@@ -135,8 +135,9 @@ You start on `develop`, run `/wf-implement` once, and return to `develop` when d
 
 20. **Return to develop directory**:
    ```
-   cd ../app
+   cd ../../app
    ```
+   (From `../feature-branches/<plan-name>` → `../../app`)
 
 21. **Post completion message** — display:
    ```
