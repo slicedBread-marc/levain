@@ -90,16 +90,18 @@ You start on `develop`, run `/wf-implement` once, and return to `develop` when d
 9. **Set the Docker project name and port** — export both as environment variables so all docker compose commands use an isolated container on a unique port:
    ```bash
    PLAN_FOLDER=$(basename $(ls -d plans/active/PLN-*/ | head -1) | tr -d '/')
+   # Extract the plan name (slug) from PLN-NNN-<name>, e.g., "deployment-date-footer" from "PLN-004-deployment-date-footer"
+   PLAN_NAME=$(echo $PLAN_FOLDER | sed 's/^PLN-[0-9]*-//')
    # Extract the plan ID number (e.g., "004" from "PLN-004-deployment-date-footer")
    PLAN_ID=$(echo $PLAN_FOLDER | grep -oE 'PLN-[0-9]+' | sed 's/PLN-//')
    # Calculate port: 8100 + NNN (e.g., PLN-004 → 8104, PLN-012 → 8112)
    # Port range 8000-8099 is reserved for static site (includes staging at 8081)
    FEATURE_PORT=$((8100 + PLAN_ID))
-   export COMPOSE_PROJECT_NAME="app-$PLAN_FOLDER"
+   export COMPOSE_PROJECT_NAME="app-$PLAN_NAME"
    export FEATURE_PORT
    ```
    This ensures:
-   - Container name: `app-PLN-NNN-<name>` (isolated from `app-staging`)
+   - Container name: `app-<plan-name>` (e.g., `app-deployment-date-footer`, isolated from `app-staging`)
    - Port: 8100 + plan ID (e.g., PLN-004 → 8104, PLN-012 → 8112)
    - **Port ranges:** 8000-8099 reserved (static site, staging at 8081); 8100+ for features (no collisions)
    - All `docker compose up` commands in plan steps use these values automatically
@@ -277,10 +279,16 @@ services:
 - **8100+:** Feature branches (8100 + plan ID). E.g., PLN-004 → 8104, PLN-012 → 8112.
 - **8080:** Default for local development (when `FEATURE_PORT` not set).
 
+**Project naming:**
+- Feature project names use the plan slug only: `app-<plan-name>` (e.g., `app-deployment-date-footer`)
+- Staging always: `app-staging` (set via `--project-name app-staging` in wf-stage script)
+- Keeps container names short and readable
+
 This ensures:
 - Zero collisions between features (each gets a unique port)
 - Staging always at 8081 (never conflicts with features)
 - Clear separation of concerns (static range vs. feature range)
+- Short, readable container names
 
 ## Committing work
 
