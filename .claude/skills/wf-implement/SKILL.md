@@ -59,14 +59,14 @@ You start on `develop`, run `/wf-implement` once, and return to `develop` when d
    ```
 5. **Create feature branch and worktree**:
    ```
-   mkdir -p ../feature-branches
-   git worktree add -b feature/<plan-name> ../feature-branches/<plan-name> HEAD
+   mkdir -p feature-branches
+   git worktree add -b feature/<plan-name> feature-branches/<plan-name> HEAD
    ```
-   This creates the worktrees folder if needed, then creates a new feature branch FROM the current HEAD (develop, with the locked-plan commit) and a new worktree directory separate from your main repo.
+   This creates the feature-branches folder inside app if needed, then creates a new feature branch FROM the current HEAD (develop, with the locked-plan commit) and a new worktree directory.
 
 6. **Drop settings.local.json into worktree** for full write permissions:
    ```
-   cat > ../feature-branches/<plan-name>/.claude/settings.local.json << 'EOF'
+   cat > feature-branches/<plan-name>/.claude/settings.local.json << 'EOF'
    {
      "permissions": {
        "allow": [
@@ -84,7 +84,7 @@ You start on `develop`, run `/wf-implement` once, and return to `develop` when d
 
 7. **Change to worktree directory** (within the Bash session — this persists for all subsequent Phase 2 steps):
    ```
-   cd ../feature-branches/<plan-name>
+   cd feature-branches/<plan-name>
    ```
 8. **Confirm you are on the feature branch** — run `git branch --show-current`. Should be `feature/<plan-name>`, not `develop`.
 9. **Read `plan.md`** — understand the goal, design decisions, and all steps
@@ -135,12 +135,15 @@ You start on `develop`, run `/wf-implement` once, and return to `develop` when d
 
 20. **Return to develop directory**:
    ```bash
-   # Detect worktree structure (old vs new) and return to app accordingly
-   if [ -d "../../app" ]; then
-     # New structure: ../feature-branches/<plan-name>
+   # Detect worktree structure and return to app accordingly
+   if [ -f "../../.dockerignore" ]; then
+     # Current structure: app/feature-branches/<plan-name>
+     cd ../..
+   elif [ -d "../../app" ]; then
+     # Old structure (migration): ../feature-branches/<plan-name>
      cd ../../app
    else
-     # Old structure (migration): ../app-feature-*
+     # Legacy structure: ../app-feature-*
      cd ../app
    fi
    ```
@@ -152,7 +155,7 @@ You start on `develop`, run `/wf-implement` once, and return to `develop` when d
    ✓ Docker container cleaned up
    
    T4 (Validator): Switch to the worktree for verification and human testing:
-     cd ../feature-branches/<plan-name>
+     cd feature-branches/<plan-name>
      /wf-verify       (automated verification: build, tests, quality checks)
      /wf-test         (human acceptance testing: user-observable criteria)
    
@@ -206,7 +209,7 @@ The workflow is:
 (develop) ✓ done
 
 (T4 takes over)
-  cd ../feature-branches/<plan-name>
+  cd feature-branches/<plan-name>
   /wf-verify (automated: build, tests, quality)
   /wf-test (human: UX acceptance testing)
 ```
