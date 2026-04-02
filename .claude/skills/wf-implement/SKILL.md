@@ -134,10 +134,16 @@ You start on `develop`, run `/wf-implement` once, and return to `develop` when d
 **Phase 3: Cleanup (return to `develop`)**
 
 20. **Return to develop directory**:
+   ```bash
+   # Detect worktree structure (old vs new) and return to app accordingly
+   if [ -d "../../app" ]; then
+     # New structure: ../feature-branches/<plan-name>
+     cd ../../app
+   else
+     # Old structure (migration): ../app-feature-*
+     cd ../app
+   fi
    ```
-   cd ../../app
-   ```
-   (From `../feature-branches/<plan-name>` → `../../app`)
 
 21. **Post completion message** — display:
    ```
