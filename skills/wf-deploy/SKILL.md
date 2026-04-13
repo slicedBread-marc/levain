@@ -94,7 +94,7 @@ Before starting, confirm E2E passed on release:
     NEXT: When ready to go live, manually push main:
       git push origin main
 
-    This will trigger the production deploy to https://example.com
+    This will trigger the production deploy to {{production_url}}
     ```
 
 ## Conflict resolution
@@ -142,6 +142,6 @@ git push origin main
 ```
 
 Pushing `main` automatically triggers `.github/workflows/deploy.yml` on the GitHub Actions runner. Check deployment status at:
-- **Logs:** https://github.com/you/app/actions
-- **Live site:** https://example.com (update should be live in 2–5 minutes)
+- **Logs:** {{production_logs_url}}
+- **Live site:** {{production_url}} (update should be live in 2–5 minutes)
 - **Health:** Check `/health` endpoint for server status
