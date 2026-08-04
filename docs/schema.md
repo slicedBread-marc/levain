@@ -125,6 +125,7 @@ The `Deps` column holds comma-separated plan IDs that must reach `complete` stat
 | `testing` | Passed automated checks, needs human test | T4 (wf-test) |
 | `complete` | Done | — |
 | `rolled-back` | Reverted | — |
+| `abandoned` | Dropped on purpose — terminal, not successful | — |
 
 ### State machine
 
@@ -134,7 +135,17 @@ draft → ready → active → verify ──[agent]──→ testing → complet
                   |          ├→ active  (fix cycle)
                   |          └→ draft   (escalation)
                   └→ draft  (implementer escalation)
+
+any state ──[wf-abandon.sh]──→ abandoned ──[--revive]──→ draft
 ```
+
+**`abandoned` is terminal like `complete`, but not successful.** Every other state means someone still owes work; `complete` means it shipped. Without a third option a dropped plan can only be left in a working state (and re-dispatched forever) or marked `complete` (claiming code that never shipped). It is reachable from anywhere, because work is dropped from wherever it happened to be, and revivable only to `draft` — a branch left months ago is not safe to resume mid-pipeline.
+
+A dependency that is abandoned **will never be satisfied**. `wf-check-deps.sh` reports it as `DEAD` rather than `BLOCKED`, and the list scripts label it, so the dependent gets replanned instead of waiting forever.
+
+**States are validated on write.** `wf-registry-update.sh` rejects any value outside the set above. It used to accept anything, so a typo — or a state someone invented under deadline — became a live value in the pipeline's single source of truth, unroutable by the orchestrator and permanently blocking to dependents. Use `wf-abandon.sh <ID> --reason "..."`, which records why in the plan's `progress.md`; the reason is the part that would otherwise be lost.
+
+`wf-registry-audit.sh` checks the registry against `plans/` from the other direction — folders with no row, rows with no folder, duplicate IDs, a counter that would collide, unroutable states, and pre-implementation states sitting on branches that are ahead of develop.
 
 ## Findings Format (v4)
 

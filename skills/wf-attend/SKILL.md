@@ -44,10 +44,23 @@ Once the user picks one, read the gate's `<context>` file if it has one, then fo
 
 The plan is drafted, **already reviewed**, and committed in `draft` state. The orchestrator wrote it and ran the architecture review; it is not allowed to approve it.
 
-1. Display the plan's `## Review` section first — the verdict, the round count, and any Warnings. The review has already run unattended, so a plan reaching this gate is one the reviewer *approved*; you are deciding whether to build it, not whether it is sound. If `## Review` is empty, the plan gated before its review — that is a harness fault, so file it with `wf-issue.sh` and run the review yourself.
+1. **Locate the verdict before assuming there isn't one:**
+   ```bash
+   eval "$(scripts/wf-exec.sh wf-review-status.sh <PLN-ID>)"
+   ```
+   | `REVIEW_LOCATION` / `REVIEW_STALE` | What it means | What to do |
+   |-|-|-|
+   | `plan`, not stale | The normal case | Display `## Review` and continue to step 2 |
+   | `findings`, not stale | The verdict exists but was written to `findings.md` | Display it from there, move it into `plan.md`'s `## Review`, and file `wf-issue.sh` — the review is fine, its filing was not |
+   | `REVIEW_STALE=true` | The plan was **amended after** the verdict | The verdict is about a document that no longer exists. Re-run the review on the plan as it now stands, write it to `## Review`, and gate on *that* |
+   | `none` | The plan gated before its review | Harness fault — file it with `wf-issue.sh` and run the review yourself |
+
+   Display the verdict, the round count, and any Warnings. A plan reaching this gate should be one the reviewer *approved*; you are deciding whether to build it, not whether it is sound.
+
+   **A stale verdict is the dangerous one, because it reads as done.** client-a had two plans at this gate whose only reviews were `Blocked` on the pre-amendment draft; the amendment then resolved every finding and nothing re-reviewed it, so plans carrying six resolved Criticals were presented as reviewed and approved (WFI-046).
 2. Then display the plan's Goal, the step count, the Tests table, and the Human Test Criteria split (Chrome-Assisted vs Manual).
 3. Ask: `approve / edit / reject?`
-4. On **approve** — hand off to `/wf-spec` to write the registry row and transition `draft → ready`. Do not set the state by hand and do not re-run the review; it is in `## Review`.
+4. On **approve** — hand off to `/wf-spec` to write the registry row and transition `draft → ready`. Do not set the state by hand, and do not re-run a review step 1 already found current.
 5. On **edit** — capture what they want changed, then hand to `/wf-spec` to revise and re-review.
 6. On **reject** — ask why, append the reason to the plan's `findings.md` as an ESCALATED item, and leave the state at `draft`.
 7. Close the gate with the outcome:
@@ -59,7 +72,7 @@ The plan is drafted, **already reviewed**, and committed in `draft` state. The o
 
 When the user picks `all` and the queue holds more than two `spec-approval` gates, do **not** work them one at a time. Reviewing serially re-establishes shared context per plan and lets the same defect class be discovered independently N times — in one measured run, a reviewer flagged defects a sibling plan had already fixed, because it had no way to know.
 
-1. **Read the verdicts that are already there.** Each parked plan carries its own `## Review` — round 1 ran unattended before the gate opened. Re-running it burns the tokens the review-before-gate ordering exists to save. Only fan out the sonnet review agent for plans whose `## Review` is missing or older than the plan's last commit.
+1. **Read the verdicts that are already there.** Each parked plan carries its own `## Review` — round 1 ran unattended before the gate opened. Re-running it burns the tokens the review-before-gate ordering exists to save. Run `wf-review-status.sh` across the queue first and fan out the sonnet review agent only for the plans it reports as `none` or `REVIEW_STALE=true`.
 2. **Read all the verdicts before fixing anything.** Group findings by defect class, not by plan.
 3. **After a defect class appears in 3 or more plans, stop reviewing it and sweep.** A targeted sweep for one known class across every remaining plan is far cheaper than N full reviews, and it catches instances a full review scores as low-priority. Two such sweeps in one 16-plan run caught 13 findings that per-plan review had missed.
 4. **A finding present in 3+ plans is a template defect, not a plan defect.** One run found an ambiguous `git revert -m 1 <sha>` in the rollback section of **all 16 plans**, propagated by copying. Fixing it 16 times fixes nothing — raise it against `plans/TEMPLATE.md` (and report it upstream with `wf-issue.sh` if the defect came from the shipped template), then apply the corrected wording to the affected plans.

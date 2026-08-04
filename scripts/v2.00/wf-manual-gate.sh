@@ -78,12 +78,38 @@ fi
 # ── Does the diff touch a rendering surface? ──────────────────────────────
 # Translate globs to anchored regexes: `/**/` spans zero or more directories,
 # a bare `*` stops at a separator.
+#
+# The two `**` rules emit PLACEHOLDER bytes, and only the final pair turns
+# those into regex. That indirection is the whole point. Substituting the real
+# regex up front looks equivalent and is not: `/**/` became `/(.*/)?`, and then
+# the very next rule — the one that narrows a lone `*` to `[^/]*` — rewrote the
+# `*` inside that freshly-emitted `.*`, yielding `(.[^/]*/)?`. So `src/**/*.razor`
+# compiled to `^src/(.[^/]*/)?[^/]*\.razor$`: one optional directory level, and
+# that level had to be at least two characters. No wildcard could span
+# directories at all, which made `renderingSurfaces` non-functional for every
+# real source tree — client-a shipped a plan touching three `.razor` pages
+# with the manual gate closed as "the diff renders nothing to a human"
+# (WFI-044). A placeholder the `*` rule cannot see is what keeps the passes
+# from eating each other.
+#
+# The escape rule below is split in two for the same class of reason. It was
+# written as `[.[\]()+^$]`, which reads as "escape these metacharacters" but is
+# not that set: inside a bracket expression a backslash is literal, so the `\]`
+# closed the bracket early and the rule matched one of `.[\` followed by the
+# literal text `()+^$]`. It therefore never fired on any real input — a silent
+# no-op that left every `.` in a glob meaning "any character". Putting `[` last
+# and giving `]` its own rule is the portable spelling that actually works.
 glob_to_regex() {
+  local star_dir star_any
+  star_dir=$(printf '\001')   # stands in for `/**/`
+  star_any=$(printf '\002')   # stands in for a bare `**`
   printf '%s' "$1" \
-    | sed -e 's/[.[\]()+^$]/\\&/g' \
-          -e 's#/\*\*/#/(.*/)?#g' \
-          -e 's/\*\*/.*/g' \
+    | sed -e 's/[.()+^$[]/\\&/g' -e 's/\]/\\]/g' \
+          -e "s#/\*\*/#/${star_dir}#g" \
+          -e "s/\*\*/${star_any}/g" \
           -e 's/\*/[^\/]*/g' \
+          -e "s#${star_dir}#(.*/)?#g" \
+          -e "s#${star_any}#.*#g" \
     | sed -e 's/^/^/' -e 's/$/$/'
 }
 

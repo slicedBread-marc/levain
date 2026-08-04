@@ -74,6 +74,8 @@ while IFS='|' read -r _ id slug state priority branch _rest; do
       dep_id=$(echo "$dep_id" | xargs)
       dep_state=$(grep "^| $dep_id |" "$REGISTRY" 2>/dev/null | awk -F'|' '{print $4}' | xargs || true)
       if [ "$dep_state" != "complete" ]; then
+        # See wf-list-implementable.sh: abandoned reads differently to late.
+        [ "$dep_state" = "abandoned" ] && dep_id="$dep_id (abandoned)"
         [ -n "$blocking" ] && blocking="$blocking,$dep_id" || blocking="$dep_id"
       fi
     done

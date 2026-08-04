@@ -1,8 +1,13 @@
 # Abandoned plans — a terminal state for work that is dropped, not finished
 
-> **Status: proposed, not implemented.** Nothing in this repo supports `abandoned` today.
-> Filed from the field: `app` drained 11 feature worktrees on 2026-08-04 and had to invent
-> the state to record the outcome. Reported as `app` WFI-008; this is the design behind it.
+> **Status: implemented in v4.4.0.** Filed from the field: `app` drained 11 feature
+> worktrees on 2026-08-04 and had to invent the state to record the outcome. Reported as
+> `app` WFI-008; this is the design, and the "Change surface" section below is now a record
+> of what was built rather than a plan.
+>
+> Entry points: `wf-abandon.sh <ID> --reason "..."` to drop a plan, `--revive` to bring it
+> back to `draft`, and `wf-registry-audit.sh` to find the damage an unvalidated state
+> already did.
 
 ## The gap
 
@@ -51,7 +56,7 @@ whole point: `complete` asserts the work landed, `abandoned` asserts it never wi
 5. **Visible.** `/wf-board` counts it in its own dim column. A dropped plan that vanishes
    from every view is how `app` ended up with an unregistered plan folder (WFI-009).
 
-## Change surface
+## Change surface — as built
 
 - `wf-registry-update.sh` — **validate `to_state` against the state set** and reject
   anything else. This is worth doing on its own merits, independent of `abandoned`; the
@@ -64,9 +69,15 @@ whole point: `complete` asserts the work landed, `abandoned` asserts it never wi
   `docs/eligibility.md`, `claude-md/workflow-snippet.md`, `templates/WORKFLOW.md`,
   `skills/wf-init/SKILL.md`.
 - `tests/e2e-pipeline.sh` — cover the transition and the dependent-blocked path.
-- Consider a `wf-abandon.sh <ID> --reason "..."` so the reason is captured at the point of
-  decision rather than lost. `app` had to write its reasons into a hand-authored
-  `docs/worktree-detach-record.md` because the registry had nowhere to put them.
+- `wf-abandon.sh <ID> --reason "..."` captures the reason at the point of decision and
+  appends it to the plan's `progress.md` under `## Abandoned — <date>`, with the state it
+  was dropped from. `app` had to write its reasons into a hand-authored
+  `docs/worktree-detach-record.md` because the registry had nowhere to put them. The script
+  also names any plan that declared a dependency on the one being dropped, since that is
+  the moment the dependency needs amending.
+- `wf-registry-audit.sh` — added beyond the original design. The proposal treated the
+  missing validation as the first defect; the audit is the other half, because validation
+  only helps writes that happen *after* it ships.
 
 ## Worktree and branch handling
 

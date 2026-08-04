@@ -10,19 +10,35 @@
 build_command: ""
 
 # Test command — run to execute the full test suite.
-# Detect from: package.json "scripts.test", jest.config.*, *.csproj / *.slnx (use "dotnet test <file>"), pytest.ini, go.mod
+# Detect from: package.json "scripts.test", jest.config.*, *.csproj / *.slnx, pytest.ini, go.mod
+#
+# .NET: a *.csproj takes `dotnet test <file>`, but a SOLUTION takes
+# `dotnet test --solution <file>`. Passing a solution positionally fails with
+# "Specifying a solution for 'dotnet test' should be via '--solution'." and runs
+# nothing. Only one consumer reads this key — wf-test's auto-test agent, handed
+# it as "Test command:" — so a wrong value fails quietly: the agent either
+# adapts on its own or reports a FAIL that looks like the criterion's fault
+# rather than the config's (WFI-035).
 test_command: ""
 
 # Flag to run a single test by name or pattern.
-# Common values: "--grep" (mocha/jest), "--filter" (dotnet), "-k" (pytest), "-run" (go)
+# Common values: "--grep" (mocha/jest), "--filter" (dotnet VSTest), "-k" (pytest), "-run" (go)
+#
+# The three filter keys below are VSTest syntax by default. A .NET project on
+# Microsoft.Testing.Platform rejects `--filter` outright — see testFilterStyle
+# for the MTP equivalents, and set these to match your runner (WFI-038).
 test_filter_flag: ""
 
 # Filter to exclude e2e tests (used by implement/verify — fast feedback without a running server).
-# e.g., '--filter "FullyQualifiedName!~E2E"' (dotnet), '--grep "^(?!.*E2E)"' (mocha)
+# e.g., '--filter "FullyQualifiedName!~E2E"' (dotnet VSTest),
+#       '--filter-not-namespace "*E2E*" --ignore-exit-code 8' (dotnet MTP),
+#       '--grep "^(?!.*E2E)"' (mocha)
 test_exclude_e2e: ""
 
 # Filter to run only e2e tests (used by wf-test — human tester has the app running).
-# e.g., '--filter "FullyQualifiedName~E2E"' (dotnet), '--grep E2E' (mocha)
+# e.g., '--filter "FullyQualifiedName~E2E"' (dotnet VSTest),
+#       '--filter-namespace "*E2E*" --ignore-exit-code 8' (dotnet MTP),
+#       '--grep E2E' (mocha)
 test_only_e2e: ""
 
 # Source directories — the implementer is allowed to edit files in these paths.
@@ -86,14 +102,26 @@ local_stop_command: ""
 # testFilterStyle — how wf-test-scope.sh renders the filter.
 #   auto    (default) vstest, unless the project is detected as Microsoft.
 #           Testing.Platform (global.json `runner`, or a csproj setting
-#           TestingPlatformDotnetTestSupport), in which case: none
-#   vstest  emit FullyQualifiedName~X expressions
+#           TestingPlatformDotnetTestSupport), in which case: mtp
+#   vstest  emit FullyQualifiedName~X expressions behind test_filter_flag
+#   mtp     emit repeated --filter-class, plus --ignore-exit-code 8
 #   none    never emit a filter — always run the full suite
 #
 # MTP does not recognise VSTest's --filter in native mode: it prints its own
-# help, reports "Zero tests ran" and exits 1. A verify agent reading only the
-# exit code would fail a fully passing plan, so the scoped run degrades to the
-# full suite rather than emitting a filter the runner will reject.
+# help, reports "Zero tests ran" and exits 1. It has its own filter flags
+# instead, confirmed against real `dotnet test --solution` runs on .NET 10 /
+# xUnit v3:
+#   FullyQualifiedName~X   ->  --filter-method '*X*'
+#   a class                ->  --filter-class 'Ns.Class'
+#   a namespace            ->  --filter-class 'Ns*'  /  --filter-namespace 'Ns*'
+#   negation               ->  --filter-not-class / --filter-not-namespace
+# Repeating a flag ORs the values.
+#
+# --ignore-exit-code 8 belongs with a filtered MTP run and nowhere else:
+# filtering across a solution makes every project with zero matching tests exit
+# 8, so a run whose selected tests all passed still reports failure. On an
+# UNFILTERED run, exit 8 means the suite really found no tests — a genuine
+# failure that must stay one. That is why it cannot live in test_command.
 testFilterStyle: auto
 testScopes: {}
 #   unit:

@@ -35,14 +35,6 @@ Fix the cause **here**, in the library — never in the client, where the next d
 
 Resolved entries stay in the client's file as the record of what was already reported. `sweep-issues.sh` exits 0 when there is work and 1 when every client is clean.
 
-### Open proposals
-
-Designed but not built. Each is a swept client issue that needed more than a fix:
-
-| Proposal | Origin | Summary |
-|-|-|-|
-| [`docs/abandoned-plans.md`](docs/abandoned-plans.md) | `app` WFI-008 | A terminal `abandoned` state for dropped work. Includes the `wf-registry-update.sh` state validation gap that let an undocumented state into a live registry. |
-
 ---
 
 ## Process Flow
@@ -109,6 +101,7 @@ draft → ready → active → verify ──[agent]──→ testing → complet
 | `verify` | Verify agent running automated checks | (automatic) |
 | `testing` | Passed automated checks, needs human test | T4 (wf-test) |
 | `complete` | Done | — |
+| `abandoned` | Dropped on purpose — terminal, but not successful | — |
 
 Bugs move through: `bugs/open/` → `bugs/triaged/` → `bugs/closed/`
 

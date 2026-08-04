@@ -82,6 +82,41 @@ fi
 
 [ -f "$REGISTRY" ] || { echo "Error: $REGISTRY not found" >&2; exit 1; }
 
+# --- Validate the destination state ---
+#
+# This script writes whatever string it is handed into the State column, and
+# for a long time it validated none of it. app dropped six plans and wrote them
+# as `abandoned` — a state that did not exist. It was accepted silently, and
+# the consequences landed elsewhere: the orchestrator hard-fails on an unknown
+# state, and four dependency checks read "not complete" as "not satisfied yet",
+# so an abandoned plan named in a Deps column would have blocked its dependents
+# forever with no way to clear it (WFI-008).
+#
+# The state set is small, closed, and documented. Any typo in a caller — or any
+# state someone invents under deadline — becomes a live value in the pipeline's
+# single source of truth, so it is rejected here rather than discovered later.
+#
+# `from_state` is deliberately NOT validated: it has to match the row anyway,
+# and a client whose registry already holds a nonstandard value must still be
+# able to transition out of it.
+WF_STATES="draft ready active verify testing complete rolled-back abandoned"
+case " $WF_STATES " in
+  *" $to_state "*) ;;
+  *)
+    echo "Error: '$to_state' is not a workflow state." >&2
+    echo "       Valid: $WF_STATES" >&2
+    echo "       To drop a plan, use wf-abandon.sh — it records the reason." >&2
+    exit 1
+    ;;
+esac
+
+# `abandoned` is terminal. Revival is deliberate and goes back to planning: the
+# branch may be months stale, so resuming mid-pipeline is not safe.
+if [ "$from_state" = "abandoned" ] && [ "$to_state" != "draft" ]; then
+  echo "Error: $plan_id is abandoned. Revive it to 'draft' first, then replan." >&2
+  exit 1
+fi
+
 today=$(date +%Y-%m-%d)
 
 # --- Everything below mutates the registry: take the lock first ---

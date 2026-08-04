@@ -93,9 +93,8 @@ Before starting, confirm E2E passed on release:
 
     NEXT: When ready to go live, manually push main:
       git push origin main
-
-    This will trigger the production deploy to {{production_url}}
     ```
+    Add a line saying what that push will actually do — see [Production deploy](#production-deploy-separate-step). Name the workflow if one deploys on `main`; say "runs CI only, nothing is deployed" if none does. Do not assert a production deploy without checking.
 
 ## Conflict resolution
 
@@ -141,7 +140,21 @@ To deploy to production, manually push main:
 git push origin main
 ```
 
-Pushing `main` automatically triggers `.github/workflows/deploy.yml` on the GitHub Actions runner. Check deployment status at:
+**Check what pushing `main` actually does before telling the user it deployed.** Not every project has a deploy workflow, and saying so when it does not is the one failure here a user cannot detect for themselves — they read "deployed to production" and stop looking.
+
+```bash
+grep -ln 'branches:.*main\|branches:$' .github/workflows/*.yml 2>/dev/null | while read -r wf; do
+  printf '%s: %s\n' "$(basename "$wf")" "$(grep -m1 '^name:' "$wf" | sed 's/^name:[ ]*//')"
+done
+```
+
+Then report only what is true:
+
+- **A workflow deploys on push to `main`** — name it, and give the Logs / Live site / Health lines below.
+- **Only build/test CI runs on `main`** — say exactly that: the push runs CI, and nothing is deployed. client-c has only `build.yml`, and a user following the old wording would have believed a release was live when nothing had shipped (WFI-003).
+- **`{{production_url}}` is blank** — omit the Live site line entirely rather than rendering it empty. A blank value is a deliberate "this project has no production URL", not a missing config.
+
+When there is a real deploy:
 - **Logs:** {{production_logs_url}}
 - **Live site:** {{production_url}} (update should be live in 2–5 minutes)
 - **Health:** Check `/health` endpoint for server status

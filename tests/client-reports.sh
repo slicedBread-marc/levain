@@ -694,8 +694,12 @@ assert_eq "a Blocked verdict never reaches a human directly" "true" \
 assert_eq "the gate question carries the verdict" "true" \
   "$(awk '/^## Exit — unattended/, /^## Replanning/' "$LIB_ROOT/skills/wf-spec/SKILL.md" \
      | grep -q 'Review: Approved with notes' && echo true || echo false)"
+# v4.2.0 asserted a flat "do not re-run the review". WFI-046 made it
+# conditional — a verdict that predates the plan's last amendment MUST be
+# re-run — so the assertion tracks the narrower contract: don't re-run one that
+# is current.
 assert_eq "wf-attend reads the review instead of commissioning it" "true" \
-  "$(grep -q 'do not re-run the review' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'do not re-run a review step 1 already found current' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
 assert_eq "and a batch drain does not re-review what already has a verdict" "true" \
   "$(grep -q 'Read the verdicts that are already there' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
 
@@ -794,6 +798,373 @@ assert_eq "and gates on it whatever the review verdict says" "true" \
      | grep -q 'whatever the review verdict says' && echo true || echo false)"
 assert_eq "wf-attend knows what to do with a scope-reduction gate" "true" \
   "$(grep -q '^### `scope-reduction`' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Port vars reach the post-commit hook (client-a WFI-039/041/043)"
+
+# `eval "$(wf-plan-port.sh ...)"` on bare KEY=VALUE lines sets UNEXPORTED shell
+# variables. The consumer is the post-commit hook, which git runs as a child
+# process — and a child inherits the environment, not plain shell variables.
+# The eval appeared to work and every plan deployed under the first plan's
+# container name and port.
+port_out=$("$SCRIPT_DIR/wf-plan-port.sh" PLN-004-capsule-service)
+assert_eq "the port line is exported" "true" \
+  "$(printf '%s' "$port_out" | grep -q '^export FEATURE_PORT=8104$' && echo true || echo false)"
+assert_eq "the project name is exported" "true" \
+  "$(printf '%s' "$port_out" | grep -q '^export COMPOSE_PROJECT_NAME=' && echo true || echo false)"
+
+# The distinction the bug turned on: exported vars survive into a child.
+port_seen=$(eval "$port_out"; bash -c 'echo "${FEATURE_PORT:-unset}"')
+assert_eq "a child process sees the port" "8104" "$port_seen"
+
+# Captured before grepping: `script | grep -q` races under pipefail — grep exits
+# on the first match, SIGPIPEs the producer, and the pipeline reports the
+# producer's 141 rather than grep's 0.
+v1x_out=$("$LIB_SCRIPTS/v1.x/wf-plan-port.sh" PLN-004-x)
+assert_eq "the v1.x snapshot exports too" "true" \
+  "$(printf '%s' "$v1x_out" | grep -q '^export FEATURE_PORT=' && echo true || echo false)"
+
+# Step 7 of the fix cycle is the one step that commits from its own bash call,
+# so it must re-resolve rather than inherit.
+assert_eq "the fix cycle's commit step sets the port itself" "true" \
+  "$(awk '/^7\. \*\*When all findings are checked off/, /^## Worktree workflow/' \
+       "$LIB_ROOT/skills/wf-implement/SKILL.md" | grep -q 'wf-plan-port.sh' && echo true || echo false)"
+
+# The hook derives its own identity rather than trusting the caller at all.
+assert_eq "the commit hook reads .plan-ref" "true" \
+  "$(grep -q 'PROJECT_DIR/.plan-ref' "$LIB_ROOT/templates/on-implement-commit.sh" && echo true || echo false)"
+# Scoped to the on-implement-commit.sh sed block: install.sh substitutes
+# {{project_slug}} in several other places already, so an unanchored grep
+# passes whether or not the hook gets it.
+assert_eq "and install.sh bakes the slug into it" "true" \
+  "$(awk '/{{local_start_command}}/, /on-implement-commit.sh"$/' "$LIB_ROOT/install.sh" \
+     | grep -q 'project_slug' && echo true || echo false)"
+
+# The hook duplicates wf-plan-port.sh's formula, so prove they agree.
+hook_port=$(awk '/8100 \+ _plan_num/ { print "8104" }' "$LIB_ROOT/templates/on-implement-commit.sh" | head -1)
+assert_eq "the hook's port formula matches wf-plan-port.sh" "8104" "$hook_port"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Rendering-surface globs span directories (client-a WFI-044)"
+
+# `/**/` was rewritten to `/(.*/)?`, and then the rule narrowing a lone `*` to
+# `[^/]*` rewrote the `*` INSIDE that `.*`. Every glob compiled to one optional
+# directory level of at least two characters, so renderingSurfaces matched
+# nothing in a real source tree and a plan changing three .razor pages shipped
+# with its manual gate closed as "the diff renders nothing to a human".
+eval "$(sed -n '/^glob_to_regex() {/,/^}/p' "$SCRIPT_DIR/wf-manual-gate.sh")"
+
+changed_files='src/Tracker.Web.Client/Pages/Admin/Capsules.razor
+src/Tracker.Web.Client/wwwroot/css/app.css
+src/Tracker.Core/Services/CapsuleService.cs
+src/foo-razor'
+glob_hit() {
+  printf '%s\n' "$changed_files" | grep -E "$(glob_to_regex "$1")" | head -1 || true
+}
+
+assert_eq "a nested .razor page matches src/**/*.razor" \
+  "src/Tracker.Web.Client/Pages/Admin/Capsules.razor" "$(glob_hit 'src/**/*.razor')"
+assert_eq "a nested wwwroot file matches src/**/wwwroot/**" \
+  "src/Tracker.Web.Client/wwwroot/css/app.css" "$(glob_hit 'src/**/wwwroot/**')"
+assert_eq "a glob that should not match still does not" "" "$(glob_hit 'src/**/Components/**')"
+assert_eq "a single * does not span a separator" "" "$(glob_hit 'src/*.cs')"
+
+# The escape rule was `[.[\]()+^$]`, which reads as a metacharacter set but is
+# not one: a backslash is literal inside brackets, so `\]` closed it early and
+# the rule never fired on any input.
+assert_eq "the dot in a glob is escaped, so *.razor is not *?razor" "" "$(glob_hit 'src/**/*Xrazor')"
+escaped=$(glob_to_regex 'a.b')
+assert_eq "the escape pass actually escapes" "true" \
+  "$(printf '%s' "$escaped" | grep -qF 'a\.b' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A stash only ever restores its own work (client-a WFI-036)"
+
+# `git stash` on a clean tree saves NOTHING and exits 0, so the unconditional
+# `git stash pop` that followed restored whatever was at stash@{0} — a stale
+# entry from an interrupted session. Live, that was an 18-file superseded
+# workflow deploy, and the next step commits whatever it restored.
+STASH_DIR="$TEST_DIR/stash"
+mkdir -p "$STASH_DIR" && (
+  cd "$STASH_DIR" && git init -q . && git config user.email t@t && git config user.name t
+  echo one > a.txt && git add . && git commit -qm init
+  echo FOREIGN > a.txt && git stash push -m "someone else's work" >/dev/null
+) >/dev/null 2>&1
+
+pushed=$(cd "$STASH_DIR" && "$SCRIPT_DIR/wf-stash.sh" push merge 2>/dev/null)
+assert_eq "a clean tree stashes nothing" "WF_STASHED=false" "$pushed"
+restored=$(cd "$STASH_DIR" && "$SCRIPT_DIR/wf-stash.sh" pop merge 2>/dev/null)
+assert_eq "and popping restores nothing" "WF_RESTORED=false" "$restored"
+assert_eq "the foreign stash is untouched" "one" "$(cat "$STASH_DIR/a.txt")"
+assert_eq "and is still in the stack" "1" \
+  "$(cd "$STASH_DIR" && git stash list | wc -l | tr -d ' ')"
+
+# A real round trip still works, and survives another stash landing on top.
+(cd "$STASH_DIR" && echo MINE > a.txt && "$SCRIPT_DIR/wf-stash.sh" push merge) >/dev/null 2>&1
+(cd "$STASH_DIR" && echo INTERLOPER > b.txt && git add b.txt && git stash push -m interloper) >/dev/null 2>&1
+(cd "$STASH_DIR" && "$SCRIPT_DIR/wf-stash.sh" pop merge) >/dev/null 2>&1
+assert_eq "our stash is found after the stack shifts under it" "MINE" "$(cat "$STASH_DIR/a.txt")"
+
+assert_eq "wf-test no longer pops positionally" "false" \
+  "$(grep -q 'git stash pop 2>/dev/null' "$LIB_ROOT/skills/wf-test/SKILL.md" && echo true || echo false)"
+assert_eq "nor does wf-chrome-test" "false" \
+  "$(grep -q 'git stash pop 2>/dev/null' "$LIB_ROOT/skills/wf-chrome-test/SKILL.md" && echo true || echo false)"
+assert_eq "and the restored-changes commit is guarded on WF_RESTORED" "true" \
+  "$(grep -q 'WF_RESTORED:-false' "$LIB_ROOT/skills/wf-test/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "MTP projects get a real filter (client-a WFI-045/038/035)"
+
+# testFilterStyle accepted only vstest or none, so a Microsoft.Testing.Platform
+# project could never emit a filter — tiered test gating always fell back to the
+# full suite. The MTP syntax has since been confirmed against real runs.
+SCOPE2="$TEST_DIR/mtp"
+mkdir -p "$SCOPE2/scripts" "$SCOPE2/plans/PLN-160-mtp"
+cp "$SCRIPT_DIR/wf-test-scope.sh" "$SCRIPT_DIR/wf-plan-info.sh" "$SCOPE2/scripts/"
+printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-160 | mtp | verify | — | — | 2026-08-04 | %s | — | — |\n' \
+  "${SCRIPT_FOLDER#v}" > "$SCOPE2/plans/REGISTRY.md"
+printf '## Goal\nx\n\n## Test Scope\n- unit\n' > "$SCOPE2/plans/PLN-160-mtp/plan.md"
+printf 'test_filter_flag: "--filter"\ntestFilterStyle: mtp\ntestScopes:\n  unit:\n    - Core.Tests\n' \
+  > "$SCOPE2/claude-workflow.yml"
+
+if command -v yq >/dev/null 2>&1; then
+  mtp_args=$(cd "$SCOPE2" && ./scripts/wf-test-scope.sh PLN-160-mtp --args 2>/dev/null || true)
+  assert_eq "an MTP scope emits --filter-class, not FullyQualifiedName" "true" \
+    "$(printf '%s' "$mtp_args" | grep -q -- "--filter-class '\*Core.Tests\*'" && echo true || echo false)"
+  # Filtering across a solution makes zero-match projects exit 8, so a run whose
+  # selected tests all passed still reports failure without this.
+  assert_eq "and carries --ignore-exit-code 8" "true" \
+    "$(printf '%s' "$mtp_args" | grep -q -- '--ignore-exit-code 8' && echo true || echo false)"
+
+  printf 'test_filter_flag: "--filter"\ntestFilterStyle: vstest\ntestScopes:\n  unit:\n    - Core.Tests\n' \
+    > "$SCOPE2/claude-workflow.yml"
+  vs_args=$(cd "$SCOPE2" && ./scripts/wf-test-scope.sh PLN-160-mtp --args 2>/dev/null || true)
+  assert_eq "vstest --args still renders flag plus value" "--filter 'FullyQualifiedName~Core.Tests'" "$vs_args"
+  # On an UNFILTERED run exit 8 means the suite really found no tests, so the
+  # ignore must never leak into the vstest path.
+  assert_eq "and never carries the MTP exit-code ignore" "false" \
+    "$(printf '%s' "$vs_args" | grep -q -- '--ignore-exit-code' && echo true || echo false)"
+
+  printf 'testFilterStyle: auto\ntestScopes:\n  unit:\n    - Core.Tests\n' > "$SCOPE2/claude-workflow.yml"
+  printf '{ "test": { "runner": "Microsoft.Testing.Platform" } }\n' > "$SCOPE2/global.json"
+  auto_args=$(cd "$SCOPE2" && ./scripts/wf-test-scope.sh PLN-160-mtp --args 2>/dev/null || true)
+  assert_eq "auto-detection routes an MTP project to mtp, not to the full suite" "true" \
+    "$(printf '%s' "$auto_args" | grep -q -- '--filter-class' && echo true || echo false)"
+fi
+
+assert_eq "wf-verify asks for the whole argument string" "true" \
+  "$(grep -q 'wf-test-scope.sh PLN-NNN-<slug> --args' "$LIB_ROOT/skills/wf-verify/SKILL.md" && echo true || echo false)"
+assert_eq "a solution takes --solution, not a positional path" "true" \
+  "$(grep -q 'dotnet test --solution <file>' "$LIB_ROOT/config.example.yml" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A verdict is found, and known to be current (client-a WFI-046)"
+
+# Two failures at one gate: the verdict was written to findings.md under
+# `## Spec Review` (so wf-attend, reading only plan.md, would have called it a
+# harness fault and re-run a review that existed), and both verdicts were
+# Blocked on the PRE-amendment plan — the amendment then resolved every finding
+# and nothing re-reviewed it.
+mkdir -p plans/PLN-013-relay plans/PLN-018-fresh
+cat > plans/PLN-013-relay/plan.md <<'PLAN13'
+## Goal
+Two-way relay
+## Review
+> Filled by the planner's review gate before status is set to Ready.
+## Amendments
+A1 — 2026-08-04 — narrowed to answer-only
+PLAN13
+cat > plans/PLN-013-relay/findings.md <<'FIND13'
+## Spec Review — 2026-08-03
+Independent architecture and security review run at the spec-approval gate. Result: Blocked
+FIND13
+cat > plans/PLN-018-fresh/plan.md <<'PLAN18'
+## Review
+**2026-08-04 — Plan Review (unattended, round 1)**
+**Result:** Approved with notes
+## Amendments
+> Append-only.
+PLAN18
+
+rs13=$("$SCRIPT_DIR/wf-review-status.sh" PLN-013 2>/dev/null)
+assert_eq "a verdict filed in findings.md is still found" "findings" \
+  "$(printf '%s' "$rs13" | awk -F= '/^REVIEW_LOCATION=/{print $2}')"
+assert_eq "and its verdict is read out of prose" "'Blocked'" \
+  "$(printf '%s' "$rs13" | sed -n 's/^REVIEW_RESULT=//p')"
+assert_eq "a verdict older than the amendment is stale" "true" \
+  "$(printf '%s' "$rs13" | awk -F= '/^REVIEW_STALE=/{print $2}')"
+
+rs18=$("$SCRIPT_DIR/wf-review-status.sh" PLN-018 2>/dev/null)
+assert_eq "a fresh spec records its verdict in plan.md" "plan" \
+  "$(printf '%s' "$rs18" | awk -F= '/^REVIEW_LOCATION=/{print $2}')"
+assert_eq "and an unamended plan is not stale" "false" \
+  "$(printf '%s' "$rs18" | awk -F= '/^REVIEW_STALE=/{print $2}')"
+
+assert_eq "wf-attend looks in both places before crying harness fault" "true" \
+  "$(grep -q 'wf-review-status.sh' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
+assert_eq "and re-reviews a plan amended since its verdict" "true" \
+  "$(grep -q 'REVIEW_STALE=true' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
+assert_eq "the replan path is told where the verdict goes" "true" \
+  "$(awk '/^## Replanning/, /^## Cross-plan consistency/' "$LIB_ROOT/skills/wf-spec/SKILL.md" \
+     | grep -q 'Never in `findings.md`' && echo true || echo false)"
+assert_eq "and wf-review names one home for it" "true" \
+  "$(grep -q 'verdict of record' "$LIB_ROOT/skills/wf-review/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Consuming a freshly filed bug (client-a WFI-037)"
+
+# `git mv` exits 128 on a folder git has never seen, and wf-bug commits only at
+# the end of its run — so the FIRST consumption of any new bug failed. Separately
+# the Status/Plan rewrites were pure sub() calls, silently no-ops on a header
+# lacking those lines, so a "triaged" bug recorded neither.
+mkdir -p bugs/open/BUG-017-landing-copy
+cat > bugs/open/BUG-017-landing-copy/bug.md <<'BUG17'
+# Landing copy is wrong
+
+> **Severity:** Low
+> **Source:** human
+> **Created:** 2026-08-04
+
+## Description
+Copy says "beta".
+BUG17
+
+assert_ok "an untracked bug can be consumed at all" \
+  "$SCRIPT_DIR/wf-bug-consume.sh" BUG-017 PLN-017-landing-copy
+assert_eq "the bug moved to triaged" "true" \
+  "$([ -d bugs/triaged/BUG-017-landing-copy ] && echo true || echo false)"
+assert_eq "a missing Status line is inserted, not skipped" "true" \
+  "$(grep -q '^> \*\*Status:\*\* Triaged$' bugs/triaged/BUG-017-landing-copy/bug.md && echo true || echo false)"
+assert_eq "and the plan link is recorded" "true" \
+  "$(grep -q '^> \*\*Plan:\*\* PLN-017-landing-copy$' bugs/triaged/BUG-017-landing-copy/bug.md && echo true || echo false)"
+assert_eq "the insert lands inside the header block" "true" \
+  "$(awk '/^## Description/ { exit } /Status:\*\* Triaged/ { found = 1 } END { print (found ? "true" : "false") }' \
+       bugs/triaged/BUG-017-landing-copy/bug.md)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A terminal state for dropped work (app WFI-008)"
+
+# Six dropped plans were written as `abandoned` — a state that did not exist.
+# wf-registry-update.sh accepted it silently, so any typo became a live value.
+registry_add_row PLN-035 dropped verify
+registry_add_row PLN-090 dependent draft "—" "—" PLN-035
+printf '' > plans/PLN-035-dropped/progress.md
+
+assert_fails "a state outside the documented set is rejected" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-035 verify abandonned
+assert_eq "and the plan did not move" "verify" "$(registry_state PLN-035)"
+
+assert_fails "abandoning without a reason is refused" \
+  "$SCRIPT_DIR/wf-abandon.sh" PLN-035
+assert_ok "abandoning with one works from any state" \
+  "$SCRIPT_DIR/wf-abandon.sh" PLN-035 --reason "Superseded by PLN-073."
+assert_eq "the plan is terminal" "abandoned" "$(registry_state PLN-035)"
+assert_eq "and the reason survives in progress.md" "true" \
+  "$(grep -q 'Superseded by PLN-073' plans/PLN-035-dropped/progress.md && echo true || echo false)"
+
+# An incomplete dep is "not yet"; an abandoned one is "never". Reported the same
+# way, an abandoned dep blocked its dependents forever with no way to clear it.
+deps_out=$("$SCRIPT_DIR/wf-check-deps.sh" PLN-090 2>/dev/null)
+assert_eq "a dependent is told the dep is dead, not late" "DEAD PLN-035" "$deps_out"
+
+assert_fails "a terminal plan cannot jump back to a working state" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-035 abandoned active
+assert_ok "but it can be revived to draft" \
+  "$SCRIPT_DIR/wf-abandon.sh" PLN-035 --revive
+assert_eq "which is where revival lands" "draft" "$(registry_state PLN-035)"
+
+assert_eq "the orchestrator routes abandoned instead of hard-failing" "true" \
+  "$(grep -q 'abandoned)      result="abandoned"' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+assert_eq "and gives it its own exit code" "true" \
+  "$(grep -q 'exit 40' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "The registry and plans/ still describe one world (app WFI-009/010)"
+
+# A plan folder with no row is not partly tracked — it is invisible. Every
+# wf-list-* script and the orchestrator see plans only through the registry, so
+# nothing can report a plan the registry does not know about.
+mkdir -p plans/PLN-051-maze-crumbs plans/PLN-064-session-telemetry plans/PLN-064-learning-portal
+printf '# x\n' > plans/PLN-051-maze-crumbs/plan.md
+
+audit=$("$SCRIPT_DIR/wf-registry-audit.sh" 2>/dev/null || true)
+assert_eq "a plan folder with no registry row is reported" "true" \
+  "$(printf '%s' "$audit" | grep -q 'MISSING ROW.*PLN-051' && echo true || echo false)"
+assert_eq "two folders sharing an ID are reported" "true" \
+  "$(printf '%s' "$audit" | grep -q 'DUPLICATE DIR PLN-064' && echo true || echo false)"
+assert_eq "the audit exits non-zero when it finds something" "1" \
+  "$("$SCRIPT_DIR/wf-registry-audit.sh" >/dev/null 2>&1; echo $?)"
+
+# A `draft` plan carrying 21 commits of finished work means a state write was
+# lost — visible only from the branch side, which nothing else looks at.
+git checkout -q -b feature/PLN-090-dependent 2>/dev/null
+printf 'work\n' > impl.txt && git add impl.txt >/dev/null 2>&1
+git commit -qm "implement(PLN-090): step 1" >/dev/null 2>&1
+git checkout -q develop 2>/dev/null
+# A `draft` plan carrying 21 commits of finished work means a state write was
+# lost — visible only from the branch side, which nothing else looks at.
+#
+# Run in its own repo: committing on a feature branch here would sweep the
+# staged registry into that commit, and checking back out to develop would then
+# discard the rows this fixture depends on.
+STALE_DIR="$TEST_DIR/stale"
+mkdir -p "$STALE_DIR/plans/PLN-037-lost" && (
+  cd "$STALE_DIR" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-037 | lost | draft | — | — | 2026-08-04 | 2.00 | — | — |\n\n<!-- Counter: 99 -->\n' \
+    > plans/REGISTRY.md
+  printf '# x\n' > plans/PLN-037-lost/plan.md
+  git add -A && git commit -qm seed
+  git checkout -qb feature/PLN-037-lost
+  echo work > src.txt && git add src.txt && git commit -qm "implement(PLN-037): step 1"
+  git checkout -q develop
+) >/dev/null 2>&1
+
+stale_audit=$(cd "$STALE_DIR" && "$SCRIPT_DIR/wf-registry-audit.sh" 2>/dev/null || true)
+assert_eq "a draft plan sitting on real commits is reported" "true" \
+  "$(printf '%s' "$stale_audit" | grep -q 'STALE STATE.*PLN-037' && echo true || echo false)"
+
+assert_eq "wf-status runs the audit" "true" \
+  "$(grep -q 'wf-registry-audit.sh' "$LIB_ROOT/skills/wf-status/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "client-c's first three reports (WFI-001/002/003)"
+
+# WFI-001 — wf-spec cited templates/plans/TEMPLATE.md, a path that exists in
+# the LIBRARY. install.sh deploys it to the client as plans/TEMPLATE.md.
+assert_eq "wf-spec cites the client's template path, not the library's" "false" \
+  "$(grep -q 'templates/plans/TEMPLATE.md' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+assert_eq "and cites the one install.sh actually writes" "true" \
+  "$(grep -q 'following `plans/TEMPLATE.md`' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+
+# WFI-002 — the implementer spawns its own verify agent on exit. The
+# orchestrator reached verify a moment later, was turned away by the
+# already-running guard, saw no state change and reported exit 30 — documented
+# as "something is wrong with the plan or the skill" — while that verify agent
+# ran healthily. A retry would have burned one of max_attempts_per_plan.
+assert_eq "an already-running peer is waited for, not called a stall" "true" \
+  "$(grep -q 'rc" -eq 2' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+assert_eq "and has an exit code distinct from no-progress" "true" \
+  "$(grep -q 'exit 41' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+assert_eq "the contract published to clients lists it" "true" \
+  "$(grep -q '`41`' "$LIB_ROOT/templates/WORKFLOW.md" && echo true || echo false)"
+
+# WFI-003 — wf-deploy asserted a deploy.yml that a project need not have. A
+# user reading "deployed to production" when only CI ran cannot detect it.
+assert_eq "wf-deploy checks what pushing main actually does" "true" \
+  "$(grep -q '.github/workflows/\*.yml' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+assert_eq "and no longer asserts a deploy workflow unconditionally" "false" \
+  "$(grep -q 'Pushing `main` automatically triggers' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+assert_eq "a blank production_url omits the live-site line" "true" \
+  "$(grep -q 'omit the Live site line entirely' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Feature worktrees are ignored by the planning branch (client-a WFI-032)"
+
+# feature-branches/ is the workflow's own convention — wf-worktree-sparse.sh
+# creates it — so a `git add -A` on develop committed an entire feature worktree
+# into the planning branch.
+assert_eq "install.sh seeds the ignore" "true" \
+  "$(grep -q 'echo "feature-branches/" >> "\$GITIGNORE"' "$LIB_ROOT/install.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n'

@@ -54,6 +54,9 @@ check_deps_blocked() {
     local dep_state
     dep_state=$(grep "^| $dep_id |" "$REGISTRY" 2>/dev/null | awk -F'|' '{print $4}' | xargs || true)
     if [ "$dep_state" != "complete" ]; then
+      # Mark an abandoned dep in the label itself: it is not late, it is gone,
+      # and the plan needs replanning rather than patience (WFI-008).
+      [ "$dep_state" = "abandoned" ] && dep_id="$dep_id (abandoned)"
       [ -n "$blocking" ] && blocking="$blocking,$dep_id" || blocking="$dep_id"
     fi
   done

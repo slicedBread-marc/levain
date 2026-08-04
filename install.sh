@@ -263,6 +263,7 @@ if [ -n "$LOCAL_DEPLOY" ]; then
     sed -e "s|{{local_start_command}}|$LOCAL_START|g" \
         -e "s|{{local_deploy_command}}|$LOCAL_DEPLOY|g" \
         -e "s|{{local_stop_command}}|$LOCAL_STOP|g" \
+        -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
         "$SCRIPT_DIR/templates/on-implement-commit.sh" > "$TARGET_DIR/.claude/on-implement-commit.sh"
     chmod +x "$TARGET_DIR/.claude/on-implement-commit.sh"
     echo -e "${GREEN}  Installed .claude/on-implement-commit.sh${NC}"
@@ -291,6 +292,18 @@ for pattern in ".claude/verify-*.log" ".claude/verify-*.pid"; do
         echo "$pattern" >> "$GITIGNORE"
     fi
 done
+
+# Feature worktrees.
+#
+# `feature-branches/` is the workflow's own convention — wf-worktree-sparse.sh
+# creates it — so ignoring it is the harness's job, not each project's. Left
+# out, it sits untracked on develop from the moment the first plan gets a
+# worktree, and a `git add -A` on develop commits an entire feature worktree
+# into the planning branch (WFI-032, same class as WFI-007).
+if ! grep -qF "feature-branches/" "$GITIGNORE" 2>/dev/null; then
+    echo "feature-branches/" >> "$GITIGNORE"
+    echo -e "${GREEN}  Added feature-branches/ to .gitignore${NC}"
+fi
 
 # Orchestrator runtime dirs — gates, worker logs, events.log, locks.
 # All runtime state, none of it belongs in git.

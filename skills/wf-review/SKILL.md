@@ -21,7 +21,7 @@ Agent(model: haiku, prompt: "Read [file] and list all places user input is used.
 ## Review Contexts
 
 ### 1. Plan Review (pre-implementation gate)
-Triggered automatically by the `/wf-spec` skill. The plan cannot move from `drafts/` to `ready/` until review passes.
+Triggered automatically by the `/wf-spec` skill. The plan's REGISTRY state cannot move from `draft` to `ready` until review passes. (Plans never move on disk — state lives in `plans/REGISTRY.md`.)
 
 **Evaluate against:**
 
@@ -63,6 +63,14 @@ Invoked manually with `/wf-review` after implementation. Reads the actual code c
 
 ## Writing Findings
 
+### Where the verdict lives — one place, always
+
+**`plan.md`'s `## Review` section is the verdict of record.** Every consumer reads it there: `/wf-attend` shows it at the approval gate, and `wf-review-status.sh` decides from it whether a plan has a current review at all.
+
+`findings.md` receives the *actionable items* — the Criticals and Warnings someone has to work — as checklist entries. It must **never** carry the verdict, and never a `## Spec Review` heading of its own. Writing the verdict there is not a cosmetic filing error: a plan whose `## Review` holds only the template placeholder is indistinguishable from one that gated before it was ever reviewed, and the operator is told to file a harness fault and re-run a review that already exists (client-a WFI-046).
+
+Both halves are written in the same pass. The split is by *kind* — verdict vs. work — not by which file you happen to have open.
+
 ### Plan Review findings
 Write to `plan.md`'s **Review** section AND add Critical/Warning items to `findings.md`:
 
@@ -91,7 +99,7 @@ Append directly to `findings.md`:
 
 ## Determining Outcome (Plan Review)
 
-- **Any Critical finding** → Result is `Blocked`, plan stays in `drafts/`; commit findings:
+- **Any Critical finding** → Result is `Blocked`, state stays `draft`; commit findings:
   ```
   git add plans/
   git commit -m "review: <feature-name> — blocked"
@@ -101,7 +109,7 @@ Append directly to `findings.md`:
   git add plans/
   git commit -m "review: <feature-name> — approved with notes"
   ```
-- **Notes only or clean** → Result is `Approved`, plan moves to `ready/`; commit:
+- **Notes only or clean** → Result is `Approved`, state advances to `ready`; commit:
   ```
   git add plans/
   git commit -m "review: <feature-name> — approved"

@@ -130,6 +130,7 @@ draft → ready → active → verify ──[agent]──→ testing → complet
 | `verify` | Verify agent running automated checks | (automatic) |
 | `testing` | Passed automated checks, needs human test | T4 (wf-test) |
 | `complete` | Done | — |
+| `abandoned` | Dropped on purpose — terminal, but not successful | — |
 
 ### Model & Agent Strategy
 

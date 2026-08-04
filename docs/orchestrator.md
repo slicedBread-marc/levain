@@ -241,7 +241,17 @@ scripts/wf-exec.sh wf-orchestrate.sh BUG-094 --json
 | 0 | Reached the target state |
 | 20 | Blocked on a human. **Normal outcome — never auto-retry** |
 | 30 | Worker ran, state unchanged |
+| 40 | Plan is abandoned — terminal, not successful |
+| 41 | A worker for that role is already running; not a fault |
 | 1 | Error (bad ID, or orchestrator disabled) |
+
+40 and 41 both exist to keep 30 meaningful. 30 says *something is wrong with the plan or
+the skill*, and both of these used to land on it: a dropped plan was an unknown state that
+hard-failed, and a plan whose implementer had just spawned its own verify agent looked
+identical to a stalled one — the orchestrator was turned away by the already-running guard,
+saw no state change, and reported a stall while the real worker ran healthily beside it
+(client-c WFI-002). A caller obeying the contract would have retried, burning one of
+`max_attempts_per_plan` for a non-fault.
 
 ## Safety
 

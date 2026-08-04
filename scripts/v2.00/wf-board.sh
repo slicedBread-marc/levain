@@ -125,14 +125,30 @@ render() {
         /^\| PLN-/ && trim($4) == s { c++ } END { print c + 0 }' "$REGISTRY")
       printf '  %-9s %s\n' "$st" "$n"
     done
-    n=$(awk -F'|' '
-      function trim(x) { gsub(/^[ \t]+|[ \t]+$/, "", x); return x }
-      /^\| PLN-/ && trim($4) == "complete" { c++ } END { print c + 0 }' "$REGISTRY")
-    printf '  %s%-9s %s%s\n' "$DIM" "complete" "$n" "$R"
+    # Both terminals get a dim row. An abandoned plan that appears in no
+    # column at all is how a project ends up with plan folders nobody can
+    # account for (WFI-009), so it is shown even when the count is zero.
+    for st in complete abandoned; do
+      n=$(awk -F'|' -v s="$st" '
+        function trim(x) { gsub(/^[ \t]+|[ \t]+$/, "", x); return x }
+        /^\| PLN-/ && trim($4) == s { c++ } END { print c + 0 }' "$REGISTRY")
+      printf '  %s%-9s %s%s\n' "$DIM" "$st" "$n" "$R"
+    done
   else
     printf '  %sno REGISTRY.md%s\n' "$DIM" "$R"
   fi
   printf '\n'
+
+  # ── Registry integrity ──────────────────────────────────────────────
+  # Last, and only when there is something to say. Everything above reads the
+  # registry and therefore cannot show a plan the registry has lost track of.
+  local audit
+  audit=$("$SELF_DIR/wf-registry-audit.sh" 2>/dev/null || true)
+  if [ -n "$audit" ] && [ "$audit" != "registry audit: clean" ]; then
+    printf '%s\n' "${B}REGISTRY${R} ${DIM}— the registry and plans/ disagree${R}"
+    printf '%s\n' "$audit" | sed 's/^/  /'
+    printf '\n'
+  fi
 
   # ── Recent events ───────────────────────────────────────────────────
   printf '%s\n' "${B}RECENT${R}"

@@ -1,11 +1,26 @@
 #!/usr/bin/env bash
-# wf-test-scope.sh <plan-name>
+# wf-test-scope.sh <plan-name> [--args]
 #
 # Emits a test-filter expression for the given plan's test scope.
 #
 # stdout: filter expression (e.g. "FullyQualifiedName~Core.Tests|FullyQualifiedName~E2E.HomePageTests")
 #         Empty string means "run full suite" (no filter flag needed).
 # stderr: human-readable category list ("scope: unit, e2e-smoke") for logging in the verify agent.
+#
+# --args: emit the COMPLETE argument string instead of a bare filter value —
+#         flag names included. This exists because not every runner expresses a
+#         filter as one flag plus one value. Microsoft.Testing.Platform needs a
+#         repeated `--filter-class` and a mandatory `--ignore-exit-code 8`,
+#         which `<flag> "<value>"` cannot express at all. Callers should prefer
+#         --args; the bare form is kept for existing callers.
+#
+#         The output carries its own quoting, so run it through eval:
+#             ARGS=$(wf-test-scope.sh PLN-NNN-slug --args)
+#             eval "<test command> $ARGS"
+#         Unquoted expansion instead of eval would leave the quote characters
+#         in the argument AND let the shell glob `*Core.Tests*` against the
+#         working directory. The values are project-authored config, the same
+#         trust level as the test command itself.
 #
 # Why stdout/stderr split (diverges from wf-plan-info.sh env-var pattern):
 #   wf-plan-info.sh outputs eval-friendly key=value pairs for multiple values.
@@ -23,6 +38,8 @@
 set -euo pipefail
 
 PLAN_NAME="${1:-}"
+EMIT_ARGS=false
+[ "${2:-}" = "--args" ] && EMIT_ARGS=true
 
 # Input validation — close command-injection vector before plan name reaches eval.
 if ! echo "$PLAN_NAME" | grep -qE '^PLN-[0-9]+-[a-z0-9-]+$'; then
@@ -159,6 +176,7 @@ done
 
 # Resolve each category to FQN substrings from testScopes.
 fqn_parts=()
+fqn_raw=()
 used_cats=()
 for cat in "${all_cats[@]}"; do
   count=$(yq_count ".testScopes.\"$cat\" | length")
@@ -170,6 +188,7 @@ for cat in "${all_cats[@]}"; do
   for (( i = 0; i < count; i++ )); do
     fqn=$(yq e ".testScopes.\"$cat\"[$i]" "$CONFIG")
     fqn_parts+=("FullyQualifiedName~$fqn")
+    fqn_raw+=("$fqn")
   done
 done
 
@@ -186,11 +205,14 @@ cat_list=$(IFS=", "; echo "${used_cats[*]}")
 # here — a verify agent reading only the exit code sees a fully passing plan
 # fail, and routes it back to active or draft for nothing.
 #
-# Running everything is never wrong, only slower. So when the target is MTP,
-# fall back to the full suite and say why, rather than emitting a filter this
-# runner will reject. Set testFilterStyle: vstest in claude-workflow.yml to
-# override the detection; a real MTP filter syntax can be added here once one
-# has been confirmed against an actual `dotnet test` run.
+# `mtp` renders the same scope in MTP's own syntax instead. `none` remains as
+# the deliberate opt-out: run everything, always. Running everything is never
+# wrong, only slower.
+#
+#   auto   — detect the runner (default)
+#   vstest — FullyQualifiedName~ expressions behind test_filter_flag
+#   mtp    — repeated --filter-class, plus --ignore-exit-code 8
+#   none   — never filter; always the full suite
 filter_style=$(yq e '.testFilterStyle // ""' "$CONFIG" 2>/dev/null || echo "")
 if [ -z "$filter_style" ] || [ "$filter_style" = "null" ]; then
   filter_style="auto"
@@ -205,16 +227,51 @@ if [ "$filter_style" = "auto" ]; then
          "$DEVELOP_ROOT" --include='*.csproj' 2>/dev/null; then
     mtp="a test project sets TestingPlatformDotnetTestSupport"
   fi
-  [ -n "$mtp" ] && filter_style="none"
+  [ -n "$mtp" ] && filter_style="mtp"
 fi
 
 if [ "$filter_style" = "none" ]; then
-  echo "wf-test-scope.sh: ${mtp:-testFilterStyle: none} — VSTest --filter syntax does not apply." >&2
+  echo "wf-test-scope.sh: testFilterStyle: none — filtering disabled." >&2
   echo "wf-test-scope.sh: falling back to the FULL suite (scope would have been: $cat_list)." >&2
   exit 0
 fi
 
 echo "scope: $cat_list" >&2
 
+if [ "$filter_style" = "mtp" ]; then
+  # Confirmed against real `dotnet test --solution` runs on .NET 10 / xUnit v3
+  # (client-a, WFI-045). `--filter-class` matches the fully-qualified class
+  # name, so wrapping each testScopes value in `*` reproduces the substring
+  # semantics of VSTest's `FullyQualifiedName~`. Repeating the flag ORs the
+  # values together.
+  #
+  # `--ignore-exit-code 8` is not optional and not cosmetic. Filtering across a
+  # solution makes every project with zero matching tests exit 8, so a run in
+  # which every selected test passed still reports failure — and a verify agent
+  # reading the exit code routes a good plan back to active. It is applied ONLY
+  # on filtered runs: on an unfiltered one, exit 8 means the suite genuinely
+  # found no tests, which is a real failure and must stay one. That asymmetry
+  # is why this cannot simply be baked into test_command.
+  if [ "$EMIT_ARGS" != "true" ]; then
+    echo "wf-test-scope.sh: testFilterStyle: mtp needs --args — its filter is several flags," >&2
+    echo "wf-test-scope.sh: not one value. Falling back to the FULL suite." >&2
+    exit 0
+  fi
+  args=""
+  for fqn in "${fqn_raw[@]}"; do
+    args="$args --filter-class '*${fqn}*'"
+  done
+  printf '%s --ignore-exit-code 8' "${args# }"
+  exit 0
+fi
+
 filter=$(IFS="|"; echo "${fqn_parts[*]}")
+
+if [ "$EMIT_ARGS" = "true" ]; then
+  flag=$(yq e '.test_filter_flag // ""' "$CONFIG" 2>/dev/null || echo "")
+  case "$flag" in ''|null) flag="--filter" ;; esac
+  printf "%s '%s'" "$flag" "$filter"
+  exit 0
+fi
+
 printf "%s" "$filter"

@@ -39,7 +39,7 @@ if one exists, there is nothing left to create and the implementer picks up
 where it left off.
 
 **Not eligible:**
-- Plans in `draft`, `verify`, `testing`, or `complete` state.
+- Plans in `draft`, `verify`, `testing`, `complete`, or `abandoned` state.
 - Plans in `active` with only ESCALATED findings — these need T2 (wf-spec).
 
 ---
@@ -90,3 +90,4 @@ The verify agent runs autonomously and auto-routes:
 | `testing` | T4 | wf-test (human acceptance) |
 | `complete` | — | Done |
 | `rolled-back` | — | Reverted |
+| `abandoned` | — | Dropped on purpose. Terminal. Revivable only to `draft` |

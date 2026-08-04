@@ -41,11 +41,15 @@ You receive a plan ID (e.g. `PLN-003`) as context. From this:
 Before spawning the test agent, compute the tiered scope filter (BRF-080):
 
 ```bash
-FILTER=$(scripts/wf-exec.sh wf-test-scope.sh PLN-NNN-<slug> 2>/tmp/wf-scope.log) || FILTER=""
+TEST_ARGS=$(scripts/wf-exec.sh wf-test-scope.sh PLN-NNN-<slug> --args 2>/tmp/wf-scope.log) || TEST_ARGS=""
 # stderr carries "scope: <categories>" — include it in the verify log.
 ```
 
-If `$FILTER` is empty → run the **full suite** (backward-compat fallback). Otherwise pass `{{test_filter_flag}} "$FILTER"` to the test command. `testScopes` / `testMappings` / `testScopeMandatory` in `claude-workflow.yml` define the categories and auto-detect mappings. The aggregation guarantee is preserved: `wf-release` always runs the full suite with no filter.
+If `$TEST_ARGS` is empty → run the **full suite** (backward-compat fallback). Otherwise append it to the test command **through `eval`** — `eval "{{test_command}} $TEST_ARGS"` — because the string carries its own quoting and may be several flags, not one.
+
+`--args` returns the whole argument string rather than a bare filter value on purpose: a Microsoft.Testing.Platform project needs a repeated `--filter-class` plus `--ignore-exit-code 8`, which `<flag> "<value>"` cannot express. Nothing here needs to know which runner is in play — `testFilterStyle` in `claude-workflow.yml` decides, defaulting to auto-detection.
+
+`testScopes` / `testMappings` / `testScopeMandatory` define the categories and auto-detect mappings. The aggregation guarantee is preserved: `wf-release` always runs the full suite with no filter.
 
 Spawn **haiku agents in parallel** for data gathering, then synthesize:
 
@@ -55,7 +59,7 @@ Agent(model: haiku, prompt: "Run `{{build_command}}` in feature-branches/PLN-NNN
   Report: success/failure, any errors or warnings. Response under 1000 chars.")
 
 Agent(model: haiku, prompt: "Run the test command in feature-branches/PLN-NNN-<slug>/.
-  If FILTER is non-empty: `{{test_command}} {{test_filter_flag}} \"$FILTER\"`
+  If TEST_ARGS is non-empty: `eval \"{{test_command}} $TEST_ARGS\"`
   Otherwise (full-suite fallback): `{{test_command}} {{test_exclude_e2e}}`
   Report: total tests, passed, failed, skipped. Quote the 'scope: ...' line from /tmp/wf-scope.log.
   List failures. Response under 1500 chars.")

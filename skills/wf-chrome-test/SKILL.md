@@ -382,12 +382,16 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    cd /absolute/path/to/project
    git checkout develop
    git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
-   git stash --include-untracked -m "wf-chrome-test: stash before merge"
+   scripts/wf-exec.sh wf-stash.sh push merge
    ```
+   **Use `wf-stash.sh`, never a bare `git stash` / `git stash pop`.** On a clean
+   tree `git stash` saves nothing and still exits 0, so a positional `pop`
+   restores a previous session's entry instead. `wf-stash.sh` pops the commit
+   *this* run recorded or nothing at all (WFI-036).
    ```bash
    if ! git merge "$CURRENT_BRANCH" --no-edit; then
      git merge --abort
-     git stash pop 2>/dev/null || true
+     scripts/wf-exec.sh wf-stash.sh pop merge
      echo "ERROR: Feature branch has conflicts with develop. Routing back to builder."
    ```
    - Write findings to `plans/$PLAN_NAME/findings.md` about the develop merge conflict
@@ -398,8 +402,8 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    On success:
    ```bash
    fi
-   git stash pop 2>/dev/null || true
-   # Auto-resolve infra conflicts from stash pop (infra files always match develop)
+   scripts/wf-exec.sh wf-stash.sh pop merge
+   # Auto-resolve infra conflicts from the restore (infra files always match develop)
    git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
    ```
 4. Release claim and update REGISTRY:
@@ -452,10 +456,10 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    ```bash
    cd /absolute/path/to/project
    git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
-   git stash --include-untracked -m "wf-chrome-test: stash before checkout" 2>/dev/null || true
+   scripts/wf-exec.sh wf-stash.sh push checkout
    git checkout develop
-   git stash pop 2>/dev/null || true
-   # Auto-resolve infra conflicts from stash pop (infra files always match develop)
+   scripts/wf-exec.sh wf-stash.sh pop checkout
+   # Auto-resolve infra conflicts from the restore (infra files always match develop)
    git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
    ```
 4. Release claim and determine route:

@@ -33,11 +33,14 @@ scripts/wf-exec.sh wf-list-testable.sh 2>/dev/null || true
 scripts/wf-exec.sh wf-list-findings.sh 2>/dev/null || true
 scripts/wf-exec.sh wf-list-briefs.sh 2>/dev/null || true
 scripts/wf-exec.sh wf-list-bugs.sh 2>/dev/null || true
+scripts/wf-exec.sh wf-registry-audit.sh 2>/dev/null || true
 
 Return raw output only. No commentary.")
 ```
 
 Use the agent's output to populate each section. If a script produced no output, the section is empty — omit it.
+
+**`wf-registry-audit.sh` output goes at the TOP, not in a pipeline section.** It reports where the registry and `plans/` have stopped agreeing — a plan folder with no row, two folders sharing an ID, a `draft` plan whose branch is ahead of develop. Every one of those is invisible to the lists below it by construction: the pipeline can only show plans the registry knows about. If it says `registry audit: clean`, print nothing.
 
 If `plans/MIGRATION-NOTES.md` exists (the `ls` above printed a path), add this line directly under the `### Script folder:` line, before the pipeline sections:
 

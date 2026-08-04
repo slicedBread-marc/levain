@@ -20,6 +20,7 @@
 # PLAN_TAGS: comma-separated category tags (or — if none).
 # PLAN_DEPS: comma-separated plan IDs that must be complete (or — if none).
 # PLAN_BLOCKED: true if any dep is not in complete state.
+# PLAN_DEPS_DEAD: subset of PLAN_BLOCKING that is abandoned — never arriving.
 #
 # Accepts either a plan ID (PLN-004) or full plan name (PLN-004-deployment-date-footer).
 # Usage: eval "$(scripts/wf-plan-info.sh PLN-004)"
@@ -83,9 +84,14 @@ if [ -f "$plan_dir/plan.md" ]; then
   goal=$(grep -A 1 "^## Goal" "$plan_dir/plan.md" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//' || true)
 fi
 
-# Check if any dep is not complete
+# Check if any dep is not complete.
+#
+# An abandoned dep also blocks — you cannot build against something that will
+# never exist — but it is reported separately, because waiting fixes the one
+# and never fixes the other (WFI-008).
 blocked=false
 blocking=""
+dead=""
 if [ "$deps" != "—" ] && [ -n "$deps" ]; then
   IFS=',' read -ra dep_list <<< "$deps"
   for dep_id in "${dep_list[@]}"; do
@@ -94,6 +100,9 @@ if [ "$deps" != "—" ] && [ -n "$deps" ]; then
     if [ "$dep_state" != "complete" ]; then
       blocked=true
       [ -n "$blocking" ] && blocking="$blocking,$dep_id" || blocking="$dep_id"
+      if [ "$dep_state" = "abandoned" ]; then
+        [ -n "$dead" ] && dead="$dead,$dep_id" || dead="$dep_id"
+      fi
     fi
   done
 fi
@@ -115,6 +124,7 @@ emit PLAN_TAGS "$tags"
 emit PLAN_DEPS "$deps"
 emit PLAN_BLOCKED "$blocked"
 emit PLAN_BLOCKING "$blocking"
+emit PLAN_DEPS_DEAD "$dead"
 emit PLAN_DIR "$plan_dir"
 emit PLAN_NAME "$plan_name"
 emit PLAN_GOAL "$goal"

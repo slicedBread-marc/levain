@@ -371,12 +371,18 @@ The verify agent found code/test/spec issues and set the REGISTRY state back to 
 6. **Re-run build/tests** via haiku agents
 7. **When all findings are checked off** — commit and return to Phase 3 exit:
    ```bash
+   DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+   eval "$($DEVELOP_ROOT/scripts/wf-exec.sh wf-plan-port.sh PLN-NNN-<slug>)"
    git add src/ tests/
    git commit -m "implement(PLN-NNN-<slug>): fix findings"
    $DEVELOP_ROOT/scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug>
    # Then follow Phase 3 steps 23-26 (uses $DEVELOP_ROOT)
    ```
-   This re-triggers the verify agent.
+   The first two lines are here because this is the one step in the fix cycle
+   that both commits and is routinely run in its own bash call — step 4's eval
+   is two steps and possibly hours behind, and shell variables do not survive
+   that. Without them the post-commit hook deployed a PLN-003 build as
+   `...-pln001` on 8101 (WFI-041). This re-triggers the verify agent.
 
 ---
 

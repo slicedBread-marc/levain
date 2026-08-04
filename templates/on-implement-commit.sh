@@ -14,6 +14,32 @@ START_CMD="{{local_start_command}}"
 DEPLOY_CMD="{{local_deploy_command}}"
 STOP_CMD="{{local_stop_command}}"
 
+# ── Plan-scoped container identity ────────────────────────────────────────
+# Every command below is eval'd, and the compose file they drive reads
+# COMPOSE_PROJECT_NAME and FEATURE_PORT from the environment. Relying on the
+# caller to have exported them is what WFI-033 reports: `start` invoked by hand
+# in a feature worktree brought PLN-002 up as `...-pln001` on 8101, and because
+# `start` does not rebuild, that container can serve an image built for a
+# different plan — a human test then runs against the wrong build.
+#
+# So derive them here instead of trusting the caller. This script knows which
+# worktree it is in, and a feature worktree carries `.plan-ref`; nothing else is
+# needed. An already-exported value wins, so an explicit override still works.
+#
+# The formula is duplicated from scripts/*/wf-plan-port.sh, which remains the
+# authority. `tests/client-reports.sh` asserts the two agree, because a silent
+# divergence here is exactly the class of bug this block exists to kill.
+if [ -f "$PROJECT_DIR/.plan-ref" ]; then
+    _plan_ref=$(tr -d '[:space:]' < "$PROJECT_DIR/.plan-ref")
+    _plan_num=$(printf '%s' "$_plan_ref" | grep -oE '[0-9]+' | head -1)
+    if [ -n "$_plan_num" ]; then
+        _plan_num=$((10#$_plan_num))
+        export FEATURE_PORT="${FEATURE_PORT:-$((8100 + _plan_num))}"
+        export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(printf '{{project_slug}}-pln%03d' "$_plan_num")}"
+        echo "local-env: $COMPOSE_PROJECT_NAME on port $FEATURE_PORT (from .plan-ref)"
+    fi
+fi
+
 _write_timestamp() {
     date +%s > "$TIMESTAMP_FILE"
 }

@@ -23,6 +23,11 @@
 #   0    reached the target state
 #   20   blocked on a human decision; the gate is on stdout / in --json
 #   30   no progress: the worker ran but the state did not change
+#   40   the plan is abandoned: terminal, and not successfully. Distinct from 0
+#        so an external driver can tell "shipped" from "dropped on purpose"
+#   41   a healthy worker for this role is already running and outlasted the
+#        wait. NOT a fault — re-drive once it exits. Distinct from 30 so a
+#        caller does not read a concurrent run as a stalled plan.
 #   1    error (bad artifact, worker failure, orchestrator disabled)
 #
 # The dispatcher skips an artifact when ANY of these hold:
@@ -540,6 +545,10 @@ case "$mode" in
     gate_info=""
     iterations=0
     MAX_ITERATIONS=12
+    # How long to wait for a peer worker on the same role before handing the
+    # decision back to the caller. Long enough for a normal verify or test run,
+    # short enough that a wedged worker does not hold a driver forever.
+    ORCH_PEER_WAIT=$(wf_cfg orchestrator.peer_wait_seconds 900)
 
     while :; do
       iterations=$((iterations + 1))
@@ -568,6 +577,10 @@ case "$mode" in
           verify)         role="verify" ;;
           testing)        role="test" ;;
           complete)       result="done"; break ;;
+          # Terminal like complete, but not successful. Dispatching a worker at
+          # a plan someone deliberately dropped is the exact re-dispatch loop
+          # `abandoned` exists to end (WFI-008).
+          abandoned)      result="abandoned"; break ;;
           *) echo "Error: unknown state '$state' for $pln_id" >&2; exit 1 ;;
         esac
       fi
@@ -599,6 +612,34 @@ case "$mode" in
 
       if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
         result="error"; break
+      fi
+
+      # rc=2 is "a worker for this role is ALREADY running". Treating it like a
+      # completed launch is what produced a bogus exit 30: the implementer
+      # spawns its own verify agent on the way out, this loop reaches verify a
+      # moment later, is turned away, sees no state change (because the real
+      # verify is still running, healthily) and reports "worker ran, state did
+      # not change — something is wrong with the plan or the skill". Nothing was
+      # wrong, and a caller obeying the documented contract would misdiagnose
+      # it; worse, a retry burns one of max_attempts_per_plan for a non-fault
+      # (client-c WFI-002).
+      #
+      # The right response to "someone else is doing this" is to wait for them.
+      if [ "$rc" -eq 2 ]; then
+        wait_pidfile="$(wf_orch_dir)/logs/${artifact}-${role}.pid"
+        waited=0
+        while [ "$waited" -lt "$ORCH_PEER_WAIT" ]; do
+          other_pid=$(cat "$wait_pidfile" 2>/dev/null || echo "")
+          [ -n "$other_pid" ] && kill -0 "$other_pid" 2>/dev/null || break
+          sleep 5
+          waited=$((waited + 5))
+        done
+        if [ "$waited" -ge "$ORCH_PEER_WAIT" ]; then
+          $as_json || echo "  ($role for $artifact still running after ${waited}s — leaving it to finish)"
+          result="peer-running"; break
+        fi
+        $as_json || echo "  (waited ${waited}s for an already-running $role)"
+        continue   # re-read the state that worker just wrote
       fi
 
       # Did the worker park instead of progressing?
@@ -653,6 +694,8 @@ case "$mode" in
     case "$result" in
       done)             exit 0 ;;
       blocked-on-human) exit 20 ;;
+      abandoned)        echo "$pln_id was abandoned — nothing to drive." >&2; exit 40 ;;
+      peer-running)     echo "$pln_id: a $role worker is already running — re-drive when it exits." >&2; exit 41 ;;
       no-progress)      exit 30 ;;
       *)                exit 1 ;;
     esac

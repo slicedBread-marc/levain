@@ -176,7 +176,7 @@ If the user picks a bug BUG-NNN:
     Suggest from the listed tags — reuse the project's own words rather than inventing a synonym for one it already has. A genuinely new tag is allowed and `wf-set-tags.sh` will take it; it just gets a warning so a typo does not become a second vocabulary.
 
     This list used to be a hardcoded `security, arcade, admin, lessons, ux, infra, e2e, bugfix` — one project's game/admin/lessons vocabulary, shipped to everyone. Elsewhere it named tags that meant nothing and omitted the one tag the project actually gated on, which is the failure that matters: an allowlist that looks authoritative, isn't, and sits directly in front of a gating decision.
-5. **Create the plan folder** — `plans/PLN-NNN-<slug>/` with three files following `templates/plans/TEMPLATE.md`:
+5. **Create the plan folder** — `plans/PLN-NNN-<slug>/` with three files following `plans/TEMPLATE.md`:
    - Folder is always `plans/PLN-NNN-<slug>/` (e.g. `plans/PLN-041-user-auth/`)
    - In `plan.md`, fill in `> **ID:** PLN-NNN` and `> **schema_version:** 6`
    - **Goal** — use the confirmed one-liner from step 4b as the first line under `## Goal`. Follow with an optional context paragraph.
@@ -433,7 +433,18 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
 3. **Write an Amendment** (if needed) — append to `plan.md`'s **Amendments** section. Never rewrite Steps, Tests, or Design Decisions already there.
 4. **Update Design Decisions** — add any new decisions to `plan.md`
 5. **Address findings** — for each `ESCALATED` item in `findings.md`, check it off if resolved by the amendment. Leave behavior findings unchecked (T3 will handle them).
-6. **Run the review gate** — same as above
+6. **Run the review gate** — same as above, on the plan **as amended**, and write the verdict to `plan.md`'s `## Review` like any other round.
+
+   Two rules, both learned the hard way (WFI-046):
+
+   - **The verdict goes in `plan.md` `## Review`. Never in `findings.md`.** findings.md takes the actionable items; it never takes the verdict, and never a `## Spec Review` heading. A verdict filed there leaves `## Review` holding the template placeholder, which every consumer reads as *never reviewed*.
+   - **The last thing to happen before the gate is a review of the current text.** If you amend after the review — because the reviewer's own findings prompted the amendment, which is the common case — that verdict is now about a document that no longer exists. Review again. Confirm before parking:
+     ```bash
+     eval "$(scripts/wf-exec.sh wf-review-status.sh PLN-NNN)"
+     # REVIEW_LOCATION must be `plan`, and REVIEW_STALE must be false.
+     ```
+
+   The failure this prevents is a quiet one: two plans reached the approval gate whose only verdicts were `Blocked` on their pre-amendment drafts. The amendments resolved every Critical, so the findings were all checked off and the plans looked finished — while the resolutions themselves had never been reviewed by anything.
 6a. **Scope check — does this replan shrink what the plan promised?**
     ```bash
     scripts/wf-exec.sh wf-goal-delta.sh PLN-NNN

@@ -95,6 +95,8 @@ scripts/wf-exec.sh wf-orchestrate.sh PLN-097 --json     # machine-readable
 | `0` | Reached the target state | Done |
 | `20` | Blocked on a human decision | **Stop. Do not retry.** The gate is on stdout / in `--json`. A person must run `/wf-attend`. |
 | `30` | A worker ran but nothing changed | Inspect `.claude/orchestrator/logs/` — the plan or skill is wrong, not the orchestrator |
+| `40` | The plan is abandoned | Terminal, and not successfully. Nothing to drive. Revive it with `wf-abandon.sh <ID> --revive` if that was wrong |
+| `41` | A worker for that role is already running | **Not a fault.** Something else is driving this plan. Wait and re-drive; do not retry in a loop |
 | `1` | Error | Bad artifact ID, or the orchestrator is disabled in `claude-workflow.yml` |
 
 `--json` shape:
