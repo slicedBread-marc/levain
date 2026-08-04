@@ -1396,6 +1396,25 @@ for pat in '.claude/skills/wf-\*/' '.claude/workflow.md' 'scripts/wf-exec.sh' 's
     "$(grep -q "\"$pat\"" "$LIB_ROOT/install.sh" && echo true || echo false)"
 done
 
+# `git rm` is ATOMIC: one pathspec matching nothing tracked aborts the whole
+# command and untracks nothing. app already ignored .claude/skills/*, so that
+# pathspec matched no tracked file and the migration silently did nothing —
+# hit for real while migrating it.
+assert_eq "the printed migration command survives a pathspec that matches nothing" "true" \
+  "$(grep -q 'git rm -r --cached --quiet --ignore-unmatch' "$LIB_ROOT/install.sh" && echo true || echo false)"
+
+MIG="$TEST_DIR/atomicmig"
+mkdir -p "$MIG/scripts" && (
+  cd "$MIG" && git init -q . && git config user.email t@t && git config user.name t
+  printf 'x\n' > scripts/wf-exec.sh
+  printf 'x\n' > .gitignore
+  git add -A && git commit -qm init
+) >/dev/null 2>&1
+# .claude/skills/wf-* is absent — exactly app's shape.
+( cd "$MIG" && git rm -r --cached --quiet --ignore-unmatch .claude/skills/wf-* scripts/wf-exec.sh ) >/dev/null 2>&1
+assert_eq "and it does untrack what IS tracked" "0" \
+  "$(git -C "$MIG" ls-files scripts/wf-exec.sh | wc -l | xargs)"
+
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then

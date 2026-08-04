@@ -328,7 +328,12 @@ if [ "$HARNESS_IGNORED" -gt 0 ]; then
     echo -e "${GREEN}  Added $HARNESS_IGNORED generated-harness pattern(s) to .gitignore${NC}"
     if git -C "$TARGET_DIR" ls-files --error-unmatch scripts/wf-exec.sh >/dev/null 2>&1; then
         echo -e "${YELLOW}  The harness is still TRACKED here. To finish the migration:${NC}"
-        echo "    git rm -r --cached --quiet .claude/skills/wf-* .claude/workflow.md \\"
+        # --ignore-unmatch is not optional: `git rm` is atomic, so a single
+        # pathspec matching nothing tracked (a client that already ignores
+        # .claude/skills/*, as app did) aborts the WHOLE command and untracks
+        # nothing — silently, if stderr is redirected.
+        echo "    git rm -r --cached --quiet --ignore-unmatch \\"
+        echo "      .claude/skills/wf-* .claude/workflow.md \\"
         echo "      .claude/on-implement-commit.sh .claude/on-verify-trigger.sh \\"
         echo "      scripts/wf-exec.sh scripts/version-map.txt scripts/wf-prune-versions.sh scripts/v*"
         echo "    git commit -m 'chore: stop tracking the generated workflow harness'"
