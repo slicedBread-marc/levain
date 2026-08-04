@@ -56,8 +56,30 @@ esac
 id=$(printf '%s' "$artifact" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
 [ -n "$id" ] || { echo "Error: '$artifact' is not a PLN/BUG/BRF id" >&2; exit 1; }
 
+# The artifact NUMBER, which is what identity actually turns on: the counter is
+# global and a bug keeps its number when it becomes a plan (BUG-022 → PLN-022).
+num="${id#*-}"
+
 ROOT="$(wf_develop_root)"
 ORCH="$(wf_orch_dir)"
+
+# ── Scrub git's hook environment ──────────────────────────────────────────
+#
+# The post-commit hook is one of the two callers, and git exports its own
+# plumbing into every hook: GIT_INDEX_FILE, GIT_DIR, GIT_PREFIX, GIT_AUTHOR_*,
+# GIT_EDITOR. A worker launched from there inherits all of it and carries it
+# into a DIFFERENT worktree, where `GIT_INDEX_FILE=.git/index` resolves against
+# a `.git` that is a file, not a directory — so every git command it runs dies
+# with "index file open failed: Not a directory" (client-a WFI-071, which
+# cost a verify run until someone thought to check the environment).
+#
+# These variables are meaningful only inside the hook that set them. Nothing
+# downstream of a spawn wants any of them.
+unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX GIT_EDITOR \
+      GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
+      GIT_QUARANTINE_PATH GIT_REFLOG_ACTION GIT_EXEC_PATH \
+      GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE \
+      GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE 2>/dev/null || true
 
 # ── Default model per role ────────────────────────────────────────────────
 default_model() {
@@ -72,14 +94,41 @@ default_model() {
 model="${model_override:-$(wf_cfg "orchestrator.models.$role" "$(default_model "$role")")}"
 
 # ── Already-running guard ─────────────────────────────────────────────────
-pidfile="$ORCH/logs/${artifact}-${role}.pid"
+#
+# Keyed on the NUMBER, not the artifact name. It used to be
+# "${artifact}-${role}.pid", which reads as one guard per worker and is really
+# one guard per NAME — and the same work has two names on its way through spec.
+# client-a's WFI-067: `BUG-022-csp-blocks-inline-styles` (still listed by
+# wf-list-specable.sh, because the open→triaged move had not committed) and
+# `PLN-022-csp-style-src` (in draft) were both offered, took different pidfiles,
+# and two wf-spec workers reviewed and approved the same plan at once. One wrote
+# its verdict on top of the other's, leaving plan.md with two contradicting
+# `## Review` blocks.
+pidfile="$ORCH/logs/${num}-${role}.pid"
+# Adopt a pre-v5.1 pidfile so an upgrade mid-flight does not double-launch.
+legacy_pidfile="$ORCH/logs/${artifact}-${role}.pid"
+[ -f "$legacy_pidfile" ] && [ ! -f "$pidfile" ] && mv "$legacy_pidfile" "$pidfile" 2>/dev/null || true
 if [ -f "$pidfile" ]; then
   old_pid=$(cat "$pidfile" 2>/dev/null || echo "")
   if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-    echo "wf-spawn: $role already running for $artifact (PID $old_pid)" >&2
+    echo "wf-spawn: $role already running for $id (PID $old_pid)" >&2
     exit 2
   fi
   rm -f "$pidfile"
+fi
+
+# ── Claim before the worker starts, not after ─────────────────────────────
+#
+# A skill that claims partway through its own run leaves a window between "the
+# dispatcher decided this artifact was free" and "the worker said so", and both
+# WFI-067 workers started inside that window. The claim belongs to whoever hands
+# out the work. Attended sessions claim through wf-claim.sh the same way, so an
+# attended /wf-test and the daemon now contend for one file instead of racing.
+plan_dir="$ROOT/plans/${artifact}"
+if [ -d "$plan_dir" ] && wf_claim_live "$plan_dir"; then
+  holder=$(sed -n '2p' "$plan_dir/.wf-claim" 2>/dev/null || true)
+  echo "wf-spawn: $artifact is claimed by a live session (PID ${holder:-?}) — not spawning $role" >&2
+  exit 2
 fi
 
 # ── Worker prompt ─────────────────────────────────────────────────────────
@@ -107,12 +156,16 @@ log="$ORCH/logs/${artifact}-${role}-${ts}.log"
 if $foreground; then
   wf_event spawn "$id" "$role ($model) foreground"
   echo $$ > "$pidfile"
+  [ -d "$plan_dir" ] && wf_claim_write "$plan_dir" $$
   set +e
   ( cd "$ROOT" && WF_UNATTENDED=1 WF_ROLE="$role" WF_ARTIFACT="$artifact" \
       claude -p --model "$model" --dangerously-skip-permissions "$prompt" ) 2>&1 | tee "$log"
   rc=${PIPESTATUS[0]}
   set -e
   rm -f "$pidfile"
+  # Release what we claimed, however the worker ended. A claim outliving its
+  # worker parks the artifact until the TTL expires or someone notices.
+  [ -d "$plan_dir" ] && rm -f "$plan_dir/.wf-claim"
   wf_event exit "$id" "$role rc=$rc"
   exit "$rc"
 fi
@@ -124,16 +177,23 @@ export WF_PROMPT="$prompt"
 export WF_UNATTENDED=1 WF_ROLE="$role" WF_ARTIFACT="$artifact"
 event_sh="$(cd "$(dirname "$0")" && pwd)/wf-event.sh"
 
+claimfile=""
+[ -d "$plan_dir" ] && claimfile="$plan_dir/.wf-claim"
+
 nohup bash -c "
     cd '$ROOT'
     claude -p --model '$model' --dangerously-skip-permissions \"\$WF_PROMPT\"
     rc=\$?
     rm -f '$pidfile'
+    [ -n '$claimfile' ] && rm -f '$claimfile'
     '$event_sh' exit '$id' \"$role rc=\$rc\"
 " > "$log" 2>&1 &
 
 worker_pid=$!
 echo "$worker_pid" > "$pidfile"
+# The claim names the worker, so it dies with the worker rather than with the
+# shell that launched it.
+[ -n "$claimfile" ] && wf_claim_write "$plan_dir" "$worker_pid"
 disown "$worker_pid" 2>/dev/null || true
 
 wf_event spawn "$id" "$role ($model) pid $worker_pid"

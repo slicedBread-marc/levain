@@ -631,10 +631,16 @@ case "$mode" in
       #
       # The right response to "someone else is doing this" is to wait for them.
       if [ "$rc" -eq 2 ]; then
-        wait_pidfile="$(wf_orch_dir)/logs/${artifact}-${role}.pid"
+        # Two shapes of "someone else is doing this": a worker of this role
+        # (pidfile, keyed on the artifact number), or any session holding the
+        # plan's claim. Wait on whichever is live — with neither, a bare
+        # `break` here spins the whole loop at full speed until MAX_ITERATIONS.
+        wait_pidfile="$(wf_orch_dir)/logs/${pln_id#*-}-${role}.pid"
+        wait_claimfile="$ROOT/plans/${artifact}/.wf-claim"
         waited=0
         while [ "$waited" -lt "$ORCH_PEER_WAIT" ]; do
           other_pid=$(cat "$wait_pidfile" 2>/dev/null || echo "")
+          [ -n "$other_pid" ] || other_pid=$(sed -n '2p' "$wait_claimfile" 2>/dev/null || echo "")
           [ -n "$other_pid" ] && kill -0 "$other_pid" 2>/dev/null || break
           sleep 5
           waited=$((waited + 5))

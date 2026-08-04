@@ -87,6 +87,14 @@ render() {
     base=$(basename "$pf" .pid)
     role="${base##*-}"
     artifact="${base%-*}"
+    # Pidfiles are keyed on the artifact number (wf-spawn.sh), which is the one
+    # identity a bug keeps when it becomes a plan. Name it for the reader.
+    if printf '%s' "$artifact" | grep -qE '^[0-9]+$'; then
+      artifact=$(grep -E "^\| (PLN|BUG|BRF)-$artifact \|" "$ROOT/plans/REGISTRY.md" 2>/dev/null \
+        | head -1 | awk -F'|' '{ gsub(/ /, "", $2); gsub(/^[ \t]+|[ \t]+$/, "", $3); print $2 "-" $3 }' \
+        || true)
+      [ -n "$artifact" ] || artifact="${base%-*}"
+    fi
     age=$(( now - $(file_mtime "$pf") ))
     printf '  %s%-11s%s %-34s %s  %spid %s%s\n' \
       "$CYN" "$role" "$R" "$artifact" "$(human_age "$age")" "$DIM" "$pid" "$R"
