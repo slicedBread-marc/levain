@@ -10,7 +10,10 @@
 # 12 of 14 that genuinely needed eyes. The correlation is with the SURFACE the
 # diff touches, not with how many criteria the planner happened to write.
 #
-# So: a plan whose diff renders nothing to a human never stops for a human.
+# So: a plan whose diff renders nothing to a human, AND whose open criteria were
+# each tagged eyes:* by someone, never stops for a human. Both halves are load-
+# bearing — see the untagged branch under "Decide" for what the first half alone
+# did to a CLI project.
 #
 # Gate only when ALL configured conditions hold (claude-workflow.yml):
 #
@@ -149,6 +152,27 @@ if [ "$open_count" -lt "$cfg_min_eyes" ]; then
   reason="$open_count unresolved eyes criteria, below minEyesCriteria=$cfg_min_eyes"
 elif [ "$cfg_require_surface" = "true" ] && [ -n "$surfaces" ] && ! $diff_known; then
   reason="could not read the plan's diff (worktree missing?) — gating rather than assuming it renders nothing"
+elif [ "$cfg_require_surface" = "true" ] && [ -n "$surfaces" ] && [ "${MANUAL_OPEN_UNTAGGED:-0}" -gt 0 ]; then
+  # The surface rule below is an argument about APPEARANCE: if nothing the diff
+  # touches can be looked at, a criterion asking someone to look is unsatisfiable
+  # and gating buys nothing. That argument holds only for criteria somebody
+  # actually tagged eyes:*. It does not hold for a criterion whose tag was
+  # ASSUMED — and every pre-v6 plan's criteria are assumed, because
+  # wf-manual-lint.sh reads an untagged criterion the v5 way and promotes it to
+  # eyes:blocking on its behalf.
+  #
+  # Combining the two says: this plan renders nothing, and its criteria are all
+  # about rendering, therefore none of them matter. For a CLI project the first
+  # half is true by construction and the second is never true, so EVERY CLI plan
+  # auto-completes EVERY human criterion, permanently and silently. client-a
+  # shipped PLN-004 that way in ~40 seconds — five criteria recorded untested,
+  # two of them safety assertions ("prints exactly what it will do and stops for
+  # confirmation", "leaves <drive>/keys/ empty afterwards" for private key
+  # material on a shared drive). Neither has ever executed (WFI-054).
+  #
+  # An untagged criterion is not evidence of anything visual, so it cannot be
+  # dismissed by a fact about visuals. Gate, and say which criteria did it.
+  reason="$MANUAL_OPEN_UNTAGGED unresolved criteria carry no reason tag of their own (schema v$MANUAL_SCHEMA) — untagged criteria say nothing about rendering, so a surface miss cannot dismiss them"
 elif [ "$cfg_require_surface" = "true" ] && [ -n "$surfaces" ] && [ -z "$surface_hit" ]; then
   gate=false
   reason="the diff renders nothing to a human — no file matches manualTestGate.renderingSurfaces"
@@ -164,6 +188,7 @@ wf_emit SURFACE_HIT  "$surface_hit"
 wf_emit MANUAL_TOTAL         "$MANUAL_TOTAL"
 wf_emit MANUAL_OPEN_BLOCKING "$MANUAL_OPEN_BLOCKING"
 wf_emit MANUAL_OPEN_COSMETIC "$MANUAL_OPEN_COSMETIC"
+wf_emit MANUAL_OPEN_UNTAGGED "${MANUAL_OPEN_UNTAGGED:-0}"
 wf_emit MANUAL_EXTERNAL      "$MANUAL_EXTERNAL"
 wf_emit MANUAL_SOAK          "$MANUAL_SOAK"
 wf_emit MANUAL_SCHEMA        "$MANUAL_SCHEMA"
@@ -174,6 +199,7 @@ if $explain; then
     echo "  reason: $reason"
     echo "  open eyes: blocking=$MANUAL_OPEN_BLOCKING cosmetic=$MANUAL_OPEN_COSMETIC (counted: $open_count, min: $cfg_min_eyes)"
     echo "  never gate: external=$MANUAL_EXTERNAL soak=$MANUAL_SOAK"
+    echo "  untagged open: ${MANUAL_OPEN_UNTAGGED:-0} (if >0 the surface rule does not apply)"
     echo "  surface: requireRenderingSurface=$cfg_require_surface hit=${surface_hit:-none}"
   } >&2
 fi

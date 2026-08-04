@@ -34,6 +34,9 @@
 #                MANUAL_TOTAL, MANUAL_EYES_BLOCKING, MANUAL_EYES_COSMETIC,
 #                MANUAL_EXTERNAL, MANUAL_SOAK, MANUAL_UNBUILT, MANUAL_UNTAGGED,
 #                MANUAL_OPEN_EYES  (unchecked eyes:* criteria — what gates)
+#                MANUAL_OPEN_UNTAGGED (unchecked criteria carrying no eyes:*
+#                  tag of their own — overlaps MANUAL_OPEN_BLOCKING for a
+#                  pre-v6 plan, where the tag was assumed rather than written)
 #
 # Codes: untagged | unknown-tag | assertable
 
@@ -126,9 +129,16 @@ out=$(awk -v legacy="$legacy" '
 
     if (tag == "") {
       # Pre-v6 plan: no tags were ever required, so read it the v5 way.
-      if (legacy) { eyes_blocking++; if (!checked) { open_eyes++; open_blocking++ } ; next }
+      # open_untagged is counted in BOTH paths and overlaps open_blocking on
+      # purpose: it is a diagnostic, not a share of the total. It answers one
+      # question the other counts cannot — "was this criterion ever judged to
+      # need EYES, or did a compatibility rule say so on its behalf?" — and the
+      # manual gate needs that to decide whether a rendering-surface miss is
+      # evidence of anything. See wf-manual-gate.sh (WFI-054).
+      if (legacy) { eyes_blocking++; if (!checked) { open_eyes++; open_blocking++; open_untagged++ } ; next }
       printf "F\t%d\tuntagged\t%s\t%s\n", NR, text, "no reason tag — add (eyes:blocking), (eyes:cosmetic), (external), (soak) or (unbuilt), or move it to the Tests table"
       untagged++
+      if (!checked) open_untagged++
       next
     }
 
@@ -156,9 +166,9 @@ out=$(awk -v legacy="$legacy" '
     }
   }
   END {
-    printf "C\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", \
+    printf "C\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", \
       total + 0, eyes_blocking + 0, eyes_cosmetic + 0, external + 0, soak + 0, untagged + 0, \
-      open_eyes + 0, open_blocking + 0, open_cosmetic + 0, unbuilt + 0
+      open_eyes + 0, open_blocking + 0, open_cosmetic + 0, unbuilt + 0, open_untagged + 0
   }
 ' "$plan_file")
 
@@ -176,6 +186,7 @@ if [ "$mode" = "counts" ]; then
   wf_emit MANUAL_OPEN_EYES     "$(printf '%s' "$counts" | cut -f8)"
   wf_emit MANUAL_OPEN_BLOCKING "$(printf '%s' "$counts" | cut -f9)"
   wf_emit MANUAL_OPEN_COSMETIC "$(printf '%s' "$counts" | cut -f10)"
+  wf_emit MANUAL_OPEN_UNTAGGED "$(printf '%s' "$counts" | cut -f12)"
   wf_emit MANUAL_SCHEMA        "${schema:-0}"
   exit 0
 fi
