@@ -114,7 +114,20 @@ if [ -z "$new_amendments" ]; then
   exit 0
 fi
 
-count=$(printf '%s\n' "$new_amendments" | grep -cE '^#+ *A[0-9]|^\*\*A[0-9]|^> *\*\*A[0-9]' || true)
+# The id does NOT follow the heading marker directly. plans/TEMPLATE.md
+# specifies "[date] — description", so amendments are written
+# `### [2026-08-04] — A9: ...` and the old pattern — which required A<n>
+# immediately after `#`, `**` or `> **` — could never match one. AMENDMENTS_NEW
+# was therefore 0 for every project that follows the template, while the
+# amendment text itself was printed verbatim below: the script saw it and only
+# the count was wrong. A caller branching on the count concludes a narrowing
+# replan added nothing, immediately in front of the always-on scope-reduction
+# gate (WFI-051).
+#
+# So: allow an optional bracketed date and any non-letter run between the marker
+# and the id. `A[0-9]` still anchors it, so prose headings do not match.
+count=$(printf '%s\n' "$new_amendments" \
+        | grep -cE '^(#+|\*\*|>|-)[[:space:]]*(\[[^]]*\])?[^A-Za-z]*A[0-9]+([^0-9]|$)' || true)
 printf 'AMENDMENTS_NEW: %s\n' "$count"
 printf -- '--- added to %s since HEAD ---\n' "$plan_file"
 printf '%s\n' "$new_amendments"
