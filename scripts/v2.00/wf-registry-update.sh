@@ -179,21 +179,27 @@ fi
 # REGISTRY.md is staged here, not by the caller, and whether or not --commit
 # was passed. It is tracked as of v3.2.0; before that it was gitignored, so
 # every skill's post-transition `git add <plan files> && git commit` names only
-# plan files and none of them names the registry. Left to the caller, the
-# commit that a skill documents as "this triggers the verify agent" does not
-# contain the state change that triggers it — the transition sits unstaged on
-# develop and the next unrelated commit picks it up, or nothing does.
+# plan files and none of them names the registry.
 #
-# Staging it here fixes every such call site at once, including ones not yet
-# written: `git commit -m` commits the whole index, so any later commit in the
-# same flow carries the transition. Callers that pass --commit get it atomically
-# under the lock, as before.
+# This used to add: "`git commit -m` commits the whole index, so any later
+# commit in the same flow carries the transition." That was true, and it was
+# the wrong thing to rely on. On develop the index is SHARED — spec,
+# consistency and test workers run concurrently in one working directory — so
+# "any later commit" means any worker's commit. client-a's PLN-020 had its
+# draft→ready transition carried off inside a commit about filing an unrelated
+# workflow issue, leaving `git log --grep PLN-020` empty for a plan that had
+# been reviewed and approved (WFI-049).
+#
+# So the transition is staged for the CALLER to name in its own pathspec, and
+# no longer travels on whatever commit happens next. Skills commit through
+# wf-commit.sh and list `plans/REGISTRY.md` among their paths.
 git add "$REGISTRY" 2>/dev/null || true
 
 # --- Atomic commit (still under the lock) ---
+#
+# Pathspec-scoped via wf-commit.sh: this commit carries the transition and the
+# findings that justify it, and nothing a concurrent worker left staged.
 if [ -n "$commit_msg" ]; then
-  for f in "${add_files[@]+"${add_files[@]}"}"; do
-    git add "$f"
-  done
-  git commit --allow-empty -m "$commit_msg"
+  "$(dirname "$0")/wf-commit.sh" "$commit_msg" --allow-empty \
+    --add "$REGISTRY" "${add_files[@]+"${add_files[@]}"}"
 fi

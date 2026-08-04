@@ -52,8 +52,7 @@ bugs/closed/  → resolved by /wf-deploy when a plan completes
    - If the user describes a file they'll add later, add a placeholder: `- [ ] Attach: <description>`
 7. **Commit and push**:
    ```
-   git add bugs/open/BUG-NNN-<slug>/
-   git commit -m "bug: BUG-NNN — <short title>"
+   scripts/wf-exec.sh wf-commit.sh "bug: BUG-NNN — <short title>" --add bugs/open/BUG-NNN-<slug>/
    git push origin develop
    ```
 8. **Restore branch** — if you switched branches in step 1, switch back:

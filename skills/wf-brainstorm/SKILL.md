@@ -25,8 +25,7 @@ You are in **brainstorm mode**. Your job is to capture ideas, explore options, a
 5. **Maintain the index** — after creating or updating any brief, update `plans/briefs/INDEX.md` to reflect the current state. Move items between sections as their status changes.
 6. **Commit** — when done exploring or deciding, commit changes:
    ```
-   git add plans/briefs/
-   git commit -m "brainstorm: BRF-NNN-<brief-name> — <Idea|Exploring|Decided>"
+   scripts/wf-exec.sh wf-commit.sh "brainstorm: BRF-NNN-<brief-name> — <Idea|Exploring|Decided>" --add plans/briefs/ plans/REGISTRY.md
    ```
 
 ## Rules
@@ -57,6 +56,5 @@ Display the current backlog from INDEX.md as a summary table. Then tell the user
 
 After creating or updating a brief, commit:
 ```
-git add plans/briefs/
-git commit -m "brainstorm: <brief-name> — <Idea|Exploring|Decided>"
+scripts/wf-exec.sh wf-commit.sh "brainstorm: <brief-name> — <Idea|Exploring|Decided>" --add plans/briefs/ plans/REGISTRY.md
 ```

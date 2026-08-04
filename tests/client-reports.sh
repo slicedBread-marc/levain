@@ -1260,6 +1260,81 @@ assert_eq "wf-spec checks before re-opening spec-approval" "true" \
      | grep -q 'wf-gate-status.sh' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A commit carries only its own paths (client-a WFI-048/049)"
+
+# `git add <paths> && git commit` does NOT commit those paths — it commits the
+# whole index. On develop that index is shared: spec, consistency and test
+# workers run concurrently in one working directory, and per-role caps do not
+# help because the race is across roles.
+#
+# Both directions were observed within two minutes:
+#   WFI-048 — a consistency commit swallowed a stranger's staged bug rename.
+#   WFI-049 — a stranger's commit swallowed wf-spec's staged plan + REGISTRY
+#             transition, leaving `git log --grep PLN-020` empty for a plan
+#             that had been reviewed and approved.
+CO_DIR="$TEST_DIR/commit"
+mkdir -p "$CO_DIR/plans/PLN-020-x" "$CO_DIR/bugs/open/BUG-020-y" && (
+  cd "$CO_DIR" && git init -q . && git config user.email t@t && git config user.name t
+  printf '# bug\n'  > bugs/open/BUG-020-y/bug.md
+  printf 'seed\n'   > seed.txt
+  git add -A && git commit -qm init
+) >/dev/null 2>&1
+
+# A concurrent worker stages a bug rename; we then commit only our plan.
+( cd "$CO_DIR" && mkdir -p bugs/triaged && git mv bugs/open/BUG-020-y bugs/triaged/BUG-020-y ) >/dev/null 2>&1
+printf '# plan\n' > "$CO_DIR/plans/PLN-020-x/plan.md"
+( cd "$CO_DIR" && "$SCRIPT_DIR/wf-commit.sh" "spec: PLN-020 — plan ready" --add plans/PLN-020-x/ ) >/dev/null 2>&1
+
+assert_eq "the commit carries only the paths it was given" "plans/PLN-020-x/plan.md" \
+  "$(cd "$CO_DIR" && git show --pretty=format: --name-only HEAD | tr -d '\n')"
+assert_eq "a concurrent worker's staged work is left staged, not swallowed" "bugs/triaged/BUG-020-y/bug.md" \
+  "$(cd "$CO_DIR" && git diff --cached --name-only | tr -d '\n')"
+# WFI-049's real consequence: an unattended approval must be findable afterwards.
+assert_eq "and the plan's own message stays attached to the plan's own change" "true" \
+  "$(cd "$CO_DIR" && git log --grep 'PLN-020' --oneline | grep -q . && echo true || echo false)"
+
+# An empty marker commit is the other way the index gets swept: a bare
+# `git commit --allow-empty` commits whatever is staged.
+( cd "$CO_DIR" && "$SCRIPT_DIR/wf-commit.sh" "test(PLN-020): complete" --allow-empty ) >/dev/null 2>&1
+assert_eq "an empty marker commit changes no tree" "true" \
+  "$(cd "$CO_DIR" && [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse 'HEAD~1^{tree}')" ] && echo true || echo false)"
+assert_eq "and still does not swallow the staged rename" "bugs/triaged/BUG-020-y/bug.md" \
+  "$(cd "$CO_DIR" && git diff --cached --name-only | tr -d '\n')"
+
+# Nothing to commit is a no-op, not a failure — skills call this unconditionally.
+assert_ok "nothing to commit exits clean" \
+  bash -c "cd '$CO_DIR' && '$SCRIPT_DIR/wf-commit.sh' 'spec: no change' --add plans/PLN-020-x/"
+
+# The registry transition must travel WITH the findings that justify it, and
+# still not pick up a bystander.
+RU_DIR="$TEST_DIR/regcommit"
+mkdir -p "$RU_DIR/plans/PLN-004-x" && (
+  cd "$RU_DIR" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-004 | x | verify | — | — | 2026-08-04 | 2.00 | — | — |\n' > plans/REGISTRY.md
+  printf 'f\n' > plans/PLN-004-x/findings.md
+  printf 'other\n' > other.txt
+  git add -A && git commit -qm init
+  printf 'stranger\n' > other.txt && git add other.txt
+  printf 'finding\n' >> plans/PLN-004-x/findings.md
+) >/dev/null 2>&1
+( cd "$RU_DIR" && "$SCRIPT_DIR/wf-registry-update.sh" PLN-004 verify active \
+    --commit "verify(PLN-004): findings" --add plans/PLN-004-x/findings.md ) >/dev/null 2>&1
+
+assert_eq "a transition commits together with its justification" "true" \
+  "$(cd "$RU_DIR" && git show --pretty=format: --name-only HEAD | tr '\n' ' ' \
+     | grep -q 'plans/PLN-004-x/findings.md' && echo true || echo false)"
+assert_eq "and carries the REGISTRY row that changed" "true" \
+  "$(cd "$RU_DIR" && git show --pretty=format: --name-only HEAD | grep -q 'plans/REGISTRY.md' && echo true || echo false)"
+assert_eq "but not the bystander another worker staged" "other.txt" \
+  "$(cd "$RU_DIR" && git diff --cached --name-only | tr -d '\n')"
+
+# The skills that run on develop must not hand-roll `git add && git commit`.
+for sk in wf-spec wf-consistency wf-bug wf-attend wf-brainstorm; do
+  assert_eq "$sk commits through wf-commit.sh" "0" \
+    "$(grep -c 'git commit -m' "$LIB_ROOT/skills/$sk/SKILL.md")"
+done
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

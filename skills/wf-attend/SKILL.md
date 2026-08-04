@@ -119,8 +119,7 @@ Automated and Chrome-Assisted criteria already passed; what's left needs human e
 1. Show the source brief or bug, then ask for a one-line goal.
 2. Write it as the first line under `## Goal` in the plan's `plan.md`, stage and commit:
    ```bash
-   git add plans/<plan-name>/plan.md
-   git commit -m "spec(<plan-name>): add missing goal"
+   scripts/wf-exec.sh wf-commit.sh "spec(<plan-name>): add missing goal" --add plans/<plan-name>/plan.md
    ```
 3. Close the gate: `wf-gate-close.sh <PLN-ID> "goal set"`.
 

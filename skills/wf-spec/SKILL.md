@@ -323,10 +323,11 @@ Final response under 2000 characters.")
 6. **Release claim and commit:**
    ```bash
    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
-   git add plans/PLN-NNN-<slug>/ plans/briefs/ bugs/
-   # If any deferred criteria were consumed (rows removed from deferred-criteria.md):
-   git add plans/deferred-criteria.md
-   git commit -m "spec: PLN-NNN-<slug> — plan ready"
+   # Commit ONLY these paths. On develop the index is shared with other
+   # unattended workers, and a bare `git commit` takes whatever they have
+   # staged — or theirs takes yours (WFI-048/049).
+   scripts/wf-exec.sh wf-commit.sh "spec: PLN-NNN-<slug> — plan ready" \
+     --add plans/PLN-NNN-<slug>/ plans/REGISTRY.md plans/briefs/ bugs/ plans/deferred-criteria.md
    ```
    Then run `scripts/wf-exec.sh wf-check-reboot-flag.sh` and append any output after your completion message.
 
@@ -402,7 +403,7 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
 
    **Needs a gate** (`SPEC_MODE` is `gate`, or the plan carries a tag in `GATE_TAGS`) — commit the reviewed plan, leave the state at `draft`, park, and exit. The gate question carries the verdict, because the human is now deciding on a *reviewed* plan and should not have to open the file to learn that:
    ```bash
-   git add plans/PLN-NNN-<slug>/ && git commit -m "spec(PLN-NNN-<slug>): reviewed — Approved with notes, awaiting approval"
+   scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): reviewed — Approved with notes, awaiting approval" --add plans/PLN-NNN-<slug>/ plans/REGISTRY.md
    scripts/wf-exec.sh wf-gate-open.sh PLN-NNN spec-approval \
      "<goal> — Review: Approved with notes (2 rounds, N Warnings). N steps, N automated tests, N manual criteria. Approve?" \
      --context plans/PLN-NNN-<slug>/plan.md --skill wf-spec
@@ -413,8 +414,8 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
    ```bash
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN draft ready
    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
-   git add plans/PLN-NNN-<slug>/ plans/briefs/ bugs/ plans/deferred-criteria.md
-   git commit -m "spec: PLN-NNN-<slug> — approved with notes (round 2), plan ready"
+   scripts/wf-exec.sh wf-commit.sh "spec: PLN-NNN-<slug> — approved with notes (round 2), plan ready" \
+     --add plans/PLN-NNN-<slug>/ plans/REGISTRY.md plans/briefs/ bugs/ plans/deferred-criteria.md
    ```
 
 **Do not skip the review to save a round.** In `verdict` mode the verdict is the only thing standing between a draft and a builder; in the gating paths it is the only thing standing between a human and an hour of work a machine had already done.
@@ -503,10 +504,8 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
 
 8. **Commit:**
    ```
-   git add plans/PLN-NNN-<slug>/
-   # If any deferred criteria were consumed:
-   git add plans/deferred-criteria.md
-   git commit -m "spec: PLN-NNN-<slug> — amendment, back to ready"
+   scripts/wf-exec.sh wf-commit.sh "spec: PLN-NNN-<slug> — amendment, back to ready" \
+     --add plans/PLN-NNN-<slug>/ plans/REGISTRY.md plans/deferred-criteria.md
    ```
 
 ## Cross-plan consistency

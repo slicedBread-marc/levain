@@ -108,10 +108,13 @@ Then:
 **Clean or amended (unbuilt deps only):**
 ```bash
 scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
-git add plans/PLN-NNN-<slug>/ plans/<amended-plan>/
+# Scoped commit: on develop the index is shared with other unattended
+# workers, so a bare `git commit` takes whatever they have staged. This run
+# swept a stranger's BUG-020 open→triaged rename into a consistency commit
+# before it was scoped (WFI-048).
 # Plus any reference doc you corrected under check 5:
-git add <doc-path>
-git commit -m "consistency(PLN-NNN-<slug>): closure checked — <clean | amended PLN-MMM>"
+scripts/wf-exec.sh wf-commit.sh "consistency(PLN-NNN-<slug>): closure checked — <clean | amended PLN-MMM>" \
+  --add plans/PLN-NNN-<slug>/ plans/<amended-plan>/ plans/REGISTRY.md <doc-path>
 ```
 State stays `ready`. The plan proceeds to the builder.
 

@@ -205,8 +205,29 @@ Routing: ESCALATED → `draft`, unchecked → `active`, all checked → advances
 
 ### Conflict Avoidance
 - Plans live only on develop — feature branches have no plan content to conflict
-- REGISTRY.md is row-based — concurrent edits to different rows auto-merge
+- REGISTRY.md is row-based — concurrent edits to different rows **auto-merge across branches**
 - Each terminal writes its own REGISTRY rows (T2: draft/ready, T3: active/verify, T4: testing/complete)
+
+**That is a statement about `git merge`, not about concurrency.** Two workers in
+the *same* working directory share one git index, and `git add <paths> &&
+git commit` commits the whole index — not the paths just added. So a commit can
+carry off work another worker staged seconds earlier, in either direction:
+yours swallowing theirs, or theirs swallowing yours (WFI-048/049).
+
+Under the orchestrator this is routine, not exotic: `spec`, `consistency` and
+`test` all run on develop, and the per-role concurrency caps do not prevent it
+because the race is *across* roles.
+
+**Commit through `wf-commit.sh`, which scopes the commit to a pathspec:**
+
+```bash
+scripts/wf-exec.sh wf-commit.sh "<message>" --add <path>...
+```
+
+Name every path the commit should carry, including `plans/REGISTRY.md` when a
+state transition belongs with it. Anything another worker has staged stays
+staged, and your own message stays attached to your own change — which is what
+makes an unattended approval auditable afterwards.
 
 ## Local Dev Environment
 
