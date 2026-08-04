@@ -121,11 +121,25 @@ diff_known=true
 surfaces=$(wf_cfg_list manualTestGate.renderingSurfaces || true)
 
 if [ -n "$surfaces" ]; then
-  worktree="$ROOT/feature-branches/$plan_name"
-  [ -d "$worktree" ] || worktree="$PWD"
-  changed=$(git -C "$worktree" diff --name-only develop...HEAD 2>/dev/null || true)
-  if [ -z "$changed" ]; then
-    changed=$(git -C "$worktree" diff --name-only HEAD~1 2>/dev/null || true)
+  # Only ever diff THIS plan's branch. The fallback used to be a bare `$PWD`,
+  # which is right when wf-test calls this from inside the worktree and wrong
+  # everywhere else: from the develop root it diffs develop's own last commit
+  # and reads whatever that touched as "what the plan changed". A registry
+  # commit is enough to make an unreadable diff look readable, and the answer
+  # this script gives decides whether a human ever looks at the feature.
+  worktree=""
+  if [ -d "$ROOT/feature-branches/$plan_name" ]; then
+    worktree="$ROOT/feature-branches/$plan_name"
+  elif [ "$(git branch --show-current 2>/dev/null || true)" = "feature/$plan_name" ]; then
+    worktree="$PWD"
+  fi
+
+  changed=""
+  if [ -n "$worktree" ]; then
+    changed=$(git -C "$worktree" diff --name-only develop...HEAD 2>/dev/null || true)
+    if [ -z "$changed" ]; then
+      changed=$(git -C "$worktree" diff --name-only HEAD~1 2>/dev/null || true)
+    fi
   fi
 
   # An empty diff here means we could not read one — the plan's worktree is

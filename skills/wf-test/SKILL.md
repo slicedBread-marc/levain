@@ -19,9 +19,14 @@ Your job changes shape: **clear everything that can be cleared without eyes, the
 
 Order of work:
 
+0. **Stand down if a human is already in here.** Before anything else:
+   ```bash
+   scripts/wf-exec.sh wf-claim.sh <plan-name> --if-free
+   ```
+   Exit 2 means a live session holds the claim — an attended `/wf-test` is walking this plan right now. Print the message and exit 0 immediately. Do not read the plan, do not start a container, and above all do not run the exit path: the container you would tear down and the `test-progress.md` you would overwrite are theirs (WFI-070).
 1. If your instructions name a plan, skip the selection menu and work that plan.
 2. Run the automated suites and e2e scope as normal.
-3. Work every `#### Chrome-Assisted` criterion — these are scripted navigations and assertions, so run them and record PASS/FAIL yourself.
+3. Work every `#### Chrome-Assisted` criterion — these are scripted navigations and assertions, so run them and record PASS/FAIL yourself. **Every one of them ends at PASS, FAIL or a recorded reason it could not run** — leaving them at `—` and then gating for "one Manual criterion" misreports what is actually left, and the gate question is the only thing a human reads (WFI-070).
 4. For every criterion where the mode menu applies, take `[a]` (auto-test) whenever the criterion matches a recurring auto-testable shape. On auto-test FAIL, record it as a Candidate as normal — do **not** fall through to the manual flow.
 5. Dispose of the criteria that never need a human, whatever remains untested:
    - `(external)` and `(soak)` — defer each and check it off. They cannot be satisfied at gate time by anyone, so they never gate:
@@ -132,8 +137,14 @@ After user picks:
    ```bash
    eval "$(../../scripts/wf-exec.sh wf-docker-up.sh)" && BUILD=$(git log -1 --format='%ad (%h)' --date=format:'%b %d %H:%M')
    ```
-   This sets FEATURE_PORT, COMPOSE_PROJECT_NAME, and BUILD.
+   This sets FEATURE_PORT, COMPOSE_PROJECT_NAME, TEST_ACCOUNT, and BUILD.
    Also read `guest_entry_path` from `claude-workflow.yml` (root of repo). If set, store it as `GUEST_ENTRY_PATH`.
+
+   **`$TEST_ACCOUNT` is the sign-in line** — display it verbatim with the URL in every state below. A fresh container has no account unless `test_account_command` made one.
+
+   **If `$TEST_ACCOUNT` is empty and any criterion needs a signed-in session, stop and say so before walking criteria.** Attended: ask the user how to get an account, and once they answer, tell them to record it as `test_account_command` / `test_account_note` in `claude-workflow.yml` so the next run does not repeat this. Unattended: **[GATE]** `needs-input` with the question "criteria N, M need a signed-in session and the container has no account — what provisions one?".
+
+   Do not work around it silently and do not mark those criteria skipped, untested or passed. client-a's WFI-072 stalled a run at criterion 5 of 5 for exactly this, and the reporter's read of the earlier runs is the reason this paragraph exists: two prior plans shipped with every criterion behind the login unexecuted, and nothing in the record said so.
 3b. **Check for injectable test parameters** — scan `appsettings.json` (and `appsettings.Development.json` if present) for numeric fields whose names suggest probability, rate, chance, or frequency. If any are found, note them and surface them before the criteria list:
    ```
    💡 Injectable parameters detected — modify these in appsettings.json to force or suppress behaviors:
@@ -166,6 +177,7 @@ After user picks:
    ```
    Testing: PLN-NNN — <plan title>
    App is running at http://localhost:$FEATURE_PORT
+   Sign in: $TEST_ACCOUNT                                          ← only if TEST_ACCOUNT is set
    Login first: http://localhost:$FEATURE_PORT$GUEST_ENTRY_PATH   ← only if GUEST_ENTRY_PATH is set
    Start here: http://localhost:$FEATURE_PORT/<first criterion's route>
    Current build: Apr 08 14:32 (a1b2c3d)
@@ -187,6 +199,7 @@ After user picks:
    ```
    Testing: PLN-NNN — <plan title>
    App is running at http://localhost:$FEATURE_PORT
+   Sign in: $TEST_ACCOUNT                                          ← only if TEST_ACCOUNT is set
    Login first: http://localhost:$FEATURE_PORT$GUEST_ENTRY_PATH   ← only if GUEST_ENTRY_PATH is set
    Start here: http://localhost:$FEATURE_PORT/<resume criterion's route>
    Current build: Apr 08 14:32 (f4e5d6c)
@@ -212,6 +225,7 @@ After user picks:
    ```
    Testing: PLN-NNN — <plan title>
    App is running at http://localhost:$FEATURE_PORT
+   Sign in: $TEST_ACCOUNT                                          ← only if TEST_ACCOUNT is set
    Login first: http://localhost:$FEATURE_PORT$GUEST_ENTRY_PATH   ← only if GUEST_ENTRY_PATH is set
    Start here: http://localhost:$FEATURE_PORT/<first stale criterion's route>
    Current build: Apr 08 16:45 (g7h8i9j)
@@ -464,6 +478,7 @@ Last failure: #3 on build Apr 08 14:32 (f4e5d6c)
 - One row per criterion, always present. Result: `PASS`, `FAIL`, `SKIP`, or `—` (untested).
 - Only the most recent result per criterion is stored — overwrite on retest.
 - "Last failure" line records the resume point for the next session.
+- **Start from the file that is already there, and never write `—` over a result you did not retest.** This file is the only record that a criterion was ever executed; a session that regenerates it from scratch erases whatever an earlier session — or a human sitting at the app right now — established. client-a lost a completed 15/15 run to a rewrite exactly like that (WFI-070). Carry forward every row you did not test yourself, build identifier included.
 
 **On findings (failure exit):** write test-progress.md with current state. Include in the findings commit:
 ```bash
@@ -705,11 +720,13 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
      fi
    fi
    ```
-4. Release claim and update REGISTRY:
+4. Release claim, close the `manual-test` gate if one is open, and update REGISTRY:
    ```bash
    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
+   scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "manual test passed"
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete -
    ```
+   The gate is closed **here**, at the end, not when testing started. `/wf-attend` hands this plan over with the gate still open on purpose: while it is open the orchestrator will not dispatch anything at this plan, which is what keeps an unattended tester out of the worktree a human is using (WFI-070). Closing it is this skill's last act, and it is safe to run when no gate is open.
 5. Close linked bugs (if plan Goal has `**Bug:** BUG-NNN`):
    ```bash
    scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
@@ -770,11 +787,13 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
      fi
    fi
    ```
-4. Release claim and determine route:
+4. Release claim, close the `manual-test` gate if one is open, and determine route:
    ```bash
    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
+   scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "manual test found N issue(s)"
    route=$(scripts/wf-exec.sh wf-findings-route.sh plans/PLN-NNN-<slug>)
    ```
+   Close it on this path too. A findings exit sends the plan to `draft`, and a `manual-test` gate left open there parks it in front of a planner who has nothing to answer.
    - **`escalated`** → route to draft:
      ```bash
      scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing draft
@@ -799,6 +818,8 @@ Always destroy the container before leaving the worktree — on pass, fail, or e
 ../../scripts/wf-exec.sh wf-docker-down.sh $PLAN_NAME
 ```
 If you hit an error and need to stop early, **destroy the container first** before routing back or displaying the error.
+
+**Unless it is not yours.** One exception, and it is the whole reason the claim check in [Unattended mode](#unattended-mode) step 0 exists: a container belongs to the session that started it. If you stood down because another session holds the claim, leave everything running — that app on `localhost:$FEATURE_PORT` is what a human is looking at.
 
 ## Bug reference model
 

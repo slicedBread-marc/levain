@@ -31,6 +31,17 @@ This skill is **always** unattended. Unlike `wf-spec`, `wf-implement` and `wf-te
 
 You receive a plan ID (e.g. `PLN-003`) as context. From this:
 
+0. **If git commands fail inside the worktree, check the environment before anything else.**
+   ```
+   fatal: .git/index: index file open failed: Not a directory
+   ```
+   That error means `GIT_INDEX_FILE` (and usually `GIT_DIR`, `GIT_PREFIX`, `GIT_AUTHOR_*`) leaked in from the post-commit hook that launched you: they point at the develop root's git plumbing, and a linked worktree's `.git` is a *file*, so every path resolves wrong. `wf-spawn.sh` scrubs them at launch as of v5.1, so this should not happen — if it does, unset them and file it:
+   ```bash
+   unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX GIT_EDITOR \
+         GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE \
+         GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE
+   ```
+   The failure is worth recognising on sight (WFI-071): it looks like a corrupt repository and is nothing of the kind.
 1. **Look up the plan** — `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"` → sets PLAN_SLUG, PLAN_STATE, PLAN_BRANCH, PLAN_DIR, PLAN_NAME
 2. **Claim the plan** — `scripts/wf-exec.sh wf-claim.sh $PLAN_NAME`
 3. **Read the plan** — `$PLAN_DIR/plan.md` on develop

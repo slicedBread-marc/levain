@@ -53,7 +53,7 @@ The plan is drafted, **already reviewed**, and committed in `draft` state. The o
    | `plan`, not stale | The normal case | Display `## Review` and continue to step 2 |
    | `findings`, not stale | The verdict exists but was written to `findings.md` | Display it from there, move it into `plan.md`'s `## Review`, and file `wf-issue.sh` — the review is fine, its filing was not |
    | `REVIEW_STALE=true` | The plan was **amended after** the verdict | The verdict is about a document that no longer exists. Re-run the review on the plan as it now stands, write it to `## Review`, and gate on *that* |
-   | `REVIEW_STALE=unknown` | Reviewed and amended the same day | Dates cannot order them. Read the amendment: if the review does not address it, treat it as stale |
+   | `REVIEW_STALE=unknown` | Reviewed and amended the same day, and the verdict carries no `Plan-Hash` stamp | Dates cannot order them. Read the amendment: if the review does not address it, treat it as stale. Once you have decided, run `wf-review-stamp.sh <PLN-ID>` so the next reader gets a true/false answer instead of this row |
    | `none` | The plan gated before its review | Harness fault — file it with `wf-issue.sh` and run the review yourself |
 
    Display the verdict, the round count, and any Warnings. A plan reaching this gate should be one the reviewer *approved*; you are deciding whether to build it, not whether it is sound.
@@ -112,7 +112,11 @@ A replan amended the plan in a way that drops or narrows something its `## Goal`
 Automated and Chrome-Assisted criteria already passed; what's left needs human eyes.
 
 1. Hand off to `/wf-test` for this plan — it owns the criteria walkthrough, findings, and PR creation. Do not run acceptance criteria yourself.
-2. Close the gate once `/wf-test` has taken over: `wf-gate-close.sh <PLN-ID> "handed to wf-test"`.
+2. **Leave the gate open.** `/wf-test` closes it on its own exit path, pass or fail.
+
+   Closing it here is what this row used to say, and it is a dispatch signal, not a bookkeeping one: an open gate is the only thing keeping the daemon off a plan a human is testing. client-a closed it on handoff and the daemon spawned an unattended tester onto the same worktree 92 seconds later (WFI-070). That worker destroyed the running container mid-session — `/wf-test`'s own cleanup rule, followed correctly — and overwrote `test-progress.md` with every criterion at `—`, discarding a completed 15/15 e2e run. The same race on the all-pass path merges the PR and removes the worktree out from under the human.
+
+   Say so plainly when you hand off: "The gate stays open until /wf-test finishes — that's what keeps the orchestrator off this plan."
 
 ### `goal-missing`
 
