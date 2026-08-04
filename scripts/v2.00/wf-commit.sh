@@ -133,11 +133,21 @@ fi
 # Read the list back from the index rather than trusting the requested paths:
 # a directory pathspec, a gitignored file, or a path that did not change all
 # resolve here to exactly what git will accept.
+#
+# --no-renames is load-bearing. `git diff --cached --name-only` reports a
+# rename as ONE path — the destination — so the source never reaches the
+# `git commit -- <paths>` pathspec below and its deletion stays staged.
+#
+# WFI-066: `wf-commit.sh ... --add bugs/` after wf-bug-consume.sh's
+# open→triaged `git mv` reported "committed 5 path(s)" and left HEAD holding
+# the same bug in bugs/open/ AND bugs/triaged/. The next worklist re-offered
+# the still-open copy as an unplanned bug, which is how two spec workers ended
+# up on one artifact (WFI-067). Every bug consumed by a spec run hit this.
 changed=()
 if [ "${#paths[@]}" -gt 0 ]; then
   while IFS= read -r f; do
     [ -n "$f" ] && changed+=("$f")
-  done < <(git diff --cached --name-only -- "${paths[@]}" 2>/dev/null || true)
+  done < <(git diff --cached --name-only --no-renames -- "${paths[@]}" 2>/dev/null || true)
 fi
 
 if [ "${#changed[@]}" -gt 0 ]; then
