@@ -55,6 +55,15 @@ report() {
   [ "$QUIET" = "true" ] || printf '%s\n' "$1"
 }
 
+# The second line of a two-line finding. It is the SAME problem — printing it
+# through report() counted every such finding twice, so a registry with one
+# thing wrong announced "2 problem(s)" and the reader went looking for a second
+# one that was never there. Found on client-c, and filed independently from
+# client-a as WFI-050.
+detail() {
+  [ "$QUIET" = "true" ] || printf '%s\n' "$1"
+}
+
 # ── One pass over the registry ───────────────────────────────────────────
 #
 # Every check below reads the same rows, so they are parsed ONCE into shell
@@ -105,7 +114,7 @@ while IFS=' ' read -r id base; do
     *" $id "*) ;;
     *)
       report "MISSING ROW   plans/$base has no row in $REGISTRY — invisible to every wf-list-* script and to the orchestrator."
-      report "              Add a row, or abandon it: scripts/wf-exec.sh wf-abandon.sh $id --reason \"...\""
+      detail "              Add a row, or abandon it: scripts/wf-exec.sh wf-abandon.sh $id --reason \"...\""
       ;;
   esac
 done <<< "$disk_rows"
@@ -129,7 +138,7 @@ dupe_dirs=$(printf '%s' "$disk_rows" | awk '{print $1}' | sort | uniq -d || true
 for id in $dupe_dirs; do
   folders=$(printf '%s' "$disk_rows" | awk -v i="$id" '$1 == i { print $2 }' | tr '\n' ' ')
   report "DUPLICATE DIR $id names two plan folders: $folders"
-  report "              The counter handed the same number out twice. Check both for competing migrations or schema changes before removing either."
+  detail "              The counter handed the same number out twice. Check both for competing migrations or schema changes before removing either."
 done
 
 # ── 4. Counter sanity ────────────────────────────────────────────────────
@@ -144,7 +153,7 @@ if [ -n "$counter" ]; then
   )
   if [ -n "$highest" ] && [ "$counter" -le "$highest" ]; then
     report "COUNTER       <!-- Counter: $counter --> is not above the highest ID in use ($highest) — the next allocation collides."
-    report "              Set it to $((highest + 1))."
+    detail "              Set it to $((highest + 1))."
   fi
 fi
 
@@ -166,7 +175,7 @@ while IFS=' ' read -r id slug state; do
   ahead=$(git rev-list --count "develop..$branch" 2>/dev/null || echo 0)
   [ "$ahead" -gt 0 ] || continue
   report "STALE STATE   $id is '$state' but $branch is $ahead commit(s) ahead of develop — the registry and the branch disagree."
-  report "              Either a state write was lost, or the work was abandoned. Check the branch, then set the state deliberately."
+  detail "              Either a state write was lost, or the work was abandoned. Check the branch, then set the state deliberately."
 done <<< "$reg_rows"
 
 if [ "$problems" -eq 0 ]; then

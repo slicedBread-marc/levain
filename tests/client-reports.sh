@@ -1159,6 +1159,14 @@ stale_audit=$(cd "$STALE_DIR" && "$SCRIPT_DIR/wf-registry-audit.sh" 2>/dev/null 
 assert_eq "a draft plan sitting on real commits is reported" "true" \
   "$(printf '%s' "$stale_audit" | grep -q 'STALE STATE.*PLN-037' && echo true || echo false)"
 
+# This fixture has exactly ONE thing wrong, and the finding is written over two
+# lines. Both lines used to go through report(), so the tally counted the
+# continuation as a second problem and the reader went hunting for a finding
+# that was never printed. client-a filed it as WFI-050; client-c showed
+# the same shape — "2 problem(s)" above a single COUNTER finding.
+assert_eq "a two-line finding counts as one problem" "registry audit: 1 problem(s)" \
+  "$(printf '%s' "$stale_audit" | grep 'registry audit:')"
+
 assert_eq "wf-status runs the audit" "true" \
   "$(grep -q 'wf-registry-audit.sh' "$LIB_ROOT/skills/wf-status/SKILL.md" && echo true || echo false)"
 
