@@ -1,9 +1,12 @@
 # Untracked harness — the client copy is build output, not source
 
-> **Status: proposed, not implemented.** Targets **v5.0.0** (breaking: changes what a
-> client repo tracks). Origin: no client issue — this came from the observation that
-> every client carries a permanent pile of uncommitted deploy churn, and from noticing
-> that `app` has quietly been running half of it for months.
+> **Status: implemented in v5.0.0.** Origin: no client issue — this came from the
+> observation that every client carries a permanent pile of uncommitted deploy churn,
+> and from noticing that `app` had quietly been running half of it for months.
+>
+> Entry points: `wf-worktree-harness.sh` copies the three must-exist paths into a
+> worktree; `install.sh` seeds the ignores and prints the one-time `git rm --cached`
+> for a client that is still tracking them. `wf-infra-sync.sh` was deleted.
 
 ## The gap
 

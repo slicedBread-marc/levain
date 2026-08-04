@@ -29,15 +29,15 @@
 #
 # A pathspec commit (`git commit -m msg -- <paths>`) is immune: it builds the
 # commit from those paths only and leaves every other index entry staged and
-# untouched. wf-infra-sync.sh already reasoned this out for install.sh racing a
-# worker; this generalizes it so every caller gets it.
+# untouched. The now-deleted wf-infra-sync.sh reasoned this out first, for
+# install.sh racing a worker; this generalizes it so every caller gets it.
 #
 # TWO TRAPS, both already met in this repo:
 #
 #   · `git commit -- <untracked path>` fails the whole commit with "pathspec
 #     did not match any file(s) known to git". So paths are staged first, then
 #     the real list is read back from the index — every element is then known
-#     to git by construction (the wf-infra-sync.sh lesson).
+#     to git by construction.
 #
 #   · An empty commit cannot be scoped by pathspec at all, and a bare
 #     `git commit --allow-empty` would sweep the shared index — the exact bug.

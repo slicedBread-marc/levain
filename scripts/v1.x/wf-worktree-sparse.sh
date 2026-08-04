@@ -35,12 +35,16 @@
 #                             versioned script is never the one that runs
 #   scripts/wf-prune-versions.sh
 #
-# Tracked normally — materialised by install.sh, so they cannot be excluded:
-#   .claude/workflow.md, .claude/skills/**, scripts/wf-exec.sh
+# Not tracked at all as of v5.0.0 — GITIGNORED, and copied in by
+# wf-worktree-harness.sh:
+#   .claude/workflow.md, .claude/skills/wf-*/, scripts/wf-exec.sh
 #
-# Those three are reconciled by committing develop's content on the feature
-# branch (wf-infra-sync.sh). The commit is a no-op on merge-back — both sides
-# hold the same bytes.
+# These three must physically exist here, and used to arrive by being tracked
+# AND by being written by deploy — two delivery mechanisms for one requirement,
+# whose collision is the hazard described above. Ignoring them removes the
+# collision at the root: an ignored file cannot go dirty, cannot conflict, and
+# cannot abort a merge, so no reconciliation step is needed for them at all.
+# See docs/untracked-harness.md.
 
 set -euo pipefail
 

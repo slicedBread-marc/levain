@@ -16,33 +16,22 @@ branch=$(git branch --show-current)
 
 git fetch origin release
 
-# ── Pre-sync workflow infra for non-sparse worktrees ────────────────────────
-# Sparse-checkout worktrees exclude infra files from tracking, so no conflicts.
-# Legacy (non-sparse) worktrees still track them — reset to release's version
-# before merging so they can't cause dirty-tree failures or conflicts.
+# ── Reset release-owned plan content for non-sparse worktrees ───────────────
+# The generated harness is gitignored as of v5.0.0 — invisible to git, so it
+# cannot conflict here and needs no reconciliation. Only plan content does.
 if ! git config core.sparseCheckout 2>/dev/null | grep -q true; then
   needs_sync=false
-  # Do NOT sync .claude/workflow-version — it's the plan's immovable WF stamp
-  # and must not change mid-flight. Dispatcher routes on this value.
-  if [ -f ".claude/workflow.md" ]; then
-    git checkout origin/release -- ".claude/workflow.md" 2>/dev/null && needs_sync=true || true
-  fi
-  git checkout origin/release -- .claude/skills/ 2>/dev/null && needs_sync=true || true
+  # Do NOT sync .claude/workflow-version — it's the plan's immovable WF stamp.
   git checkout origin/release -- plans/ 2>/dev/null && needs_sync=true || true
   git checkout origin/release -- bugs/ 2>/dev/null && needs_sync=true || true
   git checkout origin/release -- briefs/ 2>/dev/null && needs_sync=true || true
   git checkout origin/release -- templates/ 2>/dev/null && needs_sync=true || true
-  for f in scripts/wf-exec.sh scripts/wf-prune-versions.sh scripts/version-map.txt scripts/v*/wf-*.sh; do
-    [ -f "$f" ] && git checkout origin/release -- "$f" 2>/dev/null && needs_sync=true || true
-  done
   if $needs_sync; then
-    git add .claude/workflow.md .claude/skills/ plans/ bugs/ briefs/ templates/ scripts/wf-exec.sh scripts/wf-prune-versions.sh scripts/version-map.txt scripts/v*/wf-*.sh 2>/dev/null || true
-    if ! git diff --cached --quiet 2>/dev/null; then
-      git commit -m "chore: sync workflow infra from release"
-      echo "Pre-synced workflow infra to release's version."
-    fi
+    "$(dirname "$0")/wf-commit.sh" "chore: sync plan content from release" \
+      --add plans/ bugs/ briefs/ templates/ >/dev/null 2>&1 || true
   fi
 fi
+
 
 # Attempt clean merge first
 if git merge origin/release --no-edit 2>/dev/null; then

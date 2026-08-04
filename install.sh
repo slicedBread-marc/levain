@@ -293,6 +293,48 @@ for pattern in ".claude/verify-*.log" ".claude/verify-*.pid"; do
     fi
 done
 
+HARNESS_IGNORED=0
+
+# Generated workflow harness.
+#
+# deploy writes these; the library is their source of truth. Tracking them made
+# every deploy dirty every client — 253 files across five repos, none written
+# by a human — and put a git-managed path under a second, independent writer.
+# wf-worktree-sparse.sh states where that leads: "Excluding a file you also
+# write is not a stricter policy than tracking it; it is a broken one." The
+# same is true of tracking it. See docs/untracked-harness.md.
+#
+# NOT ignored, deliberately: claude-workflow.yml (the project's own config),
+# .claude/workflow-version (the one-line stamp saying which harness a commit
+# was made under), WORKFLOW.md (the entry contract), and plans/ + bugs/.
+#
+# The `wf-` prefix on the skills glob is load-bearing: a project's own skills
+# sit in the same directory and are its source, not ours.
+for pattern in \
+    ".claude/skills/wf-*/" \
+    ".claude/workflow.md" \
+    ".claude/on-implement-commit.sh" \
+    ".claude/on-verify-trigger.sh" \
+    "scripts/wf-exec.sh" \
+    "scripts/version-map.txt" \
+    "scripts/wf-prune-versions.sh" \
+    "scripts/v*/" ; do
+    if ! grep -qxF "$pattern" "$GITIGNORE" 2>/dev/null; then
+        echo "$pattern" >> "$GITIGNORE"
+        HARNESS_IGNORED=$((HARNESS_IGNORED + 1))
+    fi
+done
+if [ "$HARNESS_IGNORED" -gt 0 ]; then
+    echo -e "${GREEN}  Added $HARNESS_IGNORED generated-harness pattern(s) to .gitignore${NC}"
+    if git -C "$TARGET_DIR" ls-files --error-unmatch scripts/wf-exec.sh >/dev/null 2>&1; then
+        echo -e "${YELLOW}  The harness is still TRACKED here. To finish the migration:${NC}"
+        echo "    git rm -r --cached --quiet .claude/skills/wf-* .claude/workflow.md \\"
+        echo "      .claude/on-implement-commit.sh .claude/on-verify-trigger.sh \\"
+        echo "      scripts/wf-exec.sh scripts/version-map.txt scripts/wf-prune-versions.sh scripts/v*"
+        echo "    git commit -m 'chore: stop tracking the generated workflow harness'"
+    fi
+fi
+
 # Feature worktrees.
 #
 # `feature-branches/` is the workflow's own convention — wf-worktree-sparse.sh
@@ -496,44 +538,15 @@ if git -C "$TARGET_DIR" rev-parse --git-dir &>/dev/null; then
                     "$TARGET_ABS/scripts/$wt_folder/wf-worktree-sparse.sh" "$wt_path" >/dev/null 2>&1 || true
                 fi
 
-                # Copy ONLY what a session inside the worktree reads off its own
-                # disk. Everything else — the versioned script folders, the
-                # version map, the pruning tool — is resolved from the MAIN
-                # worktree: wf-exec.sh's find_project_root answers with the main
-                # worktree, so a copy here is never the one that runs. Copying
-                # them anyway was what broke sparse-checkout: writing content to
-                # an excluded path clears its skip-worktree bit, and one client
-                # ended up with 33 files it never touched showing as modified
-                # and a `git merge develop` that aborted outright.
-                mkdir -p "$wt_path/scripts"
-                if [ -f "$TARGET_ABS/scripts/wf-exec.sh" ]; then
-                    cp "$TARGET_ABS/scripts/wf-exec.sh" "$wt_path/scripts/wf-exec.sh"
-                    chmod +x "$wt_path/scripts/wf-exec.sh"
-                fi
-
-                for skill_dir in "$TARGET_ABS/.claude/skills"/*/; do
-                    dest="$wt_path/.claude/skills/$(basename "$skill_dir")"
-                    mkdir -p "$dest"
-                    cp "$skill_dir/SKILL.md" "$dest/SKILL.md"
-                done
-
-                mkdir -p "$wt_path/.claude"
-                [ -f "$TARGET_ABS/.claude/workflow.md" ] && cp "$TARGET_ABS/.claude/workflow.md" "$wt_path/.claude/workflow.md"
-
-                # .claude/workflow-version is deliberately NOT stamped here.
-                # It is sparse-excluded, and writing an excluded path is what
-                # clears its skip-worktree bit. Nothing reads the worktree copy:
-                # wf-exec.sh resolves the effective version from the plan's WF
-                # column, then from the MAIN worktree's stamp. The pin is the
-                # registry column, not a file in the worktree.
-
-                # The copies above overwrite tracked files with develop's
-                # content, which leaves the worktree dirty against its own
-                # branch. Commit them (pathspec-scoped, so a live session's
-                # staged work is untouched) so the tree is clean and
-                # `git merge develop` can run.
-                if [ -x "$TARGET_ABS/scripts/$wt_folder/wf-infra-sync.sh" ]; then
-                    "$TARGET_ABS/scripts/$wt_folder/wf-infra-sync.sh" "$wt_path" >/dev/null 2>&1 || true
+                # Put the three must-exist paths on the worktree's disk.
+                #
+                # They are gitignored now, so this is the ONLY way they arrive
+                # — git no longer materialises them, and nothing reconciles
+                # them afterwards because an ignored file cannot be dirty,
+                # cannot conflict, and cannot abort a merge. Everything else
+                # workflow-owned resolves from the MAIN worktree.
+                if [ -x "$TARGET_ABS/scripts/$wt_folder/wf-worktree-harness.sh" ]; then
+                    "$TARGET_ABS/scripts/$wt_folder/wf-worktree-harness.sh" "$wt_path" >/dev/null 2>&1 || true
                 fi
 
                 echo -e "  ${GREEN}Updated $(basename "$wt_path") (skills + wf-exec.sh; scripts/${wt_folder:-none} resolved from develop, WF=${wt_wf:-0.00})${NC}"

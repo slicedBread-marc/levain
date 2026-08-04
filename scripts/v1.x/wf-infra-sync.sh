@@ -31,6 +31,11 @@
 #
 # Exit 0 whether or not anything needed syncing. Never fails a caller.
 
+# v5.0.0: the harness is gitignored, so `git add` below matches nothing and this
+# degrades to a clean no-op. Kept because this generation's wf-merge-develop.sh
+# calls it. The v2.00 generation deleted it outright — see
+# docs/untracked-harness.md.
+
 set -euo pipefail
 
 WT_PATH="${1:-$PWD}"

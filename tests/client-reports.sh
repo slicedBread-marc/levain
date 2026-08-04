@@ -435,6 +435,7 @@ printf 'v3.4.0\n' > scripts/v2.00/wf-sample.sh
 printf 'v3.4.0\n' > scripts/version-map.txt
 printf 'v3.4.0\n' > .claude/skills/wf-attend/SKILL.md
 printf 'v3.4.0\n' > scripts/wf-exec.sh
+chmod +x scripts/wf-exec.sh
 git add -A >/dev/null 2>&1 && git commit -qm "chore: adopt v3.4.0" >/dev/null 2>&1
 
 # Re-running sparse configuration is what install.sh now does first. It clears
@@ -444,28 +445,29 @@ git add -A >/dev/null 2>&1 && git commit -qm "chore: adopt v3.4.0" >/dev/null 2>
 assert_eq "develop-owned script copies no longer dirty the worktree" "0" \
   "$(git -C "$TEST_DIR/wt-103" status --porcelain -- scripts/v2.00 scripts/version-map.txt | wc -l | xargs)"
 
-# The three paths a session genuinely reads off its own disk cannot be
-# excluded, so they are reconciled by committing develop's bytes.
-assert_ok "infra sync commits what deploy wrote" \
-  "$SCRIPT_DIR/wf-infra-sync.sh" "$TEST_DIR/wt-103"
-assert_eq "the worktree is clean afterwards" "0" \
+# The three paths a session reads off its own disk are gitignored as of v5.0.0
+# and copied in rather than tracked. Migrate this fixture the way a real client
+# migrates, so the merge assertion below tests the CURRENT contract: under
+# tracking, a mid-plan deploy left them modified and the merge aborted before it
+# could conflict on anything real.
+printf '.claude/skills/wf-*/\n.claude/workflow.md\nscripts/wf-exec.sh\n' >> .gitignore
+git rm -r -q --cached .claude/skills scripts/wf-exec.sh >/dev/null 2>&1 || true
+git add .gitignore >/dev/null 2>&1
+git commit -qm "chore: stop tracking the generated harness" >/dev/null 2>&1
+
+# The worktree takes the migration through wf-merge-develop.sh, which is what
+# clears the deploy's local modifications first — a plain `git merge` ABORTS on
+# them and the worktree can then never receive the untrack commit at all.
+( cd "$TEST_DIR/wt-103" && "$SCRIPT_DIR/wf-merge-develop.sh" ) >/dev/null 2>&1 || true
+
+assert_eq "the runtime files are on the worktree's disk" "true" \
+  "$([ -f "$TEST_DIR/wt-103/.claude/skills/wf-attend/SKILL.md" ] && [ -f "$TEST_DIR/wt-103/scripts/wf-exec.sh" ] && echo true || echo false)"
+assert_eq "and cannot dirty it, because git cannot see them" "0" \
   "$(git -C "$TEST_DIR/wt-103" status --porcelain | wc -l | xargs)"
-assert_eq "and the runtime files are still on disk" "v3.4.0" \
-  "$(cat "$TEST_DIR/wt-103/.claude/skills/wf-attend/SKILL.md" 2>/dev/null)"
 
 # The whole point: the merge runs.
 assert_ok "git merge develop succeeds after a mid-plan deploy" \
   git -C "$TEST_DIR/wt-103" merge develop --no-edit
-
-# A sync must never sweep a live session's staged work into a chore commit —
-# install.sh calls it while a worker may be mid-edit in the same worktree.
-printf 'work in progress\n' > "$TEST_DIR/wt-103/feature-work.txt"
-git -C "$TEST_DIR/wt-103" add feature-work.txt >/dev/null 2>&1
-printf 'v3.5.0\n' > "$TEST_DIR/wt-103/.claude/skills/wf-attend/SKILL.md"
-"$SCRIPT_DIR/wf-infra-sync.sh" "$TEST_DIR/wt-103" >/dev/null 2>&1
-assert_eq "someone else's staged work is left staged, not committed" "true" \
-  "$(git -C "$TEST_DIR/wt-103" diff --cached --name-only | grep -qx 'feature-work.txt' && echo true || echo false)"
-git -C "$TEST_DIR/wt-103" reset -q >/dev/null 2>&1
 
 # A release adds scripts AFTER a branch is cut, so an old deploy left them in
 # the worktree as UNTRACKED files. `git ls-files` cannot see those, and they sit
@@ -491,21 +493,6 @@ assert_eq "a flat-layout leftover is cleared" "false" \
 assert_eq "but wf-exec.sh survives the same glob" "true" \
   "$([ -f "$TEST_DIR/wt-103/scripts/wf-exec.sh" ] && echo true || echo false)"
 
-# app gitignores `.claude/skills/*`, so that path is untracked there.
-# `git commit -- <untracked path>` fails the WHOLE commit with "pathspec did
-# not match any file(s) known to git" — which left the paths that HAD changed
-# staged and the tree still dirty, one deploy short of the merge failing again.
-git -C "$TEST_DIR/wt-103" rm -r -q --cached .claude/skills >/dev/null 2>&1
-git -C "$TEST_DIR/wt-103" commit -q -m "untrack skills, as app does" >/dev/null 2>&1
-printf 'v3.6.0\n' > "$TEST_DIR/wt-103/.claude/workflow.md"
-git -C "$TEST_DIR/wt-103" add .claude/workflow.md >/dev/null 2>&1
-git -C "$TEST_DIR/wt-103" commit -q -m "baseline workflow.md" >/dev/null 2>&1
-printf 'v3.7.0\n' > "$TEST_DIR/wt-103/.claude/workflow.md"
-assert_ok "sync survives an infra path the project does not track" \
-  "$SCRIPT_DIR/wf-infra-sync.sh" "$TEST_DIR/wt-103"
-assert_eq "and the tracked paths are committed, not left staged" "0" \
-  "$(git -C "$TEST_DIR/wt-103" status --porcelain --untracked-files=no | wc -l | xargs)"
-
 # The exclusion list and the propagation list are the same decision made twice;
 # a path may not appear in both.
 assert_eq "install.sh no longer copies versioned scripts into a worktree" "false" \
@@ -513,12 +500,11 @@ assert_eq "install.sh no longer copies versioned scripts into a worktree" "false
 assert_eq "nor stamps the sparse-excluded workflow-version there" "false" \
   "$(grep -q 'wt_path/.claude/workflow-version' "$LIB_ROOT/install.sh" && echo true || echo false)"
 
-# The pre-sync ran only for NON-sparse worktrees, so the case that actually
-# breaks — a sparse one — was the one it skipped.
-assert_eq "merge-develop syncs infra on every worktree, sparse or not" "true" \
-  "$(awk '/wf-infra-sync.sh/ { found = NR } /sparseCheckout/ { sparse = NR }
-          END { print (found && sparse && found < sparse) ? "true" : "false" }' \
-     "$SCRIPT_DIR/wf-merge-develop.sh")"
+# The reconciliation that used to run here is gone, not relocated.
+assert_eq "wf-infra-sync.sh no longer exists" "false" \
+  "$([ -e "$SCRIPT_DIR/wf-infra-sync.sh" ] && echo true || echo false)"
+assert_eq "and merge-develop restores the harness on every worktree instead" "true" \
+  "$(grep -q 'wf-worktree-harness.sh' "$SCRIPT_DIR/wf-merge-develop.sh" && echo true || echo false)"
 
 git worktree remove --force "$TEST_DIR/wt-103" >/dev/null 2>&1
 git branch -q -D feature/PLN-121-deploy-drift 2>/dev/null || true
@@ -1332,6 +1318,82 @@ assert_eq "but not the bystander another worker staged" "other.txt" \
 for sk in wf-spec wf-consistency wf-bug wf-attend wf-brainstorm; do
   assert_eq "$sk commits through wf-commit.sh" "0" \
     "$(grep -c 'git commit -m' "$LIB_ROOT/skills/$sk/SKILL.md")"
+done
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Untracking the generated harness (v5.0.0 migration)"
+
+# The client copy of the harness is build output. Tracking it meant deploy
+# dirtied every client permanently — 253 files across five repos — and put a
+# git-managed path under a second, independent writer. See
+# docs/untracked-harness.md.
+#
+# The migration's one dangerous step is exercised here: the untrack commit
+# DELETES those paths on develop, so a feature branch cut earlier loses them on
+# its next `git merge develop` — mid-plan. wf-merge-develop.sh restoring the
+# harness afterwards is what makes that survivable.
+UT="$TEST_DIR/untracked"
+mkdir -p "$UT" && (
+  cd "$UT" && git init -qb develop . && git config user.email t@t && git config user.name t
+  mkdir -p .claude/skills/wf-spec .claude/skills/ref-project scripts/v2.00
+  printf 'spec v1\n'    > .claude/skills/wf-spec/SKILL.md
+  printf 'mine\n'       > .claude/skills/ref-project/SKILL.md
+  printf 'wf\n'         > .claude/workflow.md
+  printf '#!/bin/sh\n'  > scripts/wf-exec.sh && chmod +x scripts/wf-exec.sh
+  printf 'v\n'          > scripts/v2.00/wf-sample.sh
+  printf 'feature-branches/\n' > .gitignore
+  printf 'src\n' > src.txt
+  git add -A && git commit -qm init
+  git worktree add -q feature-branches/PLN-001-x -b feature/PLN-001-x HEAD
+) >/dev/null 2>&1
+
+assert_eq "before migrating, a worktree gets the harness from git" "true" \
+  "$([ -f "$UT/feature-branches/PLN-001-x/.claude/skills/wf-spec/SKILL.md" ] && echo true || echo false)"
+
+# The migration, on develop.
+( cd "$UT"
+  printf '.claude/skills/wf-*/\n.claude/workflow.md\nscripts/wf-exec.sh\nscripts/v*/\n' >> .gitignore
+  git rm -r -q --cached .claude/skills/wf-spec .claude/workflow.md scripts/wf-exec.sh scripts/v2.00
+  git add .gitignore && git commit -qm "chore: stop tracking the generated workflow harness"
+) >/dev/null 2>&1
+
+assert_eq "develop's tree is clean after the untrack commit" "0" \
+  "$(git -C "$UT" status --porcelain | wc -l | xargs)"
+assert_eq "the files are still on disk, just ignored" "true" \
+  "$([ -f "$UT/scripts/wf-exec.sh" ] && [ -f "$UT/.claude/skills/wf-spec/SKILL.md" ] && echo true || echo false)"
+assert_eq "a project's own skill stays tracked — the wf- prefix is load-bearing" "true" \
+  "$(git -C "$UT" ls-files --error-unmatch .claude/skills/ref-project/SKILL.md >/dev/null 2>&1 && echo true || echo false)"
+
+# THE DANGEROUS STEP: the live worktree merges develop and takes the deletion.
+cp "$SCRIPT_DIR/wf-worktree-harness.sh" "$UT/scripts/" 2>/dev/null || true
+( cd "$UT/feature-branches/PLN-001-x" && git merge develop --no-edit ) >/dev/null 2>&1
+assert_eq "merging the migration strips the harness from a live worktree" "false" \
+  "$([ -f "$UT/feature-branches/PLN-001-x/.claude/skills/wf-spec/SKILL.md" ] && echo true || echo false)"
+
+# ...and the restore that makes it survivable.
+( cd "$UT/feature-branches/PLN-001-x" && "$SCRIPT_DIR/wf-worktree-harness.sh" . ) >/dev/null 2>&1
+assert_eq "the harness copier puts it back" "true" \
+  "$([ -f "$UT/feature-branches/PLN-001-x/.claude/skills/wf-spec/SKILL.md" ] && echo true || echo false)"
+assert_eq "wf-exec.sh too" "true" \
+  "$([ -x "$UT/feature-branches/PLN-001-x/scripts/wf-exec.sh" ] && echo true || echo false)"
+assert_eq "and the worktree is CLEAN — ignored files cannot dirty it" "0" \
+  "$(git -C "$UT/feature-branches/PLN-001-x" status --porcelain | wc -l | xargs)"
+
+# A later deploy changes the harness. Under tracking this is what dirtied every
+# worktree and aborted the next merge; now it is invisible to git.
+printf 'spec v2\n' > "$UT/.claude/skills/wf-spec/SKILL.md"
+( cd "$UT/feature-branches/PLN-001-x" && "$SCRIPT_DIR/wf-worktree-harness.sh" . ) >/dev/null 2>&1
+assert_eq "a mid-plan deploy leaves the worktree clean" "0" \
+  "$(git -C "$UT/feature-branches/PLN-001-x" status --porcelain | wc -l | xargs)"
+assert_eq "and the worktree has the new content" "spec v2" \
+  "$(cat "$UT/feature-branches/PLN-001-x/.claude/skills/wf-spec/SKILL.md")"
+assert_ok "so git merge develop still runs" \
+  git -C "$UT/feature-branches/PLN-001-x" merge develop --no-edit
+
+# install.sh must seed the ignores, or a client migrates halfway and re-dirties.
+for pat in '.claude/skills/wf-\*/' '.claude/workflow.md' 'scripts/wf-exec.sh' 'scripts/v\*/'; do
+  assert_eq "install.sh seeds the ignore for $pat" "true" \
+    "$(grep -q "\"$pat\"" "$LIB_ROOT/install.sh" && echo true || echo false)"
 done
 
 # ═══════════════════════════════════════════════════════════════════════

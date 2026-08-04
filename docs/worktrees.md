@@ -38,27 +38,49 @@ Configured by `wf-worktree-sparse.sh`:
 worktree copy of a versioned script is never the one that runs. Copying them in
 bought nothing and cost the exclusion.
 
-## Tracked normally — a session reads these off its own disk
+## Gitignored — a session reads these off its own disk
 
-`.claude/workflow.md`, `.claude/skills/**`, `scripts/wf-exec.sh`.
+`.claude/workflow.md`, `.claude/skills/wf-*/`, `scripts/wf-exec.sh`.
 
 Claude Code loads skills from the tree it is running in, and skills invoke
-`scripts/wf-exec.sh` by relative path. These must physically exist, so they
-cannot be excluded. `install.sh` overwrites them on every deploy, which leaves
-the worktree dirty against its own branch; `wf-infra-sync.sh` reconciles that by
-committing develop's bytes onto the feature branch. The commit is a no-op on
-merge-back — both sides hold identical content.
+`scripts/wf-exec.sh` by relative path, so these three must **physically exist**
+in every feature worktree.
 
-That sync is **pathspec-scoped** (`git commit -- <paths>`), never a bare commit:
-it runs from `install.sh`, which can fire while a worker has unrelated work
-staged in the same worktree.
+They used to be tracked, which is one way to get a file into a new worktree —
+git materialises tracked files on `git worktree add`. `install.sh` also wrote
+them. **Two delivery mechanisms for one requirement**, and their collision was
+the entire problem: deploy rewrote a tracked path, the worktree went dirty
+against its own branch, `git merge develop` aborted before it could conflict on
+anything real, and a script existed solely to commit develop's own bytes onto
+the feature branch to make it stop.
 
-## Adding a path
+As of **v5.0.0** they are gitignored and arrive one way: `wf-worktree-harness.sh`
+copies them from the main worktree. An ignored file cannot go dirty, cannot
+conflict, and cannot abort a merge, so there is nothing left to reconcile —
+`wf-infra-sync.sh` was deleted rather than fixed. See
+[`untracked-harness.md`](untracked-harness.md).
 
-Decide which list it belongs to *before* adding it, and put it in exactly one:
+The `wf-` prefix on the skills glob is load-bearing: a project's own skills sit
+in the same directory, are its source rather than ours, and stay tracked.
 
-- Does any process write it into a worktree? → tracked normally, and add it to
-  `INFRA` in `wf-infra-sync.sh`.
-- Otherwise → add it to the pattern list in `wf-worktree-sparse.sh`.
+## The three states a path can be in
 
-A path in both lists is the WFI-021 defect, rewritten.
+Decide which one applies *before* adding a path, and put it in exactly one:
+
+| State | When | Where it goes |
+|-|-|-|
+| **Gitignored** | The library generates it, and a session needs it on the worktree's disk | the ignore list in `install.sh`, and the copy list in `wf-worktree-harness.sh` |
+| **Sparse-excluded** | Develop owns it and nothing materialises it in a worktree | the pattern list in `wf-worktree-sparse.sh` |
+| **Tracked normally** | The project authors it | neither list |
+
+The rule that makes this a contract rather than a preference, from
+`wf-worktree-sparse.sh`'s own header:
+
+> Excluding a file you also write is not a stricter policy than tracking it; it
+> is a broken one.
+
+A path that is both sparse-excluded and written by deploy breaks git outright —
+that is WFI-021. A path that is both **tracked** and written by deploy is the
+milder version of the same mistake: it does not break, it just leaves every
+client permanently dirty and needs a reconciliation script to hide it. Generated
+content belongs in neither state; it belongs in the first row.

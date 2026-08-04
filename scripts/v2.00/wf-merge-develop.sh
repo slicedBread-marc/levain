@@ -27,48 +27,68 @@ if [ -d "$claim_dir" ]; then
   printf '%s\n%s\n' "$(date +%s)" "$_pid" > "$claim_dir/.wf-claim"
 fi
 
-# ── Pre-sync workflow infra ─────────────────────────────────────────────────
-# Runs on EVERY worktree, sparse or not. The three runtime paths a session
-# needs on disk (.claude/skills, .claude/workflow.md, scripts/wf-exec.sh)
-# cannot be sparse-excluded — anything that writes them clears the bit — so a
-# deploy landing mid-plan leaves them modified and `git merge develop` aborts
-# with "your local changes would be overwritten" before it conflicts on
-# anything real. This used to be skipped for sparse worktrees on the (wrong)
-# assumption that exclusion covered them.
-"$(dirname "$0")/wf-infra-sync.sh" . || true
+# ── Refresh the harness, before and after ───────────────────────────────────
+#
+# The three runtime paths a session needs on disk (.claude/skills/wf-*,
+# .claude/workflow.md, scripts/wf-exec.sh) are GITIGNORED as of v5.0.0, so they
+# are invisible to git: they cannot be dirty, cannot conflict, and cannot abort
+# this merge. All of the reconciliation that used to live here — an infra-sync
+# commit before merging, and `git checkout develop --` for a dozen paths — was
+# managing a problem that no longer exists.
+#
+# The pre-merge call is what makes the v5.0.0 migration self-healing. A feature
+# branch cut BEFORE the untrack commit still tracks those paths; merging
+# develop applies the deletion and strips them from this worktree mid-plan. The
+# post-merge call puts them straight back as ignored files, so the session
+# survives a migration that happened underneath it.
+# Before merging: if the harness is still TRACKED here — a branch cut before
+# the v5.0.0 migration — a deploy will have left it modified, and `git merge`
+# aborts on that ("your local changes would be overwritten") BEFORE it can
+# deliver the very commit that untracks it. The worktree would be permanently
+# unable to take the migration.
+#
+# Discarding those modifications is safe precisely because the content is
+# generated: the post-merge copy below reproduces it from the main worktree.
+for _p in .claude/workflow.md scripts/wf-exec.sh .claude/skills/wf-*/SKILL.md; do
+  git ls-files --error-unmatch "$_p" >/dev/null 2>&1 || continue
+  git checkout -- "$_p" 2>/dev/null || true
+done
+
+# NOTE: no harness COPY here, only the clean above. Copying before the merge
+# re-dirties the very files just restored — the main worktree holds develop's
+# newer content, which is exactly what makes them differ from this branch's
+# committed blob. The copy belongs after the merge, once they are untracked and
+# git can no longer see them (_restore_harness below).
 
 # ── Reset develop-only content for non-sparse worktrees ─────────────────────
-# Legacy (non-sparse) worktrees still track plans/, bugs/, templates/ and the
-# versioned script snapshots — reset them to develop's version before merging
-# so they can't cause dirty-tree failures or conflicts. Sparse worktrees never
-# have these on disk at all.
+# Legacy (non-sparse) worktrees still track plans/, bugs/ and templates/ —
+# reset them to develop's version before merging so they cannot cause
+# dirty-tree failures or conflicts. Sparse worktrees never have them on disk.
 if ! git config core.sparseCheckout 2>/dev/null | grep -q true; then
   needs_sync=false
   # Do NOT sync .claude/workflow-version — it's the plan's immovable WF stamp
   # and must not change mid-flight. Dispatcher routes on this value.
-  if [ -f ".claude/workflow.md" ]; then
-    git checkout develop -- ".claude/workflow.md" 2>/dev/null && needs_sync=true || true
-  fi
-  git checkout develop -- .claude/skills/ 2>/dev/null && needs_sync=true || true
   git checkout develop -- plans/ 2>/dev/null && needs_sync=true || true
   git checkout develop -- bugs/ 2>/dev/null && needs_sync=true || true
   git checkout develop -- briefs/ 2>/dev/null && needs_sync=true || true
   git checkout develop -- templates/ 2>/dev/null && needs_sync=true || true
-  # Versioned script snapshots + unversioned dispatcher + map (v2.00 layout).
-  for f in scripts/wf-exec.sh scripts/wf-prune-versions.sh scripts/version-map.txt scripts/v*/wf-*.sh; do
-    [ -f "$f" ] && git checkout develop -- "$f" 2>/dev/null && needs_sync=true || true
-  done
   if $needs_sync; then
-    git add .claude/workflow.md .claude/skills/ plans/ bugs/ briefs/ templates/ scripts/wf-exec.sh scripts/wf-prune-versions.sh scripts/version-map.txt scripts/v*/wf-*.sh 2>/dev/null || true
-    if ! git diff --cached --quiet 2>/dev/null; then
-      git commit -m "chore: sync workflow infra from develop"
-      echo "Pre-synced workflow infra to develop's version."
-    fi
+    "$(dirname "$0")/wf-commit.sh" "chore: sync plan content from develop" \
+      --add plans/ bugs/ briefs/ templates/ >/dev/null 2>&1 || true
   fi
 fi
 
+# Restore the harness after the merge, on every successful path.
+#
+# This is the half that makes the v5.0.0 migration self-healing: a feature
+# branch cut before the untrack commit still tracks those paths, so merging
+# develop DELETES them from this worktree. Putting them back as ignored files
+# leaves the session working and the tree clean.
+_restore_harness() { "$(dirname "$0")/wf-worktree-harness.sh" . >/dev/null 2>&1 || true; }
+
 # Attempt clean merge first
 if git merge develop --no-edit 2>/dev/null; then
+  _restore_harness
   echo "Merged develop cleanly."
   exit 0
 fi
@@ -114,4 +134,5 @@ if $has_non_plan_conflicts; then
 fi
 
 git commit --no-edit
+_restore_harness
 echo "Merged develop with auto-resolved plan files."
