@@ -1451,6 +1451,22 @@ mkdir -p "$MIG/scripts" && (
 assert_eq "and it does untrack what IS tracked" "0" \
   "$(git -C "$MIG" ls-files scripts/wf-exec.sh | wc -l | xargs)"
 
+# The v6 template swap used to drop plans/TEMPLATE.md.v5.bak beside the new
+# one — an untracked file in a TRACKED directory that nothing ever removes.
+# Three of five clients still carry one, so `deploy && status --porcelain`
+# could never come back empty no matter how much of the harness got untracked.
+# The old version is in git whenever the template is tracked, which is every
+# client; the backup is only warranted when it is not.
+assert_eq "the pre-v6 template backup is guarded by a tracked check" "true" \
+  "$(awk '/if \[ "\$REPLACING" = true \]/, /^        fi$/' "$LIB_ROOT/install.sh" \
+     | grep -q 'ls-files --error-unmatch "plans/TEMPLATE.md"' && echo true || echo false)"
+assert_eq "and a tracked template is removed, not backed up" "true" \
+  "$(awk '/ls-files --error-unmatch "plans\/TEMPLATE.md"/, /else/' "$LIB_ROOT/install.sh" \
+     | grep -q 'rm -f "\$DEST"' && echo true || echo false)"
+assert_eq "while an untracked one still keeps its copy" "true" \
+  "$(awk '/ls-files --error-unmatch "plans\/TEMPLATE.md"/, /^            fi$/' "$LIB_ROOT/install.sh" \
+     | grep -q 'mv "\$DEST" "\$DEST.v5.bak"' && echo true || echo false)"
+
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then

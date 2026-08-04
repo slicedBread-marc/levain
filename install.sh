@@ -226,8 +226,20 @@ for f in "$SCRIPT_DIR/templates/plans/TEMPLATE.md" "$SCRIPT_DIR/templates/plans/
             "$f" > "$DEST.new"
 
         if [ "$REPLACING" = true ]; then
-            mv "$DEST" "$DEST.v5.bak"
-            echo -e "${YELLOW}  plans/TEMPLATE.md is pre-v6 — replacing (old copy kept at TEMPLATE.md.v5.bak)${NC}"
+            # Keep a copy only when git isn't already keeping one. plans/ is
+            # tracked in every client, so for a committed template the previous
+            # version is `git show HEAD:plans/TEMPLATE.md` away — and a .bak
+            # beside it is worse than redundant: it is an untracked file in a
+            # tracked directory that nothing ever removes, so the tree is dirty
+            # forever and `deploy && status --porcelain` can never come back
+            # empty. app and client-i both carry one from the v6 upgrade.
+            if git -C "$TARGET_DIR" ls-files --error-unmatch "plans/TEMPLATE.md" >/dev/null 2>&1; then
+                rm -f "$DEST"
+                echo -e "${YELLOW}  plans/TEMPLATE.md is pre-v6 — replacing (previous version: git show HEAD:plans/TEMPLATE.md)${NC}"
+            else
+                mv "$DEST" "$DEST.v5.bak"
+                echo -e "${YELLOW}  plans/TEMPLATE.md is pre-v6 — replacing (untracked, so the old copy is kept at TEMPLATE.md.v5.bak)${NC}"
+            fi
         fi
         mv "$DEST.new" "$DEST"
         echo -e "${GREEN}  Installed $DEST${NC}"
