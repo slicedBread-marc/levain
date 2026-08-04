@@ -187,7 +187,20 @@ If the user picks a bug BUG-NNN:
    - Exact file paths to create or modify
    - Class/method/component names and signatures
    - Acceptance criteria (test command, observable behavior)
-7. **Define tests** — fill in the Tests table with specific test IDs, types, descriptions, and commands. **Maximize automation:** API responses, data correctness, markup structure, auth gates, redirects, and status codes are all automatable (unit tests, integration tests, curl commands, scripts). Only use `Manual` type for things that genuinely require human eyes — visual rendering, subjective UX, complex multi-step physical interactions.
+7. **Define tests** — fill in the Tests table with specific test IDs, types, descriptions, and commands.
+
+   **Get the command shape from the config, not from memory or from the template.** Run:
+
+   ```bash
+   scripts/wf-exec.sh wf-config-get.sh test_command
+   scripts/wf-exec.sh wf-config-get.sh test_filter_flag
+   ```
+
+   and build every command as `<test_command> <test_filter_flag> <name>`. Do not write a filter expression from your own knowledge of the runner. `--filter "FullyQualifiedName~X"` is **VSTest** syntax; a .NET project on Microsoft.Testing.Platform (xUnit v3, `dotnet test --solution`) rejects it with `Unknown option --filter`, exit code 5, **zero tests run** — and a verify agent reading only the exit code fails a perfectly good plan. client-a's PLN-018 shipped a Tests table where every row failed that way (WFI-055); its config said `--ignore-exit-code 8 --filter-method` the whole time.
+
+   `plans/TEMPLATE.md` is not a second opinion here. Its example was rendered from the config **when the harness was first installed** and is never re-rendered, so on any project whose runner changed since, the template's example is the stale one and the config is right.
+
+   **Maximize automation:** API responses, data correctness, markup structure, auth gates, redirects, and status codes are all automatable (unit tests, integration tests, curl commands, scripts). Only use `Manual` type for things that genuinely require human eyes — visual rendering, subjective UX, complex multi-step physical interactions.
 
    **Default-automated patterns** — past plans have repeatedly shipped these classes of criteria as automated tests (see `plans/auto-test-log.md` Realized section for proofs). If a criterion you're drafting fits one of these shapes, put it in the Tests table (not Human Test Criteria) from the start:
 
