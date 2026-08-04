@@ -392,6 +392,14 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
    GATE_TAGS=$(scripts/wf-exec.sh wf-list-tags.sh --gating)
    ```
 
+   **First, has this gate already been answered?** The rule below is re-derived on every dispatch, and a closed gate looks exactly like one that was never opened — so a plan approved by a human re-gates on the next pass, and the next, without end (WFI-047):
+   ```bash
+   eval "$(scripts/wf-exec.sh wf-gate-status.sh PLN-NNN spec-approval)"
+   ```
+   - `GATE_ANSWERED=true` → **do not gate.** The human already approved *this* revision. Honour the recorded `GATE_RESOLUTION`, transition `draft → ready`, and note in `## Review` that you acted on an existing approval.
+   - `GATE_STALE=true` → the plan changed after the approval. Gate again: the approval was given to a document that no longer says what it said.
+   - Otherwise → gate as below.
+
    **Needs a gate** (`SPEC_MODE` is `gate`, or the plan carries a tag in `GATE_TAGS`) — commit the reviewed plan, leave the state at `draft`, park, and exit. The gate question carries the verdict, because the human is now deciding on a *reviewed* plan and should not have to open the file to learn that:
    ```bash
    git add plans/PLN-NNN-<slug>/ && git commit -m "spec(PLN-NNN-<slug>): reviewed — Approved with notes, awaiting approval"

@@ -308,6 +308,7 @@ fi
 # Orchestrator runtime dirs — gates, worker logs, events.log, locks.
 # All runtime state, none of it belongs in git.
 mkdir -p "$TARGET_DIR/.claude/orchestrator/gates" \
+         "$TARGET_DIR/.claude/orchestrator/gates/resolved" \
          "$TARGET_DIR/.claude/orchestrator/logs" \
          "$TARGET_DIR/.claude/orchestrator/attempts"
 if ! grep -qF ".claude/orchestrator/" "$GITIGNORE" 2>/dev/null; then

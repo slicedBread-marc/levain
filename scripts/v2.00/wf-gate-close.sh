@@ -33,5 +33,41 @@ fi
 gate_name=$(grep -m1 "^GATE_NAME=" "$gate_file" | sed "s/^GATE_NAME='//; s/'$//")
 rm -f "$gate_file"
 
+# ── Remember that it was answered ─────────────────────────────────────────
+#
+# Deleting the gate file leaves "answered" and "never asked" looking identical:
+# both are simply the absence of a gate. That is fine for the dispatcher, which
+# only wants to know whether to skip the plan — and wrong for a skill, which
+# reaches its gating rule again on the very next dispatch.
+#
+# client-a hit the loop (WFI-047): a human granted spec-approval in writing,
+# the gate closed, the orchestrator re-dispatched wf-spec to action that
+# resolution, and step 6's rule ("a plan carrying a gateTag parks on an Approved
+# verdict") read exactly the same as it had the first time. Each re-dispatch
+# reproduces the condition, so the loop has no end. The only record of the
+# approval was prose in findings.md, which nothing reads.
+#
+# The record is fingerprinted with the plan text that was approved. An approval
+# is for a REVISION, not for a plan forever — edit the plan afterwards and the
+# fingerprint stops matching, which is what should re-open the question.
+resolved_dir="$(wf_orch_dir)/gates/resolved"
+mkdir -p "$resolved_dir"
+
+plan_fp=""
+slug=$(grep "^| $id |" "$(wf_develop_root)/plans/REGISTRY.md" 2>/dev/null \
+       | head -1 | awk -F'|' '{print $3}' | xargs || true)
+plan_md="$(wf_develop_root)/plans/${id}-${slug}/plan.md"
+if [ -n "$slug" ] && [ -f "$plan_md" ]; then
+  plan_fp=$(shasum "$plan_md" 2>/dev/null | awk '{print $1}' || true)
+fi
+
+{
+  wf_emit GATE_ID         "$id"
+  wf_emit GATE_NAME       "$gate_name"
+  wf_emit GATE_RESOLUTION "$resolution"
+  wf_emit GATE_RESOLVED   "$(wf_now)"
+  wf_emit GATE_PLAN_FP    "$plan_fp"
+} > "$resolved_dir/${id}.${gate_name}"
+
 wf_event gate-close "$id" "$gate_name: $resolution"
 echo "$id: gate '$gate_name' closed — $resolution"

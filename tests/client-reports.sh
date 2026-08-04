@@ -1205,6 +1205,49 @@ assert_eq "install.sh seeds the ignore" "true" \
   "$(grep -q 'echo "feature-branches/" >> "\$GITIGNORE"' "$LIB_ROOT/install.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A gate remembers it was answered (client-a WFI-047)"
+
+# A skill re-derives its gating rule on every dispatch, and a CLOSED gate is
+# indistinguishable from one never opened — both are just the absence of a gate
+# file. So a plan whose spec-approval a human granted in writing gets re-gated
+# on the next dispatch, and the next: each pass reproduces the condition, so the
+# loop has no end. The only record of the approval was prose in findings.md,
+# which nothing reads.
+registry_add_row PLN-018 wire draft "—" "infra,contract"
+
+st=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
+assert_eq "an unasked gate is not answered" "'false'" \
+  "$(printf '%s' "$st" | sed -n 's/^GATE_ANSWERED=//p')"
+
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-018 spec-approval "Approve?" --skill wf-spec >/dev/null 2>&1
+st=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
+assert_eq "an open gate reads as open" "'true'" \
+  "$(printf '%s' "$st" | sed -n 's/^GATE_OPEN=//p')"
+assert_eq "and not yet answered" "'false'" \
+  "$(printf '%s' "$st" | sed -n 's/^GATE_ANSWERED=//p')"
+
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-018 "plain approve, scope unchanged" >/dev/null 2>&1
+st=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
+assert_eq "a re-dispatch sees the answer, so it must not re-gate" "'true'" \
+  "$(printf '%s' "$st" | sed -n 's/^GATE_ANSWERED=//p')"
+assert_eq "and the resolution is readable by a script, not just prose" \
+  "'plain approve, scope unchanged'" \
+  "$(printf '%s' "$st" | sed -n 's/^GATE_RESOLUTION=//p')"
+
+# An approval is given to a REVISION, not to an ID forever. Edit the plan and
+# the question is genuinely open again.
+printf '## Goal\nWire contract, now with extra scope\n' > plans/PLN-018-wire/plan.md
+st=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
+assert_eq "editing the plan after approval re-opens the question" "'true'" \
+  "$(printf '%s' "$st" | sed -n 's/^GATE_STALE=//p')"
+assert_eq "and it no longer counts as answered" "'false'" \
+  "$(printf '%s' "$st" | sed -n 's/^GATE_ANSWERED=//p')"
+
+assert_eq "wf-spec checks before re-opening spec-approval" "true" \
+  "$(awk '/^## Exit — unattended/, /^## Replanning/' "$LIB_ROOT/skills/wf-spec/SKILL.md" \
+     | grep -q 'wf-gate-status.sh' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"
