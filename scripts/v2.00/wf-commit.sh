@@ -79,8 +79,55 @@ fi
 # already holding it (wf-registry-update.sh) does not deadlock.
 wf_lock_acquire commit
 
+# Stage one path at a time, and do NOT discard the result.
+#
+# This was a single `git add -- "${paths[@]}" 2>/dev/null || true`, which fails
+# two ways that both end at the same silent no-op:
+#
+#   WFI-053 — `git add` is ATOMIC across its pathspecs. Callers pass a fixed
+#     list including `plans/deferred-criteria.md`, and a project that has never
+#     deferred a criterion does not have that file, so git aborts the WHOLE add
+#     with "did not match any files" and stages nothing. wf-spec then committed
+#     only what another script had already staged, reported "committed 2
+#     path(s)", and left the new plan folder untracked — the registry said
+#     `ready` for a plan whose plan.md was not in the repo, and a builder
+#     picked it up and moved it to `active` against a folder git had never seen.
+#
+#   WFI-057 — a concurrent worker holding .git/index.lock makes the add fail
+#     outright. The failure was swallowed, `git diff --cached` was then
+#     legitimately empty, and the script announced "nothing to commit" and
+#     exited 0 while the caller's modified file sat unstaged. Under the
+#     orchestrator this is routine, not rare.
+#
+# So the two outcomes that must never look alike — "there was nothing to do"
+# and "my write was lost" — were reported identically, with the same exit code,
+# by the script written to close exactly that auditability hole.
+#
+# Now: a pathspec matching nothing is benign and skipped (it is how callers
+# name optional files); a lock is retried; anything else fails loudly.
 if [ "${#paths[@]}" -gt 0 ]; then
-  git add -- "${paths[@]}" 2>/dev/null || true
+  for p in "${paths[@]}"; do
+    add_err=""
+    attempt=0
+    while :; do
+      if add_err=$(git add -- "$p" 2>&1); then add_err=""; break; fi
+      case "$add_err" in
+        *"did not match any file"*)
+          # Named but never created here. Not this commit's problem.
+          add_err=""; break ;;
+        *index.lock*|*"Unable to create"*)
+          attempt=$((attempt + 1))
+          [ "$attempt" -lt 5 ] || break
+          sleep 1 ;;
+        *) break ;;
+      esac
+    done
+    if [ -n "$add_err" ]; then
+      echo "wf-commit: git add failed for '$p' — not committing." >&2
+      printf '%s\n' "$add_err" >&2
+      exit 1
+    fi
+  done
 fi
 
 # Read the list back from the index rather than trusting the requested paths:
