@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
-# wf-gate-close.sh <artifact-id> [resolution]
+# wf-gate-close.sh <artifact-id> [resolution] [--gate <name>]
 #
 # Releases a parked artifact. The next dispatcher sweep picks it up again.
 # Safe to call when no gate is open.
 #
 # resolution is free text recorded in events.log (e.g. "approved", "rejected",
 # "criteria passed") — it is the audit trail for why work resumed.
+#
+# --gate <name>  Record the resolution under this gate name even when no gate
+#                file is open. This is the backfill path: a decision a human
+#                demonstrably made — in a commit message, in findings.md —
+#                but which the resolved-gate ledger has no record of, because
+#                the gate closed before the ledger existed or was cleared by
+#                hand. Without it, wf-gate-status.sh reports GATE_ANSWERED=false
+#                and the owning skill re-asks a question already answered in
+#                writing (client-a WFI-060, PLN-019's spec approval), and
+#                the only workarounds are faking an open gate or overriding the
+#                skill's own rule.
 #
 # Exit 0 always (idempotent).
 
@@ -14,8 +25,22 @@ set -euo pipefail
 # shellcheck source=wf-orch-lib.sh
 source "$(dirname "$0")/wf-orch-lib.sh"
 
-artifact="${1:?Usage: $0 <artifact-id> [resolution]}"
-resolution="${2:-resolved}"
+artifact=""
+resolution=""
+forced_gate=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --gate) forced_gate="${2:?--gate requires a gate name}"; shift 2 ;;
+    -*)     echo "Unknown option: $1" >&2; exit 1 ;;
+    *)
+      if [ -z "$artifact" ]; then artifact="$1"; else resolution="$1"; fi
+      shift ;;
+  esac
+done
+
+[ -n "$artifact" ] || { echo "Usage: $0 <artifact-id> [resolution] [--gate <name>]" >&2; exit 1; }
+resolution="${resolution:-resolved}"
 
 id=$(printf '%s' "$artifact" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
 if [ -z "$id" ]; then
@@ -25,13 +50,18 @@ fi
 
 gate_file="$(wf_orch_dir)/gates/${id}.gate"
 
-if [ ! -f "$gate_file" ]; then
+if [ ! -f "$gate_file" ] && [ -z "$forced_gate" ]; then
   echo "$id: no open gate"
   exit 0
 fi
 
-gate_name=$(grep -m1 "^GATE_NAME=" "$gate_file" | sed "s/^GATE_NAME='//; s/'$//")
-rm -f "$gate_file"
+if [ -f "$gate_file" ]; then
+  gate_name=$(grep -m1 "^GATE_NAME=" "$gate_file" | sed "s/^GATE_NAME='//; s/'$//")
+  rm -f "$gate_file"
+else
+  gate_name="$forced_gate"
+fi
+[ -n "$forced_gate" ] && gate_name="$forced_gate"
 
 # ── Remember that it was answered ─────────────────────────────────────────
 #
@@ -64,4 +94,8 @@ plan_fp=$(wf_plan_fingerprint "$id")
 } > "$resolved_dir/${id}.${gate_name}"
 
 wf_event gate-close "$id" "$gate_name: $resolution"
-echo "$id: gate '$gate_name' closed — $resolution"
+if [ -n "$forced_gate" ] && [ ! -f "$gate_file" ]; then
+  echo "$id: recorded '$gate_name' as answered — $resolution"
+else
+  echo "$id: gate '$gate_name' closed — $resolution"
+fi

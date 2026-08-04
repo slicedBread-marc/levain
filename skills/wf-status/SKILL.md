@@ -127,6 +127,7 @@ Use `wf-list-implementable.sh` output (tab-separated: `<type>\t<plan-name>\t<goa
 | wf-list-ready.sh | — | Ready to build | |
 | wf-list-implementable.sh | `fix` | Ready to fix | active, unclaimed, has open findings |
 | wf-list-implementable.sh | `resume` | Ready to fix | active, unclaimed, no findings — stalled |
+| wf-list-implementable.sh | `gated` | Waiting on you | a gate is open; 5th field names it. Point at `/wf-attend` |
 | wf-list-implementable.sh | `blocked` | Blocked | deps not all complete — show `[blocked by PLN-NNN]` |
 | wf-list-implementable.sh | `processing` | In progress | active, claimed — show claim age |
 | wf-list-verify.sh | — | Verifying (agent) | automated |

@@ -32,6 +32,13 @@ All eligibility is determined by `plans/REGISTRY.md` state. Scripts in `scripts/
 | `new` | `ready` | Plan exists, **no existing worktree** for its branch |
 | `resume` | `active`, or `ready` with a worktree | No unchecked findings in `findings.md` |
 | `fix` | `active`, or `ready` with a worktree | Has unchecked (non-ESCALATED) findings in `findings.md` |
+| `gated` | any | A gate is open on the plan — a human owes it an answer |
+
+`gated` outranks every other type, and it is emitted rather than silently
+dropped so the reason is visible. It was added in v5.1: the dispatcher
+checked gates before spawning but this script did not, so a plan carrying an
+unanswered gate was listed as ordinary `new` work and an implementer landed on
+it with nothing in the worklist to say otherwise (client-a WFI-063).
 
 A plan sent back to `ready` for a replan keeps its branch and worktree, so state
 alone does not distinguish a new build from a resumed one. The worktree does:

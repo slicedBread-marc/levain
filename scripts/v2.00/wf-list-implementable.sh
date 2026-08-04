@@ -9,11 +9,26 @@
 #   type = "fix"        — has a worktree, has unchecked findings
 #   type = "processing" — state: active, claimed by another session (< 2h old claim file)
 #   type = "blocked"    — deps not all complete (appends blocking plan IDs)
+#   type = "gated"      — a gate is open on it; a human owes an answer first
 #   priority = "urgent" or "—" (normal)
 #
 # Urgent items are output first. Exit 0 if any found, exit 1 if none.
+#
+# `gated` exists because eligibility was only half-computed here. The
+# dispatcher checked gates itself before spawning, so this script — documented
+# as the single source of implementable truth — happily listed a plan with an
+# unanswered gate as an available `new`. client-a's WFI-063: an implementer
+# landed on PLN-019 while an ESCALATED consistency gate on it was open, found
+# nothing in the worklist saying so, and had to discover the gate by reading
+# .claude/orchestrator/gates/ by hand. Whoever asks "what can I build?" — human,
+# skill or daemon — gets the same answer now.
 
 set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# shellcheck source=wf-orch-lib.sh
+source "$SELF_DIR/wf-orch-lib.sh"
 
 # Registry work is develop-root work. Sourced/derived paths below are relative
 # ("plans/REGISTRY.md", "plans/PLN-NNN-slug/..."), and verify and implement
@@ -42,6 +57,13 @@ urgent_lines=()
 normal_lines=()
 processing_lines=()
 blocked_lines=()
+gated_lines=()
+
+# Open gates, read once: "<id>\t<gate>\t..." per record.
+open_gates=$("$SELF_DIR/wf-list-gates.sh" 2>/dev/null || true)
+gate_on() {
+  printf '%s\n' "$open_gates" | awk -F'\t' -v id="$1" '$1 == id { print $2; exit }'
+}
 
 # Helper: check if a plan's deps are all complete
 check_deps_blocked() {
@@ -82,6 +104,15 @@ while IFS='|' read -r _ id slug state priority branch _rest; do
   goal=$(grep -A 1 "^## Goal" "$plan_dir/plan.md" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//' || true)
   plan_name="${id}-${slug}"
 
+  # A gate outranks every other reason: nothing about this plan is settled
+  # until a human answers, so it is not implementable in any of the shapes below.
+  gate_name=$(gate_on "$id")
+  if [ -n "$gate_name" ]; then
+    gated_lines+=("$(printf "gated\t%s\t%s\t%s\t%s" "$plan_name" "$goal" "$priority" "$gate_name")")
+    found=1
+    continue
+  fi
+
   # Check deps (field 10 in the original row)
   row_full=$(grep "^| $id |" "$REGISTRY" | head -1)
   deps_raw=$(echo "$row_full" | awk -F'|' '{print $10}' | xargs)
@@ -107,22 +138,8 @@ while IFS='|' read -r _ id slug state priority branch _rest; do
     if [ "$priority" = "urgent" ]; then urgent_lines+=("$line"); else normal_lines+=("$line"); fi
     found=1
   elif [ "$effective_state" = "active" ]; then
-    claimfile="$plan_dir/.wf-claim"
-    claimed=0
-    now=$(date +%s)
-    if [ -f "$claimfile" ]; then
-      claim_ts=$(sed -n '1p' "$claimfile" 2>/dev/null)
-      claim_pid=$(sed -n '2p' "$claimfile" 2>/dev/null)
-      age=$(( now - claim_ts ))
-      if [ -n "$claim_pid" ]; then
-        kill -0 "$claim_pid" 2>/dev/null && [ "$age" -lt 7200 ] && claimed=1
-      else
-        [ "$age" -lt 7200 ] && claimed=1
-      fi
-      [ "$claimed" -eq 0 ] && rm -f "$claimfile"
-    fi
-    if [ "$claimed" -eq 1 ]; then
-      claim_age_min=$(( age / 60 ))
+    if wf_claim_live "$plan_dir"; then
+      claim_age_min=$(( WF_CLAIM_AGE / 60 ))
       processing_lines+=("$(printf "processing\t%s\t%s\t%s\t%s" "$plan_name" "$goal" "$priority" "${claim_age_min}m ago")")
       found=1
       continue
@@ -143,5 +160,6 @@ for line in "${urgent_lines[@]+"${urgent_lines[@]}"}"; do printf "%s\n" "$line";
 for line in "${normal_lines[@]+"${normal_lines[@]}"}"; do printf "%s\n" "$line"; done
 for line in "${processing_lines[@]+"${processing_lines[@]}"}"; do printf "%s\n" "$line"; done
 for line in "${blocked_lines[@]+"${blocked_lines[@]}"}"; do printf "%s\n" "$line"; done
+for line in "${gated_lines[@]+"${gated_lines[@]}"}"; do printf "%s\n" "$line"; done
 
 exit $((1 - found))

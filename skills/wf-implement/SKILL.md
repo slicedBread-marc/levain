@@ -43,7 +43,7 @@ Exiting to `verify` is unchanged: it is a normal state transition, and the verif
 
 ```
 Agent(model: haiku, prompt: "Run `scripts/wf-exec.sh wf-list-implementable.sh` in the current directory.
-Output is tab-separated: <type>\t<plan-name>\t<goal>\t<priority>. Processing type has a 5th field: <claim-age>. Blocked type has a 5th field: <blocking-plan-ids>.
+Output is tab-separated: <type>\t<plan-name>\t<goal>\t<priority>. Processing type has a 5th field: <claim-age>. Blocked type has a 5th field: <blocking-plan-ids>. Gated type has a 5th field: <gate-name>.
 Exit code 1 means no plans.
 
 You MUST format output as markdown tables using pipe syntax. Do NOT use paragraphs, bullet lists, or plain text.
@@ -66,7 +66,13 @@ Table 3 — In progress (types: processing only, no row numbers):
 |-|-|-|-|
 | — | PLN-002-example | Example goal | 15m ago |
 
-Omit Table 2 if no blocked items. Omit Table 3 if no processing items. After the tables add:
+Table 4 — Waiting on a human (type: gated, no row numbers):
+
+| Plan | Goal | Gate |
+|-|-|-|
+| PLN-019-example | Example goal | consistency-migration |
+
+Omit Table 2 if no blocked items. Omit Table 3 if no processing items. Omit Table 4 if no gated items. After the tables add:
 Mark a plan urgent: \`u <number>\`
 Force-take a stale claim: \`force <plan-id>\` (e.g. \`force PLN-022-lesson-deeplink-urls\`)
 
@@ -105,6 +111,7 @@ Wait for the user to pick a number. Then check the **Type** column for that row:
 | `resume` | **Skip Phase 1 entirely** → jump to Phase 2 step 9 |
 | `fix` | **Skip Phase 1 entirely** → jump to Fix Cycle |
 | `processing` | Not selectable — claimed by another session |
+| `gated` | Not selectable — a human owes it an answer. Say which gate, and point at `/wf-attend` |
 
 **CRITICAL — resume/fix plans already have a worktree and branch.** Do NOT run Phase 1 for them. Do NOT run `git worktree add`, `wf-registry-update.sh ready active`, or create a new branch. Jump directly to Phase 2 step 9 (which claims the plan, cd's to the existing worktree, and merges develop).
 
@@ -155,6 +162,13 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
 ## Phase 1: Setup (on `develop` branch)
 
 1. **Confirm you are on `develop`** — `scripts/wf-exec.sh wf-branch-check.sh develop true`
+1b. **Check for an open gate on this plan — before writing anything:**
+   ```bash
+   scripts/wf-exec.sh wf-list-gates.sh PLN-NNN
+   ```
+   Exit 0 means a gate is open and a human owes it an answer. **Stop.** Display the gate line and exit 0 without transitioning the registry or creating a branch. Under `WF_UNATTENDED=1`, say which gate and exit — the dispatcher will offer the plan again once it is answered.
+
+   A gate can open after you were dispatched: `wf-consistency` runs against `ready` plans and opens one the moment it finds a cross-plan contradiction. client-a's WFI-063 had an implementer land on a plan carrying an unanswered `consistency-migration` gate, with the worklist showing it as ordinary `new` work; it implemented three steps before discovering the gate by reading `.claude/orchestrator/gates/` by hand. The worklist names this now (`gated` rows in `wf-list-implementable.sh`), and this check is the second line of defence for a gate that opened between the dispatch and you.
 2. **Read the plan** — `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"` then read `$PLAN_DIR/plan.md`
 3. **Goal check** — if `$PLAN_GOAL_MISSING` is `true`: under `WF_UNATTENDED=1` this is a **[GATE]** — open gate `goal-missing` and exit 0. Otherwise ask the user: "This plan has no goal summary. Please provide a one-line goal describing what this achieves." Write their answer as the first line under `## Goal` in `$PLAN_DIR/plan.md`, stage the file, and commit: `git add $PLAN_DIR/plan.md && git commit -m "spec($PLAN_NAME): add missing goal"`. Re-run `eval "$(scripts/wf-exec.sh wf-plan-info.sh $PLAN_NAME)"` to pick up the goal.
 4. **Update REGISTRY.md** — lock the plan:
@@ -419,7 +433,9 @@ Project name: `{{project_slug}}-pln<id>` (e.g., `{{project_slug}}-pln004`)
 - If the plan is ambiguous, note it in progress.md and continue — or ask the user
 - You may edit src/, tests/ and update progress.md / check off findings
 - **Do NOT** edit the plan's Steps, Tests, or Design Decisions sections
-- **Do NOT** add findings — only the verify agent and `/wf-test` produce findings
+- **Do NOT** raise findings — a finding is a verdict on the work, and only the verify agent and `/wf-test` deliver those. Checking an existing one off is yours; opening a new one is not.
+
+  This is narrower than the old "do NOT add findings", which read as a ban on writing to `findings.md` at all and collided with plans whose own checklist told the implementer to record something there (client-a WFI-068, where a Regression Scope item said to note in findings.md that another plan's criterion had become testable again). **When a plan instructs you to record an observation, write it to `progress.md` and check the item off with a pointer to it** — that is the implementer's notebook, and it is read by verify. If the observation is "this criterion can now be tested", the right home is neither file: `wf-defer-criterion.sh` already owns `plans/deferred-criteria.md`, and `/wf-spec` reads it back.
 
 ## When the workflow misbehaves
 
