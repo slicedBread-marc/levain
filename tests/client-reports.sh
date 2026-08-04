@@ -1508,6 +1508,229 @@ assert_eq "while an untracked one still keeps its copy" "true" \
      | grep -q 'mv "\$DEST" "\$DEST.v5.bak"' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "wf-commit stages each path on its own (client-a WFI-053/057)"
+
+# `git add` is atomic across its pathspecs, and callers pass a fixed list that
+# includes optional files. One missing file aborted the whole add, so nothing
+# staged and the plan folder was silently left out of its own commit.
+CMT="$TEST_DIR/commit"
+mkdir -p "$CMT/scripts" "$CMT/plans/PLN-021-arg-injection"
+cp "$SCRIPT_DIR/wf-commit.sh" "$SCRIPT_DIR/wf-lock.sh" "$CMT/scripts/"
+(
+  cd "$CMT" && git init -q . && git config user.email t@t && git config user.name t
+  echo seed > seed.txt && git add seed.txt && git commit -qm seed
+) >/dev/null 2>&1
+echo "the plan" > "$CMT/plans/PLN-021-arg-injection/plan.md"
+echo "registry" > "$CMT/plans/REGISTRY.md"
+
+# plans/deferred-criteria.md does not exist — this project has never deferred one.
+(cd "$CMT" && ./scripts/wf-commit.sh "spec: PLN-021" \
+   --add plans/PLN-021-arg-injection/ plans/REGISTRY.md plans/deferred-criteria.md) >/dev/null 2>&1
+assert_eq "a missing optional pathspec does not discard the rest of the add" "plans/PLN-021-arg-injection/plan.md" \
+  "$(cd "$CMT" && git ls-files plans/PLN-021-arg-injection/plan.md)"
+assert_eq "and the registry lands in the same commit" "plans/REGISTRY.md" \
+  "$(cd "$CMT" && git ls-files plans/REGISTRY.md)"
+
+# The other half: a failed add must not be reported as "nothing to commit".
+# Under the orchestrator a concurrent worker holding .git/index.lock is routine,
+# and the two outcomes had the same message AND the same exit code.
+echo "changed" >> "$CMT/plans/REGISTRY.md"
+touch "$CMT/.git/index.lock"
+lock_out=$(cd "$CMT" && WF_LOCK_TIMEOUT=2 ./scripts/wf-commit.sh "workflow: file WFI-056" \
+             --add plans/REGISTRY.md 2>&1); lock_rc=$?
+rm -f "$CMT/.git/index.lock"
+assert_eq "a held index.lock fails loudly rather than reporting nothing to commit" "1" "$lock_rc"
+assert_eq "and does not print the benign skip message" "false" \
+  "$(printf '%s' "$lock_out" | grep -q 'nothing to commit' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A CLI plan's human criteria still gate (client-a WFI-054)"
+
+# wf-manual-lint reads a pre-v6 plan the v5 way and promotes every untagged
+# criterion to eyes:blocking. wf-manual-gate then closed the gate because the
+# diff touched no rendering surface — so in a CLI project, where no diff ever
+# touches one, EVERY plan auto-completed EVERY human criterion. PLN-004 went
+# testing → complete in ~40s with five criteria untested, two of them safety
+# assertions about private key material on a shared drive.
+GATE_DIR="$TEST_DIR/manualgate"
+mkdir -p "$GATE_DIR/scripts" "$GATE_DIR/plans/PLN-004-tool-cli"
+cp "$SCRIPT_DIR/wf-manual-gate.sh" "$SCRIPT_DIR/wf-manual-lint.sh" \
+   "$SCRIPT_DIR/wf-plan-info.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$GATE_DIR/scripts/"
+printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-004 | tool-cli | testing | — | — | 2026-08-04 | %s | — | — |\n' \
+  "${SCRIPT_FOLDER#v}" > "$GATE_DIR/plans/REGISTRY.md"
+# schema_version 5: no tags, exactly the population the surface rule mishandled.
+cat > "$GATE_DIR/plans/PLN-004-tool-cli/plan.md" << 'PLANEOF'
+schema_version: 5
+
+## Goal
+A CLI.
+
+#### Manual
+- [ ] tool take <handle> for a capsule with side effects stops for confirmation
+- [ ] tool key export then tool key import leaves <drive>/keys/ empty afterwards
+PLANEOF
+printf 'manualTestGate:\n  requireRenderingSurface: true\n  minEyesCriteria: 1\n  blockOnCosmetic: false\n  renderingSurfaces:\n    - "src/**/wwwroot/**"\n' \
+  > "$GATE_DIR/claude-workflow.yml"
+# A real diff that touches no rendering surface — a CLI change. Without one the
+# gate takes the "could not read the plan's diff" branch, which also gates, and
+# the assertions below would pass for the wrong reason.
+mkdir -p "$GATE_DIR/src/Cli"
+(
+  cd "$GATE_DIR" && git init -q . && git config user.email t@t && git config user.name t
+  git add -A && git commit -qm seed
+  echo 'class Program {}' > src/Cli/Program.cs
+  git add -A && git commit -qm cli
+) >/dev/null 2>&1
+
+gate_out=$(cd "$GATE_DIR" && ./scripts/wf-manual-gate.sh PLN-004 2>/dev/null || true)
+assert_eq "untagged criteria are counted as untagged, not silently as eyes" "2" \
+  "$(printf '%s' "$gate_out" | grep "^MANUAL_OPEN_UNTAGGED=" | tr -d "MANUAL_OPEN_UNTAGGED='")"
+assert_eq "a CLI plan whose diff renders nothing still gates" "GATE='true'" \
+  "$(printf '%s' "$gate_out" | grep "^GATE=")"
+assert_eq "and the reason names the untagged criteria, not the surface" "true" \
+  "$(printf '%s' "$gate_out" | grep '^GATE_REASON=' | grep -q 'no reason tag' && echo true || echo false)"
+
+# The surface rule must still work for the case it was written for: a v6 plan
+# whose criteria someone actually tagged eyes:*.
+cat > "$GATE_DIR/plans/PLN-004-tool-cli/plan.md" << 'PLANEOF'
+schema_version: 6
+
+## Goal
+A CLI.
+
+#### Manual
+- [ ] (eyes:blocking) /app/board — the column spacing reads clearly at 1280px
+PLANEOF
+tagged_out=$(cd "$GATE_DIR" && ./scripts/wf-manual-gate.sh PLN-004 2>/dev/null || true)
+assert_eq "a genuinely eyes-tagged criterion still skips on a surface miss" "GATE='false'" \
+  "$(printf '%s' "$tagged_out" | grep "^GATE=")"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "One gate is one record (client-a WFI-049)"
+
+# GATE_QUESTION is free text and wf-spec's scope-reduction question embeds
+# paragraphs. The lister emitted and counted LINES, so one open gate printed 11
+# rows — 10 of them phantom, with empty ids — and reported GATES: 11.
+GATES_DIR="$TEST_DIR/gates"
+mkdir -p "$GATES_DIR/scripts" "$GATES_DIR/.claude/orchestrator/gates" "$GATES_DIR/plans"
+cp "$SCRIPT_DIR/wf-list-gates.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$GATES_DIR/scripts/"
+printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-004 | tool-cli | draft | — | — | 2026-08-04 | 2.00 | — | — |\n' \
+  > "$GATES_DIR/plans/REGISTRY.md"
+cat > "$GATES_DIR/.claude/orchestrator/gates/PLN-004.gate" << 'GATEEOF'
+GATE_ID='PLN-004'
+GATE_ARTIFACT='PLN-004'
+GATE_NAME='scope-reduction'
+GATE_QUESTION='The goal narrowed.
+
+Goal: build the whole CLI.
+
+After: build only tool take.
+
+Reason: the rest depends on PLN-008.'
+GATE_CONTEXT='replan'
+GATE_SKILL='wf-spec'
+GATE_OPENED='2026-08-04T14:47:36Z'
+GATEEOF
+(cd "$GATES_DIR" && git init -q . && git config user.email t@t && git config user.name t) >/dev/null 2>&1
+
+gates_rows=$(cd "$GATES_DIR" && ./scripts/wf-list-gates.sh 2>/dev/null | wc -l | xargs)
+gates_count=$(cd "$GATES_DIR" && ./scripts/wf-list-gates.sh 2>&1 >/dev/null | grep '^GATES:' || true)
+assert_eq "a multi-line question still emits exactly one row" "1" "$gates_rows"
+assert_eq "and the count reports gates, not lines" "GATES: 1" "$gates_count"
+assert_eq "the question text survives, flattened onto the row" "true" \
+  "$(cd "$GATES_DIR" && ./scripts/wf-list-gates.sh 2>/dev/null \
+     | grep -q 'The goal narrowed. Goal: build the whole CLI.' && echo true || echo false)"
+# The single-artifact probe is the dispatcher's "skip this one?" test and shares
+# the same contract.
+probe_rows=$(cd "$GATES_DIR" && ./scripts/wf-list-gates.sh PLN-004 2>/dev/null | wc -l | xargs)
+assert_eq "the single-artifact probe is one row too" "1" "$probe_rows"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Dated amendments are counted (client-a WFI-051)"
+
+# plans/TEMPLATE.md specifies "[date] — description", so every amendment is
+# written `### [2026-08-04] — A9: ...`. The counting regex required the id
+# immediately after the marker, so AMENDMENTS_NEW was always 0 — reported to a
+# caller standing in front of the always-on scope-reduction gate.
+DELTA="$TEST_DIR/goaldelta"
+mkdir -p "$DELTA/scripts" "$DELTA/plans/PLN-004-tool-cli"
+cp "$SCRIPT_DIR/wf-goal-delta.sh" "$SCRIPT_DIR/wf-plan-info.sh" "$DELTA/scripts/" 2>/dev/null || true
+printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-004 | tool-cli | draft | — | — | 2026-08-04 | %s | — | — |\n' \
+  "${SCRIPT_FOLDER#v}" > "$DELTA/plans/REGISTRY.md"
+printf '## Goal\nBuild the CLI.\n\n## Amendments\n' > "$DELTA/plans/PLN-004-tool-cli/plan.md"
+(
+  cd "$DELTA" && git init -q . && git config user.email t@t && git config user.name t
+  git add -A && git commit -qm seed
+) >/dev/null 2>&1
+printf '\n### [2026-08-04] — A9: narrow to tool take only\n' >> "$DELTA/plans/PLN-004-tool-cli/plan.md"
+delta_out=$(cd "$DELTA" && ./scripts/wf-goal-delta.sh PLN-004 2>/dev/null || true)
+assert_eq "an amendment written in the template's own dated form is counted" "1" \
+  "$(printf '%s' "$delta_out" | grep '^AMENDMENTS_NEW:' | awk '{print $2}')"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Deferring a criterion ticks its box (client-a WFI-056)"
+
+# The DC row is the program-wide record; the plan's checkbox is what a reader
+# sees. Left unchecked, "deferred on purpose" and "silently dropped" look
+# identical — the same ambiguity that made WFI-054 hard to notice.
+DEFER="$TEST_DIR/defer"
+mkdir -p "$DEFER/scripts" "$DEFER/plans/PLN-018-capsule-wire"
+cp "$SCRIPT_DIR/wf-defer-criterion.sh" "$SCRIPT_DIR/wf-plan-info.sh" \
+   "$SCRIPT_DIR/wf-orch-lib.sh" "$SCRIPT_DIR/wf-lock.sh" "$DEFER/scripts/"
+printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-018 | capsule-wire | testing | — | — | 2026-08-04 | %s | — | — |\n' \
+  "${SCRIPT_FOLDER#v}" > "$DEFER/plans/REGISTRY.md"
+cat > "$DEFER/plans/PLN-018-capsule-wire/plan.md" << 'PLANEOF'
+schema_version: 6
+
+## Goal
+Wire contract.
+
+#### Manual
+- [ ] (external) the relay accepts a sealed capsule from a real second device
+PLANEOF
+(cd "$DEFER" && git init -q . && git config user.email t@t && git config user.name t) >/dev/null 2>&1
+
+(cd "$DEFER" && ./scripts/wf-defer-criterion.sh PLN-018 external \
+   "the relay accepts a sealed capsule from a real second device" --prereq PLN-008) >/dev/null 2>&1
+defer_line=$(grep -- '- \[' "$DEFER/plans/PLN-018-capsule-wire/plan.md")
+assert_eq "the deferred criterion is checked off in its own plan" "true" \
+  "$(printf '%s' "$defer_line" | grep -q '^- \[x\]' && echo true || echo false)"
+assert_eq "and the line cites the DC id, so it cannot read as silently dropped" "true" \
+  "$(printf '%s' "$defer_line" | grep -q 'deferred as DC-001' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Verify reads the branch's own config (client-a WFI-052)"
+
+# claude-workflow.yml was located by walking up from SCRIPT_DIR, which
+# wf-exec.sh always resolves to the MAIN worktree. A plan whose Step 1 adds a
+# test project to testScopes commits that on its own branch; verify then read
+# develop's config, did not see it, and filed a finding saying the scope was
+# "never added" — citing the lines where the branch's own commit added it.
+assert_eq "the config root is the invoking worktree when it has one" "true" \
+  "$(grep -q 'CONFIG_ROOT="\$WORKTREE_ROOT"' "$SCRIPT_DIR/wf-test-scope.sh" && echo true || echo false)"
+assert_eq "and the runner detection reads that same tree" "true" \
+  "$(grep -q 'if \[ -f "\$CONFIG_ROOT/global.json" \]' "$SCRIPT_DIR/wf-test-scope.sh" && echo true || echo false)"
+# On DEVELOP_ROOT, HEAD *is* develop, so this diff was empty by definition and
+# the whole testMappings auto-detection could never fire.
+assert_eq "the auto-detect diff runs in the branch worktree, not on develop" "true" \
+  "$(grep -q 'changed_files=\$(git -C "\$CONFIG_ROOT" diff --name-only develop..HEAD' "$SCRIPT_DIR/wf-test-scope.sh" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Plan test commands come from the config (client-a WFI-055)"
+
+# The planner wrote VSTest `--filter "FullyQualifiedName~X"` from its own
+# knowledge. On Microsoft.Testing.Platform that is "Unknown option --filter",
+# exit 5, zero tests run — and a verify agent reading the exit code fails a good
+# plan. client-a's config had said `--filter-method` the whole time; the
+# stale example in its seeded plans/TEMPLATE.md is what taught the wrong syntax.
+assert_eq "wf-spec reads the filter flag from the config" "true" \
+  "$(grep -q 'wf-config-get.sh test_filter_flag' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+assert_eq "and is warned off writing FullyQualifiedName from memory" "true" \
+  "$(grep -q 'FullyQualifiedName~X`\*\* is \*\*VSTest\*\* syntax\|is \*\*VSTest\*\* syntax' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+assert_eq "and told the seeded template is the stale one, not a second opinion" "true" \
+  "$(grep -q 'never re-rendered' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"
