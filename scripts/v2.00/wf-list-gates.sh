@@ -32,6 +32,22 @@ query="${1:-}"
 gates_dir="$(wf_orch_dir)/gates"
 REGISTRY="$(wf_develop_root)/plans/REGISTRY.md"
 
+# One record per line is this script's entire output contract, and GATE_QUESTION
+# is free text a skill wrote. wf-spec's scope-reduction question embeds the Goal,
+# the After and the Reason as separate PARAGRAPHS, so the record ran to 11 lines:
+# the first carried the fields, the other 10 were question text with an empty id,
+# and `wc -l` duly reported GATES: 11 for a single open gate. A caller trusting
+# the count announces 11 decisions waiting; a caller parsing rows by line gets 10
+# phantom gates it cannot look up (WFI-049).
+#
+# Flattened on READ rather than rejected on write: the gate file keeps the full
+# text for anyone opening it, /wf-attend still renders it, and the gates already
+# sitting on disk are fixed too — a write-side check would only have stopped the
+# next one.
+flatten() {
+  printf '%s' "$1" | tr '\n\t' '  ' | sed -e 's/  */ /g' -e 's/^ //' -e 's/ $//'
+}
+
 # How many other incomplete plans sit behind this one in the Deps graph.
 # BFS over the reverse-dependency edges; a plan already `complete` is not
 # blocked by anything, so it and its own dependents are not counted through it.
@@ -75,7 +91,8 @@ if [ -n "$query" ]; then
   # shellcheck disable=SC1090
   eval "$(cat "$gate_file")"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$GATE_ID" "$GATE_NAME" "$GATE_OPENED" "$GATE_QUESTION" "${GATE_CONTEXT:-—}" "$(blocked_by "$id")"
+    "$GATE_ID" "$GATE_NAME" "$GATE_OPENED" "$(flatten "$GATE_QUESTION")" \
+    "$(flatten "${GATE_CONTEXT:-—}")" "$(blocked_by "$id")"
   exit 0
 fi
 
@@ -94,7 +111,7 @@ for gate_file in "$gates_dir"/*.gate; do
     # first and by opened-timestamp second without a second sort key.
     printf '%06d\t%s\t%s\t%s\t%s\t%s\n' \
       "$(blocked_by "$GATE_ID")" "$GATE_OPENED" "$GATE_ID" "$GATE_NAME" \
-      "$GATE_QUESTION" "${GATE_CONTEXT:-—}"
+      "$(flatten "$GATE_QUESTION")" "$(flatten "${GATE_CONTEXT:-—}")"
   ) >> "$tmp" 2>/dev/null || true
 done
 
