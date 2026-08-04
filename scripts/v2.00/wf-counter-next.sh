@@ -49,6 +49,10 @@ awk -v cur="$current" -v nxt="$next" '
   { sub("<!-- Counter: " cur " -->", "<!-- Counter: " nxt " -->"); print }
 ' "$REGISTRY" > "$REGISTRY.tmp" && mv "$REGISTRY.tmp" "$REGISTRY"
 
+# An allocation that is not committed can be taken back — by a stash, or by a
+# concurrent worker's checkout — and the same number then goes out twice.
+wf_registry_commit "registry: counter → $next (allocated ${prefix:-ID} $current)"
+
 # Output the ID
 if [ -n "$prefix" ]; then
   printf "%s-%03d\n" "$prefix" "$current"

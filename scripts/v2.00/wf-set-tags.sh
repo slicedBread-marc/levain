@@ -105,4 +105,6 @@ else
   ' "$REGISTRY" > "$REGISTRY.tmp" && mv "$REGISTRY.tmp" "$REGISTRY"
 fi
 
+wf_registry_commit "registry($plan_id): tags → $tags"
+
 echo "$plan_id: tags → $tags"

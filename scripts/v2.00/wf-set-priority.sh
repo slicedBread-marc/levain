@@ -54,6 +54,7 @@ awk -F'|' -v OFS='|' -v id="$plan_id" -v pri="$priority" '
 ' "$REGISTRY" > "$REGISTRY.tmp" && mv "$REGISTRY.tmp" "$REGISTRY"
 
 if grep -q "^| $plan_id |.*| $priority |" "$REGISTRY"; then
+  wf_registry_commit "registry($plan_id): priority → $priority"
   echo "$plan_id: priority → $priority"
 else
   echo "Error: update failed for $plan_id" >&2

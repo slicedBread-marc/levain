@@ -131,6 +131,34 @@ wf_lock_release() {
   esac
 }
 
+# ── Durable registry writes ───────────────────────────────────────────────
+#
+# wf_registry_commit <message>
+#
+# Every script that rewrites a row in plans/REGISTRY.md calls this immediately
+# after the write, while it still holds the `registry` lock. A row left dirty
+# on the develop root does not stay yours: another worker's
+# `git stash push --include-untracked` takes it (WFI-064/065, ticks and a whole
+# ready→active transition vanished mid-run), and another worker's pathspec
+# commit carries it under a message about something else (WFI-061, one
+# session's Tags edit shipped inside another's spec commit). Pathspec scoping
+# cannot separate two edits to ONE file; only committing promptly can.
+#
+# Never fatal: the write the caller asked for has already landed.
+wf_registry_commit() {
+  local msg="$1" dir root
+  # Nothing to make durable outside a repository — and a caller under
+  # `set -euo pipefail` must not die because git had no opinion.
+  git rev-parse --git-dir >/dev/null 2>&1 || return 0
+  dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //') || root=""
+  [ -n "$root" ] || root=$(git rev-parse --show-toplevel 2>/dev/null) || root="$PWD"
+  [ -n "$root" ] || root="$PWD"
+  if ! ( cd "$root" && "$dir/wf-commit.sh" "$msg" --add plans/REGISTRY.md >/dev/null ); then
+    echo "wf-lock: registry write is staged but could not be committed — commit plans/REGISTRY.md before another worker does" >&2
+  fi
+}
+
 # ── Executed directly ─────────────────────────────────────────────────────
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then

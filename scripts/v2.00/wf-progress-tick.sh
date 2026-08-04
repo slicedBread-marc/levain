@@ -22,6 +22,8 @@
 
 set -euo pipefail
 
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 # shellcheck source=wf-orch-lib.sh
 source "$(dirname "$0")/wf-orch-lib.sh"
 # shellcheck source=wf-lock.sh
@@ -92,5 +94,24 @@ else
   printf '\n## Log\n%s\n' "$entry" >> "$progress"
 fi
 
-count=$("$(dirname "$0")/wf-progress-count.sh" "$plan_id")
+# ── Make the tick durable ─────────────────────────────────────────────────
+#
+# progress.md lives on the develop root and used to sit dirty for the whole
+# implementation, waiting for Phase 3 to commit it. It does not survive there:
+# any other worker's `git stash push --include-untracked` takes every dirty
+# file in that working tree with it. client-a watched a 2/6 checklist revert
+# to 0/6 mid-run with nothing in the session having touched it (WFI-064) — and
+# the checklist is the forward-progress signal the attempt budget reads, so a
+# silent revert reads to the orchestrator as a worker accomplishing nothing.
+#
+# One tick, one commit. Cheap, ugly in the log, and impossible to lose.
+# Run from the develop root: this script is called from inside feature
+# worktrees, where `plans/` is sparse-excluded and the commit would land on the
+# feature branch — or, more likely, match nothing and quietly do nothing.
+if ! ( cd "$ROOT" && "$SELF_DIR/wf-commit.sh" "progress($plan_id): step $step $status" \
+        --add "plans/${plan_id}-${slug}/progress.md" ); then
+  echo "wf-progress-tick: the tick is written but could not be committed" >&2
+fi
+
+count=$("$SELF_DIR/wf-progress-count.sh" "$plan_id")
 echo "Progress: $plan_id step $step $status — checklist now $count"

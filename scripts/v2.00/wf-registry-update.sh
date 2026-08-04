@@ -6,6 +6,19 @@
 #
 # --commit "msg"   Atomically: update → git add → git commit, all under the lock.
 # --add file ...   Extra files to stage (in addition to REGISTRY.md). Only with --commit.
+# --no-commit      Leave the transition staged but uncommitted (rarely correct).
+#
+# WITHOUT --commit the transition is STILL committed, under an auto-generated
+# message. It used to be left dirty for the caller's own later commit, and a
+# dirty REGISTRY.md on the develop root does not survive concurrency: another
+# worker's `git stash push --include-untracked` takes it, another's pathspec
+# commit carries it under the wrong message. client-a lost a whole
+# ready→active transition that way (WFI-065) — 20 minutes into an
+# implementation the registry read `ready` with no branch, as if Phase 1 had
+# never run, which is exactly the state a second dispatch reads as free work.
+# WFI-061 is the same file from the other side: one worker's uncommitted Tags
+# edit shipped inside another worker's commit. A row written and committed in
+# one locked step can be taken by neither.
 #
 # The `registry` lock is held for the whole run, not just for --commit — any
 # read-modify-write of REGISTRY.md races once more than one worker is live.
@@ -46,6 +59,7 @@ shift 3 2>/dev/null || true
 
 branch=""
 commit_msg=""
+no_commit=false
 add_files=()
 
 # Fourth positional arg is branch if it doesn't start with --
@@ -59,6 +73,10 @@ while [ $# -gt 0 ]; do
     --commit)
       commit_msg="${2:?--commit requires a message}"
       shift 2
+      ;;
+    --no-commit)
+      no_commit=true
+      shift
       ;;
     --add)
       shift
@@ -165,12 +183,9 @@ if [ "$to_state" = "active" ]; then
   slug=$(grep "^| $plan_id |" "$REGISTRY" | head -1 | awk -F'|' '{print $3}' | xargs)
   claim_dir="plans/${plan_id}-${slug}"
   if [ -d "$claim_dir" ]; then
-    _pid=$PPID
-    for _i in 1 2 3 4 5; do
-      _name=$(ps -o comm= -p "$_pid" 2>/dev/null)
-      case "$_name" in bash|sh|zsh|dash) _pid=$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ') ;; *) break ;; esac
-    done
-    printf '%s\n%s\n' "$(date +%s)" "$_pid" > "$claim_dir/.wf-claim"
+    # shellcheck source=wf-orch-lib.sh
+    source "$(dirname "$0")/wf-orch-lib.sh"
+    wf_claim_write "$claim_dir"
   fi
 fi
 
@@ -202,4 +217,12 @@ git add "$REGISTRY" 2>/dev/null || true
 if [ -n "$commit_msg" ]; then
   "$(dirname "$0")/wf-commit.sh" "$commit_msg" --allow-empty \
     --add "$REGISTRY" "${add_files[@]+"${add_files[@]}"}"
+elif ! $no_commit; then
+  # No message from the caller: commit the row on its own anyway. A failure
+  # here is worth saying out loud but is not the caller's fault — the write it
+  # asked for landed, and it is staged for whatever commits next.
+  if ! "$(dirname "$0")/wf-commit.sh" "registry($plan_id): $from_state → $to_state" \
+        --add "$REGISTRY"; then
+    echo "wf-registry-update: the transition is staged but could not be committed — commit plans/REGISTRY.md before another worker does" >&2
+  fi
 fi
