@@ -15,6 +15,11 @@ If `WF_UNATTENDED=1` is set in your environment, you were launched by the orches
 
 Rules, in force for the whole session:
 
+0. **Claim the artifact before you read anything.** If it has a plan folder:
+   ```bash
+   scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug> --if-free
+   ```
+   Exit 2 means a live session is already on it — print the message and exit 0. Claiming *after* the work is claiming after the race: client-a ran two unattended wf-spec workers over one plan for twenty minutes, and the second wrote its `## Review` block on top of the first's, leaving plan.md with two contradicting verdicts (WFI-067). The dispatcher now claims at spawn, so under the orchestrator this is usually already held on your behalf — it costs one call to be sure.
 1. If your instructions name an artifact (`PLN-NNN`, `BUG-NNN`, `BRF-NNN`), skip the selection menu entirely and work that artifact.
 2. Prompts marked **[AUTO]** below resolve to their stated default. Take it and move on.
 3. Prompts marked **[GATE]** below must never be guessed. Park the work instead:
@@ -400,6 +405,12 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
    > |-|-|-|-|-|
    ```
 
+   Then stamp it, so the record says which text was judged rather than only when:
+   ```bash
+   scripts/wf-exec.sh wf-review-stamp.sh PLN-NNN
+   ```
+   Run this after the **last** write to `plan.md`. Anything you change afterwards makes the verdict stale — correctly, and now detectably.
+
 6. **Route the approved plan.** Read the mode and the gating tags — don't assume either:
    ```bash
    SPEC_MODE=$(scripts/wf-exec.sh wf-config-get.sh specApproval.mode gate)
@@ -413,6 +424,12 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
    - `GATE_ANSWERED=true` → **do not gate.** The human already approved *this* revision. Honour the recorded `GATE_RESOLUTION`, transition `draft → ready`, and note in `## Review` that you acted on an existing approval.
    - `GATE_STALE=true` → the plan changed after the approval. Gate again: the approval was given to a document that no longer says what it said.
    - Otherwise → gate as below.
+
+   **If the approval is provable but unrecorded, record it instead of re-asking.** A resolution that predates the ledger — or one a human gave in a commit message or in `findings.md` while the gate file was cleared some other way — reads here as `GATE_ANSWERED=false`, and following the rule then re-asks a question already answered in writing (WFI-060). When you can point at the evidence, back-fill it and proceed:
+   ```bash
+   scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "approved by <who>, <commit-sha or file>" --gate spec-approval
+   ```
+   Only with evidence you have actually read. "Probably approved" is a gate.
 
    **Needs a gate** (`SPEC_MODE` is `gate`, or the plan carries a tag in `GATE_TAGS`) — commit the reviewed plan, leave the state at `draft`, park, and exit. The gate question carries the verdict, because the human is now deciding on a *reviewed* plan and should not have to open the file to learn that:
    ```bash
@@ -460,11 +477,16 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
    Two rules, both learned the hard way (WFI-046):
 
    - **The verdict goes in `plan.md` `## Review`. Never in `findings.md`.** findings.md takes the actionable items; it never takes the verdict, and never a `## Spec Review` heading. A verdict filed there leaves `## Review` holding the template placeholder, which every consumer reads as *never reviewed*.
-   - **The last thing to happen before the gate is a review of the current text.** If you amend after the review — because the reviewer's own findings prompted the amendment, which is the common case — that verdict is now about a document that no longer exists. Review again. Confirm before parking:
+   - **The last thing to happen before the gate is a review of the current text.** If you amend after the review — because the reviewer's own findings prompted the amendment, which is the common case — that verdict is now about a document that no longer exists. Review again. Then **stamp the verdict against the text it judged**, and confirm:
      ```bash
+     scripts/wf-exec.sh wf-review-stamp.sh PLN-NNN
      eval "$(scripts/wf-exec.sh wf-review-status.sh PLN-NNN)"
      # REVIEW_LOCATION must be `plan`, and REVIEW_STALE must be false.
      ```
+
+     **Stamp first, then check.** Without the stamp, staleness is decided by comparing two dates, and a replan that reviews and amends on the same day — every replan that finishes in one session — is unorderable: the script correctly answers `REVIEW_STALE=unknown`, and the condition above can then never be satisfied by any amount of re-reviewing (client-a WFI-069). The stamp records a hash of the plan body inside `## Review`, so the answer becomes true or false and stays right no matter how many rounds run in a day.
+
+     If you meet `REVIEW_STALE=unknown` on a plan reviewed before stamps existed: re-run the review against the plan as it now stands, write that verdict, stamp it, and read the status again.
 
    The failure this prevents is a quiet one: two plans reached the approval gate whose only verdicts were `Blocked` on their pre-amendment drafts. The amendments resolved every Critical, so the findings were all checked off and the plans looked finished — while the resolutions themselves had never been reviewed by anything.
 6a. **Scope check — does this replan shrink what the plan promised?**

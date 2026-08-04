@@ -33,11 +33,19 @@
 #   REVIEW_DATE=2026-08-03                (empty when undated)
 #   AMENDMENT_DATE=2026-08-04             (empty when never amended)
 #   REVIEW_STALE=true|false|unknown       (true = amended since the verdict)
+#   REVIEW_STAMPED=true|false             (the verdict names the text it judged)
 #
-# REVIEW_STALE is true when the amendment is newer, or when the review carries
-# no date at all — a verdict nobody dated cannot be shown to postdate anything.
-# It is `unknown` when the two share a date, which day-granular timestamps
-# cannot order; anything other than `false` wants a human's eye.
+# When the review carries a `Plan-Hash:` stamp (wf-review-stamp.sh), staleness
+# is decided by comparing that hash with the plan as it stands — a true/false
+# answer, whatever the dates say.
+#
+# Without a stamp it falls back to dates. REVIEW_STALE is then true when the
+# amendment is newer, or when the review carries no date at all — a verdict
+# nobody dated cannot be shown to postdate anything. It is `unknown` when the
+# two share a date, which day-granular timestamps cannot order; anything other
+# than `false` wants a human's eye. `unknown` is why the stamp exists
+# (WFI-069): wf-spec's replanning gate requires `false`, and a same-day replan
+# could never produce one.
 #
 # Exit 0 always. This reports; the caller decides.
 
@@ -78,10 +86,11 @@ emit() {
   emit_one REVIEW_DATE     "${3:-}"
   emit_one AMENDMENT_DATE  "${4:-}"
   emit_one REVIEW_STALE    "${5:-false}"
+  emit_one REVIEW_STAMPED  "${6:-false}"
 }
 
 if [ -z "$plan_dir" ]; then
-  emit none "" "" "" false
+  emit none "" "" "" false false
   exit 0
 fi
 
@@ -202,4 +211,22 @@ if [ "$review_location" != "none" ] && [ -n "$amendment_date" ]; then
   fi
 fi
 
-emit "$review_location" "$review_result" "$review_date" "$amendment_date" "$stale"
+# A stamp outranks the dates entirely: it names the text that was judged, so
+# "has the plan changed since?" stops being a question about calendars.
+stamped=false
+if [ "$review_location" != "none" ]; then
+  stamp=$(printf '%s\n' "$review_body" \
+          | { grep -m1 -iE 'plan-hash:' || true; } \
+          | sed -E 's/.*[Pp]lan-[Hh]ash:[ \t]*//; s/\*+//g; s/[ \t]*<!--.*$//; s/[^0-9a-fA-F]//g')
+  if [ -n "$stamp" ]; then
+    stamped=true
+    # shellcheck source=wf-orch-lib.sh
+    source "$(dirname "$0")/wf-orch-lib.sh"
+    now_fp=$(wf_plan_body_fingerprint "$plan_id")
+    if [ -n "$now_fp" ]; then
+      if [ "$stamp" = "$now_fp" ]; then stale=false; else stale=true; fi
+    fi
+  fi
+fi
+
+emit "$review_location" "$review_result" "$review_date" "$amendment_date" "$stale" "$stamped"
