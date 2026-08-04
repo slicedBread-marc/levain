@@ -35,6 +35,14 @@ Fix the cause **here**, in the library — never in the client, where the next d
 
 Resolved entries stay in the client's file as the record of what was already reported. `sweep-issues.sh` exits 0 when there is work and 1 when every client is clean.
 
+### Open proposals
+
+Designed but not built. Each needed more than a fix:
+
+| Proposal | Origin | Summary |
+|-|-|-|
+| [`docs/untracked-harness.md`](docs/untracked-harness.md) | 253 permanently-dirty files across 5 clients | Stop tracking the generated harness in client repos. Retires `wf-infra-sync.sh`, the `chore: sync workflow infra` commit class, and the sparse-checkout hazard. Targets v5.0.0. |
+
 ---
 
 ## Process Flow
