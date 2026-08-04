@@ -176,7 +176,6 @@ done
 
 # Resolve each category to FQN substrings from testScopes.
 fqn_parts=()
-fqn_raw=()
 used_cats=()
 for cat in "${all_cats[@]}"; do
   count=$(yq_count ".testScopes.\"$cat\" | length")
@@ -188,7 +187,6 @@ for cat in "${all_cats[@]}"; do
   for (( i = 0; i < count; i++ )); do
     fqn=$(yq e ".testScopes.\"$cat\"[$i]" "$CONFIG")
     fqn_parts+=("FullyQualifiedName~$fqn")
-    fqn_raw+=("$fqn")
   done
 done
 
@@ -258,7 +256,8 @@ if [ "$filter_style" = "mtp" ]; then
     exit 0
   fi
   args=""
-  for fqn in "${fqn_raw[@]}"; do
+  for part in "${fqn_parts[@]}"; do
+    fqn="${part#FullyQualifiedName~}"   # the raw testScopes value
     args="$args --filter-class '*${fqn}*'"
   done
   printf '%s --ignore-exit-code 8' "${args# }"

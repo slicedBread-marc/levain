@@ -46,7 +46,8 @@ cd "$_wf_root"
 REGISTRY="plans/REGISTRY.md"
 [ -f "$REGISTRY" ] || { echo "wf-registry-audit.sh: $REGISTRY not found" >&2; exit 1; }
 
-WF_STATES="draft ready active verify testing complete rolled-back abandoned"
+# shellcheck source=wf-states.sh
+source "$(dirname "$0")/wf-states.sh"
 
 problems=0
 report() {
@@ -54,51 +55,79 @@ report() {
   [ "$QUIET" = "true" ] || printf '%s\n' "$1"
 }
 
-# Registry rows: ID -> state. Only real artifact rows, never the header or the
-# separator line.
-registry_ids=$(awk -F'|' '
+# ── One pass over the registry ───────────────────────────────────────────
+#
+# Every check below reads the same rows, so they are parsed ONCE into shell
+# variables rather than re-awked per check. This script now runs on every
+# /wf-status and every /wf-board render, including --watch, so its cost is
+# paid continuously rather than on demand: the first cut spawned six
+# subprocesses per registry row and measured 1.7s on a 75-plan project, 3.8s
+# at 100. Everything below is string work in bash — no subprocess per row.
+#
+# `reg_rows`  one "<id> <slug> <state>" line per PLN row
+# `reg_ids`   space-delimited PLN ids, for membership tests
+# `art_nums`  every PLN/BUG/BRF number, for the counter check
+eval "$(awk -F'|' '
   function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-  trim($2) ~ /^PLN-[0-9]+$/ { print trim($2) }
-' "$REGISTRY")
+  function esc(s)  { gsub(/'"'"'/, "'"'"'\\'"'"''"'"'", s); return s }
+  {
+    id = trim($2)
+    if (id !~ /^(PLN|BUG|BRF)-[0-9]+$/) next
+    num = id; sub(/^[A-Z]+-/, "", num); nums = nums num "\n"
+    if (id !~ /^PLN-/) next
+    rows = rows id " " trim($3) " " trim($4) "\n"
+    ids  = ids id " "
+  }
+  END {
+    printf "reg_rows='"'"'%s'"'"'\n", esc(rows)
+    printf "reg_ids='"'"' %s'"'"'\n",  esc(ids)
+    printf "art_nums='"'"'%s'"'"'\n",  esc(nums)
+  }
+' "$REGISTRY")"
 
-# Plan folders on disk.
-disk_ids=""
+# Plan folders on disk — bash parameter expansion, not basename + grep per entry.
+disk_rows=""
+disk_ids=" "
 for d in plans/PLN-*/; do
   [ -d "$d" ] || continue
-  base=$(basename "$d")
-  id=$(printf '%s' "$base" | grep -oE '^PLN-[0-9]+' || true)
-  [ -n "$id" ] || continue
-  disk_ids="$disk_ids$id $base"$'\n'
+  base="${d%/}"; base="${base##*/}"
+  case "$base" in PLN-[0-9]*) ;; *) continue ;; esac
+  rest="${base#PLN-}"          # 051-maze-crumbs
+  id="PLN-${rest%%-*}"         # PLN-051
+  disk_rows="$disk_rows$id $base"$'\n'
+  disk_ids="$disk_ids$id "
 done
 
 # ── 1. Folder with no row ────────────────────────────────────────────────
 while IFS=' ' read -r id base; do
   [ -n "$id" ] || continue
-  if ! printf '%s\n' "$registry_ids" | grep -qx "$id"; then
-    report "MISSING ROW   plans/$base has no row in $REGISTRY — invisible to every wf-list-* script and to the orchestrator."
-    report "              Add a row, or abandon it: scripts/wf-exec.sh wf-abandon.sh $id --reason \"...\""
-  fi
-done <<< "$disk_ids"
+  case "$reg_ids" in
+    *" $id "*) ;;
+    *)
+      report "MISSING ROW   plans/$base has no row in $REGISTRY — invisible to every wf-list-* script and to the orchestrator."
+      report "              Add a row, or abandon it: scripts/wf-exec.sh wf-abandon.sh $id --reason \"...\""
+      ;;
+  esac
+done <<< "$disk_rows"
 
 # ── 2. Row with no folder ────────────────────────────────────────────────
-while IFS= read -r id; do
+while IFS=' ' read -r id _slug _state; do
   [ -n "$id" ] || continue
-  found=false
-  for d in plans/${id}-*/; do [ -d "$d" ] && found=true && break; done
-  if [ "$found" = "false" ]; then
-    report "DANGLING ROW  $id has a registry row but no plans/$id-*/ folder — state with nothing behind it."
-  fi
-done <<< "$registry_ids"
+  case "$disk_ids" in
+    *" $id "*) ;;
+    *) report "DANGLING ROW  $id has a registry row but no plans/$id-*/ folder — state with nothing behind it." ;;
+  esac
+done <<< "$reg_rows"
 
 # ── 3. Duplicate IDs ─────────────────────────────────────────────────────
-dupe_rows=$(printf '%s\n' "$registry_ids" | sort | uniq -d || true)
+dupe_rows=$(printf '%s' "$reg_rows" | awk '{print $1}' | sort | uniq -d || true)
 for id in $dupe_rows; do
   report "DUPLICATE ROW $id appears more than once in $REGISTRY — every lookup takes the first match and silently ignores the rest."
 done
 
-dupe_dirs=$(printf '%s' "$disk_ids" | awk '{print $1}' | sort | uniq -d || true)
+dupe_dirs=$(printf '%s' "$disk_rows" | awk '{print $1}' | sort | uniq -d || true)
 for id in $dupe_dirs; do
-  folders=$(printf '%s' "$disk_ids" | awk -v i="$id" '$1 == i { print $2 }' | tr '\n' ' ')
+  folders=$(printf '%s' "$disk_rows" | awk -v i="$id" '$1 == i { print $2 }' | tr '\n' ' ')
   report "DUPLICATE DIR $id names two plan folders: $folders"
   report "              The counter handed the same number out twice. Check both for competing migrations or schema changes before removing either."
 done
@@ -106,18 +135,12 @@ done
 # ── 4. Counter sanity ────────────────────────────────────────────────────
 counter=$(grep -oE '<!-- Counter: [0-9]+ -->' "$REGISTRY" | grep -oE '[0-9]+' | head -1 || true)
 if [ -n "$counter" ]; then
+  # One glob expansion into one grep, rather than basename + grep per entry.
   highest=$(
-    { printf '%s\n' "$registry_ids"
-      awk -F'|' '
-        function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-        trim($2) ~ /^(PLN|BUG|BRF)-[0-9]+$/ { print trim($2) }
-      ' "$REGISTRY"
-      printf '%s' "$disk_ids" | awk '{print $1}'
-      for d in bugs/*/*/ plans/briefs/*; do
-        [ -e "$d" ] || continue
-        basename "$d" | grep -oE '^(BUG|BRF)-[0-9]+' || true
-      done
-    } | grep -oE '[0-9]+$' | sed 's/^0*//' | sort -n | tail -1
+    { printf '%s' "$art_nums"
+      printf '%s' "$disk_rows" | awk '{print $1}'
+      printf '%s\n' bugs/*/*/ plans/briefs/* 2>/dev/null
+    } | { grep -oE '[0-9]+' || true; } | sed 's/^0*//' | sort -n | tail -1
   )
   if [ -n "$highest" ] && [ "$counter" -le "$highest" ]; then
     report "COUNTER       <!-- Counter: $counter --> is not above the highest ID in use ($highest) — the next allocation collides."
@@ -125,33 +148,18 @@ if [ -n "$counter" ]; then
   fi
 fi
 
-# ── 5. Unroutable states ─────────────────────────────────────────────────
-while IFS= read -r line; do
-  [ -n "$line" ] || continue
-  id=$(printf '%s' "$line" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}')
-  st=$(printf '%s' "$line" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/,"",$4); print $4}')
-  case " $WF_STATES " in
-    *" $st "*) ;;
-    *) report "BAD STATE     $id is in state '$st', which is not a workflow state. The orchestrator hard-fails on it. Valid: $WF_STATES" ;;
-  esac
-done < <(awk -F'|' '
-  function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-  trim($2) ~ /^PLN-[0-9]+$/ { print }
-' "$REGISTRY")
-
-# ── 6. Pre-implementation state sitting on a real implementation ─────────
+# ── 5. Unroutable states, and 6. pre-implementation states on real work ──
 #
-# `draft` means "being written or needs replanning" — nobody has built it yet.
-# app found two plans at `draft` carrying finished work: 22 files/+2590 across
-# 21 commits, and 33 files/+1639 across 16 commits including passing tests,
-# neither with an unchecked or ESCALATED finding that would explain the route
-# back (WFI-010). Whatever wrote those rows, the registry stopped describing
-# the branch — and a state write that can be lost is worth catching from the
-# other side rather than trusting.
-while IFS='|' read -r _ id slug state _rest; do
-  id=$(printf '%s' "$id" | xargs); state=$(printf '%s' "$state" | xargs)
-  slug=$(printf '%s' "$slug" | xargs)
+# One loop, because both read the same three fields. `draft` means nobody has
+# built it yet; app found two such plans carrying finished implementations —
+# 21 and 16 commits, no findings to explain the route back (WFI-010). A state
+# write that can be lost is worth catching from the branch side.
+while IFS=' ' read -r id slug state; do
   [ -n "$id" ] || continue
+
+  wf_state_is_valid "$state" || \
+    report "BAD STATE     $id is in state '$state', which is not a workflow state. The orchestrator hard-fails on it. Valid: $WF_STATES"
+
   case "$state" in draft|ready) ;; *) continue ;; esac
   branch="feature/${id}-${slug}"
   git rev-parse --verify "$branch" >/dev/null 2>&1 || continue
@@ -159,10 +167,7 @@ while IFS='|' read -r _ id slug state _rest; do
   [ "$ahead" -gt 0 ] || continue
   report "STALE STATE   $id is '$state' but $branch is $ahead commit(s) ahead of develop — the registry and the branch disagree."
   report "              Either a state write was lost, or the work was abandoned. Check the branch, then set the state deliberately."
-done < <(awk -F'|' '
-  function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-  trim($2) ~ /^PLN-[0-9]+$/ { print }
-' "$REGISTRY")
+done <<< "$reg_rows"
 
 if [ "$problems" -eq 0 ]; then
   [ "$QUIET" = "true" ] || echo "registry audit: clean"

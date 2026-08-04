@@ -581,6 +581,11 @@ case "$mode" in
           # a plan someone deliberately dropped is the exact re-dispatch loop
           # `abandoned` exists to end (WFI-008).
           abandoned)      result="abandoned"; break ;;
+          # `rolled-back` has been a documented state since v4 and was never
+          # routed here — it fell through to "unknown state" and exit 1, the
+          # same hard failure `abandoned` produced. Both are terminal; neither
+          # is a fault in the plan.
+          rolled-back)    result="abandoned"; break ;;
           *) echo "Error: unknown state '$state' for $pln_id" >&2; exit 1 ;;
         esac
       fi

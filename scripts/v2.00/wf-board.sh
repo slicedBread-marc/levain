@@ -5,8 +5,8 @@
 # pipeline by state, and recent events. This is the replacement for holding
 # four terminals' worth of state in your head.
 #
-# Pure render — reads REGISTRY.md, pidfiles, gate files and events.log.
-# Spawns nothing, changes nothing, costs no tokens.
+# Read-only — reads REGISTRY.md, pidfiles, gate files and events.log, and runs
+# wf-registry-audit.sh. Changes nothing, costs no tokens.
 #
 #   --watch [n]   refresh every n seconds (default 10)
 #   --plain       no colour (for piping or logging)
@@ -118,21 +118,22 @@ render() {
   # ── Pipeline ────────────────────────────────────────────────────────
   printf '%s\n' "${B}PIPELINE${R}"
   if [ -f "$REGISTRY" ]; then
-    local st n
-    for st in draft ready active verify testing; do
-      n=$(awk -F'|' -v s="$st" '
-        function trim(x) { gsub(/^[ \t]+|[ \t]+$/, "", x); return x }
-        /^\| PLN-/ && trim($4) == s { c++ } END { print c + 0 }' "$REGISTRY")
-      printf '  %-9s %s\n' "$st" "$n"
-    done
-    # Both terminals get a dim row. An abandoned plan that appears in no
+    # One histogram pass, not one pass per state. The two terminal states get
+    # a dim row and are shown even at zero: an abandoned plan appearing in no
     # column at all is how a project ends up with plan folders nobody can
-    # account for (WFI-009), so it is shown even when the count is zero.
-    for st in complete abandoned; do
-      n=$(awk -F'|' -v s="$st" '
-        function trim(x) { gsub(/^[ \t]+|[ \t]+$/, "", x); return x }
-        /^\| PLN-/ && trim($4) == s { c++ } END { print c + 0 }' "$REGISTRY")
-      printf '  %s%-9s %s%s\n' "$DIM" "$st" "$n" "$R"
+    # account for (WFI-009).
+    local st n counts
+    counts=$(awk -F'|' '
+      function trim(x) { gsub(/^[ \t]+|[ \t]+$/, "", x); return x }
+      /^\| PLN-/ { c[trim($4)]++ }
+      END { for (s in c) print s, c[s] }' "$REGISTRY")
+    for st in draft ready active verify testing complete abandoned; do
+      n=$(printf '%s\n' "$counts" | awk -v s="$st" '$1 == s { print $2 }')
+      n="${n:-0}"
+      case "$st" in
+        complete|abandoned) printf '  %s%-9s %s%s\n' "$DIM" "$st" "$n" "$R" ;;
+        *)                  printf '  %-9s %s\n' "$st" "$n" ;;
+      esac
     done
   else
     printf '  %sno REGISTRY.md%s\n' "$DIM" "$R"

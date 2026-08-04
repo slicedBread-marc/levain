@@ -63,16 +63,11 @@ resolution=""
 resolved_at=""
 
 if [ -f "$resolved_file" ]; then
-  # shellcheck disable=SC1090
   resolution=$(grep -m1 "^GATE_RESOLUTION=" "$resolved_file" | sed "s/^GATE_RESOLUTION='//; s/'$//" || true)
   resolved_at=$(grep -m1 "^GATE_RESOLVED=" "$resolved_file" | sed "s/^GATE_RESOLVED='//; s/'$//" || true)
   was_fp=$(grep -m1 "^GATE_PLAN_FP=" "$resolved_file" | sed "s/^GATE_PLAN_FP='//; s/'$//" || true)
 
-  slug=$(grep "^| $id |" "$(wf_develop_root)/plans/REGISTRY.md" 2>/dev/null \
-         | head -1 | awk -F'|' '{print $3}' | xargs || true)
-  plan_md="$(wf_develop_root)/plans/${id}-${slug}/plan.md"
-  now_fp=""
-  [ -n "$slug" ] && [ -f "$plan_md" ] && now_fp=$(shasum "$plan_md" 2>/dev/null | awk '{print $1}' || true)
+  now_fp=$(wf_plan_fingerprint "$id")
 
   if [ -z "$was_fp" ] || [ -z "$now_fp" ]; then
     # No fingerprint on either side — an older record, or a plan whose file is

@@ -23,6 +23,8 @@ set -euo pipefail
 
 # shellcheck source=wf-lock.sh
 source "$(dirname "$0")/wf-lock.sh"
+# shellcheck source=wf-states.sh
+source "$(dirname "$0")/wf-states.sh"
 
 # Registry work is develop-root work. Sourced/derived paths below are relative
 # ("plans/REGISTRY.md", "plans/PLN-NNN-slug/..."), and verify and implement
@@ -99,16 +101,12 @@ fi
 # `from_state` is deliberately NOT validated: it has to match the row anyway,
 # and a client whose registry already holds a nonstandard value must still be
 # able to transition out of it.
-WF_STATES="draft ready active verify testing complete rolled-back abandoned"
-case " $WF_STATES " in
-  *" $to_state "*) ;;
-  *)
-    echo "Error: '$to_state' is not a workflow state." >&2
-    echo "       Valid: $WF_STATES" >&2
-    echo "       To drop a plan, use wf-abandon.sh — it records the reason." >&2
-    exit 1
-    ;;
-esac
+if ! wf_state_is_valid "$to_state"; then
+  echo "Error: '$to_state' is not a workflow state." >&2
+  echo "       Valid: $WF_STATES" >&2
+  echo "       To drop a plan, use wf-abandon.sh — it records the reason." >&2
+  exit 1
+fi
 
 # `abandoned` is terminal. Revival is deliberate and goes back to planning: the
 # branch may be months stale, so resuming mid-pipeline is not safe.

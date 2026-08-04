@@ -53,13 +53,7 @@ rm -f "$gate_file"
 resolved_dir="$(wf_orch_dir)/gates/resolved"
 mkdir -p "$resolved_dir"
 
-plan_fp=""
-slug=$(grep "^| $id |" "$(wf_develop_root)/plans/REGISTRY.md" 2>/dev/null \
-       | head -1 | awk -F'|' '{print $3}' | xargs || true)
-plan_md="$(wf_develop_root)/plans/${id}-${slug}/plan.md"
-if [ -n "$slug" ] && [ -f "$plan_md" ]; then
-  plan_fp=$(shasum "$plan_md" 2>/dev/null | awk '{print $1}' || true)
-fi
+plan_fp=$(wf_plan_fingerprint "$id")
 
 {
   wf_emit GATE_ID         "$id"

@@ -13,6 +13,7 @@
 #   wf_orch_dir                      → <develop-root>/.claude/orchestrator (created)
 #   wf_cfg <dotted.path> [default]   → value from claude-workflow.yml
 #   wf_emit <KEY> <value>            → eval-safe KEY='value' line
+#   wf_plan_fingerprint <PLN-NNN>    → hash of that plan's plan.md (may be empty)
 #   wf_event <type> <artifact> <msg> → append to events.log
 #   wf_now                           → ISO-8601 UTC timestamp
 
@@ -123,6 +124,29 @@ wf_cfg_list() {
 # contract wf-plan-info.sh uses (and the reason BUG-094 existed).
 wf_emit() {
   printf "%s='%s'\n" "$1" "$(printf '%s' "$2" | sed "s/'/'\\\\''/g")"
+}
+
+# ── Plan identity ─────────────────────────────────────────────────────────
+
+# wf_plan_fingerprint <PLN-NNN> → hash of that plan's plan.md, or empty.
+#
+# Used to scope a gate answer to the plan REVISION it was given for: an
+# approval is given to a document, not to an ID forever. Lives here because the
+# writer (wf-gate-close.sh) and the reader (wf-gate-status.sh) must agree
+# exactly — two copies of this would mean a gate that either re-opens forever
+# or never re-opens, with nothing to indicate which.
+#
+# Empty for a BUG/BRF id, or a plan with no folder yet. Callers treat an empty
+# fingerprint as "cannot tell", not as "changed".
+wf_plan_fingerprint() {
+  local id="$1" root slug plan_md
+  root="$(wf_develop_root)"
+  slug=$(grep "^| $id |" "$root/plans/REGISTRY.md" 2>/dev/null \
+         | head -1 | awk -F'|' '{print $3}' | xargs || true)
+  [ -n "$slug" ] || return 0
+  plan_md="$root/plans/${id}-${slug}/plan.md"
+  [ -f "$plan_md" ] || return 0
+  shasum "$plan_md" 2>/dev/null | awk '{print $1}' || true
 }
 
 # ── Events ────────────────────────────────────────────────────────────────

@@ -840,9 +840,26 @@ assert_eq "and install.sh bakes the slug into it" "true" \
   "$(awk '/{{local_start_command}}/, /on-implement-commit.sh"$/' "$LIB_ROOT/install.sh" \
      | grep -q 'project_slug' && echo true || echo false)"
 
-# The hook duplicates wf-plan-port.sh's formula, so prove they agree.
-hook_port=$(awk '/8100 \+ _plan_num/ { print "8104" }' "$LIB_ROOT/templates/on-implement-commit.sh" | head -1)
-assert_eq "the hook's port formula matches wf-plan-port.sh" "8104" "$hook_port"
+# The hook duplicates wf-plan-port.sh's formula, so prove they agree — by
+# RUNNING the hook's copy against the same input, not by pattern-matching the
+# source. The first cut of this asserted `awk '/8100 \+ _plan_num/ {print "8104"}'`
+# equals 8104, which is true whenever the pattern matches and says nothing at
+# all about the arithmetic. A guard that cannot fail is worse than none: it
+# reads as coverage.
+hook_dir=$(mktemp -d)
+sed 's|{{project_slug}}|testproj|g' "$LIB_ROOT/templates/on-implement-commit.sh" > "$hook_dir/hook.sh"
+printf 'PLN-004\n' > "$hook_dir/.plan-ref"
+# Source only the derivation block — running the whole hook would eval the
+# project's deploy command.
+hook_derived=$(
+  cd "$hook_dir" && PROJECT_DIR="$hook_dir" \
+    bash -c "$(awk '/^if \[ -f "\$PROJECT_DIR\/.plan-ref" \]/, /^fi$/' "$hook_dir/hook.sh"); echo \"\$FEATURE_PORT \$COMPOSE_PROJECT_NAME\"" 2>/dev/null | tail -1
+)
+port_ref=$(sed 's|{{project_slug}}|testproj|g' "$LIB_SCRIPTS/$SCRIPT_FOLDER/wf-plan-port.sh" > "$hook_dir/port.sh"
+           chmod +x "$hook_dir/port.sh"
+           eval "$("$hook_dir/port.sh" PLN-004-x)"; echo "$FEATURE_PORT $COMPOSE_PROJECT_NAME")
+assert_eq "the hook's port formula agrees with wf-plan-port.sh" "$port_ref" "$hook_derived"
+rm -rf "$hook_dir"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Rendering-surface globs span directories (client-a WFI-044)"
@@ -986,13 +1003,12 @@ cat > plans/PLN-018-fresh/plan.md <<'PLAN18'
 > Append-only.
 PLAN18
 
-rs13=$("$SCRIPT_DIR/wf-review-status.sh" PLN-013 2>/dev/null)
-assert_eq "a verdict filed in findings.md is still found" "findings" \
-  "$(printf '%s' "$rs13" | awk -F= '/^REVIEW_LOCATION=/{print $2}')"
-assert_eq "and its verdict is read out of prose" "'Blocked'" \
-  "$(printf '%s' "$rs13" | sed -n 's/^REVIEW_RESULT=//p')"
-assert_eq "a verdict older than the amendment is stale" "true" \
-  "$(printf '%s' "$rs13" | awk -F= '/^REVIEW_STALE=/{print $2}')"
+# Read through eval, the way wf-attend and wf-spec do — the output is quoted
+# precisely so that a verdict containing an apostrophe survives that eval.
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-013 2>/dev/null)"
+assert_eq "a verdict filed in findings.md is still found" "findings" "$REVIEW_LOCATION"
+assert_eq "and its verdict is read out of prose" "Blocked" "$REVIEW_RESULT"
+assert_eq "a verdict older than the amendment is stale" "true" "$REVIEW_STALE"
 
 # A review recorded as BLOCKQUOTE lines is still a review. The shipped template
 # and wf-spec's own example both write the record that way, so a "filled means
@@ -1013,17 +1029,13 @@ cat > plans/PLN-019-quoted/plan.md <<'PLAN19'
 ## Amendments
 > Append-only.
 PLAN19
-rs19=$("$SCRIPT_DIR/wf-review-status.sh" PLN-019 2>/dev/null)
-assert_eq "a blockquoted verdict is found, not read as a placeholder" "plan" \
-  "$(printf '%s' "$rs19" | awk -F= '/^REVIEW_LOCATION=/{print $2}')"
-assert_eq "and the LAST round's verdict is the one reported" "'Approved'" \
-  "$(printf '%s' "$rs19" | sed -n 's/^REVIEW_RESULT=//p')"
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-019 2>/dev/null)"
+assert_eq "a blockquoted verdict is found, not read as a placeholder" "plan" "$REVIEW_LOCATION"
+assert_eq "and the LAST round's verdict is the one reported" "Approved" "$REVIEW_RESULT"
 
-rs18=$("$SCRIPT_DIR/wf-review-status.sh" PLN-018 2>/dev/null)
-assert_eq "a fresh spec records its verdict in plan.md" "plan" \
-  "$(printf '%s' "$rs18" | awk -F= '/^REVIEW_LOCATION=/{print $2}')"
-assert_eq "and an unamended plan is not stale" "false" \
-  "$(printf '%s' "$rs18" | awk -F= '/^REVIEW_STALE=/{print $2}')"
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-018 2>/dev/null)"
+assert_eq "a fresh spec records its verdict in plan.md" "plan" "$REVIEW_LOCATION"
+assert_eq "and an unamended plan is not stale" "false" "$REVIEW_STALE"
 
 # Day-granular dates cannot order a review and an amendment written the same
 # day — which is the ordinary case. Neither "current" nor "stale" is honest.
@@ -1035,8 +1047,8 @@ cat > plans/PLN-020-sameday/plan.md <<'PLAN20'
 ## Amendments
 A1 — 2026-08-04 — narrowed
 PLAN20
-assert_eq "a same-day review and amendment is neither, and says so" "unknown" \
-  "$("$SCRIPT_DIR/wf-review-status.sh" PLN-020 2>/dev/null | awk -F= '/^REVIEW_STALE=/{print $2}')"
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-020 2>/dev/null)"
+assert_eq "a same-day review and amendment is neither, and says so" "unknown" "$REVIEW_STALE"
 
 assert_eq "wf-attend looks in both places before crying harness fault" "true" \
   "$(grep -q 'wf-review-status.sh' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
@@ -1216,32 +1228,32 @@ section "A gate remembers it was answered (client-a WFI-047)"
 registry_add_row PLN-018 wire draft "—" "infra,contract"
 
 st=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
-assert_eq "an unasked gate is not answered" "'false'" \
-  "$(printf '%s' "$st" | sed -n 's/^GATE_ANSWERED=//p')"
+assert_eq "an unasked gate is not answered" "false" \
+  "$(printf '%s' "$st" | sed -n "s/^GATE_ANSWERED='\\(.*\\)'$/\\1/p")"
 
 "$SCRIPT_DIR/wf-gate-open.sh" PLN-018 spec-approval "Approve?" --skill wf-spec >/dev/null 2>&1
 st=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
-assert_eq "an open gate reads as open" "'true'" \
-  "$(printf '%s' "$st" | sed -n 's/^GATE_OPEN=//p')"
-assert_eq "and not yet answered" "'false'" \
-  "$(printf '%s' "$st" | sed -n 's/^GATE_ANSWERED=//p')"
+assert_eq "an open gate reads as open" "true" \
+  "$(printf '%s' "$st" | sed -n "s/^GATE_OPEN='\\(.*\\)'$/\\1/p")"
+assert_eq "and not yet answered" "false" \
+  "$(printf '%s' "$st" | sed -n "s/^GATE_ANSWERED='\\(.*\\)'$/\\1/p")"
 
 "$SCRIPT_DIR/wf-gate-close.sh" PLN-018 "plain approve, scope unchanged" >/dev/null 2>&1
 st=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
-assert_eq "a re-dispatch sees the answer, so it must not re-gate" "'true'" \
-  "$(printf '%s' "$st" | sed -n 's/^GATE_ANSWERED=//p')"
+assert_eq "a re-dispatch sees the answer, so it must not re-gate" "true" \
+  "$(printf '%s' "$st" | sed -n "s/^GATE_ANSWERED='\\(.*\\)'$/\\1/p")"
 assert_eq "and the resolution is readable by a script, not just prose" \
-  "'plain approve, scope unchanged'" \
-  "$(printf '%s' "$st" | sed -n 's/^GATE_RESOLUTION=//p')"
+  "plain approve, scope unchanged" \
+  "$(printf '%s' "$st" | sed -n "s/^GATE_RESOLUTION='\\(.*\\)'$/\\1/p")"
 
 # An approval is given to a REVISION, not to an ID forever. Edit the plan and
 # the question is genuinely open again.
 printf '## Goal\nWire contract, now with extra scope\n' > plans/PLN-018-wire/plan.md
 st=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
-assert_eq "editing the plan after approval re-opens the question" "'true'" \
-  "$(printf '%s' "$st" | sed -n 's/^GATE_STALE=//p')"
-assert_eq "and it no longer counts as answered" "'false'" \
-  "$(printf '%s' "$st" | sed -n 's/^GATE_ANSWERED=//p')"
+assert_eq "editing the plan after approval re-opens the question" "true" \
+  "$(printf '%s' "$st" | sed -n "s/^GATE_STALE='\\(.*\\)'$/\\1/p")"
+assert_eq "and it no longer counts as answered" "false" \
+  "$(printf '%s' "$st" | sed -n "s/^GATE_ANSWERED='\\(.*\\)'$/\\1/p")"
 
 assert_eq "wf-spec checks before re-opening spec-approval" "true" \
   "$(awk '/^## Exit — unattended/, /^## Replanning/' "$LIB_ROOT/skills/wf-spec/SKILL.md" \

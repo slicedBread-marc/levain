@@ -51,26 +51,33 @@ fi
 plan_id=$(printf '%s' "$plan_id" | grep -oE '^PLN-[0-9]+')
 
 # Registry work is develop-root work: the main worktree is always the first one
-# git lists, and plans/ exists only there.
-wf_develop_root() {
-  local main
-  main=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
-  if [ -n "$main" ] && [ -d "$main/plans" ]; then printf '%s' "$main"; return 0; fi
-  printf '%s' "$PWD"
-}
-ROOT=$(wf_develop_root)
+# git lists, and plans/ exists only there. Written inline, as the other
+# non-orchestrator scripts do — deliberately NOT named wf_develop_root, which
+# is wf-orch-lib.sh's function with a different fallback contract.
+ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //') || true
+[ -n "$ROOT" ] || ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
 
 plan_dir=""
 for d in "$ROOT"/plans/${plan_id}-*/; do
   [ -d "$d" ] && { plan_dir="${d%/}"; break; }
 done
 
+# Single-quoted with embedded quotes escaped, because callers run this through
+# `eval` (wf-attend step 1, wf-spec step 6). Reviewer prose is full of
+# apostrophes — "it's", "the reviewer's call" — and an unescaped one closes the
+# quote early, runs the next word as a command, and loses every variable
+# emitted after it. Same failure as BUG-094, which is why wf-plan-info.sh
+# escapes identically.
+emit_one() {
+  printf "%s='%s'\n" "$1" "$(printf '%s' "$2" | sed "s/'/'\\\\''/g")"
+}
+
 emit() {
-  printf "REVIEW_LOCATION=%s\n" "${1:-none}"
-  printf "REVIEW_RESULT='%s'\n" "${2:-}"
-  printf "REVIEW_DATE=%s\n" "${3:-}"
-  printf "AMENDMENT_DATE=%s\n" "${4:-}"
-  printf "REVIEW_STALE=%s\n" "${5:-false}"
+  emit_one REVIEW_LOCATION "${1:-none}"
+  emit_one REVIEW_RESULT   "${2:-}"
+  emit_one REVIEW_DATE     "${3:-}"
+  emit_one AMENDMENT_DATE  "${4:-}"
+  emit_one REVIEW_STALE    "${5:-false}"
 }
 
 if [ -z "$plan_dir" ]; then
@@ -109,18 +116,22 @@ section_body() {
 # every one, and the verdict that matters is the most recent. Trimmed at the
 # first em-dash so a gate question carries "Approved with notes" rather than a
 # paragraph of reviewer commentary.
-result_of() {
+# Real verdict lines: any line naming a Result, minus the template's own,
+# which is recognisable by listing every verdict at once.
+result_lines() {
   printf '%s\n' "$1" \
     | { grep -iE 'result:' || true; } \
-    | { grep -v 'Approved | Approved with notes | Blocked' || true; } \
-    | tail -1 \
-    | sed -E 's/.*[Rr]esult:[ \t]*//' \
-    | sed -E 's/^\*+//; s/\*+//g' \
-    | sed -E 's/[ \t]*—.*$//' \
-    | sed -E 's/^[ \t]+//; s/[ \t]+$//'
+    | { grep -v 'Approved | Approved with notes | Blocked' || true; }
 }
 
-first_date_of() {
+result_of() {
+  result_lines "$1" | tail -1 \
+    | sed -E 's/.*[Rr]esult:[ \t]*//; s/\*+//g; s/[ \t]*—.*$//; s/^[ \t]+//; s/[ \t]+$//'
+}
+
+# The LATEST date in a block: a multi-round record carries one per round, and
+# the current verdict is the newest.
+latest_date_of() {
   printf '%s\n' "$1" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | sort -r | head -1 || true
 }
 
@@ -141,10 +152,7 @@ review_body=""
 # possible verdict (`Approved | Approved with notes | Blocked`), and a real one
 # names exactly one.
 body=$(section_body "$plan_file" "Review")
-real=$(printf '%s\n' "$body" \
-  | { grep -iE 'result:' || true; } \
-  | { grep -v 'Approved | Approved with notes | Blocked' || true; })
-if [ -n "$real" ]; then
+if [ -n "$(result_lines "$body")" ]; then
   review_location=plan
   review_body="$body"
 else
@@ -159,25 +167,24 @@ else
       break
     fi
   done
-  # findings.md sections are dated in the heading itself ("## Spec Review — 2026-08-03"),
-  # so recover the date from the heading when the body carries none.
-  if [ "$review_location" = "findings" ] && [ -z "$(first_date_of "$review_body")" ]; then
-    heading_line=$({ grep -iE '^## (Spec )?Review' "$findings_file" || true; } | head -1)
-    review_body="$review_body
-$heading_line"
-  fi
 fi
 
 review_result=""
 review_date=""
 if [ "$review_location" != "none" ]; then
   review_result=$(result_of "$review_body")
-  review_date=$(first_date_of "$review_body")
+  review_date=$(latest_date_of "$review_body")
+  # findings.md dates its sections in the HEADING ("## Spec Review — 2026-08-03"),
+  # which section_body does not return. Read it from the heading rather than
+  # splicing it into the body — result_of reads that same body.
+  if [ -z "$review_date" ] && [ "$review_location" = "findings" ]; then
+    review_date=$(latest_date_of "$({ grep -iE '^## (Spec )?Review' "$findings_file" || true; })")
+  fi
 fi
 
 amendment_body=$(section_body "$plan_file" "Amendments")
 amendment_unquoted=$(printf '%s\n' "$amendment_body" | { grep -vE '^[ \t]*>' || true; })
-amendment_date=$(first_date_of "$amendment_unquoted")
+amendment_date=$(latest_date_of "$amendment_unquoted")
 
 # Three answers, not two. Dates are day-granular, and a plan reviewed and
 # amended on the SAME day is the ordinary case — review, findings, amendment,
