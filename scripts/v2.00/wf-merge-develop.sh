@@ -111,9 +111,26 @@ has_non_plan_conflicts=false
 while IFS= read -r file; do
   [ -z "$file" ] && continue
   if [[ "$file" == plans/* ]] || [[ "$file" == bugs/* ]] || [[ "$file" == briefs/* ]] || [[ "$file" == .claude/* ]] || [[ "$file" == scripts/* ]] || [[ "$file" == skills/* ]] || [[ "$file" == templates/* ]]; then
-    git checkout develop -- "$file" 2>/dev/null || git checkout --theirs -- "$file"
-    git add "$file"
-    echo "  resolved: $file (took develop's version)"
+    if git cat-file -e "develop:$file" 2>/dev/null; then
+      git checkout develop -- "$file" 2>/dev/null || git checkout --theirs -- "$file" 2>/dev/null || true
+      git add -- "$file"
+      echo "  resolved: $file (took develop's version)"
+    else
+      # MODIFY/DELETE: develop no longer has this path, so there is no "their
+      # version" to take and `git checkout develop -- <file>` fails outright
+      # ("does not have their version"), leaving the merge stuck.
+      #
+      # This is the shape of the v5.0.0 harness migration on any branch that
+      # ever ran the old infra-sync: that script COMMITTED develop's bytes onto
+      # the feature branch, so the branch carries its own modifications to paths
+      # develop has since deleted. Every client with a live worktree hits it.
+      #
+      # Accept the deletion. For harness paths the post-merge restore copies
+      # them straight back as ignored files; for anything else develop deleting
+      # it is the intent.
+      git rm -q -f -- "$file" 2>/dev/null || true
+      echo "  resolved: $file (deleted on develop — accepted)"
+    fi
   elif [[ "$file" == .plan-ref ]]; then
     # Derive plan ID from branch name — more reliable than git checkout --ours
     # which can fail with "pathspec did not match" in some conflict states

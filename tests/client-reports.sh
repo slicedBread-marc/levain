@@ -1390,6 +1390,42 @@ assert_eq "and the worktree has the new content" "spec v2" \
 assert_ok "so git merge develop still runs" \
   git -C "$UT/feature-branches/PLN-001-x" merge develop --no-edit
 
+# MODIFY/DELETE is the shape this migration takes on any branch that ever ran
+# the old infra-sync — which committed develop's bytes ONTO the feature branch,
+# so the branch carries its own modifications to paths develop has since
+# deleted. `git checkout develop -- <file>` then fails outright ("does not have
+# their version") and the merge stays stuck. Hit for real on client-a's live
+# PLN-004 worktree; every remaining client will hit it too.
+MD="$TEST_DIR/modifydelete"
+mkdir -p "$MD" && (
+  cd "$MD" && git init -qb develop . && git config user.email t@t && git config user.name t
+  mkdir -p .claude/skills/wf-spec scripts
+  printf 'v1\n' > .claude/skills/wf-spec/SKILL.md
+  printf 'v1\n' > scripts/wf-exec.sh && chmod +x scripts/wf-exec.sh
+  printf 'feature-branches/\n' > .gitignore && printf 'code\n' > src.txt
+  git add -A && git commit -qm init
+  git worktree add -q feature-branches/wt -b feature/PLN-004-x HEAD
+  # the old infra-sync behaviour: the BRANCH commits its own harness change
+  cd feature-branches/wt && printf 'v2-branch\n' > .claude/skills/wf-spec/SKILL.md
+  git add -A && git commit -qm "chore: sync workflow infra from develop"
+  cd "$MD"
+  printf 'v3-develop\n' > .claude/skills/wf-spec/SKILL.md
+  git add -A && git commit -qm deploy
+  printf '.claude/skills/wf-*/\nscripts/wf-exec.sh\n' >> .gitignore
+  git rm -r -q --cached --ignore-unmatch .claude/skills/wf-* scripts/wf-exec.sh
+  git add .gitignore && git commit -qm untrack
+) >/dev/null 2>&1
+
+( cd "$MD/feature-branches/wt" && "$SCRIPT_DIR/wf-merge-develop.sh" ) >/dev/null 2>&1
+assert_eq "a modify/delete conflict on a deleted path resolves" "0" \
+  "$(git -C "$MD/feature-branches/wt" ls-files -u | wc -l | xargs)"
+assert_eq "the worktree is clean after taking the migration" "0" \
+  "$(git -C "$MD/feature-branches/wt" status --porcelain | wc -l | xargs)"
+assert_eq "and the harness is back on disk, from the main worktree" "v3-develop" \
+  "$(cat "$MD/feature-branches/wt/.claude/skills/wf-spec/SKILL.md" 2>/dev/null)"
+assert_eq "wf-exec.sh restored and executable" "true" \
+  "$([ -x "$MD/feature-branches/wt/scripts/wf-exec.sh" ] && echo true || echo false)"
+
 # install.sh must seed the ignores, or a client migrates halfway and re-dirties.
 for pat in '.claude/skills/wf-\*/' '.claude/workflow.md' 'scripts/wf-exec.sh' 'scripts/v\*/'; do
   assert_eq "install.sh seeds the ignore for $pat" "true" \
