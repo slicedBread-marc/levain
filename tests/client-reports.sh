@@ -522,16 +522,28 @@ registry_add_row PLN-120 unstaged ready
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-120" >/dev/null 2>&1
 
 "$SCRIPT_DIR/wf-registry-update.sh" PLN-120 ready active >/dev/null 2>&1
-assert_eq "a transition without --commit still stages the registry" "true" \
-  "$(git diff --cached --name-only | grep -qx 'plans/REGISTRY.md' && echo true || echo false)"
 
-# The caller's own commit is what must carry it — `git commit -m` commits the
-# whole index, so staging here is enough for every skill's add-list.
-git commit -qm "implement(PLN-120-unstaged): verified, moved to verify" >/dev/null 2>&1
-assert_eq "the caller's commit carries the transition" "true" \
+# Staged was never enough (client-a WFI-065): a dirty REGISTRY.md on the
+# develop root is taken by any other worker's stash and carried by any other
+# worker's commit, and a transition that evaporates mid-implementation reads to
+# the next sweep as free work. So the transition commits itself, immediately,
+# whether or not the caller passed --commit.
+assert_eq "a transition without --commit commits itself" "true" \
   "$(git show --stat --name-only HEAD | grep -qx 'plans/REGISTRY.md' && echo true || echo false)"
+assert_eq "and nothing is left dirty for someone else to pick up" "true" \
+  "$(git diff --cached --name-only | grep -qx 'plans/REGISTRY.md' && echo false || echo true)"
 assert_eq "and HEAD's registry holds the new state" "active" \
   "$(git show HEAD:plans/REGISTRY.md | grep '^| PLN-120 |' | awk -F'|' '{print $4}' | xargs)"
+assert_eq "and the message names the transition" "true" \
+  "$(git log -1 --format=%s | grep -q 'registry(PLN-120): ready → active' && echo true || echo false)"
+
+# --no-commit is the opt-out, for a caller that really does want to bundle it.
+registry_add_row PLN-121 staged-only ready
+"$SCRIPT_DIR/wf-commit.sh" "add PLN-121" --add plans/REGISTRY.md >/dev/null 2>&1
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-121 ready active --no-commit >/dev/null 2>&1
+assert_eq "--no-commit stages without committing" "true" \
+  "$(git diff --cached --name-only | grep -qx 'plans/REGISTRY.md' && echo true || echo false)"
+git commit -qm "implement(PLN-121-staged-only): carries its own transition" >/dev/null 2>&1
 
 # Phase 3 named only progress.md and findings.md, so the plan.md checklist
 # ticks that step 21 writes were dropped on the floor too.
@@ -1574,10 +1586,18 @@ printf 'manualTestGate:\n  requireRenderingSurface: true\n  minEyesCriteria: 1\n
 # A real diff that touches no rendering surface — a CLI change. Without one the
 # gate takes the "could not read the plan's diff" branch, which also gates, and
 # the assertions below would pass for the wrong reason.
+#
+# The diff has to be reachable the way the script looks for it: from the plan's
+# own branch, or from `feature-branches/<plan>`. Anything else is somebody
+# else's history — the script used to diff whatever directory it was called in,
+# so on the develop root a registry commit read as "the plan changed the
+# registry", and the surface rule then answered about that.
 mkdir -p "$GATE_DIR/src/Cli"
 (
   cd "$GATE_DIR" && git init -q . && git config user.email t@t && git config user.name t
   git add -A && git commit -qm seed
+  git checkout -q -b develop
+  git checkout -q -b feature/PLN-004-tool-cli
   echo 'class Program {}' > src/Cli/Program.cs
   git add -A && git commit -qm cli
 ) >/dev/null 2>&1
@@ -1744,7 +1764,7 @@ mkdir -p "$SPEC_DIR/scripts" \
          "$SPEC_DIR/plans/PLN-008-capsule-take" \
          "$SPEC_DIR/plans/PLN-020-relay-wire" \
          "$SPEC_DIR/plans/PLN-030-row-only"
-cp "$SCRIPT_DIR/wf-list-specable.sh" "$SPEC_DIR/scripts/"
+cp "$SCRIPT_DIR/wf-list-specable.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$SPEC_DIR/scripts/"
 cat > "$SPEC_DIR/plans/REGISTRY.md" << 'REGEOF'
 | ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |
 |-|-|-|-|-|-|-|-|-|
@@ -1803,6 +1823,171 @@ printf -- '- [ ] ESCALATED: the wire format is undecided\n' \
 only_escalated=$(cd "$SPEC_DIR" && ./scripts/wf-list-specable.sh 2>&1 || true)
 assert_eq "escalated work with no unreviewed drafts lists cleanly" "true" \
   "$(printf '%s' "$only_escalated" | grep -q 'unbound variable' && echo false || echo true)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A rename commits both of its halves (client-a WFI-066)"
+
+# `git diff --cached --name-only` reports a rename as ONE path — the
+# destination. wf-commit.sh read its commit list back that way, so the source
+# never reached the pathspec and its deletion stayed staged: HEAD held the same
+# bug in bugs/open/ AND bugs/triaged/, and the next worklist re-offered the
+# still-open copy as unplanned work.
+cd "$TEST_DIR/main" || exit 1
+mkdir -p bugs/open/BUG-900-dup bugs/triaged
+echo 'a bug' > bugs/open/BUG-900-dup/bug.md
+"$SCRIPT_DIR/wf-commit.sh" "bug: file BUG-900" --add bugs/ >/dev/null 2>&1
+git mv bugs/open/BUG-900-dup bugs/triaged/BUG-900-dup >/dev/null 2>&1
+"$SCRIPT_DIR/wf-commit.sh" "spec: consume BUG-900" --add bugs/ >/dev/null 2>&1
+assert_eq "the triaged copy is committed" "true" \
+  "$(git ls-tree -r --name-only HEAD | grep -qx 'bugs/triaged/BUG-900-dup/bug.md' && echo true || echo false)"
+assert_eq "and the open copy is gone from HEAD, not merely from the worktree" "false" \
+  "$(git ls-tree -r --name-only HEAD | grep -qx 'bugs/open/BUG-900-dup/bug.md' && echo true || echo false)"
+assert_eq "and nothing is left staged" "true" \
+  "$(git diff --cached --name-only | grep -q . && echo false || echo true)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A claim names a process that outlives the shell (client-a WFI-062)"
+
+# The PID walk compared `ps -o comm=` against bare shell names, which never
+# match on macOS (comm is `/bin/zsh`). The walk stopped on its first step and
+# recorded the transient shell that ran the script — dead by the next tool
+# call — so every attended claim read as stale and the daemon dispatched
+# unattended workers straight into worktrees a human was using.
+registry_add_row PLN-901 claimed active
+"$SCRIPT_DIR/wf-claim.sh" PLN-901-claimed >/dev/null 2>&1
+claim_pid=$(sed -n '2p' plans/PLN-901-claimed/.wf-claim)
+assert_eq "the claim records a live process" "true" \
+  "$(kill -0 "$claim_pid" 2>/dev/null && echo true || echo false)"
+assert_eq "and not the shell that has already exited" "false" \
+  "$([ "$claim_pid" = "$$" ] && echo true || echo false)"
+assert_eq "so the plan reads as processing, not free" "processing" \
+  "$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null | awk -F'\t' '$2 == "PLN-901-claimed" { print $1 }')"
+
+# --if-free is what lets a second worker stand down instead of racing.
+assert_fails "a live claim refuses a second claimant" \
+  "$SCRIPT_DIR/wf-claim.sh" PLN-901-claimed --if-free
+# A claim whose owner is gone must not park the artifact forever.
+printf '%s\n999999\n' "$(date +%s)" > plans/PLN-901-claimed/.wf-claim
+assert_ok "a dead owner's claim is reaped" \
+  "$SCRIPT_DIR/wf-claim.sh" PLN-901-claimed --if-free
+"$SCRIPT_DIR/wf-unclaim.sh" PLN-901-claimed >/dev/null 2>&1
+
+# ═══════════════════════════════════════════════════════════════════════
+section "An open gate is part of eligibility (client-a WFI-063)"
+
+# The dispatcher checked gates before spawning; wf-list-implementable.sh, which
+# every human and skill treats as the source of truth for what is buildable,
+# did not. An implementer landed on a plan carrying an unanswered
+# consistency-migration gate with the worklist calling it ordinary `new` work.
+registry_add_row PLN-902 gated ready
+mkdir -p .claude/orchestrator/gates
+cat > .claude/orchestrator/gates/PLN-902.gate << 'GATEEOF'
+GATE_ID='PLN-902'
+GATE_ARTIFACT='PLN-902'
+GATE_NAME='consistency-migration'
+GATE_QUESTION='Which capsule format wins?'
+GATE_CONTEXT=''
+GATE_SKILL='wf-consistency'
+GATE_OPENED='2026-08-04T19:45:44Z'
+GATEEOF
+gated_out=$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null || true)
+assert_eq "a gated plan is not offered as new work" "gated" \
+  "$(printf '%s' "$gated_out" | awk -F'\t' '$2 == "PLN-902-gated" { print $1 }')"
+assert_eq "and the row names the gate that holds it" "consistency-migration" \
+  "$(printf '%s' "$gated_out" | awk -F'\t' '$2 == "PLN-902-gated" { print $5 }')"
+assert_eq "the dispatcher's own parse drops it" "false" \
+  "$(printf '%s' "$gated_out" \
+     | awk -F'\t' '$1 == "new" || $1 == "resume" || $1 == "fix" { print $2 }' \
+     | grep -qx 'PLN-902-gated' && echo true || echo false)"
+rm -f .claude/orchestrator/gates/PLN-902.gate
+
+# ═══════════════════════════════════════════════════════════════════════
+section "An answered gate can be recorded after the fact (client-a WFI-060)"
+
+# The resolved-gate ledger was introduced after some gates had already closed,
+# and there was no way to write a resolution proven by commit history into it.
+# wf-spec then re-derived its gating rule, saw GATE_ANSWERED=false, and re-asked
+# a question the user had answered in writing.
+registry_add_row PLN-903 backfill draft
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-903 "approved as reviewed (5c369e2)" --gate spec-approval >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-903 spec-approval)"
+assert_eq "the backfilled resolution answers the gate" "true" "$GATE_ANSWERED"
+assert_eq "and carries the evidence forward" "approved as reviewed (5c369e2)" "$GATE_RESOLUTION"
+# Scoped to the revision, like any other resolution: edit the plan and it re-opens.
+echo 'a new step' >> plans/PLN-903-backfill/plan.md
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-903 spec-approval)"
+assert_eq "an edited plan makes it stale again" "true" "$GATE_STALE"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A review says which text it judged (client-a WFI-069)"
+
+# Staleness was a comparison of two day-granular dates, so a plan reviewed and
+# amended in one session — every replan that finishes in one sitting — was
+# unorderable. The script correctly said `unknown`, and wf-spec's gate condition
+# ("REVIEW_STALE must be false") could then never be met.
+registry_add_row PLN-904 stamped draft
+cat > plans/PLN-904-stamped/plan.md << 'PLANEOF'
+# Stamped
+
+## Goal
+Prove staleness is answerable.
+
+## Amendments
+2026-08-04 — narrowed the wire format.
+
+## Review
+> **2026-08-04 — Plan Review (round 1 of 3)**
+> **Result:** Approved
+PLANEOF
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-904)"
+assert_eq "same-day review and amendment are unorderable by date" "unknown" "$REVIEW_STALE"
+"$SCRIPT_DIR/wf-review-stamp.sh" PLN-904 >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-904)"
+assert_eq "a stamp settles it" "false" "$REVIEW_STALE"
+assert_eq "and says it is stamped" "true" "$REVIEW_STAMPED"
+assert_eq "the verdict survives stamping" "Approved" "$REVIEW_RESULT"
+# Amend after the stamp and it is stale — definitively, not by date. The
+# amendment goes in the plan BODY: writing more rounds into `## Review` is not
+# an edit to the thing under review, which is why the hash excludes it.
+awk '/^## Review/ && !done { print "2026-08-04 — dropped the retry path."; done = 1 } { print }' \
+  plans/PLN-904-stamped/plan.md > plans/PLN-904-stamped/plan.tmp \
+  && mv plans/PLN-904-stamped/plan.tmp plans/PLN-904-stamped/plan.md
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-904)"
+assert_eq "editing the plan makes the verdict stale" "true" "$REVIEW_STALE"
+# Re-stamping after a re-review replaces the old stamp rather than stacking.
+"$SCRIPT_DIR/wf-review-stamp.sh" PLN-904 >/dev/null 2>&1
+assert_eq "one stamp, not two" "1" \
+  "$(grep -c 'wf-review-stamp' plans/PLN-904-stamped/plan.md | xargs)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Progress ticks and registry rows are durable (client-a WFI-064, WFI-065)"
+
+# Both files sat dirty on the develop root for the length of an implementation.
+# Any other worker's `git stash push --include-untracked` takes every dirty file
+# in that working tree, so a 2/6 checklist reverted to 0/6 and a whole
+# ready→active transition vanished — which the next sweep reads as free work.
+registry_add_row PLN-905 durable ready
+cat > plans/PLN-905-durable/progress.md << 'PROGEOF'
+# Progress — PLN-905
+
+## Steps
+- [ ] Step 1: wire the reader
+- [ ] Step 2: wire the writer
+
+## Log
+PROGEOF
+"$SCRIPT_DIR/wf-commit.sh" "spec: seed PLN-905" --add plans/ >/dev/null 2>&1
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-905 ready active feature/PLN-905-durable >/dev/null 2>&1
+"$SCRIPT_DIR/wf-progress-tick.sh" PLN-905 1 "wired the reader" >/dev/null 2>&1
+
+# The test for durability is the one that actually happened: a concurrent
+# worker stashes the whole working tree and pops it later.
+git stash push --include-untracked -m "another worker" >/dev/null 2>&1 || true
+assert_eq "the transition survives a stranger's stash" "active" "$(registry_state PLN-905)"
+assert_eq "and so does the tick" "1" \
+  "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-905 | cut -d/ -f1)"
+git stash pop >/dev/null 2>&1 || true
+"$SCRIPT_DIR/wf-unclaim.sh" PLN-905-durable >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n'

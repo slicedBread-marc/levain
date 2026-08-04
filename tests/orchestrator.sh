@@ -494,14 +494,33 @@ assert_eq "the gate names the reason" "stuck" \
   "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-035 2>/dev/null | cut -f2)"
 
 # --- one worker per artifact+role, however many callers ask
+#
+# The guard is keyed on the artifact NUMBER, not its name: a bug keeps its
+# number when it becomes a plan, so BUG-036 and PLN-036-dup are one piece of
+# work with two names, and one guard has to cover both (client-a WFI-067).
 registry_add_row PLN-036 dup ready
-echo $$ > "$ORCH/logs/PLN-036-dup-implement.pid"   # pretend a worker is live
+echo $$ > "$ORCH/logs/036-implement.pid"   # pretend a worker is live
 rc=0; "$SCRIPT_DIR/wf-spawn.sh" implement PLN-036-dup >/dev/null 2>&1 || rc=$?
 assert_eq "second spawn for a live worker is refused (rc 2)" "2" "$rc"
-rm -f "$ORCH/logs/PLN-036-dup-implement.pid"
-echo "999999" > "$ORCH/logs/PLN-036-dup-implement.pid"  # dead PID
+rc=0; "$SCRIPT_DIR/wf-spawn.sh" spec BUG-036 >/dev/null 2>&1 || rc=$?
+assert_eq "a different role for the same number still spawns" "0" "$rc"
+rc=0; "$SCRIPT_DIR/wf-spawn.sh" implement BUG-036 >/dev/null 2>&1 || rc=$?
+assert_eq "the same work under its other name is refused too" "2" "$rc"
+rm -f "$ORCH/logs/036-implement.pid" "$ORCH/logs/036-spec.pid"
+
+echo "999999" > "$ORCH/logs/036-implement.pid"  # dead PID
 rc=0; "$SCRIPT_DIR/wf-spawn.sh" implement PLN-036-dup --dry-run >/dev/null 2>&1 || rc=$?
 assert_eq "a dead pidfile does not block a respawn" "0" "$rc"
+rm -f "$ORCH/logs/036-implement.pid"
+
+# An upgrade mid-flight must not double-launch: a pidfile written under the old
+# name is adopted rather than ignored.
+echo $$ > "$ORCH/logs/PLN-036-dup-implement.pid"
+rc=0; "$SCRIPT_DIR/wf-spawn.sh" implement PLN-036-dup >/dev/null 2>&1 || rc=$?
+assert_eq "a pre-v5.1 pidfile still guards its worker" "2" "$rc"
+assert_eq "and is renamed to the number-keyed form" "true" \
+  "$([ -f "$ORCH/logs/036-implement.pid" ] && echo true || echo false)"
+rm -f "$ORCH/logs/036-implement.pid" "$ORCH/logs/PLN-036-dup-implement.pid"
 
 section "Board"
 
