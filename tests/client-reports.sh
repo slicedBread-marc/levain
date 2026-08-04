@@ -994,11 +994,49 @@ assert_eq "and its verdict is read out of prose" "'Blocked'" \
 assert_eq "a verdict older than the amendment is stale" "true" \
   "$(printf '%s' "$rs13" | awk -F= '/^REVIEW_STALE=/{print $2}')"
 
+# A review recorded as BLOCKQUOTE lines is still a review. The shipped template
+# and wf-spec's own example both write the record that way, so a "filled means
+# unquoted" test reports a correctly-filed verdict as missing — the same false
+# harness fault this script exists to prevent. Caught against client-a's real
+# PLN-018 after the first cut of the fix shipped.
+mkdir -p plans/PLN-019-quoted
+cat > plans/PLN-019-quoted/plan.md <<'PLAN19'
+## Review
+> Filled by the planner's review gate before status is set to Ready.
+
+> **2026-08-04 — Plan Review (unattended, round 1 of 3)**
+> **Result:** Approved with notes
+> **Rounds:** 1 — no Critical findings.
+
+> **2026-08-05 — Plan Review (unattended, round 2 of 3)**
+> **Result:** Approved
+## Amendments
+> Append-only.
+PLAN19
+rs19=$("$SCRIPT_DIR/wf-review-status.sh" PLN-019 2>/dev/null)
+assert_eq "a blockquoted verdict is found, not read as a placeholder" "plan" \
+  "$(printf '%s' "$rs19" | awk -F= '/^REVIEW_LOCATION=/{print $2}')"
+assert_eq "and the LAST round's verdict is the one reported" "'Approved'" \
+  "$(printf '%s' "$rs19" | sed -n 's/^REVIEW_RESULT=//p')"
+
 rs18=$("$SCRIPT_DIR/wf-review-status.sh" PLN-018 2>/dev/null)
 assert_eq "a fresh spec records its verdict in plan.md" "plan" \
   "$(printf '%s' "$rs18" | awk -F= '/^REVIEW_LOCATION=/{print $2}')"
 assert_eq "and an unamended plan is not stale" "false" \
   "$(printf '%s' "$rs18" | awk -F= '/^REVIEW_STALE=/{print $2}')"
+
+# Day-granular dates cannot order a review and an amendment written the same
+# day — which is the ordinary case. Neither "current" nor "stale" is honest.
+mkdir -p plans/PLN-020-sameday
+cat > plans/PLN-020-sameday/plan.md <<'PLAN20'
+## Review
+**2026-08-04 — Plan Review**
+**Result:** Approved
+## Amendments
+A1 — 2026-08-04 — narrowed
+PLAN20
+assert_eq "a same-day review and amendment is neither, and says so" "unknown" \
+  "$("$SCRIPT_DIR/wf-review-status.sh" PLN-020 2>/dev/null | awk -F= '/^REVIEW_STALE=/{print $2}')"
 
 assert_eq "wf-attend looks in both places before crying harness fault" "true" \
   "$(grep -q 'wf-review-status.sh' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"

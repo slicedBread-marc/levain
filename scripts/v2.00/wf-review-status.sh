@@ -32,11 +32,12 @@
 #   REVIEW_RESULT='Approved with notes'   (empty when none)
 #   REVIEW_DATE=2026-08-03                (empty when undated)
 #   AMENDMENT_DATE=2026-08-04             (empty when never amended)
-#   REVIEW_STALE=true|false               (true = amended since the verdict)
+#   REVIEW_STALE=true|false|unknown       (true = amended since the verdict)
 #
-# REVIEW_STALE is true only when both dates are known and the amendment is
-# newer. An undated review with a dated amendment is also stale — a verdict
-# nobody dated cannot be shown to postdate anything.
+# REVIEW_STALE is true when the amendment is newer, or when the review carries
+# no date at all — a verdict nobody dated cannot be shown to postdate anything.
+# It is `unknown` when the two share a date, which day-granular timestamps
+# cannot order; anything other than `false` wants a human's eye.
 #
 # Exit 0 always. This reports; the caller decides.
 
@@ -80,10 +81,7 @@ fi
 plan_file="$plan_dir/plan.md"
 findings_file="$plan_dir/findings.md"
 
-# Body of a `## <name>` section, with the template's blockquote scaffolding
-# stripped. Everything the template ships is quoted with `>`; anything a real
-# session writes is not. That is what tells a filled section from a placeholder.
-# Matched by PREFIX, not equality: findings.md dates its sections in the
+# Body of a `## <name>` section. Matched by PREFIX, not equality: findings.md dates its sections in the
 # heading itself (`## Spec Review — 2026-08-03`), so an equality test finds
 # nothing at all there.
 section_body() {
@@ -106,12 +104,20 @@ section_body() {
 # produced buries it mid-sentence ("...review run at the spec-approval gate.
 # Result: Blocked"). Anchoring at line start finds the first and silently
 # misses the second, which is the same failure as not looking at all.
+#
+# The LAST Result line, not the first: a plan that went several rounds records
+# every one, and the verdict that matters is the most recent. Trimmed at the
+# first em-dash so a gate question carries "Approved with notes" rather than a
+# paragraph of reviewer commentary.
 result_of() {
   printf '%s\n' "$1" \
     | { grep -iE 'result:' || true; } \
-    | head -1 \
-    | sed -E 's/.*[Rr]esult:\*{0,2}[ \t]*//' \
-    | sed -E 's/[ \t]+$//'
+    | { grep -v 'Approved | Approved with notes | Blocked' || true; } \
+    | tail -1 \
+    | sed -E 's/.*[Rr]esult:[ \t]*//' \
+    | sed -E 's/^\*+//; s/\*+//g' \
+    | sed -E 's/[ \t]*—.*$//' \
+    | sed -E 's/^[ \t]+//; s/[ \t]+$//'
 }
 
 first_date_of() {
@@ -122,9 +128,23 @@ review_location=none
 review_body=""
 
 # 1. The place the verdict belongs.
+#
+# "Filled" is decided by the presence of a real `Result:` line, NOT by whether
+# the section is blockquoted. That distinction matters: the shipped template
+# and wf-spec's own example both write the record AS blockquote lines
+# (`> **Result:** Approved with notes`), so treating every `>` line as
+# scaffolding reports a correctly-filed review as missing — which is precisely
+# the false "harness fault" this script exists to prevent. Caught against
+# client-a's PLN-018, whose two rounds are recorded exactly as documented.
+#
+# The template's own line is excluded by its shape: it is a menu of every
+# possible verdict (`Approved | Approved with notes | Blocked`), and a real one
+# names exactly one.
 body=$(section_body "$plan_file" "Review")
-unquoted=$(printf '%s\n' "$body" | { grep -vE '^[ \t]*>' || true; } | { grep -vE '^[ \t]*$' || true; })
-if [ -n "$unquoted" ]; then
+real=$(printf '%s\n' "$body" \
+  | { grep -iE 'result:' || true; } \
+  | { grep -v 'Approved | Approved with notes | Blocked' || true; })
+if [ -n "$real" ]; then
   review_location=plan
   review_body="$body"
 else
@@ -159,12 +179,18 @@ amendment_body=$(section_body "$plan_file" "Amendments")
 amendment_unquoted=$(printf '%s\n' "$amendment_body" | { grep -vE '^[ \t]*>' || true; })
 amendment_date=$(first_date_of "$amendment_unquoted")
 
+# Three answers, not two. Dates are day-granular, and a plan reviewed and
+# amended on the SAME day is the ordinary case — review, findings, amendment,
+# re-review all inside one session. Calling that stale would force a pointless
+# re-review nearly every time; calling it current would wave through the exact
+# ordering WFI-046 is about. So it reports `unknown` and lets the operator look.
 stale=false
 if [ "$review_location" != "none" ] && [ -n "$amendment_date" ]; then
   if [ -z "$review_date" ]; then
     stale=true
-  elif [ "$(printf '%s\n%s\n' "$review_date" "$amendment_date" | sort | tail -1)" = "$amendment_date" ] &&
-       [ "$review_date" != "$amendment_date" ]; then
+  elif [ "$review_date" = "$amendment_date" ]; then
+    stale=unknown
+  elif [ "$(printf '%s\n%s\n' "$review_date" "$amendment_date" | sort | tail -1)" = "$amendment_date" ]; then
     stale=true
   fi
 fi

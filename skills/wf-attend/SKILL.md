@@ -53,6 +53,7 @@ The plan is drafted, **already reviewed**, and committed in `draft` state. The o
    | `plan`, not stale | The normal case | Display `## Review` and continue to step 2 |
    | `findings`, not stale | The verdict exists but was written to `findings.md` | Display it from there, move it into `plan.md`'s `## Review`, and file `wf-issue.sh` — the review is fine, its filing was not |
    | `REVIEW_STALE=true` | The plan was **amended after** the verdict | The verdict is about a document that no longer exists. Re-run the review on the plan as it now stands, write it to `## Review`, and gate on *that* |
+   | `REVIEW_STALE=unknown` | Reviewed and amended the same day | Dates cannot order them. Read the amendment: if the review does not address it, treat it as stale |
    | `none` | The plan gated before its review | Harness fault — file it with `wf-issue.sh` and run the review yourself |
 
    Display the verdict, the round count, and any Warnings. A plan reaching this gate should be one the reviewer *approved*; you are deciding whether to build it, not whether it is sound.
