@@ -1167,6 +1167,38 @@ assert_eq "a draft plan sitting on real commits is reported" "true" \
 assert_eq "a two-line finding counts as one problem" "registry audit: 1 problem(s)" \
   "$(printf '%s' "$stale_audit" | grep 'registry audit:')"
 
+# The counter check used to read every digit run out of whole paths, so a slug
+# containing a number became an artifact ID. client-a's highest real ID was
+# 020 and `base64url` in two slugs made the audit report 64 and advise setting
+# the counter to 65 — burning IDs 21-64. The check that guards the counter was
+# the only thing endangering it (WFI-050).
+SLUG="$TEST_DIR/slugdigits"
+mkdir -p "$SLUG/plans/PLN-019-capsule-base64url-encoding" \
+         "$SLUG/bugs/triaged/BUG-019-capsule-base64url-encoding" \
+         "$SLUG/plans/briefs" && (
+  cd "$SLUG" && git init -qb develop . && git config user.email t@t && git config user.name t
+  { printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n'
+    printf '| PLN-019 | capsule-base64url-encoding | complete | — | — | 2026-08-04 | 2.00 | — | — |\n'
+    printf '| PLN-020 | tool-cli | draft | — | — | 2026-08-04 | 2.00 | — | — |\n'
+    printf '\n<!-- Counter: 21 -->\n'
+  } > plans/REGISTRY.md
+  mkdir -p plans/PLN-020-tool-cli
+) >/dev/null 2>&1
+
+slug_audit=$(cd "$SLUG" && "$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+assert_eq "a number inside a slug is not mistaken for an artifact ID" "true" \
+  "$(printf '%s' "$slug_audit" | grep -q 'COUNTER' && echo false || echo true)"
+assert_eq "and the audit is clean on client-a's actual shape" "registry audit: clean" \
+  "$(printf '%s' "$slug_audit" | grep 'registry audit:')"
+
+# The check must still fire for a counter that really is behind.
+( cd "$SLUG" && sed -i.bak 's/<!-- Counter: 21 -->/<!-- Counter: 19 -->/' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak )
+behind_audit=$(cd "$SLUG" && "$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+assert_eq "a genuinely stale counter is still caught" "true" \
+  "$(printf '%s' "$behind_audit" | grep -q 'COUNTER.*highest ID in use (20)' && echo true || echo false)"
+assert_eq "and it advises the next free number, not a slug's digits" "true" \
+  "$(printf '%s' "$behind_audit" | grep -q 'Set it to 21\.' && echo true || echo false)"
+
 assert_eq "wf-status runs the audit" "true" \
   "$(grep -q 'wf-registry-audit.sh' "$LIB_ROOT/skills/wf-status/SKILL.md" && echo true || echo false)"
 

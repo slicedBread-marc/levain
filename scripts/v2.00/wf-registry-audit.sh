@@ -75,14 +75,14 @@ detail() {
 #
 # `reg_rows`  one "<id> <slug> <state>" line per PLN row
 # `reg_ids`   space-delimited PLN ids, for membership tests
-# `art_nums`  every PLN/BUG/BRF number, for the counter check
+# `art_ids`   every PLN/BUG/BRF id, for the counter check
 eval "$(awk -F'|' '
   function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
   function esc(s)  { gsub(/'"'"'/, "'"'"'\\'"'"''"'"'", s); return s }
   {
     id = trim($2)
     if (id !~ /^(PLN|BUG|BRF)-[0-9]+$/) next
-    num = id; sub(/^[A-Z]+-/, "", num); nums = nums num "\n"
+    nums = nums id "\n"
     if (id !~ /^PLN-/) next
     rows = rows id " " trim($3) " " trim($4) "\n"
     ids  = ids id " "
@@ -90,7 +90,7 @@ eval "$(awk -F'|' '
   END {
     printf "reg_rows='"'"'%s'"'"'\n", esc(rows)
     printf "reg_ids='"'"' %s'"'"'\n",  esc(ids)
-    printf "art_nums='"'"'%s'"'"'\n",  esc(nums)
+    printf "art_ids='"'"'%s'"'"'\n",  esc(nums)
   }
 ' "$REGISTRY")"
 
@@ -145,11 +145,20 @@ done
 counter=$(grep -oE '<!-- Counter: [0-9]+ -->' "$REGISTRY" | grep -oE '[0-9]+' | head -1 || true)
 if [ -n "$counter" ]; then
   # One glob expansion into one grep, rather than basename + grep per entry.
+  #
+  # Match the ID, then take its digits — NOT every digit run in the path. Two
+  # of these inputs are whole paths, and a slug is free to contain numbers:
+  # `bugs/triaged/BUG-019-capsule-base64url-encoding/` yields 019 *and 64* to a
+  # bare `[0-9]+`. client-a's counter sat correctly at 21 and the audit told
+  # it to jump to 65, which would have burned IDs 21-64 — the check meant to
+  # protect the counter was the only thing threatening it (WFI-050). Any slug
+  # with a number in it does this: base64, sha256, oauth2, utf8, s3.
   highest=$(
-    { printf '%s' "$art_nums"
+    { printf '%s' "$art_ids"
       printf '%s' "$disk_rows" | awk '{print $1}'
       printf '%s\n' bugs/*/*/ plans/briefs/* 2>/dev/null
-    } | { grep -oE '[0-9]+' || true; } | sed 's/^0*//' | sort -n | tail -1
+    } | { grep -oE '(PLN|BUG|BRF)-[0-9]+' || true; } \
+      | sed -E 's/^[A-Z]+-0*//' | { grep -E '^[0-9]+$' || true; } | sort -n | tail -1
   )
   if [ -n "$highest" ] && [ "$counter" -le "$highest" ]; then
     report "COUNTER       <!-- Counter: $counter --> is not above the highest ID in use ($highest) — the next allocation collides."
