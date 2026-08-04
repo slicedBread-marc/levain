@@ -145,3 +145,46 @@ printf '| %s | %s | %s | %s | %s | %s | %s | open |\n' \
   "$next" "$criterion" "$tag" "$plan_id" "$prereq" "$note" "$(date +%Y-%m-%d)" >> "$FILE"
 
 echo "Deferred: $next ($tag, prereq $prereq) from $plan_id"
+
+# ── Close the loop in the plan itself ─────────────────────────────────────
+#
+# The row above is the program-wide record. It is not the record a person reads
+# when they open the completed plan — there they see the `#### Manual` list, and
+# an unchecked box there means BOTH "deferred on purpose" and "silently
+# dropped". Those need to stop looking alike: the same ambiguity is what made
+# BUG-020/WFI-054 hard to notice, and PLN-018 completed with its deferral
+# correctly recorded here and its checkbox untouched (WFI-056).
+#
+# Best-effort by design. A criterion reworded on the way in still gets its DC
+# row; failing the deferral over a text mismatch would trade a bookkeeping gap
+# for a pipeline stop.
+eval "$("$(dirname "$0")/wf-plan-info.sh" "$plan_id" 2>/dev/null)" || true
+plan_file="$ROOT/${PLAN_DIR:-}/plan.md"
+
+if [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
+  if awk -v crit="$criterion" -v dc="$next" '
+      BEGIN { done = 0 }
+      /^####[[:space:]]*Manual/ { in_manual = 1; print; next }
+      /^(#|##|###|####)[[:space:]]/ {
+        if (in_manual && $0 !~ /^####[[:space:]]*Manual/) in_manual = 0
+      }
+      {
+        # index() not a regex: the criterion is free text and may contain any
+        # metacharacter a planner typed.
+        if (!done && in_manual && $0 ~ /^[[:space:]]*-[[:space:]]*\[[ ]\]/ && index($0, crit) > 0) {
+          sub(/\[[ ]\]/, "[x]")
+          printf "%s — deferred as %s\n", $0, dc
+          done = 1
+          next
+        }
+        print
+      }
+      END { exit (done ? 0 : 1) }
+    ' "$plan_file" > "$plan_file.tmp"; then
+    mv "$plan_file.tmp" "$plan_file"
+    echo "  ticked in $PLAN_DIR/plan.md — deferred as $next"
+  else
+    rm -f "$plan_file.tmp"
+    echo "  note: no matching unchecked criterion in $PLAN_DIR/plan.md — tick it by hand and cite $next" >&2
+  fi
+fi
