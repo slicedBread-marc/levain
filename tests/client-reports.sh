@@ -1731,6 +1731,80 @@ assert_eq "and told the seeded template is the stale one, not a second opinion" 
   "$(grep -q 'never re-rendered' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A never-reviewed draft is dispatchable (client-a WFI-058)"
+
+# The daemon reaches the spec role through wf-list-specable.sh, which emitted a
+# draft plan only when its findings.md carried an unchecked box — the replanning
+# shape. A draft that has a plan.md and has never been reviewed has empty
+# findings, so nothing emitted it and the sweep could not see it. client-a
+# stalled with 7 of them; PLN-008 gated five further plans while the spec slot
+# sat idle at 0/1. A plan leaves `draft` only through a spec run.
+SPEC_DIR="$TEST_DIR/specable"
+mkdir -p "$SPEC_DIR/scripts" \
+         "$SPEC_DIR/plans/PLN-008-capsule-take" \
+         "$SPEC_DIR/plans/PLN-020-relay-wire" \
+         "$SPEC_DIR/plans/PLN-030-row-only"
+cp "$SCRIPT_DIR/wf-list-specable.sh" "$SPEC_DIR/scripts/"
+cat > "$SPEC_DIR/plans/REGISTRY.md" << 'REGEOF'
+| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |
+|-|-|-|-|-|-|-|-|-|
+| PLN-005 | done-already | ready | high | — | 2026-08-04 | 2.00 | — | — |
+| PLN-008 | capsule-take | draft | high | — | 2026-08-04 | 2.00 | — | — |
+| PLN-020 | relay-wire | draft | med | — | 2026-08-04 | 2.00 | — | — |
+| PLN-030 | row-only | draft | low | — | 2026-08-04 | 2.00 | — | — |
+REGEOF
+echo '## Goal' > "$SPEC_DIR/plans/PLN-008-capsule-take/plan.md"
+echo '## Goal' > "$SPEC_DIR/plans/PLN-020-relay-wire/plan.md"
+printf -- '- [ ] ESCALATED: the wire format is undecided\n' \
+  > "$SPEC_DIR/plans/PLN-020-relay-wire/findings.md"
+# PLN-030 has a registry row and a folder but no plan.md: nothing to review yet,
+# and it belongs to whatever created the row.
+(cd "$SPEC_DIR" && git init -q . && git config user.email t@t && git config user.name t) >/dev/null 2>&1
+
+spec_out=$(cd "$SPEC_DIR" && ./scripts/wf-list-specable.sh 2>/dev/null || true)
+assert_eq "a draft with a plan.md and no findings is emitted" "true" \
+  "$(printf '%s' "$spec_out" | grep -q '^PLN-008-capsule-take	never reviewed' && echo true || echo false)"
+assert_eq "the replanning shape still is" "true" \
+  "$(printf '%s' "$spec_out" | grep -q '^PLN-020-relay-wire	1 escalated' && echo true || echo false)"
+# Escalated work has already been through the pipeline once, so something
+# downstream is waiting on it; spec runs one at a time.
+assert_eq "and escalated leads" "PLN-020-relay-wire" \
+  "$(printf '%s' "$spec_out" | grep '^PLN-' | head -1 | cut -f1)"
+assert_eq "a folder with no plan.md is left alone" "false" \
+  "$(printf '%s' "$spec_out" | grep -q 'PLN-030' && echo true || echo false)"
+assert_eq "a plan past draft is not spec work" "false" \
+  "$(printf '%s' "$spec_out" | grep -q 'PLN-005' && echo true || echo false)"
+# Both shapes ship under the existing header: the wf-spec entry menu parses
+# exactly three section names and would drop rows under a fourth.
+assert_eq "both shapes go out under # replanning" "1" \
+  "$(printf '%s' "$spec_out" | grep -c '^# replanning' | xargs)"
+assert_ok "the script reports work found" \
+  bash -c "cd '$SPEC_DIR' && ./scripts/wf-list-specable.sh >/dev/null 2>&1"
+# What candidates_spec() in wf-orchestrate.sh actually feeds the dispatcher.
+assert_eq "the dispatcher's own parse yields both plans" "2" \
+  "$(printf '%s\n' "$spec_out" | awk -F'\t' '/^# / { next } NF && $1 != "—" { print $1 }' | grep -c '^PLN-' | xargs)"
+
+# One list populated and the other empty is the COMMON case, not the edge one —
+# it is exactly what client-a had. Under `set -u` on bash 3.2, "${arr[@]}"
+# of an empty array is an unbound variable, so the fix above printed the header
+# and then exited 1 mid-list against the real registry.
+rm -rf "$SPEC_DIR/plans/PLN-020-relay-wire"
+only_unreviewed=$(cd "$SPEC_DIR" && ./scripts/wf-list-specable.sh 2>&1 || true)
+assert_eq "unreviewed drafts with no escalated work list cleanly" "true" \
+  "$(printf '%s' "$only_unreviewed" | grep -q 'unbound variable' && echo false || echo true)"
+assert_eq "and the plan is still there" "true" \
+  "$(printf '%s' "$only_unreviewed" | grep -q '^PLN-008-capsule-take	never reviewed' && echo true || echo false)"
+assert_ok "and the exit code still says work is available" \
+  bash -c "cd '$SPEC_DIR' && ./scripts/wf-list-specable.sh >/dev/null 2>&1"
+# The mirror case: escalated only, no unreviewed.
+rm -f "$SPEC_DIR/plans/PLN-008-capsule-take/plan.md"
+printf -- '- [ ] ESCALATED: the wire format is undecided\n' \
+  > "$SPEC_DIR/plans/PLN-008-capsule-take/findings.md"
+only_escalated=$(cd "$SPEC_DIR" && ./scripts/wf-list-specable.sh 2>&1 || true)
+assert_eq "escalated work with no unreviewed drafts lists cleanly" "true" \
+  "$(printf '%s' "$only_escalated" | grep -q 'unbound variable' && echo false || echo true)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

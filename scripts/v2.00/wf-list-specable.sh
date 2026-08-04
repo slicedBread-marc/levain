@@ -19,8 +19,38 @@ cd "$_wf_root"
 REGISTRY="plans/REGISTRY.md"
 found=0
 
-# --- Escalated plans in draft state (highest priority) ---
+# --- Plans in draft state ---
+#
+# Two shapes land here, and until WFI-058 only the first was emitted.
+#
+#   1. REPLANNING — a plan sent back from verify or test, carrying unchecked
+#      findings. The planner reads the findings and writes an Amendment.
+#
+#   2. NEVER REVIEWED — a plan whose plan.md exists but whose review gate has
+#      never run. Its findings.md is empty, because nothing has yet had an
+#      opinion about it.
+#
+# The old filter required an unchecked `- [ ]` in findings.md, which is shape 1
+# by definition. Shape 2 was therefore emitted by nothing: the state table says
+# `draft` means "T2 (wf-spec) acts next", and wf-orchestrate.sh's single-artifact
+# path maps draft -> spec unconditionally, but the DAEMON sweep reaches spec
+# through this script and so never saw them. client-a sat with 7 such plans —
+# one of them, PLN-008, gating five others — while every worker slot but one
+# stood idle. A plan can only leave `draft` through a spec run, so a draft this
+# script does not emit is a plan the pipeline cannot finish.
+#
+# No dependency gate here, deliberately. Specifying is a documentation act;
+# `ready -> implement` is where deps are enforced (wf-list-implementable.sh),
+# and gating spec on them too would forbid planning ahead of the build queue —
+# which several already-`ready` plans in the field were written that way.
+#
+# Both shapes go out under `# replanning` rather than a new section, because
+# consumers key on section names: wf-orchestrate.sh's candidates_spec() ignores
+# them, but the wf-spec entry menu parses exactly three (`# replanning`,
+# `# bugs`, `# briefs`) and would drop rows under a fourth. The `detail` column
+# is what tells them apart.
 escalated=()
+unreviewed=()
 while IFS='|' read -r _ id slug state priority _rest; do
   id=$(echo "$id" | xargs)
   slug=$(echo "$slug" | xargs)
@@ -56,14 +86,36 @@ while IFS='|' read -r _ id slug state priority _rest; do
       escalated+=("${id}-${slug}	${detail} finding(s)	$priority")
       found=1
     fi
+    continue
   fi
+
+  # No findings to act on. If the plan also has no plan.md, there is nothing to
+  # review yet and it belongs to whatever created the row — leave it alone.
+  [ -f "$plan_dir/plan.md" ] || continue
+  unreviewed+=("${id}-${slug}	never reviewed	$priority")
+  found=1
 done < <(grep "^|" "$REGISTRY" | tail -n +3)
 
-if [ ${#escalated[@]} -gt 0 ]; then
+if [ ${#escalated[@]} -gt 0 ] || [ ${#unreviewed[@]} -gt 0 ]; then
   echo "# replanning"
-  for entry in "${escalated[@]}"; do
-    printf "%s\n" "$entry"
-  done
+  # Escalated first: a plan already through the pipeline once has downstream
+  # work waiting on it, and spec runs one at a time.
+  #
+  # Each loop is guarded on its OWN count. Under `set -u` on the bash 3.2 macOS
+  # ships, "${arr[@]}" of an EMPTY array is an unbound variable, not an empty
+  # expansion — and the common case here is one list populated and the other
+  # not. client-a, with 7 unreviewed drafts and no escalated ones, printed
+  # the header and then died on line 109.
+  if [ ${#escalated[@]} -gt 0 ]; then
+    for entry in "${escalated[@]}"; do
+      printf "%s\n" "$entry"
+    done
+  fi
+  if [ ${#unreviewed[@]} -gt 0 ]; then
+    for entry in "${unreviewed[@]}"; do
+      printf "%s\n" "$entry"
+    done
+  fi
 fi
 
 # --- Open bugs ---
