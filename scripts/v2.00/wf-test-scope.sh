@@ -60,7 +60,27 @@ if [ -z "$DEVELOP_ROOT" ]; then
   echo "wf-test-scope.sh: cannot locate claude-workflow.yml by walking up from $SCRIPT_DIR" >&2
   exit 2
 fi
-CONFIG="$DEVELOP_ROOT/claude-workflow.yml"
+# ── Which tree answers "what is the config?" ──────────────────────────────
+#
+# DEVELOP_ROOT is found by walking up from SCRIPT_DIR, and wf-exec.sh's
+# find_project_root always resolves the MAIN worktree — so on a feature branch
+# the walk above lands on develop no matter where the caller is standing.
+#
+# That is right for plans/ (it exists only on develop) and wrong for everything
+# else here. A plan whose Step 1 adds a new test project to testScopes commits
+# that edit on its own branch; verify then runs from the feature worktree, reads
+# develop's config, does not see the new scope, and files a finding saying the
+# scope was "never added" — citing the exact lines where the branch's own commit
+# added it. client-a's PLN-004 (WFI-052). The branch's config is not visible
+# to the branch's own verification until the plan merges, which is after verify.
+#
+# So: plans come from develop, config comes from the tree the caller is in.
+WORKTREE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+CONFIG_ROOT="$DEVELOP_ROOT"
+if [ -n "$WORKTREE_ROOT" ] && [ -f "$WORKTREE_ROOT/claude-workflow.yml" ]; then
+  CONFIG_ROOT="$WORKTREE_ROOT"
+fi
+CONFIG="$CONFIG_ROOT/claude-workflow.yml"
 
 # Check yq dependency before doing anything else.
 if ! command -v yq >/dev/null 2>&1; then
@@ -123,8 +143,12 @@ yq_count() {
 
 # Auto-detect categories from git diff --name-only develop..HEAD.
 auto=()
-if git -C "$DEVELOP_ROOT" rev-parse --verify develop >/dev/null 2>&1; then
-  changed_files=$(git -C "$DEVELOP_ROOT" diff --name-only develop..HEAD 2>/dev/null || true)
+# Also CONFIG_ROOT, and for a second reason: on DEVELOP_ROOT, HEAD *is* develop,
+# so `develop..HEAD` is empty by definition and the whole testMappings
+# auto-detection below could never fire. It only means anything from the
+# worktree of the branch under test.
+if git -C "$CONFIG_ROOT" rev-parse --verify develop >/dev/null 2>&1; then
+  changed_files=$(git -C "$CONFIG_ROOT" diff --name-only develop..HEAD 2>/dev/null || true)
   if [ -n "$changed_files" ]; then
     mapping_count=$(yq_count '.testMappings | length')
     for (( i = 0; i < mapping_count; i++ )); do
@@ -218,11 +242,13 @@ fi
 
 if [ "$filter_style" = "auto" ]; then
   mtp=""
-  if [ -f "$DEVELOP_ROOT/global.json" ] &&
-     grep -q '"runner"[[:space:]]*:[[:space:]]*"Microsoft.Testing.Platform"' "$DEVELOP_ROOT/global.json" 2>/dev/null; then
+  # CONFIG_ROOT for the same reason as the config: a plan that ADDS the first
+  # MTP test project changes the answer on its own branch first.
+  if [ -f "$CONFIG_ROOT/global.json" ] &&
+     grep -q '"runner"[[:space:]]*:[[:space:]]*"Microsoft.Testing.Platform"' "$CONFIG_ROOT/global.json" 2>/dev/null; then
     mtp="global.json pins runner: Microsoft.Testing.Platform"
   elif grep -rlq '<TestingPlatformDotnetTestSupport>[[:space:]]*true' \
-         "$DEVELOP_ROOT" --include='*.csproj' 2>/dev/null; then
+         "$CONFIG_ROOT" --include='*.csproj' 2>/dev/null; then
     mtp="a test project sets TestingPlatformDotnetTestSupport"
   fi
   [ -n "$mtp" ] && filter_style="mtp"
