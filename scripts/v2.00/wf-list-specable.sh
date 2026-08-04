@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
+
 # Registry work is develop-root work. Sourced/derived paths below are relative
 # ("plans/REGISTRY.md", "plans/PLN-NNN-slug/..."), and verify and implement
 # workers run with their CWD inside a feature worktree — where those resolve to
@@ -60,19 +63,8 @@ while IFS='|' read -r _ id slug state priority _rest; do
   plan_dir="plans/${id}-${slug}"
   [ -d "$plan_dir" ] || continue
 
-  # Check for active claim (PID alive, or TTL fallback for old format)
-  claimfile="$plan_dir/.wf-claim"
-  if [ -f "$claimfile" ]; then
-    claim_ts=$(sed -n '1p' "$claimfile" 2>/dev/null)
-    claim_pid=$(sed -n '2p' "$claimfile" 2>/dev/null)
-    now=$(date +%s)
-    age=$(( now - claim_ts ))
-    if [ -n "$claim_pid" ]; then
-      kill -0 "$claim_pid" 2>/dev/null && [ "$age" -lt 7200 ] && continue
-    else
-      [ "$age" -lt 7200 ] && continue
-    fi
-  fi
+  # Claimed by a live session? Not ours to offer.
+  wf_claim_live "$plan_dir" && continue
 
   findings="$plan_dir/findings.md"
   if [ -f "$findings" ] && grep -q '^\- \[ \]' "$findings" 2>/dev/null; then

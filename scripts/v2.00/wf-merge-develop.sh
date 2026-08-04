@@ -10,6 +10,9 @@
 
 set -euo pipefail
 
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
+
 # Must be on a feature branch
 branch=$(git branch --show-current)
 [[ "$branch" == feature/* ]] || { echo "Error: not on a feature branch (on $branch)" >&2; exit 1; }
@@ -19,12 +22,7 @@ develop_root=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
 plan_name=$(echo "$branch" | sed 's#^feature/##')
 claim_dir="$develop_root/plans/$plan_name"
 if [ -d "$claim_dir" ]; then
-  _pid=$PPID
-  for _i in 1 2 3 4 5; do
-    _name=$(ps -o comm= -p "$_pid" 2>/dev/null)
-    case "$_name" in bash|sh|zsh|dash) _pid=$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ') ;; *) break ;; esac
-  done
-  printf '%s\n%s\n' "$(date +%s)" "$_pid" > "$claim_dir/.wf-claim"
+  wf_claim_write "$claim_dir"
 fi
 
 # ── Refresh the harness, before and after ───────────────────────────────────
