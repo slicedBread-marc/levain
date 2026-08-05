@@ -87,6 +87,17 @@ if ! grep -q "^orchestrator:" "$CONFIG_FILE" 2>/dev/null; then
     echo -e "${GREEN}  Added orchestrator: block to $CONFIG_FILE (disabled by default)${NC}"
 fi
 
+# The test-account keys existed only in wf-docker-up.sh's source comments, so
+# no project ever found them: five clients on 5.2.4, zero hits for
+# test_account. The fix for "the tester gets a URL and no account" shipped in
+# the library and never reached the config it reads (WFI-074).
+if ! grep -q "^test_account_command:" "$CONFIG_FILE" 2>/dev/null; then
+    printf '\n' >> "$CONFIG_FILE"
+    extract_block "# ── Test account" >> "$CONFIG_FILE"
+    echo -e "${GREEN}  Added test_account_command/test_account_note to $CONFIG_FILE (blank — no behavior change)${NC}"
+    echo -e "${YELLOW}    Set them if the app needs a login, or a tester gets a URL with no way in${NC}"
+fi
+
 # v3.0: manual-test gating keys on the surface the diff touches, not on how
 # many `#### Manual` criteria the planner wrote. Absent, wf-manual-gate.sh
 # falls back to pre-3.0 behavior (stop whenever anything manual remains).

@@ -969,6 +969,79 @@ assert_eq "the sweep count is an integer, not a spawn message" "true" \
   "$(printf '%s' "$out" | grep -qE '^sweep: [0-9]+ worker' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A worker recognises the claim its dispatcher took out for it (WFI-073/075/076)"
+
+# wf-spawn.sh claims a plan BEFORE launching the worker, naming the worker's
+# PID. The worker's own "is this free?" check then had no way to tell that
+# claim from an attended human's, so it stood down against itself: wf-test
+# exited in ~15s reporting a human who did not exist, and every plan reaching
+# testing under the daemon parked after three no-op dispatches.
+registry_add_row PLN-900 self-claim active
+claim_plan="plans/PLN-900-self-claim"
+
+# 1. The dispatcher's claim, recognised through the exported PID.
+printf '%s\n%s\n' "$(date +%s)" "$$" > "$claim_plan/.wf-claim"
+WF_CLAIM_PID=$$ "$SCRIPT_DIR/wf-claim.sh" PLN-900-self-claim --if-free >/dev/null 2>&1
+assert_eq "--if-free exits 0 on a claim naming this process (WF_CLAIM_PID)" "0" "$?"
+
+# 2. Same, with the environment lost — ancestry alone must carry it, since the
+#    claim names an ancestor of whatever shell ends up running the check.
+printf '%s\n%s\n' "$(date +%s)" "$$" > "$claim_plan/.wf-claim"
+env -u WF_CLAIM_PID "$SCRIPT_DIR/wf-claim.sh" PLN-900-self-claim --if-free >/dev/null 2>&1
+assert_eq "--if-free exits 0 on an ancestor's claim with no WF_CLAIM_PID" "0" "$?"
+
+# 3. The guard that must survive all of this: a genuinely foreign live session
+#    still blocks. The sleep is a CHILD, never an ancestor, so it is not ours.
+sleep 30 & foreign=$!
+printf '%s\n%s\n' "$(date +%s)" "$foreign" > "$claim_plan/.wf-claim"
+"$SCRIPT_DIR/wf-claim.sh" PLN-900-self-claim --if-free >/dev/null 2>&1
+assert_eq "--if-free still exits 2 for another live session" "2" "$?"
+
+# 4. A stale WF_CLAIM_PID naming some other process must not grant ownership.
+printf '%s\n%s\n' "$(date +%s)" "$foreign" > "$claim_plan/.wf-claim"
+WF_CLAIM_PID=999999 "$SCRIPT_DIR/wf-claim.sh" PLN-900-self-claim --if-free >/dev/null 2>&1
+assert_eq "--if-free ignores a WF_CLAIM_PID that does not match the claim" "2" "$?"
+
+# 5. The same ownership question, asked by the list script: an explicitly
+#    dispatched implementer was told its own plan was "processing" and exited.
+printf '%s\n%s\n' "$(date +%s)" "$$" > "$claim_plan/.wf-claim"
+own_type=$(WF_CLAIM_PID=$$ "$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null \
+  | awk -F'\t' '$2 == "PLN-900-self-claim" {print $1}')
+assert_eq "wf-list-implementable does not call our own claim 'processing'" "resume" "$own_type"
+
+printf '%s\n%s\n' "$(date +%s)" "$foreign" > "$claim_plan/.wf-claim"
+foreign_type=$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null \
+  | awk -F'\t' '$2 == "PLN-900-self-claim" {print $1}')
+assert_eq "wf-list-implementable still reports a foreign claim as 'processing'" "processing" "$foreign_type"
+
+{ kill "$foreign"; wait "$foreign"; } 2>/dev/null
+rm -f "$claim_plan/.wf-claim"
+
+# wf-spawn must hand the PID it stamped on the claim to the worker, or the
+# worker has only ancestry to go on.
+assert_ok "wf-spawn exports WF_CLAIM_PID to the worker" \
+  grep -q "WF_CLAIM_PID" "$SCRIPT_DIR/wf-spawn.sh"
+
+section "Test-account keys reach a client's config (WFI-074)"
+
+# The keys lived only in wf-docker-up.sh's source comments: five clients on
+# 5.2.4, zero hits for test_account anywhere. A tester kept getting a URL for a
+# container with no account, and the fix never reached the config it reads.
+assert_ok "config.example.yml carries test_account_command" \
+  grep -q "^test_account_command:" "$LIB_ROOT/config.example.yml"
+assert_ok "the block has its own '# ── ' header so install.sh can backfill it" \
+  grep -q "^# ── Test account" "$LIB_ROOT/config.example.yml"
+
+backfilled=$(awk -v start="# ── Test account" '
+  index($0, start) == 1 { on = 1; print; next }
+  on && /^# ── / { exit }
+  on { print }
+' "$LIB_ROOT/config.example.yml" | grep -c "^test_account_")
+assert_eq "the extracted block ends with both keys and nothing else" "2" "$backfilled"
+
+assert_ok "install.sh backfills the block into an existing client config" \
+  grep -q 'extract_block "# ── Test account"' "$LIB_ROOT/install.sh"
+
 section "No BSD-only in-place sed"
 
 # `sed -i ''` is macOS-only; it fails outright on GNU sed, so any of these

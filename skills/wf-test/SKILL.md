@@ -23,7 +23,9 @@ Order of work:
    ```bash
    scripts/wf-exec.sh wf-claim.sh <plan-name> --if-free
    ```
-   Exit 2 means a live session holds the claim — an attended `/wf-test` is walking this plan right now. Print the message and exit 0 immediately. Do not read the plan, do not start a container, and above all do not run the exit path: the container you would tear down and the `test-progress.md` you would overwrite are theirs (WFI-070).
+   Exit 2 means **another** live session holds the claim — an attended `/wf-test` is walking this plan right now. Print the message and exit 0 immediately. Do not read the plan, do not start a container, and above all do not run the exit path: the container you would tear down and the `test-progress.md` you would overwrite are theirs (WFI-070).
+
+   Exit 0 is the normal case and includes `already held on your behalf by the dispatcher` — the orchestrator claims a plan before launching you, and that claim names *your* PID. Standing down there is standing down against yourself: it ended ~15s runs reporting a human who did not exist, and parked every plan that reached testing after three no-op dispatches (WFI-073, WFI-075). Only exit 2 means someone else.
 1. If your instructions name a plan, skip the selection menu and work that plan.
 2. Run the automated suites and e2e scope as normal.
 3. Work every `#### Chrome-Assisted` criterion — these are scripted navigations and assertions, so run them and record PASS/FAIL yourself. **Every one of them ends at PASS, FAIL or a recorded reason it could not run** — leaving them at `—` and then gating for "one Manual criterion" misreports what is actually left, and the gate question is the only thing a human reads (WFI-070).

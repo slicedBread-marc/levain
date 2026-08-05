@@ -24,7 +24,7 @@ Rules, in force for the whole session:
 | Where | Prompt | Mode | Unattended behavior |
 |-|-|-|-|
 | Entry | Plan selection menu | [AUTO] | Use the plan named in your instructions |
-| Entry | Plan Type is `processing` | [AUTO] | Another session owns it — exit 0 without doing anything |
+| Entry | Plan Type is `processing` | [AUTO] | Another session owns it — exit 0 without doing anything. `wf-list-implementable.sh` no longer reports a plan as `processing` on the strength of the claim your own dispatcher took out for you (WFI-076), so this type now genuinely means somebody else. |
 | Migration notes | Pending MIGRATION-NOTES actions | **[GATE]** | `migration` — question is the notes text verbatim |
 | Phase 2 step 3 | Goal missing (`$PLAN_GOAL_MISSING`) | **[GATE]** | `goal-missing` — the goal is what the tester and PR description quote; do not invent it |
 | Phase 3 | Plan ambiguous mid-implementation | [AUTO] | Note it in `progress.md` and continue with the most conservative reading. Only [GATE] (`needs-input`) if you cannot proceed at all |

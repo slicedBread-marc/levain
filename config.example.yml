@@ -84,33 +84,6 @@ local_start_command: ""
 local_deploy_command: ""
 local_stop_command: ""
 
-# Test account — how a FRESH test container gets an account the acceptance
-# criteria can sign in as, and what to tell the tester.
-#
-# A container built from a feature branch starts empty, and an app worth
-# testing usually refuses to seed a default password (rightly — a default
-# password on a reachable host is a standing compromise). The tester then gets
-# a URL and no way in, and every criterion behind the login is unreachable.
-# client-a hit exactly that and stalled a run at criterion 5 of 5 (WFI-072);
-# the worse cost is the runs before it, where criteria behind a login were
-# recorded as skipped or passed by sessions that could not have executed them.
-#
-#   test_account_command: run by wf-docker-up.sh once the container is healthy,
-#                         with FEATURE_PORT and COMPOSE_PROJECT_NAME exported.
-#                         Must be idempotent — it runs on every start. e.g.
-#                         "docker exec -e APP_OWNER_PASSWORD='...' \
-#                          ${COMPOSE_PROJECT_NAME}-web-1 dotnet /app/App.dll --seed-owner"
-#   test_account_note:    one line handed to the tester, credentials included.
-#                         Say what the login form actually wants: an app whose
-#                         seeder sets a username but whose sign-in looks up by
-#                         email will reject the username, and the tester has no
-#                         way to know that. e.g.
-#                         "sign in with dev@example.com / <password> (email, not username)"
-#
-# Leave both blank if the app needs no account to test.
-test_account_command: ""
-test_account_note: ""
-
 # Tiered test gating (BRF-080).
 # wf-verify reads testScopes to build a test-filter expression for feature-branch
 # runs; wf-release runs the full suite with no filter (aggregation guarantee).
@@ -194,6 +167,41 @@ autoTestGrowth:
   agentModel: sonnet
   logCandidatesOnFail: true
   logFile: plans/auto-test-log.md
+
+# ── Test account ────────────────────────────────────────────────────────────
+# How a FRESH test container gets an account the acceptance criteria can sign
+# in as, and what to tell the tester.
+#
+# A container built from a feature branch starts empty, and an app worth
+# testing usually refuses to seed a default password (rightly — a default
+# password on a reachable host is a standing compromise). The tester then gets
+# a URL and no way in, and every criterion behind the login is unreachable.
+# client-a hit exactly that and stalled a run at criterion 5 of 5 (WFI-072);
+# the worse cost is the runs before it, where criteria behind a login were
+# recorded as skipped or passed by sessions that could not have executed them.
+#
+#   test_account_command: run by wf-docker-up.sh once the container is healthy,
+#                         with FEATURE_PORT and COMPOSE_PROJECT_NAME exported.
+#                         Must be idempotent — it runs on every start. e.g.
+#                         "docker exec -e APP_OWNER_PASSWORD='...' \
+#                          ${COMPOSE_PROJECT_NAME}-web-1 dotnet /app/App.dll --seed-owner"
+#   test_account_note:    one line handed to the tester, credentials included.
+#                         Say what the login form actually wants: an app whose
+#                         seeder sets a username but whose sign-in looks up by
+#                         email will reject the username, and the tester has no
+#                         way to know that. e.g.
+#                         "sign in with dev@example.com / <password> (email, not username)"
+#
+# Do NOT append `|| true` to test_account_command. An idempotent seeder usually
+# exits non-zero on the already-provisioned path ("an owner already exists"),
+# and swallowing that also swallows a real failure. wf-docker-up.sh already
+# treats a non-zero exit as a warning and brings the app up regardless, so the
+# already-provisioned case costs one line of noise and a genuine failure stays
+# visible (WFI-074).
+#
+# Leave both blank if the app needs no account to test.
+test_account_command: ""
+test_account_note: ""
 
 # ── Manual-test gate ────────────────────────────────────────────────────────
 # When an unattended /wf-test run stops for a human.

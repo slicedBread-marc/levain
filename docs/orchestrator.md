@@ -86,6 +86,28 @@ An artifact is not dispatched when any of these hold:
 | The hourly spawn budget is spent | `.claude/orchestrator/spawns-<YYYYMMDDHH>` |
 | It still owes a consistency pass (implement only) | `wf-list-consistency.sh` |
 
+### Claims name the worker, and the worker knows it
+
+The dispatcher claims an artifact *before* launching the worker, stamping the
+worker's PID on `.wf-claim` — the claim belongs to whoever hands out the work,
+or two workers start inside the window between "the dispatcher decided this was
+free" and "the worker said so" (WFI-067).
+
+That makes "another session holds the claim" ambiguous from inside the worker,
+and the ambiguity was expensive: a dispatched `wf-test` read the claim taken out
+*for it*, reported a human who did not exist, and exited in 15 seconds. Every
+plan reaching `testing` under the daemon parked as `stuck` after three such
+no-op dispatches (WFI-073, WFI-075), and the same confusion told an explicitly
+dispatched implementer its own plan was `processing` (WFI-076).
+
+So ownership is now answerable. `wf-spawn.sh` exports `WF_CLAIM_PID` into the
+worker's environment, and `wf_claim_mine` also accepts a claim whose PID is an
+ancestor of the asking process — which covers the foreground spawn path and any
+caller that lost the environment. `wf-claim.sh --if-free` refreshes a claim it
+recognises as its own and exits 0; exit 2 now means, and only means, somebody
+else. An attended session's claim names that session, which is never an ancestor
+of a different one, so a human mid-test is still protected.
+
 The attempt budget is the loop breaker. A plan bouncing `active ⇄ verify`
 forever burns tokens silently; after N implement spawns it parks as a `stuck`
 gate instead of retrying.

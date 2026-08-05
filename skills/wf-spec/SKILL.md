@@ -19,7 +19,7 @@ Rules, in force for the whole session:
    ```bash
    scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug> --if-free
    ```
-   Exit 2 means a live session is already on it — print the message and exit 0. Claiming *after* the work is claiming after the race: client-a ran two unattended wf-spec workers over one plan for twenty minutes, and the second wrote its `## Review` block on top of the first's, leaving plan.md with two contradicting verdicts (WFI-067). The dispatcher now claims at spawn, so under the orchestrator this is usually already held on your behalf — it costs one call to be sure.
+   Exit 2 means **another** live session is already on it — print the message and exit 0. Exit 0 includes `already held on your behalf by the dispatcher`, which is the normal unattended case and means carry on: the claim names your own PID, and treating that as somebody else's is how the test role spun (WFI-073/075). Claiming *after* the work is claiming after the race: client-a ran two unattended wf-spec workers over one plan for twenty minutes, and the second wrote its `## Review` block on top of the first's, leaving plan.md with two contradicting verdicts (WFI-067). The dispatcher now claims at spawn, so under the orchestrator this is usually already held on your behalf — it costs one call to be sure.
 1. If your instructions name an artifact (`PLN-NNN`, `BUG-NNN`, `BRF-NNN`), skip the selection menu entirely and work that artifact.
 2. Prompts marked **[AUTO]** below resolve to their stated default. Take it and move on.
 3. Prompts marked **[GATE]** below must never be guessed. Park the work instead:

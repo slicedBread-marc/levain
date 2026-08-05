@@ -158,7 +158,9 @@ if $foreground; then
   echo $$ > "$pidfile"
   [ -d "$plan_dir" ] && wf_claim_write "$plan_dir" $$
   set +e
-  ( cd "$ROOT" && WF_UNATTENDED=1 WF_ROLE="$role" WF_ARTIFACT="$artifact" \
+  # WF_CLAIM_PID names the claim we just took out FOR this worker, so its own
+  # "is this plan free?" check recognises the claim as its own (WFI-073/075).
+  ( cd "$ROOT" && WF_UNATTENDED=1 WF_ROLE="$role" WF_ARTIFACT="$artifact" WF_CLAIM_PID=$$ \
       claude -p --model "$model" --dangerously-skip-permissions "$prompt" ) 2>&1 | tee "$log"
   rc=${PIPESTATUS[0]}
   set -e
@@ -180,8 +182,12 @@ event_sh="$(cd "$(dirname "$0")" && pwd)/wf-event.sh"
 claimfile=""
 [ -d "$plan_dir" ] && claimfile="$plan_dir/.wf-claim"
 
+# $$ inside the bash -c is the PID this shell records as $! below, which is the
+# same PID wf_claim_write stamps on the claim — so the worker can name its own
+# claim rather than standing down against it (WFI-073/075).
 nohup bash -c "
     cd '$ROOT'
+    export WF_CLAIM_PID=\$\$
     claude -p --model '$model' --dangerously-skip-permissions \"\$WF_PROMPT\"
     rc=\$?
     rm -f '$pidfile'

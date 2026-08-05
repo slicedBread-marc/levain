@@ -17,6 +17,7 @@
 #   wf_session_pid                   → PID of the long-lived session, not the shell
 #   wf_claim_write <dir> [pid]       → write <dir>/.wf-claim
 #   wf_claim_live <dir>              → 0 if a live claim holds it; sets WF_CLAIM_AGE
+#   wf_claim_mine <dir>              → 0 if that claim is this caller's own
 #   wf_event <type> <artifact> <msg> → append to events.log
 #   wf_now                           → ISO-8601 UTC timestamp
 
@@ -219,6 +220,43 @@ wf_claim_write() {
   [ -d "$dir" ] || return 1
   [ -n "$pid" ] || pid=$(wf_session_pid)
   printf '%s\n%s\n' "$(date +%s)" "$pid" > "$dir/.wf-claim"
+}
+
+# wf_claim_mine <plan-dir> — 0 when the live claim on <plan-dir> belongs to the
+# caller's own dispatch rather than to somebody else's session.
+#
+# wf-spawn.sh claims on the worker's behalf BEFORE launching it (WFI-067: the
+# claim belongs to whoever hands out the work, or two workers start inside the
+# window between "the dispatcher decided this was free" and "the worker said
+# so"). But the worker then opens by asking whether the plan is free, sees the
+# claim the dispatcher just wrote naming the worker's own PID, and stands down
+# against itself. client-a watched that happen three ways: wf-test exiting
+# in 15s reporting "a human is testing" against its own spawn PID (WFI-073,
+# WFI-075) and wf-list-implementable.sh reporting an explicitly dispatched plan
+# as "processing" (WFI-076). Every plan reaching testing under the daemon
+# parked after three no-op dispatches.
+#
+# Ownership is established two ways, either sufficient:
+#   - WF_CLAIM_PID — wf-spawn.sh exports the PID it recorded into the worker's
+#     environment, so the worker can name its own claim directly.
+#   - ancestry — the claim's PID is a parent, grandparent, … of this process.
+#     Covers callers that lost the environment (a nested shell that scrubbed
+#     it) and the foreground spawn path, where the claim names wf-spawn.sh
+#     itself. A human's attended claim names their own session, which is never
+#     an ancestor of a different session, so this cannot swallow a real one.
+wf_claim_mine() {
+  local dir="$1" claim_pid pid parent
+  claim_pid=$(sed -n '2p' "$dir/.wf-claim" 2>/dev/null | tr -cd '0-9')
+  [ -n "$claim_pid" ] || return 1
+  [ -n "${WF_CLAIM_PID:-}" ] && [ "$claim_pid" = "$WF_CLAIM_PID" ] && return 0
+  pid=$$
+  for _ in $(seq 1 20); do
+    [ "$pid" = "$claim_pid" ] && return 0
+    parent=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    [ -n "$parent" ] && [ "$parent" -gt 1 ] 2>/dev/null || break
+    pid="$parent"
+  done
+  return 1
 }
 
 # wf_claim_live <plan-dir> — 0 when a live session holds the claim.

@@ -1860,12 +1860,20 @@ assert_eq "the claim records a live process" "true" \
   "$(kill -0 "$claim_pid" 2>/dev/null && echo true || echo false)"
 assert_eq "and not the shell that has already exited" "false" \
   "$([ "$claim_pid" = "$$" ] && echo true || echo false)"
+# The claim above names this test's own process tree, which as of 5.3.0 reads
+# as *ours* rather than a stranger's (WFI-073/075/076: a dispatched worker used
+# to stand down against the claim its own dispatcher took out for it). So the
+# "somebody else is in here" half of WFI-062 has to be posed with an owner that
+# is genuinely foreign — a live process this one did not descend from.
+sleep 30 & other_session=$!
+printf '%s\n%s\n' "$(date +%s)" "$other_session" > plans/PLN-901-claimed/.wf-claim
 assert_eq "so the plan reads as processing, not free" "processing" \
   "$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null | awk -F'\t' '$2 == "PLN-901-claimed" { print $1 }')"
 
 # --if-free is what lets a second worker stand down instead of racing.
 assert_fails "a live claim refuses a second claimant" \
   "$SCRIPT_DIR/wf-claim.sh" PLN-901-claimed --if-free
+{ kill "$other_session"; wait "$other_session"; } 2>/dev/null
 # A claim whose owner is gone must not park the artifact forever.
 printf '%s\n999999\n' "$(date +%s)" > plans/PLN-901-claimed/.wf-claim
 assert_ok "a dead owner's claim is reaped" \
