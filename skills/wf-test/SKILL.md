@@ -722,13 +722,16 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
      fi
    fi
    ```
-4. Release claim, close the `manual-test` gate if one is open, and update REGISTRY:
+4. Move the plan out of `testing` **first**, then drop the guards:
    ```bash
-   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
+   scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete - \
+     --commit "test(PLN-NNN-<slug>): human test passed — complete"
    scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "manual test passed"
-   scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete -
+   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    ```
    The gate is closed **here**, at the end, not when testing started. `/wf-attend` hands this plan over with the gate still open on purpose: while it is open the orchestrator will not dispatch anything at this plan, which is what keeps an unattended tester out of the worktree a human is using (WFI-070). Closing it is this skill's last act, and it is safe to run when no gate is open.
+
+   **The order of these three lines is the contract — see [Order of exit](#order-of-exit).**
 5. Close linked bugs (if plan Goal has `**Bug:** BUG-NNN`):
    ```bash
    scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
@@ -789,27 +792,41 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
      fi
    fi
    ```
-4. Release claim, close the `manual-test` gate if one is open, and determine route:
+4. Determine the route, move the plan out of `testing` **first**, then drop the guards:
    ```bash
-   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
-   scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "manual test found N issue(s)"
    route=$(scripts/wf-exec.sh wf-findings-route.sh plans/PLN-NNN-<slug>)
    ```
-   Close it on this path too. A findings exit sends the plan to `draft`, and a `manual-test` gate left open there parks it in front of a planner who has nothing to answer.
-   - **`escalated`** → route to draft:
-     ```bash
-     scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing draft
-     git add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md plans/auto-test-log.md plans/deferred-criteria.md 2>/dev/null || true
-     git commit -m "test(PLN-NNN-<slug>): escalated findings — needs replanning"
-     ```
-     Display: "N escalated findings require design decisions. Run /wf-spec."
-   - **`active`** → route to draft (Opus reviews all findings before sending to builder):
-     ```bash
-     scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing draft
-     git add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md plans/auto-test-log.md plans/deferred-criteria.md 2>/dev/null || true
-     git commit -m "test(PLN-NNN-<slug>): N findings from human test — routing to spec"
-     ```
-     Display: "N findings written. Run /wf-spec to review and route to builder."
+   Both routes land on `draft` — `escalated` because the findings need design decisions, `active` because Opus reviews all findings before sending them to the builder. Only the commit message differs.
+   - **`escalated`**, message `test(PLN-NNN-<slug>): escalated findings — needs replanning`, display "N escalated findings require design decisions. Run /wf-spec."
+   - **`active`**, message `test(PLN-NNN-<slug>): N findings from human test — routing to spec`, display "N findings written. Run /wf-spec to review and route to builder."
+
+   ```bash
+   scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing draft \
+     --commit "<message from above>" \
+     --add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md \
+           plans/auto-test-log.md plans/deferred-criteria.md
+   scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "manual test found N issue(s)"
+   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
+   ```
+   Close the gate on this path too. A findings exit sends the plan to `draft`, and a `manual-test` gate left open there parks it in front of a planner who has nothing to answer.
+
+   **The order of these three lines is the contract — see [Order of exit](#order-of-exit).**
+
+### Order of exit
+
+Every exit path from this skill drops the plan's two dispatch guards — its gate and its claim. **The state transition is committed before either of them is released, and the claim is released last.**
+
+```
+wf-registry-update.sh …  ← the plan leaves `testing`, committed, in one locked step
+wf-gate-close.sh …       ← first guard down
+wf-unclaim.sh …          ← last guard down
+```
+
+The reverse order is a check-then-act race, and client-a ran it: an attended session closed PLN-006's `manual-test` gate at 15:32:33Z and committed `testing → draft` five seconds later. The daemon swept at 15:32:35Z — inside that window the plan was ungated, unclaimed and still reading `testing` — and spawned an unattended tester onto a plan that was already on its way back to the planner. That worker re-ran the whole e2e scope and opened a *fresh* `manual-test` gate on a plan that had sat in `draft` with five unaddressed findings for four minutes, which then blocked the plan from reaching `/wf-spec` at all (WFI-079).
+
+While the transition is uncommitted it does not exist to any other session; while the gate or claim is up, no worker can be dispatched regardless of what the registry says. Committing first means there is never an instant where the plan is both unguarded and stale.
+
+`wf-spawn.sh` re-reads the registry immediately before it launches and stands down on a state it cannot act on, so a worker is not dispatched into a window this small. That is a backstop, not the fix — it narrows the window to milliseconds rather than closing it.
 
 ---
 

@@ -547,9 +547,22 @@ git commit -qm "implement(PLN-121-staged-only): carries its own transition" >/de
 
 # Phase 3 named only progress.md and findings.md, so the plan.md checklist
 # ticks that step 21 writes were dropped on the floor too.
+#
+# It is now one call rather than a transition followed by a `git add`: the
+# `--add` carries the whole plan folder and wf-registry-update.sh stages
+# REGISTRY.md itself, so the row and the files it describes share a commit.
+# That also removes the window where the post-commit hook could fire against a
+# transition that had not landed (WFI-079).
+phase3=$(awk '/^25\. \*\*Move the plan to/,/^26\./' \
+  "$LIB_ROOT/skills/wf-implement/SKILL.md")
 assert_eq "Phase 3 commits the whole plan folder and the registry" "true" \
-  "$(grep -q 'git add plans/REGISTRY.md plans/PLN-NNN-<slug>/ &&' \
-     "$LIB_ROOT/skills/wf-implement/SKILL.md" && echo true || echo false)"
+  "$(printf '%s' "$phase3" | grep -q -- '--add plans/PLN-NNN-<slug>/' && echo true || echo false)"
+assert_eq "and carries the transition in that same commit" "true" \
+  "$(printf '%s' "$phase3" | grep -q 'wf-registry-update.sh PLN-NNN active verify' && echo true || echo false)"
+# The hook that launches the verify agent matches on the commit SUBJECT, so
+# fusing the two commits only works if the fused one still says the words.
+assert_eq "and its message still triggers the verify hook" "true" \
+  "$(printf '%s' "$phase3" | grep -q -- '--commit "implement(PLN-NNN-<slug>): verified, moved to verify"' && echo true || echo false)"
 
 # A bare `git add -A` on a feature branch commits whatever the last deploy
 # wrote as if the plan had changed it.

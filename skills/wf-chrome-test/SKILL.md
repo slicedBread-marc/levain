@@ -406,11 +406,13 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    # Auto-resolve infra conflicts from the restore (infra files always match develop)
    git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
    ```
-4. Release claim and update REGISTRY:
+4. Move the plan out of `testing` **first**, then release the claim:
    ```bash
+   scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete - \
+     --commit "test(PLN-NNN-<slug>): chrome-assisted test passed — complete"
    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
-   scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete -
    ```
+   The claim is what keeps the dispatcher off this plan, and an uncommitted transition does not exist to any other session. Unclaim first and there is a window in which the plan is unclaimed and still reading `testing` — a sweep landing in it launches a tester onto work that is already done (client-a WFI-079).
 5. Close linked bugs (if plan Goal has `**Bug:** BUG-NNN`):
    ```bash
    scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
@@ -462,25 +464,30 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    # Auto-resolve infra conflicts from the restore (infra files always match develop)
    git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
    ```
-4. Release claim and determine route:
+4. Determine the route, transition the plan, **then** release the claim:
    ```bash
-   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    route=$(scripts/wf-exec.sh wf-findings-route.sh plans/PLN-NNN-<slug>)
    ```
    - **`escalated`** -> route to draft:
      ```bash
-     scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing draft
-     git add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md
-     git commit -m "test(PLN-NNN-<slug>): escalated findings — needs replanning"
+     scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing draft \
+       --commit "test(PLN-NNN-<slug>): escalated findings — needs replanning" \
+       --add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md
      ```
      Display: "N escalated findings require design decisions. Run /wf-spec."
    - **`active`** -> route to active:
      ```bash
-     scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing active
-     git add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md
-     git commit -m "test(PLN-NNN-<slug>): N findings from chrome-assisted test"
+     scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing active \
+       --commit "test(PLN-NNN-<slug>): N findings from chrome-assisted test" \
+       --add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md
      ```
      Display: "N findings written. Run /wf-implement to fix them."
+
+   Then, on either route:
+   ```bash
+   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
+   ```
+   The claim comes down **after** the transition has committed, never before — see the note in the all-pass path above (WFI-079).
 
 ---
 

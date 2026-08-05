@@ -333,20 +333,23 @@ Final response under 2000 characters.")
    - **Clean or Notes only:** proceed to state transition.
 4. **Write the review result** to `plan.md`'s `## Review` section
 
-5. **State transition — update REGISTRY.md:**
+5. **State transition and commit, in one step:**
    ```bash
-   scripts/wf-exec.sh wf-registry-update.sh PLN-NNN draft ready
-   ```
-
-6. **Release claim and commit:**
-   ```bash
-   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    # Commit ONLY these paths. On develop the index is shared with other
    # unattended workers, and a bare `git commit` takes whatever they have
    # staged — or theirs takes yours (WFI-048/049).
-   scripts/wf-exec.sh wf-commit.sh "spec: PLN-NNN-<slug> — plan ready" \
-     --add plans/PLN-NNN-<slug>/ plans/REGISTRY.md plans/briefs/ bugs/ plans/deferred-criteria.md
+   scripts/wf-exec.sh wf-registry-update.sh PLN-NNN draft ready \
+     --commit "spec: PLN-NNN-<slug> — plan ready" \
+     --add plans/PLN-NNN-<slug>/ plans/briefs/ bugs/ plans/deferred-criteria.md
    ```
+   The row and the plan it describes land together. Transitioning first and committing the plan afterwards leaves a window where the registry advertises a `ready` plan whose approved content is not in history yet.
+
+6. **Release the claim — last:**
+   ```bash
+   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
+   ```
+   **After step 5, never before it.** The claim is what keeps the dispatcher off this plan; dropped while the row still reads `draft`, a sweep landing in that window launches a second spec worker onto the plan you just approved (client-a WFI-079 is the same race one state further down the pipeline).
+
    Then run `scripts/wf-exec.sh wf-check-reboot-flag.sh` and append any output after your completion message.
 
 For new plans, also add the REGISTRY.md row in the same commit. Stamp the WF column with the current workflow version so the dispatcher routes this plan to the matching script snapshot (see `scripts/version-map.txt`):
@@ -440,13 +443,14 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
    ```
    Do **not** write the registry row's state as `ready`. `/wf-attend` closes it with a human, and the `## Review` section you just wrote is what they read.
 
-   **Otherwise** — transition and commit, the commit message naming the verdict:
+   **Otherwise** — transition and commit in one step, the commit message naming the verdict, and release the claim only once that has landed:
    ```bash
-   scripts/wf-exec.sh wf-registry-update.sh PLN-NNN draft ready
+   scripts/wf-exec.sh wf-registry-update.sh PLN-NNN draft ready \
+     --commit "spec: PLN-NNN-<slug> — approved with notes (round 2), plan ready" \
+     --add plans/PLN-NNN-<slug>/ plans/briefs/ bugs/ plans/deferred-criteria.md
    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
-   scripts/wf-exec.sh wf-commit.sh "spec: PLN-NNN-<slug> — approved with notes (round 2), plan ready" \
-     --add plans/PLN-NNN-<slug>/ plans/REGISTRY.md plans/briefs/ bugs/ plans/deferred-criteria.md
    ```
+   Same ordering rule as the simple exit above: the transition commits, then the claim comes down. Never the reverse.
 
 **Do not skip the review to save a round.** In `verdict` mode the verdict is the only thing standing between a draft and a builder; in the gating paths it is the only thing standing between a human and an hour of work a machine had already done.
 

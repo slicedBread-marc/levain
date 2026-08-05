@@ -81,6 +81,24 @@ unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX GIT_EDITOR \
       GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE \
       GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE 2>/dev/null || true
 
+# ── Scrub inherited lock ownership ────────────────────────────────────────
+#
+# wf-lock.sh marks a held lock by exporting WF_LOCK_HELD_<NAME>=1, and reads it
+# back to stay re-entrant: a child that acquires a lock its parent already holds
+# is a no-op rather than a deadlock. That is right for a child doing the
+# parent's work, and exactly wrong for a worker that outlives it.
+#
+# The post-commit hook fires from INSIDE wf-commit.sh, which holds `registry`
+# and `commit` for the length of the commit. A worker launched down that path
+# inherits both marks and never releases them, because it never took them —
+# so every registry write it makes for the rest of its run silently skips the
+# lock that exists to serialize it against the other live workers.
+#
+# A spawned worker owns nothing it did not acquire itself.
+while IFS='=' read -r var _; do
+  case "$var" in WF_LOCK_HELD_*) unset "$var" 2>/dev/null || true ;; esac
+done < <(env)
+
 # ── Default model per role ────────────────────────────────────────────────
 default_model() {
   case "$1" in
@@ -129,6 +147,54 @@ if [ -d "$plan_dir" ] && wf_claim_live "$plan_dir"; then
   holder=$(sed -n '2p' "$plan_dir/.wf-claim" 2>/dev/null || true)
   echo "wf-spawn: $artifact is claimed by a live session (PID ${holder:-?}) — not spawning $role" >&2
   exit 2
+fi
+
+# ── Re-read the state, here, at the last possible moment ──────────────────
+#
+# The dispatcher decided this artifact was eligible from a candidate list built
+# earlier in the sweep, and eligibility is a claim about the registry AT THAT
+# INSTANT. Between the two, a session that is exiting can move the plan: it
+# drops the gate, drops the claim, and only then commits the transition. Read
+# in that window the plan is ungated, unclaimed, and still carrying its old
+# state — every guard above says go, and the state they are guarding is stale.
+#
+# client-a ran exactly that (WFI-079): a gate closed at 15:32:33Z, a sweep
+# spawned a tester at 15:32:35Z, `testing → draft` committed at 15:32:38Z. The
+# tester re-ran the whole e2e scope and opened a fresh `manual-test` gate on a
+# plan that had been in draft with five unaddressed findings for four minutes —
+# and that false gate then blocked the plan from reaching a planner at all.
+#
+# Skills fix their half by committing the transition before releasing either
+# guard. This is the other half: read the row one more time with the launch
+# decision already made, and refuse a role the state no longer supports. It
+# narrows the window from "one sweep interval" to "the microseconds between
+# this grep and exec", which is as close to closed as a check-then-act gets.
+#
+# Exit 2, not 1: nothing is wrong. The work moved on, and both callers already
+# read 2 as "not mine to do" (the dispatcher skips, drive-one re-reads and
+# routes to the role the new state actually calls for).
+registry="$ROOT/plans/REGISTRY.md"
+cur_state=""
+if [ -f "$registry" ]; then
+  cur_state=$(grep "^| PLN-$num |" "$registry" 2>/dev/null | head -1 | awk -F'|' '{print $4}' | xargs || true)
+fi
+
+# An empty state means there is no plan row yet — a bug or brief on its way to
+# a first spec. That is legitimate work for every caller, so the guard abstains
+# rather than inventing a rule for a row it cannot see.
+if [ -n "$cur_state" ]; then
+  case "$role" in
+    spec)        allowed="draft" ;;
+    implement)   allowed="ready active" ;;
+    verify)      allowed="verify" ;;
+    test)        allowed="testing" ;;
+    consistency) allowed="ready" ;;
+  esac
+  if ! printf '%s\n' $allowed | grep -qx "$cur_state"; then
+    echo "wf-spawn: PLN-$num is '$cur_state' — $role does not act on that state; not spawning" >&2
+    wf_event skip "$id" "$role: state moved to '$cur_state' before launch"
+    exit 2
+  fi
 fi
 
 # ── Worker prompt ─────────────────────────────────────────────────────────

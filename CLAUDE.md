@@ -146,6 +146,8 @@ T3 creates a `feature/<plan-name>` branch and worktree from `develop`. On comple
 
 What a feature worktree may and may not contain is a contract, not a preference — a path that is both sparse-excluded and written by deploy breaks git outright. Read `docs/worktrees.md` before changing either list.
 
+How a skill hands a plan back is also a contract: **commit the state transition, then close the gate, then unclaim** — never the reverse. Read `docs/guard-ordering.md` before editing any skill's exit path.
+
 ---
 
 ### Artifact ID System

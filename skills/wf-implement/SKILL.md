@@ -306,36 +306,48 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
 DEVELOP_ROOT=$(git worktree list | head -1 | awk '{print $1}')
 ```
 
-24. **Return to develop and release claim:**
+24. **Return to develop:**
     ```bash
     cd "$DEVELOP_ROOT"
-    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
     ```
-25. **Update REGISTRY.md** — change state from `active` to `verify`:
+25. **Move the plan to `verify` and commit it, in one step:**
     ```bash
     cd "$DEVELOP_ROOT" && scripts/wf-exec.sh wf-registry-update.sh PLN-NNN active verify \
+      --commit "implement(PLN-NNN-<slug>): verified, moved to verify" \
+      --add plans/PLN-NNN-<slug>/ \
       || { echo "REGISTRY REFUSED THE TRANSITION — do NOT run step 26"; grep "^| PLN-NNN |" plans/REGISTRY.md; }
     ```
 
     **If that fails, stop here.** The `from_state` guard did not match, which
     means the row is not where this path assumed — most often `ready`, because
     a replan left it there while the worktree made the builder take the fix
-    path. Step 26's commit would then announce a transition that never
-    happened, and the verify agent it claims to trigger would refuse to run for
-    the same reason. Report the row the grep printed; under `WF_UNATTENDED=1`
-    this is a **[GATE]** with gate name `needs-input`.
-26. **Commit on develop:**
-    ```bash
-    cd "$DEVELOP_ROOT" && git add plans/REGISTRY.md plans/PLN-NNN-<slug>/ && git commit --allow-empty -m "implement(PLN-NNN-<slug>): verified, moved to verify"
-    ```
+    path. Anything downstream would announce a transition that never happened,
+    and the verify agent it claims to trigger would refuse to run for the same
+    reason. Report the row the grep printed; under `WF_UNATTENDED=1` this is a
+    **[GATE]** with gate name `needs-input`.
 
     The whole plan folder, not just `progress.md` and `findings.md` — step 21
     ticks the automated sections of `plan.md`'s Verification Checklist, and
-    those ticks are what the verify agent reads as already-done. `REGISTRY.md`
-    is named explicitly because this commit's entire purpose is to carry the
-    `active → verify` transition.
+    those ticks are what the verify agent reads as already-done.
 
-    **This commit triggers the verify agent automatically** (via hook on REGISTRY state change to `verify`).
+    **This one commit both carries the transition and triggers the verify
+    agent** (the post-commit hook matches `moved to verify` in the message).
+    They used to be two commits — an implicit `registry(...)` one from
+    `wf-registry-update.sh`, then a separate `--allow-empty` commit whose only
+    job was to say the words the hook looks for. Fusing them removes the window
+    where the hook could fire against a state that had not landed yet, and the
+    `--add` makes the plan folder part of the same atomic commit.
+26. **Release the claim — last:**
+    ```bash
+    cd "$DEVELOP_ROOT" && scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
+    ```
+
+    **After step 25, never before it.** The claim is what keeps the dispatcher
+    off this plan; released while the row still reads `active`, a sweep landing
+    in that window sees free, unclaimed, implementable work and launches a
+    second implementer into the worktree you are standing in. An uncommitted
+    transition does not exist to any other session, so the guards come down
+    only once it has landed (client-a WFI-079).
 
 27. **Post completion message:**
     ```
@@ -382,6 +394,20 @@ The verify agent found code/test/spec issues and set the REGISTRY state back to 
    ```markdown
    - [x] **Code**: Login endpoint returns 500 on empty password (src/auth.ts:42)
    ```
+
+   **A finding you cannot fix without editing `plan.md` is not yours, whether or not it says ESCALATED.** Before fixing, name the file the fix edits. If that file is the plan — a Step, a Tests-table row, an acceptance criterion, a Design Decision, the Rollback section — stop: the Rules bar you from those sections, and no amount of re-reading resolves the contradiction between "fix every finding" and "do not edit the plan". Leave it unchecked, mark it `← ESCALATED` so `wf-findings-route.sh` routes it correctly next time, append a line to `progress.md` naming the finding and the section it would have to touch, and send the plan back:
+
+   ```bash
+   cd $DEVELOP_ROOT
+   $DEVELOP_ROOT/scripts/wf-exec.sh wf-docker-down.sh PLN-NNN-<slug>   # if you started a container
+   scripts/wf-exec.sh wf-registry-update.sh PLN-NNN active draft \
+     --commit "implement(PLN-NNN-<slug>): finding needs a plan amendment — back to spec" \
+     --add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/progress.md
+   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
+   ```
+   Fix any other findings that *are* code-level first — one round trip carrying every code fix beats a bounce per finding. The planner amends the plan and sends it back.
+
+   Verify is supposed to mark these `← ESCALATED` so they route to `draft` rather than to you, and every `**Spec**` finding now does. This rule is what you apply when one arrives unmarked anyway — client-a's PLN-007 got one whose only fix was rewording a Tests-table row, and the implementer was left choosing which rule to break (WFI-078). Escalating is always the safe choice: a plan sent back for a one-line amendment costs a planner turn, a plan silently edited by its implementer costs the review that the amendment would have had.
 6. **Re-run build/tests** via haiku agents
 7. **When all findings are checked off** — commit and return to Phase 3 exit:
    ```bash
@@ -432,7 +458,7 @@ Project name: `{{project_slug}}-pln<id>` (e.g., `{{project_slug}}-pln004`)
 - **Do NOT** add features, refactoring, or improvements beyond what the plan specifies
 - If the plan is ambiguous, note it in progress.md and continue — or ask the user
 - You may edit src/, tests/ and update progress.md / check off findings
-- **Do NOT** edit the plan's Steps, Tests, or Design Decisions sections
+- **Do NOT** edit the plan's Steps, Tests, Design Decisions, acceptance criteria or Rollback sections — this holds even when a finding assigned to you can only be resolved there. That finding is misrouted; escalate it (see [Fix cycle](#fix-cycle-plan-returned-to-active-by-verify-agent) step 5) rather than picking one of the two rules to break.
 - **Do NOT** raise findings — a finding is a verdict on the work, and only the verify agent and `/wf-test` deliver those. Checking an existing one off is yours; opening a new one is not.
 
   This is narrower than the old "do NOT add findings", which read as a ban on writing to `findings.md` at all and collided with plans whose own checklist told the implementer to record something there (client-a WFI-068, where a Regression Scope item said to note in findings.md that another plan's criterion had become testable again). **When a plan instructs you to record an observation, write it to `progress.md` and check the item off with a pointer to it** — that is the implementer's notebook, and it is read by verify. If the observation is "this criterion can now be tested", the right home is neither file: `wf-defer-criterion.sh` already owns `plans/deferred-criteria.md`, and `/wf-spec` reads it back.

@@ -107,7 +107,6 @@ Then:
 
 **Clean or amended (unbuilt deps only):**
 ```bash
-scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
 # Scoped commit: on develop the index is shared with other unattended
 # workers, so a bare `git commit` takes whatever they have staged. This run
 # swept a stranger's BUG-020 open→triaged rename into a consistency commit
@@ -115,7 +114,10 @@ scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
 # Plus any reference doc you corrected under check 5:
 scripts/wf-exec.sh wf-commit.sh "consistency(PLN-NNN-<slug>): closure checked — <clean | amended PLN-MMM>" \
   --add plans/PLN-NNN-<slug>/ plans/<amended-plan>/ plans/REGISTRY.md <doc-path>
+scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
 ```
+**Commit first, unclaim second.** The `## Consistency` entry is this pass's done-marker, and until it is committed it is a dirty file on a shared working tree — another worker's `git stash push` or pathspec commit can take it (WFI-061/065). Releasing the claim before it lands invites a second consistency worker onto a plan you have already checked.
+
 State stays `ready`. The plan proceeds to the builder.
 
 **Escalated (built dep):** commit the findings and the `## Consistency` entry the same way, leave the gate open, and stop.

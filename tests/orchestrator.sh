@@ -502,11 +502,14 @@ registry_add_row PLN-036 dup ready
 echo $$ > "$ORCH/logs/036-implement.pid"   # pretend a worker is live
 rc=0; "$SCRIPT_DIR/wf-spawn.sh" implement PLN-036-dup >/dev/null 2>&1 || rc=$?
 assert_eq "second spawn for a live worker is refused (rc 2)" "2" "$rc"
-rc=0; "$SCRIPT_DIR/wf-spawn.sh" spec BUG-036 >/dev/null 2>&1 || rc=$?
+# `consistency`, not `spec`, because PLN-036 is `ready`: the state guard below
+# refuses a spec worker at a plan that is past drafting, and this assertion is
+# about the PIDFILE being per-role, not about eligibility.
+rc=0; "$SCRIPT_DIR/wf-spawn.sh" consistency PLN-036-dup >/dev/null 2>&1 || rc=$?
 assert_eq "a different role for the same number still spawns" "0" "$rc"
 rc=0; "$SCRIPT_DIR/wf-spawn.sh" implement BUG-036 >/dev/null 2>&1 || rc=$?
 assert_eq "the same work under its other name is refused too" "2" "$rc"
-rm -f "$ORCH/logs/036-implement.pid" "$ORCH/logs/036-spec.pid"
+rm -f "$ORCH/logs/036-implement.pid" "$ORCH/logs/036-consistency.pid"
 
 echo "999999" > "$ORCH/logs/036-implement.pid"  # dead PID
 rc=0; "$SCRIPT_DIR/wf-spawn.sh" implement PLN-036-dup --dry-run >/dev/null 2>&1 || rc=$?
@@ -1041,6 +1044,175 @@ assert_eq "the extracted block ends with both keys and nothing else" "2" "$backf
 
 assert_ok "install.sh backfills the block into an existing client config" \
   grep -q 'extract_block "# ── Test account"' "$LIB_ROOT/install.sh"
+
+section "A worker is not launched at a state that has already moved (WFI-079)"
+
+# client-a: a gate closed at 15:32:33Z, a sweep spawned a tester at
+# 15:32:35Z, and `testing → draft` committed at 15:32:38Z. Inside those two
+# seconds the plan was ungated, unclaimed and still reading `testing` — every
+# dispatcher guard said go, and the state they were guarding was stale. The
+# tester re-ran the whole scope and opened a fresh manual-test gate on a plan
+# that had been in draft with five unaddressed findings for four minutes.
+#
+# wf-spawn re-reads the row with the launch decision already made, so the
+# window shrinks from a sweep interval to the gap between grep and exec.
+# --dry-run throughout: the guard runs before the dry-run bail-out, and the
+# stub worker these would otherwise launch advances the very state under test.
+registry_add_row PLN-079 raced testing
+rm -f "$ORCH/logs/079-"*.pid
+
+rc=0; "$SCRIPT_DIR/wf-spawn.sh" test PLN-079-raced --dry-run >/dev/null 2>&1 || rc=$?
+assert_eq "a tester launches while the plan is still 'testing'" "0" "$rc"
+
+# The exiting session's transition lands. Nothing else changes: no gate, no
+# claim — exactly the window that produced the false gate.
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-079 testing draft >/dev/null 2>&1
+assert_eq "the plan is now 'draft'" "draft" "$(registry_col PLN-079 4)"
+
+rc=0; out=$("$SCRIPT_DIR/wf-spawn.sh" test PLN-079-raced --dry-run 2>&1) || rc=$?
+assert_eq "the tester is refused once the state has moved (rc 2)" "2" "$rc"
+assert_eq "and says which state turned it away" "true" \
+  "$(printf '%s' "$out" | grep -q "draft" && echo true || echo false)"
+
+# rc=2 is 'not mine to do', not a fault — no pidfile is left for the next
+# caller to trip over, and the dispatcher reads it as a skip rather than an
+# error (no attempt burned).
+assert_eq "a refused launch leaves no pidfile" "false" \
+  "$([ -f "$ORCH/logs/079-test.pid" ] && echo true || echo false)"
+
+# The role the new state DOES call for still launches — the guard filters by
+# role, it does not park the plan.
+rc=0; "$SCRIPT_DIR/wf-spawn.sh" spec PLN-079-raced --dry-run >/dev/null 2>&1 || rc=$?
+assert_eq "the role the new state calls for still launches" "0" "$rc"
+
+# Every role's allowed set, so a future edit to the table has to be deliberate.
+registry_add_row PLN-080 states ready
+for pair in "implement:0" "consistency:0" "verify:2" "test:2" "spec:2"; do
+  role="${pair%%:*}"; want="${pair##*:}"
+  rc=0; "$SCRIPT_DIR/wf-spawn.sh" "$role" PLN-080-states --dry-run >/dev/null 2>&1 || rc=$?
+  assert_eq "role '$role' against a 'ready' plan → rc $want" "$want" "$rc"
+done
+
+registry_add_row PLN-082 built verify
+for pair in "verify:0" "implement:2" "test:2"; do
+  role="${pair%%:*}"; want="${pair##*:}"
+  rc=0; "$SCRIPT_DIR/wf-spawn.sh" "$role" PLN-082-built --dry-run >/dev/null 2>&1 || rc=$?
+  assert_eq "role '$role' against a 'verify' plan → rc $want" "$want" "$rc"
+done
+
+# A bug or brief with no registry row is a first spec, and the guard must
+# abstain rather than invent a rule for a row it cannot see.
+rc=0; "$SCRIPT_DIR/wf-spawn.sh" spec BUG-081 --dry-run >/dev/null 2>&1 || rc=$?
+assert_eq "an unspecced bug still reaches a spec worker" "0" "$rc"
+
+# A worker owns no lock it did not acquire itself.
+#
+# wf-lock.sh marks a held lock with an exported WF_LOCK_HELD_<NAME>=1 and reads
+# it back to stay re-entrant. Since Phase 3 fuses its transition and its commit,
+# the verify hook fires from inside wf-commit.sh — with `registry` and `commit`
+# both held. A worker inheriting those marks would skip the registry lock for
+# its whole run, which is the serialization every other worker depends on.
+registry_add_row PLN-084 inherit verify
+lock_out=$(WF_LOCK_HELD_REGISTRY=1 WF_LOCK_HELD_COMMIT=1 \
+  "$SCRIPT_DIR/wf-spawn.sh" verify PLN-084-inherit --dry-run 2>&1) || true
+assert_eq "a spawn under a held lock still runs" "true" \
+  "$(printf '%s' "$lock_out" | grep -q 'DRY-RUN spawn' && echo true || echo false)"
+assert_ok "wf-spawn scrubs inherited lock ownership" \
+  grep -q 'WF_LOCK_HELD_\*) unset' "$SCRIPT_DIR/wf-spawn.sh"
+
+# Terminal states turn every role away — an abandoned or complete plan is the
+# re-dispatch loop `abandoned` exists to end.
+registry_add_row PLN-083 dropped abandoned
+for role in spec implement verify test consistency; do
+  rc=0; "$SCRIPT_DIR/wf-spawn.sh" "$role" PLN-083-dropped --dry-run >/dev/null 2>&1 || rc=$?
+  assert_eq "role '$role' is refused at an abandoned plan" "2" "$rc"
+done
+
+section "Skills release their guards after the transition, not before (WFI-079)"
+
+# The other half of the same fix, and the half that actually removes the race.
+# An uncommitted transition does not exist to any other session; a gate or a
+# claim is absolute while it is up. So the only safe exit order is: commit the
+# transition, close the gate, unclaim. Reversed, the plan is unguarded AND
+# stale for as long as the commit takes.
+#
+# Asserted per fenced code block, because a block is what a worker executes as
+# one unit. Blocks that release a guard without transitioning anything (the
+# stale-claim clearing in the entry menus) carry no ordering to get wrong and
+# are not the subject here.
+guard_order_ok() {
+  awk '
+    /^ *```/ { in_block = !in_block; if (in_block) seen_commit = 0; next }
+    !in_block { next }
+    /wf-registry-update\.sh|wf-commit\.sh/ { seen_commit = 1 }
+    /wf-unclaim\.sh|wf-gate-close\.sh/ {
+      if (!seen_commit && has_transition_later(NR)) bad = 1
+    }
+    END { print (bad ? "false" : "true") }
+    function has_transition_later(n,   line) {
+      # A guard released inside a block that goes on to transition is the bug.
+      while ((getline line) > 0) {
+        if (line ~ /^ *```/) return 0
+        if (line ~ /wf-registry-update\.sh|wf-commit\.sh/) return 1
+      }
+      return 0
+    }
+  ' "$1"
+}
+for skill in wf-test wf-chrome-test wf-verify wf-implement wf-spec wf-consistency; do
+  assert_eq "$skill releases no guard above a transition in the same block" "true" \
+    "$(guard_order_ok "$LIB_ROOT/skills/$skill/SKILL.md")"
+done
+
+# And the exact sequences, for the exits that ran backwards. Only lines that
+# actually invoke something — prose naming a script is not a call.
+exit_seq() { awk "/$2/,/$3/" "$LIB_ROOT/skills/$1/SKILL.md" | grep 'wf-exec\.sh' \
+  | grep -oE 'wf-(registry-update|gate-close|unclaim)\.sh' | paste -sd, -; }
+
+assert_eq "wf-test's pass exit is transition → gate → claim" \
+  "wf-registry-update.sh,wf-gate-close.sh,wf-unclaim.sh" \
+  "$(exit_seq wf-test '^4\. Move the plan out of .testing' '^5\. Close linked bugs')"
+
+assert_eq "wf-test's findings exit is transition → gate → claim" \
+  "wf-registry-update.sh,wf-gate-close.sh,wf-unclaim.sh" \
+  "$(exit_seq wf-test '^4\. Determine the route' '^### Order of exit')"
+
+assert_eq "wf-implement moves to verify before it unclaims" \
+  "wf-registry-update.sh,wf-unclaim.sh" \
+  "$(exit_seq wf-implement '^25\. \*\*Move the plan to' '^27\. \*\*Post completion')"
+
+# Every one of wf-verify's three routes, not just the one that was noticed.
+verify_routes=$(awk '/^1\. \*\*`escalated`/,/^After each route/' \
+  "$LIB_ROOT/skills/wf-verify/SKILL.md" | grep 'wf-exec\.sh' \
+  | grep -oE 'wf-(registry-update|unclaim)\.sh' | paste -sd, -)
+assert_eq "all three wf-verify routes commit before unclaiming" \
+  "wf-registry-update.sh,wf-unclaim.sh,wf-registry-update.sh,wf-unclaim.sh,wf-registry-update.sh,wf-unclaim.sh" \
+  "$verify_routes"
+
+section "A finding fixable only in plan.md never routes to the implementer (WFI-078)"
+
+# PLN-007 got an unescalated Spec finding whose only fix was rewording a row in
+# the Tests table — a section wf-implement's Rules forbid it to touch. Verify
+# routes unescalated findings to `active`, so the implementer was handed a task
+# it was explicitly barred from doing and had to pick a rule to break.
+assert_ok "verify escalates every Spec finding" \
+  grep -q 'Use `\*\*Spec\*\*:`.*always append.*ESCALATED' \
+  "$LIB_ROOT/skills/wf-verify/SKILL.md"
+
+# The example list is what a model pattern-matches on; an unescalated Spec
+# finding sitting in it outweighs the rule above.
+spec_examples=$(grep -c '^\- \[ \] \*\*Spec\*\*:' "$LIB_ROOT/skills/wf-verify/SKILL.md")
+spec_escalated=$(grep -c '^\- \[ \] \*\*Spec\*\*:.*ESCALATED' "$LIB_ROOT/skills/wf-verify/SKILL.md")
+assert_eq "no unescalated Spec finding appears in the examples" \
+  "$spec_examples" "$spec_escalated"
+
+assert_ok "the escalation test names the file the fix edits" \
+  grep -q 'name the file the fix edits' "$LIB_ROOT/skills/wf-verify/SKILL.md"
+
+# And the receiving side, for a finding that arrives misrouted anyway.
+assert_ok "the implementer escalates a finding it cannot fix in src/" \
+  grep -q 'cannot fix without editing `plan.md` is not yours' \
+  "$LIB_ROOT/skills/wf-implement/SKILL.md"
 
 section "No BSD-only in-place sed"
 

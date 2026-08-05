@@ -157,7 +157,7 @@ Write findings to `plans/PLN-NNN-<slug>/findings.md` on develop as a flat checkl
 
 - [ ] **Code**: Login endpoint returns 500 on empty password (src/auth.ts:42)
 - [ ] **Code**: Missing test for admin role check
-- [ ] **Spec**: Rollback section has TBD placeholder for DB migration reversal
+- [ ] **Spec**: Rollback section has TBD placeholder for DB migration reversal ← ESCALATED
 - [ ] **SOLID**: UserService handles both auth and email — violates SRP (src/services/user.ts)
 - [ ] **Security**: Raw SQL interpolation with user input (src/db/queries.ts:18)
 - [ ] **Design**: Auth model doesn't support multi-tenant — needs plan change ← ESCALATED
@@ -165,7 +165,7 @@ Write findings to `plans/PLN-NNN-<slug>/findings.md` on develop as a flat checkl
 
 Rules:
 - Use `**Code**:` for build/test/convention issues
-- Use `**Spec**:` for incomplete checklist items or rollback issues
+- Use `**Spec**:` for incomplete checklist items or rollback issues — **always append `← ESCALATED`**
 - Use `**SOLID**:` for violations of SOLID principles
 - Use `**Security**:` for vulnerabilities or insecure patterns — append a scope tag (see below)
 - Use `**Design**:` for fundamental approach problems — always append `← ESCALATED`
@@ -193,6 +193,9 @@ Use `← ESCALATED` when the finding **cannot be resolved by editing code alone*
 - Plan's approach is fundamentally incompatible with a constraint
 - Fixing requires changing the design of multiple components
 - Scope needs to expand or contract
+- **The fix is an edit to `plan.md` itself** — a Step, a row in the Tests table, an acceptance criterion, a Design Decision, the Rollback section. This is why every `**Spec**` finding escalates: the plan document is the planner's file, and `/wf-implement`'s Rules forbid the implementer to touch those sections. An unescalated finding routes to `active`, so a finding fixable only in `plan.md` sent to `active` hands the implementer a task it is explicitly barred from doing — client-a's PLN-007 got one whose only fix was rewording a Tests-table row to match a design decision the plan had already adopted, and the implementer had to choose which of two rules to break (WFI-078).
+
+Apply the test literally: **name the file the fix edits.** If the answer is `plan.md`, it escalates, whatever category the finding carries. If the answer is only files under `src/` or `tests/`, it does not.
 
 Everything else is a code-level finding (no ESCALATED tag).
 
@@ -206,29 +209,31 @@ route=$(scripts/wf-exec.sh wf-findings-route.sh plans/PLN-NNN-<slug>)
 
 1. **`escalated`** → route to draft (includes `← PLAN-SCOPED` security findings):
    ```bash
-   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN verify draft \
      --commit "verify(PLN-NNN-<slug>): escalated findings — needs replanning" \
      --add plans/PLN-NNN-<slug>/findings.md
+   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    ```
 
 2. **`active`** → route to active:
    ```bash
-   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN verify active \
      --commit "verify(PLN-NNN-<slug>): N findings — back to active for fixes" \
      --add plans/PLN-NNN-<slug>/findings.md
+   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    ```
 
 3. **`clean`** → route to testing:
    ```bash
-   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN verify testing \
      --commit "verify(PLN-NNN-<slug>): clean — ready for human test" \
      --add plans/PLN-NNN-<slug>/findings.md
+   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    ```
    The `--add` flag ensures findings and REGISTRY update commit atomically.
    Do NOT stage or commit `findings.md` separately before calling this.
+
+**The transition commits before the claim is released, on every route — never the other way round.** The claim is what keeps the dispatcher off this plan. Unclaim first and there is a window in which the plan is unclaimed, ungated and still reading `verify`: a sweep landing in it launches a second verify worker onto work you have already finished. Uncommitted, the transition does not exist to any other session, so the only safe order is commit, then release (client-a WFI-079).
 
 After each route, run `scripts/wf-exec.sh wf-check-reboot-flag.sh` and append any output to your completion message.
 

@@ -164,6 +164,14 @@ The orchestrator parks work rather than guessing. These never run unattended:
 
 Queued gates are drained with `/wf-attend`.
 
+**A gate and a claim are the two things that keep a worker off a plan, and they come down
+last.** Any session leaving a plan — a skill exiting, a human answering a gate — commits the
+state transition *first*, then closes the gate, then unclaims. The reverse order leaves the
+plan unguarded while the registry still reads its old state, and a sweep landing in that
+window dispatches a worker at work that is already done or already moved on.
+`wf-spawn.sh` re-reads the registry immediately before launching and stands down on a state
+its role cannot act on, which narrows that window but does not close it.
+
 Manual acceptance criteria carry a tag saying why a machine cannot check them —
 `(eyes:blocking)`, `(eyes:cosmetic)`, `(external)`, `(soak)`, `(unbuilt)`. Only unresolved
 `eyes:*` criteria can open a gate, and a cosmetic failure files a bug rather than

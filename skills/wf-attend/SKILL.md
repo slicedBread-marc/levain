@@ -40,6 +40,8 @@ If the script exits non-zero, say "No gates open — nothing is waiting on you" 
 
 Once the user picks one, read the gate's `<context>` file if it has one, then follow the row for that gate name.
 
+**Closing the gate is always the last act.** An open gate is what keeps the orchestrator off the plan, so every commit, state transition and file move the decision implies lands *first*, and `wf-gate-close.sh` runs only once they have. Close it early and the dispatcher's very next sweep — up to a minute before your work is committed — reads the plan as free and still in its old state, and launches a worker into the decision you are in the middle of making. That is how client-a got an unattended tester onto a plan already routed back to its planner, which then re-gated it and blocked it entirely (WFI-079). Each row below is written in the safe order; do not reorder it.
+
 ### `spec-approval`
 
 The plan is drafted, **already reviewed**, and committed in `draft` state. The orchestrator wrote it and ran the architecture review; it is not allowed to approve it.
