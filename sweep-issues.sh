@@ -43,6 +43,33 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# open_entries <WORKFLOW-ISSUES.md> — the entries whose status is open, whole.
+#
+# An entry's status is its OWN `**Status:**` line: the first one that starts a
+# line inside that entry. Not any occurrence anywhere in it.
+#
+# Reporters paste evidence into the Actual block, and the most natural evidence
+# for a workflow issue is a diff of WORKFLOW-ISSUES.md itself. client-a's
+# WFI-065 carries one, so its body holds `+**Status:** open` three times — and
+# the listing, which matched anywhere in the entry, printed that RESOLVED issue
+# under a client with nothing open. The count never agreed, because it anchored
+# to the line start, so one run printed an issue and then said "no open
+# workflow issues" directly underneath it.
+#
+# Both callers now read this, so there is one rule and nothing left to disagree.
+open_entries() {
+  awk -v RS='\n## ' '
+    NR > 1 {
+      n = split($0, line, "\n")
+      for (i = 1; i <= n; i++)
+        if (line[i] ~ /^\*\*Status:\*\*/) {
+          if (line[i] ~ /^\*\*Status:\*\* *open/) print "## " $0
+          break
+        }
+    }
+  ' "$1"
+}
+
 total=0
 clients=0
 
@@ -55,13 +82,13 @@ while IFS= read -r client; do
   issues="$client/WORKFLOW-ISSUES.md"
   clients=$((clients + 1))
 
-  # grep -c prints 0 AND exits 1 with no matches, so `|| echo 0` would make n
-  # the two-line string "0\n0" and break the arithmetic below.
-  n=0
-  if [ -f "$issues" ]; then
-    n=$(grep -c '^\*\*Status:\*\* *open' "$issues" 2>/dev/null)
-    n=${n:-0}
-  fi
+  open_body=""
+  [ -f "$issues" ] && open_body=$(open_entries "$issues")
+  # Count what would be PRINTED. These used to be two rules — a grep here and
+  # an awk below — and they disagreed the moment an entry's body contained the
+  # word they both looked for (see open_entries).
+  n=$(printf '%s' "$open_body" | grep -c '^## ' || true)
+  n=${n:-0}
 
   case "$mode" in
     count)
@@ -86,10 +113,20 @@ while IFS= read -r client; do
       ;;
 
     list)
+      # An entry's status is its OWN `**Status:**` line — the first one that
+      # starts a line inside the record — not any occurrence anywhere in it.
+      #
+      # Reporters paste evidence into the Actual block, and the most natural
+      # evidence for a workflow issue is a diff of WORKFLOW-ISSUES.md itself.
+      # client-a's WFI-065 carries one, so its body contains `+**Status:**
+      # open` three times; an unanchored match read the entry as open and the
+      # sweep printed a RESOLVED issue under a client that had none. The count
+      # above never agreed — it anchors — so the same run said "no open
+      # workflow issues" directly below the issue it had just printed.
       if $show_all; then
         body=$([ -f "$issues" ] && awk -v RS='\n## ' 'NR > 1 { print "## " $0 }' "$issues" || true)
       else
-        body=$([ -f "$issues" ] && awk -v RS='\n## ' 'NR > 1 && /\*\*Status:\*\* *open/ { print "## " $0 }' "$issues" || true)
+        body="$open_body"
       fi
       if [ -n "$body" ]; then
         echo -e "\n${BOLD}══ $name ${NC}${DIM}($client)${NC}"

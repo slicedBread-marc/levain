@@ -804,6 +804,43 @@ assert_eq "default view shows the open ones from both clients" "2" \
 assert_eq "--all reveals resolved entries" "1" \
   "$(sweep --all 2>/dev/null | grep -c '^## WFI-002 ' | xargs)"
 
+# An entry whose BODY quotes a status line is still read by its own status.
+#
+# The most natural evidence to paste into an Actual block, for a workflow
+# issue, is a diff of WORKFLOW-ISSUES.md — which carries `+**Status:** open`
+# inside a resolved entry. The listing matched anywhere in the entry and the
+# count anchored to the line start, so one run printed client-a's RESOLVED
+# WFI-065 and then reported "No open workflow issues" directly underneath it.
+cat >> "$SWEEP_A/WORKFLOW-ISSUES.md" << 'PASTED'
+
+## WFI-003 — wf-issue.sh — 2026-08-08T00:00:00Z
+
+**Status:** resolved 2026-08-08 — fixed
+
+**Actual:**
+```
+A diff of this very file:
++## WFI-999 — wf-spec — 2026-08-01T00:00:00Z
++
++**Status:** open
++
+```
+PASTED
+
+printf '%s\n%s\n' "$SWEEP_A" "$SWEEP_B" > "$TEST_DIR/deployments.txt"
+assert_eq "a resolved entry quoting an open status is not listed" "0" \
+  "$(sweep 2>/dev/null | grep -c '^## WFI-003 ' | xargs)"
+assert_eq "and is not counted" "1" \
+  "$(sweep --count | awk -F': ' '$1 == "client-a" { print $2 }')"
+assert_eq "the pasted entry it quotes is not conjured into existence" "0" \
+  "$(sweep 2>/dev/null | grep -c '^## WFI-999 ' | xargs)"
+assert_eq "--all still shows it" "1" \
+  "$(sweep --all 2>/dev/null | grep -c '^## WFI-003 ' | xargs)"
+# The count and the listing must never disagree: the count is what the footer
+# reports, and a footer contradicting the body above it is how this surfaced.
+assert_eq "the footer count equals the entries printed" "true" \
+  "$([ "$(sweep 2>/dev/null | grep -c '^## WFI-')" = "$(sweep 2>/dev/null | grep -oE '^[0-9]+ open workflow' | grep -oE '^[0-9]+')" ] && echo true || echo false)"
+
 # A dead path in deployments.txt must be skipped, not fatal — clients get moved.
 printf '%s\n%s\n%s\n' "$SWEEP_A" "$TEST_DIR/gone" "$SWEEP_B" > "$TEST_DIR/deployments.txt"
 assert_eq "a missing client is skipped, others still counted" "2" \

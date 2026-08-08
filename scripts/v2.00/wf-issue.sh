@@ -157,6 +157,29 @@ fi
 
 ensure_file
 
+# ── Body text may not impersonate entry structure ──────────────────────────
+#
+# The most natural evidence to paste into a report about the workflow is the
+# workflow's own files — and for an issue about issue-filing, that is this
+# file. client-a's WFI-065 carries a diff of WORKFLOW-ISSUES.md in its
+# Actual block, so its body holds three `+**Status:** open` lines; the sweep
+# read the entry as open and printed a RESOLVED issue under a client that had
+# none. A diff pasted without its `+` prefixes is worse: `## WFI-064` at column
+# one splits the record and steals the next-ID lookup.
+#
+# One leading space is enough to settle it — every marker this file's readers
+# key on is line-anchored, and inside a fenced block the indent is invisible to
+# anyone reading the entry.
+neutralise() {
+  printf '%s' "$1" | sed -e 's/^\(## WFI-\)/ \1/' \
+                         -e 's/^\(\*\*Status:\*\*\)/ \1/' \
+                         -e 's/^\(<!-- New entries\)/ \1/'
+}
+expected=$(neutralise "$expected")
+actual=$(neutralise "$actual")
+notes=$(neutralise "$notes")
+context=$(neutralise "$context")
+
 # Serialize appends — several workers can hit the same harness bug at once.
 wf_lock_acquire "workflow-issues" || exit 0
 
