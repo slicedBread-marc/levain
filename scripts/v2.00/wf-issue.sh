@@ -98,6 +98,23 @@ case "${1:-}" in
     note=$(printf '%s' "${3:-resolved}" | tr '\n' ' ')
     ensure_file
     wf_lock_acquire "workflow-issues" || exit 0
+
+    # An entry is resolved once. Re-resolving overwrote the original date and
+    # the version that actually carried the fix with whatever the second caller
+    # believed — a silent rewrite of the record this file exists to be. Refuse,
+    # and say what is already there. (Exit 0: nothing is wrong, there is just
+    # nothing to do.)
+    existing=$(awk -v id="$id" '
+      $0 ~ "^## " id " " { inblock = 1; next }
+      inblock && /^\*\*Status:\*\*/ { sub(/^\*\*Status:\*\* */, ""); print; exit }
+    ' "$ISSUES")
+    case "$existing" in
+      resolved*)
+        echo "$id: already $existing — not overwriting" >&2
+        exit 0
+        ;;
+    esac
+
     awk -v id="$id" -v note="$note" -v today="$(date -u +%Y-%m-%d)" '
       $0 ~ "^## " id " " { inblock = 1 }
       inblock && /^\*\*Status:\*\*/ {

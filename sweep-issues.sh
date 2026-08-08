@@ -74,8 +74,15 @@ while IFS= read -r client; do
       grep -q "^## $resolve_id " "$issues" 2>/dev/null || continue
       # Resolve through the client's own script so the format stays owned by
       # one place, and the client's version of it is the one that runs.
-      ( cd "$client" && ./scripts/wf-exec.sh wf-issue.sh --resolve "$resolve_id" "$resolve_note" ) \
-        && echo -e "${GREEN}  $name: $resolve_id resolved${NC}"
+      #
+      # Report what it actually said, not what we asked for: an entry resolved
+      # earlier is left alone, and a caller sweeping a batch needs to see which
+      # of its IDs were already on the record rather than a uniform "resolved".
+      out=$( cd "$client" && ./scripts/wf-exec.sh wf-issue.sh --resolve "$resolve_id" "$resolve_note" 2>&1 )
+      case "$out" in
+        *"not overwriting"*) echo -e "${YELLOW}  $name: $out${NC}" ;;
+        *)                   echo -e "${GREEN}  $name: $resolve_id resolved${NC}" ;;
+      esac
       ;;
 
     list)

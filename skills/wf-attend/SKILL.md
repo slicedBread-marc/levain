@@ -19,7 +19,7 @@ Run this first and display the queue before reading further:
 scripts/wf-exec.sh wf-list-gates.sh
 ```
 
-Output is tab-separated: `<id>  <gate>  <opened>  <question>  <context>  <blocking>`.
+Output is tab-separated: `<id>  <gate>  <opened>  <question>  <context>  <blocking>  <state>  <fit>`.
 
 `<blocking>` is how many other incomplete plans cannot start until this gate is answered, and the queue is **ordered by it, costliest first** (ties break oldest-first). A gate at the root of a dependency chain holds everything behind it; one blocking nothing costs only the minute it takes to answer. Present them in the order given — do not re-sort by age.
 
@@ -31,6 +31,14 @@ Render it as a numbered table and stop:
 ```
 
 Show `Blocking` as a plain count, and `—` when it is 0.
+
+**A row whose `<fit>` is `mismatch` is not answerable as written — say so on the row and handle it first.** The gate outlived the state it was opened in: the plan has moved on, and the role this gate hands work to cannot act from where the plan now is. Mark it in the table (`⚠ stale — plan is <state>`) and treat the decision as *reconcile*, not *answer*:
+
+1. Read the plan's `findings.md` and `## Review` to establish what actually happened since the gate was opened.
+2. If the question has already been settled by that history, close the gate as answered, quoting the evidence: `wf-gate-close.sh <PLN-ID> "<what settled it, and where>"`.
+3. If it has not, the gate is on the wrong artifact state — close it and let the skill that owns the plan's current state re-open a gate that fits.
+
+Never route a `mismatch` row to its normal skill. client-a's WFI-082: a `manual-test` gate left over from a fixed bug sat on a plan that had gone back to `draft` with five unaddressed findings, the queue showed it as ordinary work, and the attendant was sent to `/wf-test` — which cannot run on a draft plan. Worse, the unattended tester that had already reached that plan overwrote a human FAIL with PASS on the way past.
 
 Then: "Which one? (number, or `all` to work through them in order)"
 

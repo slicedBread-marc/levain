@@ -2188,6 +2188,118 @@ assert_eq "so does double-quoted YAML" 'dotnet build' "$value"
 rm -rf "$cfg_probe"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A gate is presented against the state it can be answered from (client-a WFI-082)"
+
+# A gate outlives the state it was opened in. A manual-test gate left behind by
+# an earlier bug sat on a plan that had gone back to draft with five unaddressed
+# findings; the queue showed it as ordinary work and sent the attendant to
+# /wf-test, which cannot run on a draft plan.
+registry_add_row PLN-910 stale-gate draft
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-910 manual-test "Ready to test?" --skill wf-test >/dev/null 2>&1
+row=$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null)
+assert_eq "the row carries the plan's current state" "draft" "$(printf '%s' "$row" | cut -f7)"
+assert_eq "and says the gate cannot be answered from there" "mismatch" "$(printf '%s' "$row" | cut -f8)"
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-910 draft testing >/dev/null 2>&1
+assert_eq "in the state it belongs to, it is ordinary work" "ok" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
+# A gate any state can answer makes no claim, so it never reads as stale.
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-910 "tested" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-910 needs-input "Which way?" --skill wf-implement >/dev/null 2>&1
+assert_eq "needs-input fits any state" "ok" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
+# The six documented fields are untouched — consumers index by position.
+assert_eq "the original contract still holds at field 6" "0" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null | cut -f6)"
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-910 "answered" >/dev/null 2>&1
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A bounce with nothing to build goes back to the tester (client-a WFI-096)"
+
+# A tester filed a behavior finding, the replan found it did not reproduce, and
+# neither `ready` nor `active` fitted: `active` dispatches a builder onto an
+# empty work list and re-runs a scoped verify the same tip already passed. The
+# orchestrator refused to guess and parked on a gate that blocked eight plans.
+registry_add_row PLN-911 not-reproducible draft feature/PLN-911-not-reproducible
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-911" >/dev/null 2>&1
+git worktree add -q -b feature/PLN-911-not-reproducible "$TEST_DIR/wt-911" develop 2>/dev/null
+cat > plans/PLN-911-not-reproducible/findings.md << 'FEOF'
+## Human Test — 2026-08-07
+
+- [x] **Behavior**: stylesheet link missing from app.html — did not reproduce; the re-test ran from the develop root
+FEOF
+cat > plans/PLN-911-not-reproducible/progress.md << 'PEOF'
+# Progress — PLN-911
+
+## Steps
+- [x] Step 1: add the link
+PEOF
+assert_eq "an answered human-test bounce with a live worktree goes to testing" "testing" \
+  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-911)"
+
+# One outstanding finding and it is a fix cycle again.
+printf -- '- [ ] **Behavior**: the second one does reproduce\n' >> plans/PLN-911-not-reproducible/findings.md
+assert_eq "an outstanding finding is still a fix cycle" "active" \
+  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-911)"
+
+# A verify bounce has code to answer even when every finding is checked off —
+# only the tester's own bounce can go straight back to the tester.
+cat > plans/PLN-911-not-reproducible/findings.md << 'FEOF'
+## Human Test — 2026-08-07
+
+- [x] **Behavior**: did not reproduce
+
+## Verify — 2026-08-08
+
+- [x] **Code**: null guard added
+FEOF
+assert_eq "a verify bounce still routes to the builder" "active" \
+  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-911)"
+
+# And an unfinished checklist means there is work outstanding whatever the
+# findings say.
+cat > plans/PLN-911-not-reproducible/findings.md << 'FEOF'
+## Human Test — 2026-08-07
+
+- [x] **Behavior**: did not reproduce
+FEOF
+printf -- '- [ ] Step 2: wire the reader\n' >> plans/PLN-911-not-reproducible/progress.md
+assert_eq "an unfinished checklist keeps it with the builder" "active" \
+  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-911)"
+git worktree remove --force "$TEST_DIR/wt-911" >/dev/null 2>&1
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A resolved issue is not re-resolved (this sweep)"
+
+# --resolve rewrote whatever Status line it found, so re-running it over an
+# entry closed months ago replaced the original date and the version that
+# actually carried the fix — a silent rewrite of the record the file exists
+# to be. Found by doing it: this sweep overwrote four of client-a's.
+cat > WORKFLOW-ISSUES.md << 'IEOF'
+# Workflow Issues
+
+<!-- New entries are inserted directly below this line, newest first. -->
+
+## WFI-001 — wf-spec — 2026-08-01T10:00:00Z
+
+**Status:** resolved 2026-08-02 — fixed in v5.2.4
+**Workflow version:** 5.0.15
+
+## WFI-002 — wf-test — 2026-08-01T09:00:00Z
+
+**Status:** open
+**Workflow version:** 5.0.15
+IEOF
+"$SCRIPT_DIR/wf-issue.sh" --resolve WFI-001 "fixed in v9.9.9" >/dev/null 2>&1
+assert_eq "an already-resolved entry keeps its original record" "true" \
+  "$(grep -q '^\*\*Status:\*\* resolved 2026-08-02 — fixed in v5.2.4$' WORKFLOW-ISSUES.md && echo true || echo false)"
+assert_eq "and the caller is told why nothing happened" "true" \
+  "$("$SCRIPT_DIR/wf-issue.sh" --resolve WFI-001 "fixed in v9.9.9" 2>&1 | grep -q 'not overwriting' && echo true || echo false)"
+"$SCRIPT_DIR/wf-issue.sh" --resolve WFI-002 "fixed in v5.5.1" >/dev/null 2>&1
+assert_eq "an open entry still resolves" "true" \
+  "$(grep -q "^\*\*Status:\*\* resolved .* — fixed in v5.5.1$" WORKFLOW-ISSUES.md && echo true || echo false)"
+rm -f WORKFLOW-ISSUES.md
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

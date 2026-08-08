@@ -552,10 +552,13 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
    `wf-replan-target.sh` resolves it from the same fact the dispatcher uses —
    a live worktree means resume:
 
-   | Worktree | Target | Builder path |
-   |-|-|-|
-   | none | `ready` | Phase 1 → fresh build |
-   | live | `active` | Fix cycle |
+   | Worktree | Findings | Target | Next hands |
+   |-|-|-|-|
+   | none | any | `ready` | Builder, Phase 1 → fresh build |
+   | live | any outstanding | `active` | Builder, fix cycle |
+   | live | a human-test bounce, all answered, checklist complete | `testing` | Tester, straight back |
+
+   The third row is the bounce with nothing to build: a tester filed a behavior finding, the replan concluded it does not reproduce, and there is no work for a builder. Sending it to `active` dispatches a builder onto an empty list and re-runs a full scoped verify against a tip that already passed clean; client-a's WFI-096 instead parked on a `needs-input` gate that blocked eight dependent plans until a human authorised the transition by hand. The script now answers `testing` for that shape and only that shape — say so in `findings.md`, in one line, naming what did not reproduce and how you established it.
 
 8. **Commit:**
    ```

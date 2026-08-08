@@ -7,7 +7,18 @@
 # exit 1 if not. This is the dispatcher's "should I skip this one?" test.
 #
 # stdout, one per line, tab-separated:
-#   <id>\t<gate-name>\t<age>\t<question>\t<context>\t<blocking>
+#   <id>\t<gate-name>\t<age>\t<question>\t<context>\t<blocking>\t<state>\t<fit>
+#
+# <state> is the artifact's current REGISTRY state, and <fit> is `ok` or
+# `mismatch` — whether a gate by that name can still be acted on from there.
+#
+# A gate outlives the state it was opened in. client-a's WFI-082: a
+# `manual-test` gate left behind by an earlier bug sat on a plan that had since
+# gone back to `draft` with five unaddressed findings. The queue presented it as
+# actionable, /wf-attend's manual-test row sent the attendant to /wf-test, and
+# /wf-test cannot run on a draft plan — a dead end with nothing in the output
+# saying so. The join is reported, not enforced: a stale gate still needs a
+# human to close it, so suppressing it would hide the only thing that can.
 #
 # <blocking> is the number of OTHER incomplete plans that cannot start until
 # this gate is answered — the transitive closure over the Deps column.
@@ -46,6 +57,38 @@ REGISTRY="$(wf_develop_root)/plans/REGISTRY.md"
 # next one.
 flatten() {
   printf '%s' "$1" | tr '\n\t' '  ' | sed -e 's/  */ /g' -e 's/^ //' -e 's/ $//'
+}
+
+# state_of <id> → the artifact's REGISTRY state, or `—` when it has no row yet
+# (a bug or brief on its way to a first spec, which is a legitimate gate target).
+state_of() {
+  local id="$1" s=""
+  [ -f "$REGISTRY" ] || { printf '—'; return 0; }
+  s=$(grep "^| $id |" "$REGISTRY" 2>/dev/null | head -1 | awk -F'|' '{print $4}' | xargs || true)
+  # A bug or brief keeps its number when it becomes a plan (BUG-022 → PLN-022),
+  # and the gate may have been opened under the earlier name.
+  if [ -z "$s" ]; then
+    s=$(grep "^| PLN-${id#*-} |" "$REGISTRY" 2>/dev/null | head -1 | awk -F'|' '{print $4}' | xargs || true)
+  fi
+  printf '%s' "${s:-—}"
+}
+
+# gate_fit <gate-name> <state> → ok | mismatch
+#
+# Only gates whose answer HANDS THE WORK to a specific role are checked, and
+# only against the state that role acts on. A gate that any state can answer
+# (`needs-input`, `goal-missing`) makes no claim and is always `ok`, as is any
+# gate name this table does not know — a new gate is not a stale one.
+gate_fit() {
+  local want=""
+  case "$1" in
+    manual-test)                        want="testing" ;;
+    spec-approval|spec-stuck|scope-reduction) want="draft" ;;
+    consistency-*)                      want="ready" ;;
+    *)                                  printf 'ok'; return 0 ;;
+  esac
+  [ "$2" = "—" ] && { printf 'ok'; return 0; }
+  if [ "$2" = "$want" ]; then printf 'ok'; else printf 'mismatch'; fi
 }
 
 # How many other incomplete plans sit behind this one in the Deps graph.
@@ -90,9 +133,11 @@ if [ -n "$query" ]; then
   [ -f "$gate_file" ] || exit 1
   # shellcheck disable=SC1090
   eval "$(cat "$gate_file")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+  gstate=$(state_of "$GATE_ID")
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$GATE_ID" "$GATE_NAME" "$GATE_OPENED" "$(flatten "$GATE_QUESTION")" \
-    "$(flatten "${GATE_CONTEXT:-—}")" "$(blocked_by "$id")"
+    "$(flatten "${GATE_CONTEXT:-—}")" "$(blocked_by "$id")" \
+    "$gstate" "$(gate_fit "$GATE_NAME" "$gstate")"
   exit 0
 fi
 
@@ -109,9 +154,11 @@ for gate_file in "$gates_dir"/*.gate; do
     eval "$(cat "$gate_file")"
     # Blocking count leads, zero-padded, so a plain lexical sort orders by cost
     # first and by opened-timestamp second without a second sort key.
-    printf '%06d\t%s\t%s\t%s\t%s\t%s\n' \
+    gstate=$(state_of "$GATE_ID")
+    printf '%06d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$(blocked_by "$GATE_ID")" "$GATE_OPENED" "$GATE_ID" "$GATE_NAME" \
-      "$(flatten "$GATE_QUESTION")" "$(flatten "${GATE_CONTEXT:-—}")"
+      "$(flatten "$GATE_QUESTION")" "$(flatten "${GATE_CONTEXT:-—}")" \
+      "$gstate" "$(gate_fit "$GATE_NAME" "$gstate")"
   ) >> "$tmp" 2>/dev/null || true
 done
 
@@ -124,6 +171,6 @@ fi
 # reverses the timestamp too, so sort the count descending as its own key and
 # leave the ISO-8601 timestamp ascending (lexical = oldest first).
 sort -k1,1nr -k2,2 "$tmp" \
-  | awk -F'\t' '{ print $3 "\t" $4 "\t" $2 "\t" $5 "\t" $6 "\t" ($1 + 0) }'
+  | awk -F'\t' '{ print $3 "\t" $4 "\t" $2 "\t" $5 "\t" $6 "\t" ($1 + 0) "\t" $7 "\t" $8 }'
 echo "GATES: $(wc -l < "$tmp" | xargs)" >&2
 exit 0

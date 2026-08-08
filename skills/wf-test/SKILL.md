@@ -181,6 +181,11 @@ Exit 1 here means you are standing somewhere else — almost always the develop 
       If any failed, list each failure with test name and error message.
       Final response under 1500 characters.")
    ```
+
+   **Pass every flag as a separate bare word.** Wrapping the filter flags in one pair of quotes does not error — the runner takes the lot as a single unrecognised argument, ignores the filter, and runs the **whole suite** while reporting it as the scoped result. Measured on client-a's PLN-007: quoted, `total: 435`; the same flags unquoted, `total: 1`. Nothing in the output distinguishes them (WFI-080), and every "scoped" run was really a full-suite run hammering the rate limiter — a 429 cascade that two verify passes had blamed on daemon contention.
+
+   **So check the count, not just the exit code.** If `$E2E_SCOPE` named a handful of tests and the agent reports hundreds, the filter did not apply: fix the command form and re-run before reading anything into the result.
+
    Report results to user before or during human testing. If e2e tests fail, inform the user but continue — human testing may still proceed.
 5. **Classify state and display criteria:**
 
