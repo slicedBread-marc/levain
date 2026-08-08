@@ -2346,6 +2346,30 @@ assert_eq "and the history row is the one marked resolved" "true" \
 assert_fails "a second pop finds no unresolved row" \
   "$SCRIPT_DIR/wf-goal-pop.sh" PLN-913
 
+# client-a's PLN-007 printed "Goal restored: '2'" and wrote `2` as the whole
+# `## Goal` one-liner, exit 0 — the only signal was the 2 in the success line
+# (WFI-097). A goal is a sentence; a lone token is a column index that went
+# somewhere it should not have, and writing it is worse than failing.
+registry_add_row PLN-915 goal-guard draft
+cat > plans/PLN-915-goal-guard/plan.md << 'PLAN915'
+# PLN-915
+
+## Goal
+The live sub-goal that must survive a refusal
+
+### Goal History
+| Date | Previous Goal | Trigger | Resolution |
+|-|-|-|-|
+| 2026-08-08 | 2 | Human Test | — |
+PLAN915
+
+assert_fails "a pop refuses to restore something that is not a goal" \
+  "$SCRIPT_DIR/wf-goal-pop.sh" PLN-915
+assert_eq "and leaves the live goal standing" "true" \
+  "$(grep -q '^The live sub-goal that must survive a refusal$' plans/PLN-915-goal-guard/plan.md && echo true || echo false)"
+assert_eq "and does not stamp the row it refused" "true" \
+  "$(grep -q '| 2026-08-08 | 2 | Human Test | — |' plans/PLN-915-goal-guard/plan.md && echo true || echo false)"
+
 # wf-goal-amend.sh matched rows the same way, so it could rewrite a Tests row
 # with the plan's goal.
 registry_add_row PLN-914 amend-scope draft

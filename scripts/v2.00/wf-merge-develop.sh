@@ -83,11 +83,19 @@ fi
 # develop DELETES them from this worktree. Putting them back as ignored files
 # leaves the session working and the tree clean.
 # In a feature worktree the main worktree still has the files, so copying is
-# enough. In the MAIN worktree there is nothing to copy from — that is the case
-# client-c hit on the release side, losing the harness outright (WFI-006) —
-# so fall back to pulling it out of git history and untracking it again.
+# enough — and copying is all that is wanted: a worktree needs only the three
+# paths wf-worktree-harness.sh delivers, because wf-exec.sh resolves scripts/v*/
+# from the main worktree. Reaching into git history there would put a stale
+# TRACKED copy back on a branch that no longer wants one.
+#
+# The main worktree is the case with nowhere to copy from — client-c lost
+# the harness outright on the release side (WFI-006) — so only there does the
+# fallback apply.
 _restore_harness() {
   "$(dirname "$0")/wf-worktree-harness.sh" . >/dev/null 2>&1 || true
+  local main_wt
+  main_wt=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+  [ -n "$main_wt" ] && [ "$main_wt" = "$(git rev-parse --show-toplevel 2>/dev/null)" ] || return 0
   [ -x scripts/wf-exec.sh ] && [ -f scripts/version-map.txt ] && return 0
   "$(dirname "$0")/wf-harness-restore.sh" >/dev/null 2>&1 || true
 }

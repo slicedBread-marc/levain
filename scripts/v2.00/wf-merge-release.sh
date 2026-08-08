@@ -38,8 +38,20 @@ fi
 # A branch cut before the v5.0.0 untrack commit still TRACKS these paths, so
 # merging a branch that has taken it deletes them from this worktree — and they
 # are gitignored afterwards, so nothing puts them back (client-c WFI-006).
+# In a feature worktree the main worktree still has the files, so copying is
+# enough — and copying is all that is wanted: a worktree needs only the three
+# paths wf-worktree-harness.sh delivers, because wf-exec.sh resolves scripts/v*/
+# from the main worktree. Reaching into git history there would put a stale
+# TRACKED copy back on a branch that no longer wants one.
+#
+# The main worktree is the case with nowhere to copy from — client-c lost
+# the harness outright on the release side (WFI-006) — so only there does the
+# fallback apply.
 _restore_harness() {
   "$(dirname "$0")/wf-worktree-harness.sh" . >/dev/null 2>&1 || true
+  local main_wt
+  main_wt=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+  [ -n "$main_wt" ] && [ "$main_wt" = "$(git rev-parse --show-toplevel 2>/dev/null)" ] || return 0
   [ -x scripts/wf-exec.sh ] && [ -f scripts/version-map.txt ] && return 0
   "$(dirname "$0")/wf-harness-restore.sh" >/dev/null 2>&1 || true
 }

@@ -71,6 +71,26 @@ if [ -z "$previous_goal" ]; then
   exit 1
 fi
 
+# Refuse to write something that cannot be a goal.
+#
+# The pop's failure mode is not an error — it is a plausible-looking success.
+# client-a's PLN-007 printed "Goal restored: '2'" and wrote `2` as the whole
+# `## Goal` one-liner, exit 0; the only signal was the `2` in the success
+# message, and had nobody read it the plan would have reached the builder with
+# no goal at all (WFI-097). `## Goal` feeds wf-plan-info.sh, and from there
+# wf-implement, wf-test and every PR description.
+#
+# A goal is a sentence. One token, or under ten characters, is a table cell
+# that got picked up by a column index — so fail loudly and leave plan.md
+# untouched, which is recoverable, rather than write it, which is silent.
+if [ "${#previous_goal}" -lt 10 ] || ! printf '%s' "$previous_goal" | grep -q '[[:space:]]'; then
+  echo "Error: refusing to restore '$previous_goal' — that is not a goal." >&2
+  echo "       Row $line_num of $plan_file:" >&2
+  echo "       $line_content" >&2
+  echo "       Nothing was written. Check the ### Goal History table's columns." >&2
+  exit 1
+fi
+
 today=$(date +%Y-%m-%d)
 
 # Mark the history row as resolved (awk into a tempfile — `sed -i ''` is macOS-only)
