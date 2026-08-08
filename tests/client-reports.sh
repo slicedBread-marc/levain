@@ -2011,6 +2011,183 @@ git stash pop >/dev/null 2>&1 || true
 "$SCRIPT_DIR/wf-unclaim.sh" PLN-905-durable >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A stamp tracks the spec, not the bookkeeping (client-a WFI-092, WFI-093, WFI-095)"
+
+# Three mechanical writes moved the hashed body while the specification stood
+# still, and each one made wf-spec's replan gate ("REVIEW_STALE must be false")
+# demand a fresh architectural review of byte-identical text:
+#   - ticking a Verification Checklist box, which implement and verify do every
+#     cycle (WFI-095);
+#   - wf-goal-pop.sh resolving a Goal History row (WFI-092, WFI-093).
+registry_add_row PLN-906 fingerprint draft
+cat > plans/PLN-906-fingerprint/plan.md << 'PLANEOF'
+# Fingerprint
+
+## Goal
+Prove the fingerprint tracks the specification.
+
+### Goal History
+| Date | Previous Goal | Trigger | Resolution |
+|-|-|-|-|
+
+## Verification Checklist
+- [ ] Build passes
+- [ ] Tests pass
+
+## Review
+> **2026-08-06 — Plan Review (round 1 of 3)**
+> **Result:** Approved
+PLANEOF
+"$SCRIPT_DIR/wf-review-stamp.sh" PLN-906 >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-906)"
+assert_eq "the stamp starts fresh" "false" "$REVIEW_STALE"
+
+sed 's/- \[ \] Build passes/- [x] Build passes/' plans/PLN-906-fingerprint/plan.md \
+  > plans/PLN-906-fingerprint/plan.tmp && mv plans/PLN-906-fingerprint/plan.tmp plans/PLN-906-fingerprint/plan.md
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-906)"
+assert_eq "ticking a criterion is not a spec change" "false" "$REVIEW_STALE"
+
+# Adding one is. The box state is normalised; the text is not.
+awk '/^- \[ \] Tests pass/ { print; print "- [ ] Docs updated"; next } { print }' \
+  plans/PLN-906-fingerprint/plan.md > plans/PLN-906-fingerprint/plan.tmp \
+  && mv plans/PLN-906-fingerprint/plan.tmp plans/PLN-906-fingerprint/plan.md
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-906)"
+assert_eq "adding a criterion is" "true" "$REVIEW_STALE"
+
+# Goal History is script-managed end to end: push archives a row, pop resolves
+# it. Neither is a decision anyone reviewed.
+"$SCRIPT_DIR/wf-review-stamp.sh" PLN-906 >/dev/null 2>&1
+"$SCRIPT_DIR/wf-goal-push.sh" PLN-906 "Fix the two verify findings" "Verify: 2 findings" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-goal-pop.sh" PLN-906 >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-906)"
+assert_eq "a push and pop that restore the goal leave the verdict standing" "false" "$REVIEW_STALE"
+
+# The Goal one-liner itself stays in the hash — a scope reduction is exactly
+# what a stale verdict has to catch, which is why wf-spec stamps AFTER the pop.
+"$SCRIPT_DIR/wf-goal-amend.sh" PLN-906 "Prove much less than promised" --reason "scope reduction" >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-906)"
+assert_eq "changing what the plan promises is" "true" "$REVIEW_STALE"
+
+# --no-commit leaves the stamp for the caller's own commit, so a replan lands
+# under a message describing the amendment rather than "stamp review" (WFI-085).
+"$SCRIPT_DIR/wf-commit.sh" "spec: PLN-906 amended" --add plans/PLN-906-fingerprint/ >/dev/null 2>&1
+"$SCRIPT_DIR/wf-review-stamp.sh" PLN-906 --no-commit >/dev/null 2>&1
+assert_eq "--no-commit stages the stamp instead of committing it" "true" \
+  "$(git diff --cached --name-only | grep -q 'PLN-906-fingerprint/plan.md' && echo true || echo false)"
+assert_eq "and the last commit is still the caller's" "spec: PLN-906 amended" \
+  "$(git log -1 --pretty=%s)"
+"$SCRIPT_DIR/wf-commit.sh" "spec: PLN-906 stamped" --add plans/PLN-906-fingerprint/ >/dev/null 2>&1
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A goal a human corrected stays corrected (client-a WFI-084)"
+
+# The scope-reduction gate says to amend the Goal so it describes what will be
+# built. Mid-fix-cycle the live one-liner is the pushed SUB-goal; the promise
+# the reduction contradicts is archived in Goal History, and pop restores that
+# text verbatim. Nothing could edit it, so accepting a reduction by amending
+# only the live line let the unreduced promise come back and undo the human.
+registry_add_row PLN-907 archived-goal draft
+printf '# Archived\n\n## Goal\nShip a browser timer and a CLI timer.\n' > plans/PLN-907-archived-goal/plan.md
+"$SCRIPT_DIR/wf-goal-push.sh" PLN-907 "Fix the auth bypass" "Verify: 1 ESCALATED" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-goal-amend.sh" PLN-907 "Ship a CLI timer." --reason "browser timer deferred to BRF-908" >/dev/null 2>&1
+
+# The live goal is untouched: the fix cycle is still about the auth bypass.
+assert_eq "the active sub-goal is left alone" "Fix the auth bypass" \
+  "$(grep -A1 '^## Goal' plans/PLN-907-archived-goal/plan.md | tail -1)"
+"$SCRIPT_DIR/wf-goal-pop.sh" PLN-907 >/dev/null 2>&1
+assert_eq "the pop restores the CORRECTED promise" "Ship a CLI timer." \
+  "$(grep -A1 '^## Goal' plans/PLN-907-archived-goal/plan.md | tail -1)"
+assert_eq "and the reason is on the record" "true" \
+  "$(grep -q 'goal amended .*browser timer deferred to BRF-908' plans/PLN-907-archived-goal/plan.md && echo true || echo false)"
+
+# With nothing pending restore, the same call amends the live one-liner.
+"$SCRIPT_DIR/wf-goal-amend.sh" PLN-907 "Ship a CLI timer with --watch." >/dev/null 2>&1
+assert_eq "no archived row means amend the live goal" "Ship a CLI timer with --watch." \
+  "$(grep -A1 '^## Goal' plans/PLN-907-archived-goal/plan.md | tail -1)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A routing tag is a tag, not a substring (client-a WFI-089)"
+
+# The grep matched ESCALATED / PLAN-SCOPED anywhere in an unchecked finding, so
+# a finding whose body explained why a tag did NOT apply routed the plan on the
+# strength of its own prose. The only way out was to reword the sentence.
+mkdir -p plans/PLN-908-routing
+cat > plans/PLN-908-routing/findings.md << 'FEOF'
+## Verify — 2026-08-06
+
+- [ ] **Code**: the guard runs after the write — a code-only fix, not `← PLAN-SCOPED`
+FEOF
+assert_eq "prose naming a tag does not wear it" "active" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-908-routing)"
+printf -- '- [ ] **Design**: the auth model cannot express this ← ESCALATED\n' >> plans/PLN-908-routing/findings.md
+assert_eq "a trailing tag still routes" "escalated" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-908-routing)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A worker's own claim does not block its successor (client-a WFI-086, WFI-091)"
+
+# The exit contract is: commit the transition, close the gate, unclaim. So the
+# post-commit hook that starts verify ALWAYS fires while implement still holds
+# the claim, and the spawn guard declined every single time — the hook's inline
+# spawn was structurally dead for the exact order the skill mandates. The
+# trigger belongs at the release, which is the first moment every guard can
+# answer honestly.
+registry_add_row PLN-909 deferred-spawn verify
+export WF_CLAIM_PID=$$
+printf '%s\n%s\n' "$(date +%s)" "$$" > plans/PLN-909-deferred-spawn/.wf-claim
+out=$("$SCRIPT_DIR/wf-spawn.sh" verify PLN-909-deferred-spawn --dry-run 2>&1); rc=$?
+assert_eq "a spawn behind our own claim is queued, not declined outright" "true" \
+  "$(printf '%s' "$out" | grep -q 'queued until it is released' && echo true || echo false)"
+assert_eq "and says so with 'nothing to do' rather than an error" "2" "$rc"
+assert_eq "the marker is keyed on the artifact number" "true" \
+  "$([ -f .claude/orchestrator/pending/909-verify.spawn ] && echo true || echo false)"
+
+# A stranger's claim is still a hard stop — the guard did not simply get weaker.
+# A live process that is NOT one of our ancestors: a child qualifies, init does
+# not (kill -0 1 fails for an unprivileged user, so the claim reads as dead).
+sleep 30 & stranger=$!
+disown "$stranger" 2>/dev/null || true
+printf '%s\n%s\n' "$(date +%s)" "$stranger" > plans/PLN-909-deferred-spawn/.wf-claim
+out=$("$SCRIPT_DIR/wf-spawn.sh" verify PLN-909-deferred-spawn --dry-run 2>&1)
+assert_eq "someone else's claim still declines" "true" \
+  "$(printf '%s' "$out" | grep -q 'claimed by a live session' && echo true || echo false)"
+kill "$stranger" 2>/dev/null || true
+
+# Releasing serves the queue. Launching a real worker is out of scope here, so
+# move the plan to a state no role acts on first: wf-spawn.sh then declines at
+# its own last-moment state check, after the release has done its part.
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-909 verify testing >/dev/null 2>&1
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-909 testing complete >/dev/null 2>&1
+printf '%s\n%s\n' "$(date +%s)" "$$" > plans/PLN-909-deferred-spawn/.wf-claim
+"$SCRIPT_DIR/wf-unclaim.sh" PLN-909-deferred-spawn >/dev/null 2>&1
+assert_eq "the release consumes the deferred spawn" "false" \
+  "$([ -f .claude/orchestrator/pending/909-verify.spawn ] && echo true || echo false)"
+assert_eq "and the claim is gone" "false" \
+  "$([ -f plans/PLN-909-deferred-spawn/.wf-claim ] && echo true || echo false)"
+unset WF_CLAIM_PID
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Config values arrive unquoted (client-a WFI-088, WFI-090)"
+
+# install.sh stripped double quotes only, and every filter example is
+# single-quoted YAML because the value itself contains double quotes. So the
+# rendered skill said `dotnet test '--ignore-exit-code 8 --filter-not-namespace
+# "*E2E*"'` — two flags fused into one unrecognised argument. The filter was
+# ignored, the full suite ran, and the run failed on the very e2e test the
+# filter existed to exclude.
+cfg_probe=$(mktemp -d)
+cat > "$cfg_probe/claude-workflow.yml" << 'CFGEOF'
+test_exclude_e2e: '--ignore-exit-code 8 --filter-not-namespace "*E2E*"'
+build_command: "dotnet build"
+CFGEOF
+extract=$(awk '/^get_config\(\)/,/^}/' "$LIB_ROOT/install.sh")
+value=$(CONFIG_FILE="$cfg_probe/claude-workflow.yml" bash -c "$extract"$'\nget_config test_exclude_e2e')
+assert_eq "single-quoted YAML loses its quotes" '--ignore-exit-code 8 --filter-not-namespace "*E2E*"' "$value"
+value=$(CONFIG_FILE="$cfg_probe/claude-workflow.yml" bash -c "$extract"$'\nget_config build_command')
+assert_eq "so does double-quoted YAML" 'dotnet build' "$value"
+rm -rf "$cfg_probe"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

@@ -257,6 +257,8 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
        If any failed, list each failure with test name and error message.
        Final response under 1500 characters.")
     ```
+
+    **Pass the exclusion flags as written — bare words, no quotes around them.** The value is several flags (`--ignore-exit-code 8 --filter-not-namespace "*E2E*"`), and wrapping the lot in one pair of quotes fuses them into a single unrecognised argument: the runner silently ignores the filter and runs the whole suite, then fails on an e2e test this step exists to exclude. client-a hit it twice on one plan (WFI-088, WFI-090) — an out-of-scope Playwright failure charged against an Infrastructure change.
 19. **Code review** (while agents run):
     - Read through all changed source files
     - Verify logic matches the plan's design decisions

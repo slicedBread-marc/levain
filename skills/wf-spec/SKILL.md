@@ -340,8 +340,17 @@ Final response under 2000 characters.")
    # staged — or theirs takes yours (WFI-048/049).
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN draft ready \
      --commit "spec: PLN-NNN-<slug> — plan ready" \
-     --add plans/PLN-NNN-<slug>/ plans/briefs/ bugs/ plans/deferred-criteria.md
+     --add plans/PLN-NNN-<slug>/ plans/deferred-criteria.md \
+     <the brief and bug paths this plan actually consumed — see below>
    ```
+
+   **Name the artifacts, not their directories.** `bugs/` and `plans/briefs/` are as broad as `git commit -a` over those trees: they sweep in whatever another worker left dirty there. client-a's WFI-087 watched a `bugs/` pathspec carry a different worker's uncommitted BUG-027 closure into a PLN-028 spec commit — correct content, filed in history under a message about an unrelated plan, which is exactly the auditability the pathspec rule exists to protect. You know both IDs at this point, so name them:
+
+   | Consumed | Add |
+   |-|-|
+   | a brief | `plans/briefs/INDEX.md plans/briefs/BRF-NNN-<slug>.md` |
+   | a bug | `bugs/open/BUG-NNN-<slug>/ bugs/triaged/BUG-NNN-<slug>/` (both sides — the consume is a rename, and a rename is two paths) |
+   | neither | nothing extra |
    The row and the plan it describes land together. Transitioning first and committing the plan afterwards leaves a window where the registry advertises a `ready` plan whose approved content is not in history yet.
 
 6. **Release the claim — last:**
@@ -410,9 +419,9 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
 
    Then stamp it, so the record says which text was judged rather than only when:
    ```bash
-   scripts/wf-exec.sh wf-review-stamp.sh PLN-NNN
+   scripts/wf-exec.sh wf-review-stamp.sh PLN-NNN --no-commit
    ```
-   Run this after the **last** write to `plan.md`. Anything you change afterwards makes the verdict stale — correctly, and now detectably.
+   Run this after the **last** write to `plan.md`. Anything you change afterwards makes the verdict stale — correctly, and now detectably. `--no-commit` leaves the stamp staged, because step 6 commits on every route it takes and a stamp that commits itself first steals that message (WFI-085).
 
 6. **Route the approved plan.** Read the mode and the gating tags — don't assume either:
    ```bash
@@ -447,7 +456,8 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
    ```bash
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN draft ready \
      --commit "spec: PLN-NNN-<slug> — approved with notes (round 2), plan ready" \
-     --add plans/PLN-NNN-<slug>/ plans/briefs/ bugs/ plans/deferred-criteria.md
+     --add plans/PLN-NNN-<slug>/ plans/deferred-criteria.md \
+     <the brief and bug paths this plan consumed — the table in the simple exit, step 5>
    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    ```
    Same ordering rule as the simple exit above: the transition commits, then the claim comes down. Never the reverse.
@@ -481,16 +491,9 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
    Two rules, both learned the hard way (WFI-046):
 
    - **The verdict goes in `plan.md` `## Review`. Never in `findings.md`.** findings.md takes the actionable items; it never takes the verdict, and never a `## Spec Review` heading. A verdict filed there leaves `## Review` holding the template placeholder, which every consumer reads as *never reviewed*.
-   - **The last thing to happen before the gate is a review of the current text.** If you amend after the review — because the reviewer's own findings prompted the amendment, which is the common case — that verdict is now about a document that no longer exists. Review again. Then **stamp the verdict against the text it judged**, and confirm:
-     ```bash
-     scripts/wf-exec.sh wf-review-stamp.sh PLN-NNN
-     eval "$(scripts/wf-exec.sh wf-review-status.sh PLN-NNN)"
-     # REVIEW_LOCATION must be `plan`, and REVIEW_STALE must be false.
-     ```
+   - **The last thing to happen before the gate is a review of the current text.** If you amend after the review — because the reviewer's own findings prompted the amendment, which is the common case — that verdict is now about a document that no longer exists. Review again.
 
-     **Stamp first, then check.** Without the stamp, staleness is decided by comparing two dates, and a replan that reviews and amends on the same day — every replan that finishes in one session — is unorderable: the script correctly answers `REVIEW_STALE=unknown`, and the condition above can then never be satisfied by any amount of re-reviewing (client-a WFI-069). The stamp records a hash of the plan body inside `## Review`, so the answer becomes true or false and stays right no matter how many rounds run in a day.
-
-     If you meet `REVIEW_STALE=unknown` on a plan reviewed before stamps existed: re-run the review against the plan as it now stands, write that verdict, stamp it, and read the status again.
+     **The stamp comes later, at step 6c**, once every other write to `plan.md` has happened. Do not stamp here: steps 6a and 6b both write to the file, and a stamp taken before them is stale the moment they run.
 
    The failure this prevents is a quiet one: two plans reached the approval gate whose only verdicts were `Blocked` on their pre-amendment drafts. The amendments resolved every Critical, so the findings were all checked off and the plans looked finished — while the resolutions themselves had never been reviewed by anything.
 6a. **Scope check — does this replan shrink what the plan promised?**
@@ -510,7 +513,7 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
        Proceed with the reduced scope?" \
       --context plans/PLN-NNN-<slug>/plan.md --skill wf-spec
     ```
-    Commit the amendment first (state stays `draft`), leave the sub-goal pushed, then exit 0.
+    Stamp the verdict (`wf-review-stamp.sh PLN-NNN --no-commit`) as the last write, commit the amendment (state stays `draft`), leave the sub-goal pushed, then exit 0.
 
     **This gate fires whatever the review verdict says, in gate mode and verdict mode alike.** A reviewer judges whether the plan is *sound*; whether a capability the user asked for may be dropped is a product decision no verdict answers, and the two are orthogonal. The case that motivated it: an amendment narrowed an unattended relay to ANSWER-ONLY for an entirely correct reason — a looped write-capable skill over untrusted input was the exact injection the plan existed to prevent — and its own text said *"that is a deliberate reduction of the Goal's headline capability."* As engineering it was right, so a reviewer would approve it, verdict mode would send it to `ready`, and the user would discover that *"fix this while I'm out"* no longer worked the next time they tried it. It reached a human only incidentally, via a tag that was removed from `gateTags` the same day.
 
@@ -519,6 +522,19 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
     ```bash
     scripts/wf-exec.sh wf-goal-pop.sh PLN-NNN
     ```
+6c. **Stamp the verdict against the text it judged, then check it.** This is the last write to `plan.md` in a replan, which is the whole reason it sits here:
+    ```bash
+    scripts/wf-exec.sh wf-review-stamp.sh PLN-NNN --no-commit
+    eval "$(scripts/wf-exec.sh wf-review-status.sh PLN-NNN)"
+    # REVIEW_LOCATION must be `plan`, and REVIEW_STALE must be false.
+    ```
+
+    **Stamp last, then check.** Without the stamp, staleness is decided by comparing two dates, and a replan that reviews and amends on the same day — every replan that finishes in one session — is unorderable: the script correctly answers `REVIEW_STALE=unknown`, and the condition above can then never be satisfied by any amount of re-reviewing (client-a WFI-069). The stamp records a hash of the plan body inside `## Review`, so the answer becomes true or false and stays right no matter how many rounds run in a day.
+
+    **It used to sit at step 6, and the ordering guaranteed the failure it exists to detect.** `wf-goal-pop.sh` rewrites the `## Goal` one-liner — inside the hashed body — so stamping before the pop made `REVIEW_STALE` flip from false to true with no content amendment in between, on every replan that pushed a sub-goal. Two clients hit it and both papered over it by re-stamping and explaining themselves in prose (client-a WFI-092, WFI-093). The rule is now literal: **nothing writes to `plan.md` after the stamp.**
+
+    `--no-commit` stages the stamp instead of committing it, so step 8's commit carries the amendment under a message that describes it (WFI-085). Callers with no commit of their own — `/wf-attend`, a review agent's exit — omit the flag and let the stamp commit itself.
+
 7. **Update REGISTRY.md — the target state depends on whether a worktree exists:**
    ```bash
    scripts/wf-exec.sh wf-replan-target.sh PLN-NNN --apply

@@ -104,7 +104,12 @@ A replan amended the plan in a way that drops or narrows something its `## Goal`
    scripts/wf-exec.sh wf-goal-delta.sh <PLN-ID>
    ```
 2. Ask: `accept the reduction / restore the capability / split it out?`
-   - **accept** — amend the `## Goal` one-liner so it describes what will be built. A plan whose Goal outlives the capability it names mis-sells itself to the tester, the PR, and the next planner who reads it.
+   - **accept** — amend the goal so it describes what will be built. A plan whose Goal outlives the capability it names mis-sells itself to the tester, the PR, and the next planner who reads it.
+     ```bash
+     scripts/wf-exec.sh wf-goal-amend.sh <PLN-ID> "<what will actually be built>" \
+       --reason "scope-reduction accepted by <who>"
+     ```
+     **Do not hand-edit `## Goal`.** On a plan mid-fix-cycle the live one-liner is the *sub-goal* the replan pushed; the promise your decision contradicts is archived in `### Goal History`, and `wf-goal-pop.sh` restores that text verbatim when the fix cycle ends. Amending only the live line leaves the unreduced promise to come back word for word and quietly undo you (WFI-084). The script amends whichever of the two is pending restore, and takes `--active` when you mean the live line specifically.
    - **restore** — the reduction is not acceptable; hand to `/wf-spec` to solve the underlying problem another way, with the constraint recorded in `findings.md` as ESCALATED.
    - **split** — accept the reduction *and* file the dropped capability as a brief (`/wf-brainstorm`) so it is not silently lost. Note the brief ID in the plan's `## Out of Scope`.
 3. Close the gate with the outcome and the decision.

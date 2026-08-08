@@ -35,7 +35,9 @@ wf_develop_root() {
 
 wf_orch_dir() {
   local d="$(wf_develop_root)/.claude/orchestrator"
-  mkdir -p "$d/gates" "$d/logs"
+  # pending/: spawns deferred behind the requester's own claim, served by
+  # wf-unclaim.sh when it comes down (WFI-086, WFI-091).
+  mkdir -p "$d/gates" "$d/logs" "$d/pending"
   printf '%s' "$d"
 }
 
@@ -165,6 +167,28 @@ wf_plan_fingerprint() {
 #
 # A hash can answer it. The Review section is excluded because recording the
 # stamp inside it would change the very thing being hashed.
+#
+# WHAT ELSE IS EXCLUDED, AND WHY
+#
+# The question the stamp answers is "did the SPECIFICATION change since the
+# verdict?" — not "did any byte of the file change?". Three regions move under
+# machine control while the specification stands still, and hashing them made
+# the stamp report a spec change that never happened:
+#
+#   - Checkbox state. wf-implement and wf-verify tick `## Verification
+#     Checklist` boxes on every cycle, so REVIEW_STALE flipped to true after
+#     each one — and wf-spec's replan gate ("REVIEW_STALE must be false") then
+#     charged a full architectural review round to re-approve text that was
+#     byte-identical to what was reviewed (client-a WFI-095). Marks are
+#     normalised, so ticking a criterion is invisible and ADDING one is not.
+#   - `### Goal History`. Owned end-to-end by wf-goal-push.sh / wf-goal-pop.sh
+#     and explicitly not hand-editable; a pop resolving a row is bookkeeping,
+#     not a design change (WFI-092, WFI-093).
+#   - Trailing whitespace, which no reviewer read.
+#
+# The `## Goal` one-liner stays IN. It is the plan's promise, a scope reduction
+# is exactly the kind of change a stale verdict must catch, and the pop that
+# rewrites it mechanically is ordered before the stamp for that reason.
 wf_plan_body_fingerprint() {
   local id="$1" root slug plan_md
   root="$(wf_develop_root)"
@@ -174,8 +198,16 @@ wf_plan_body_fingerprint() {
   plan_md="$root/plans/${id}-${slug}/plan.md"
   [ -f "$plan_md" ] || return 0
   awk '
-    /^## / { inside = ($0 ~ /^## Review([ \t]|$)/) ? 1 : 0 }
-    !inside { print }
+    /^## /  { inside = ($0 ~ /^## Review([ \t]|$)/) ? 1 : 0 }
+    /^### / { hist   = ($0 ~ /^### Goal History([ \t]|$)/) ? 1 : 0 }
+    /^## /  { hist = 0 }
+    inside || hist { next }
+    {
+      line = $0
+      gsub(/\[[xX]\]/, "[ ]", line)     # a ticked box is not a spec change
+      sub(/[ \t]+$/, "", line)
+      print line
+    }
   ' "$plan_md" | shasum 2>/dev/null | awk '{print $1}' || true
 }
 

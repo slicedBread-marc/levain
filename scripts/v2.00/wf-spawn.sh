@@ -145,9 +145,42 @@ fi
 plan_dir="$ROOT/plans/${artifact}"
 if [ -d "$plan_dir" ] && wf_claim_live "$plan_dir"; then
   holder=$(sed -n '2p' "$plan_dir/.wf-claim" 2>/dev/null || true)
+
+  # ── Our own claim: queue, do not decline ────────────────────────────────
+  #
+  # The post-commit verify hook fires from inside the implementer's own
+  # wf-commit.sh, and the implementer's exit order is fixed by contract:
+  # commit the transition, THEN close the gate, THEN unclaim (docs/guard-
+  # ordering.md, WFI-079). So at the instant the hook runs, the claim is always
+  # still held — by us. The guard below then read that as "somebody else is
+  # working this" and declined, every single time, for the exact sequence the
+  # skill mandates. The hook's inline spawn was structurally dead: client-a
+  # filed it twice, on two different plans, with the same PID-is-me message
+  # (WFI-086, WFI-091).
+  #
+  # Spawning anyway is worse than declining: the successor's claim would be
+  # written now and deleted seconds later by the implementer's own unclaim,
+  # leaving a live worker on an unclaimed plan for the daemon to double-book.
+  #
+  # So the trigger moves to where it belongs — the release. Queue the intent
+  # here; wf-unclaim.sh flushes the queue the moment the claim comes down, by
+  # which point every guard can answer honestly.
+  if wf_claim_mine "$plan_dir"; then
+    mkdir -p "$ORCH/pending"
+    printf '%s\t%s\t%s\n' "$role" "$artifact" "$model_override" \
+      > "$ORCH/pending/${num}-${role}.spawn"
+    echo "wf-spawn: $artifact still holds this session's own claim — $role queued until it is released" >&2
+    wf_event queue "$id" "$role deferred until the claim is released"
+    exit 2
+  fi
+
   echo "wf-spawn: $artifact is claimed by a live session (PID ${holder:-?}) — not spawning $role" >&2
   exit 2
 fi
+
+# A queued spawn for this exact role is being served right now; drop the marker
+# so the release path does not launch a second one.
+rm -f "$ORCH/pending/${num}-${role}.spawn" 2>/dev/null || true
 
 # ── Re-read the state, here, at the last possible moment ──────────────────
 #

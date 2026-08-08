@@ -33,6 +33,13 @@ test_filter_flag: ""
 # e.g., '--filter "FullyQualifiedName!~E2E"' (dotnet VSTest),
 #       '--filter-not-namespace "*E2E*" --ignore-exit-code 8' (dotnet MTP),
 #       '--grep "^(?!.*E2E)"' (mocha)
+#
+# The OUTER single quotes above are YAML, not part of the value — they are there
+# because the value contains double quotes. What reaches the command line is the
+# bare flags: `dotnet test --filter-not-namespace "*E2E*" --ignore-exit-code 8`.
+# Quote the whole value again on the command line and the flags fuse into one
+# unrecognised argument: the filter is ignored, the full suite runs, and the run
+# fails on an e2e test the filter existed to exclude (WFI-088, WFI-090).
 test_exclude_e2e: ""
 
 # Filter to run only e2e tests (used by wf-test — human tester has the app running).

@@ -180,7 +180,9 @@ Fix flicker on re-render after viewport resize (show-stopper from verify)
 
 - **Push**: when findings return a plan to `draft`, wf-spec calls `wf-goal-push.sh` to archive the current goal and write a new one summarizing pending items. If a finding is a show-stopper, it becomes the goal's focus.
 - **Pop**: when replanning resolves all findings and the plan returns to `ready`, wf-spec calls `wf-goal-pop.sh` to restore the original goal and mark the history row resolved.
+- **Amend**: `wf-goal-amend.sh` corrects what a plan promises without pushing or popping. It writes the *archived* goal by default — the text a pop will restore verbatim — because that is the promise a scope reduction contradicts while the live one-liner is still a fix-cycle sub-goal. `--active` targets the live line instead. This is the only supported way to change an archived row; the block says "do not edit manually" and means it (WFI-084).
 - `wf-plan-info.sh` always reads the first non-empty line after `## Goal` — downstream consumers (wf-implement, wf-test, wf-status) see the active goal automatically.
+- **Not part of the review fingerprint.** `wf-review-stamp.sh` hashes the plan body minus `## Review`, minus `### Goal History`, and with checkbox marks normalised: a push, a pop, or a ticked criterion is bookkeeping, not a specification change, and staleness that fires on bookkeeping costs a full review round to re-approve identical text (WFI-092, WFI-093, WFI-095). The `## Goal` one-liner *is* hashed, which is why wf-spec stamps after the pop rather than before it.
 
 ## Counter
 

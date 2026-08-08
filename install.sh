@@ -31,7 +31,22 @@ get_config() {
     # head -1: a duplicated key would otherwise return a multi-line value, and
     # every consumer feeds these into `sed -e "s|...|$VALUE|"`, where an
     # embedded newline is a syntax error rather than a wrong answer.
-    grep "^$1:" "$CONFIG_FILE" 2>/dev/null | head -1 | sed "s/^$1:[[:space:]]*//" | sed 's/^"//' | sed 's/"$//' || true
+    #
+    # The value is then UNQUOTED, and a matching pair of single quotes counts as
+    # much as a pair of double ones. This stripped `"` only, and every filter
+    # example in config.example.yml is single-quoted YAML — it has to be, since
+    # the value itself contains double quotes:
+    #
+    #   test_exclude_e2e: '--ignore-exit-code 8 --filter-not-namespace "*E2E*"'
+    #
+    # so the rendered skill said `dotnet test '--ignore-exit-code 8 --filter-...'`
+    # — two flags fused into ONE shell argument by quotes that were never part
+    # of the value. dotnet took it as a single unrecognised token, ran the whole
+    # suite unfiltered, and failed on an E2E test the filter existed to exclude
+    # (client-a WFI-088, WFI-090, twice on the same plan).
+    grep "^$1:" "$CONFIG_FILE" 2>/dev/null | head -1 \
+      | sed "s/^$1:[[:space:]]*//" \
+      | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/" || true
 }
 
 BUILD_CMD=$(get_config "build_command")

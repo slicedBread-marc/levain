@@ -126,6 +126,17 @@ After user picks:
 
 **CWD note:** All commands in this section run from within `feature-branches/$PLAN_NAME/` — the working directory was changed in Entry step 4 and persists. Do NOT prepend `cd feature-branches/$PLAN_NAME &&` to any command here.
 
+**Assert it before anything observes the code — every time you re-enter, not only on first entry:**
+```bash
+scripts/wf-exec.sh wf-branch-check.sh feature/$PLAN_NAME
+```
+Exit 1 here means you are standing somewhere else — almost always the develop root, which a re-test lands in by default. Fix the directory, do not proceed.
+
+**Why this is an assertion and not a reminder.** A verification command run from the develop root reads develop's tree, where the branch's work has not merged, and it fails *correctly* — which is indistinguishable from the feature being broken. client-a's WFI-094 wrote up exactly that as a behavior finding claiming a fix "was not implemented", and bounced a fully-built, verify-clean plan back through spec. Two shapes to watch, both from the same root cause:
+
+- **Relative paths.** `grep X src/…` from the develop root greps develop. Any path a criterion names is relative to the worktree.
+- **The container.** `docker compose -f docker/docker-compose.yml up --build` resolves `build.context: ..` against the compose file, so from the develop root it builds *develop's* source — while `wf-plan-port.sh` hands out the same port either way. The URL looks right and the build is wrong, with nothing in the output to tell them apart. Always bring the container up with `wf-docker-up.sh` from the worktree, and if a criterion fails on served content, confirm the served build matches the branch tip (`git rev-parse HEAD`, then curl the page and compare against the worktree's own file) **before** writing a behavior finding.
+
 1. **Read the plan** — from develop worktree: `../../plans/PLN-NNN-<slug>/plan.md`
    - Read Goal and Verification Checklist sections
    - **Only present `### Human Test Criteria` items** (combine `#### Chrome-Assisted` and `#### Manual` into a single flat list) — Build & Tests and Code Quality were already handled by the verify agent

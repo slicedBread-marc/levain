@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wf-review-stamp.sh <PLN-NNN>
+# wf-review-stamp.sh <PLN-NNN> [--no-commit]
 #
 # Records WHICH revision of a plan the review in its `## Review` section is a
 # verdict on, by appending one line to that section:
@@ -24,6 +24,18 @@
 # about this text: not stale, definitively. Stamped and changed → stale,
 # definitively. Unstamped → the old date comparison, unknown and all.
 #
+# --no-commit: write the stamp and leave it staged for the caller's own commit.
+#
+# The stamp normally commits itself, which is right for a caller that has no
+# commit of its own coming (wf-attend deciding a stale verdict, a review agent's
+# exit). It is wrong inside wf-spec's replan, where the whole amendment — the
+# new Amendment entry, the Tests rows, the Design Decisions, two review rounds —
+# is still uncommitted when the stamp runs. The stamp swept all of it into
+# "spec(PLN-NNN): stamp review against the reviewed text", a message describing
+# none of it, and the replan's own commit two steps later then had nothing left
+# to record. Anyone reading git log for why the plan changed was pointed at the
+# wrong commit (client-a WFI-085).
+#
 # Exit 0 on success, 1 if the plan or its `## Review` section is missing.
 
 set -euo pipefail
@@ -33,9 +45,18 @@ source "$(dirname "$0")/wf-orch-lib.sh"
 # shellcheck source=wf-lock.sh
 source "$(dirname "$0")/wf-lock.sh"
 
-raw_id="${1:?Usage: $0 <PLN-NNN>}"
+raw_id="${1:?Usage: $0 <PLN-NNN> [--no-commit]}"
+shift
+no_commit=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-commit) no_commit=true; shift ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
 plan_id=$(printf '%s' "$raw_id" | grep -oE '^PLN-[0-9]+' || true)
-[ -n "$plan_id" ] || { echo "Usage: $0 <PLN-NNN>" >&2; exit 1; }
+[ -n "$plan_id" ] || { echo "Usage: $0 <PLN-NNN> [--no-commit]" >&2; exit 1; }
 
 ROOT="$(wf_develop_root)"
 slug=$(grep "^| $plan_id |" "$ROOT/plans/REGISTRY.md" 2>/dev/null \
@@ -69,8 +90,12 @@ awk -v fp="$fp" '
   END { if (inside && !stamped) print "> **Plan-Hash:** " fp "    <!-- wf-review-stamp -->" }
 ' "$plan_md" > "$plan_md.tmp" && mv "$plan_md.tmp" "$plan_md"
 
-( cd "$ROOT" && "$(cd "$(dirname "$0")" && pwd)/wf-commit.sh" \
-    "spec($plan_id): stamp review against the reviewed text" \
-    --add "plans/${plan_id}-${slug}/plan.md" >/dev/null ) || true
-
-echo "$plan_id: review stamped ${fp:0:12}"
+if $no_commit; then
+  ( cd "$ROOT" && git add "plans/${plan_id}-${slug}/plan.md" >/dev/null 2>&1 ) || true
+  echo "$plan_id: review stamped ${fp:0:12} (staged, not committed)"
+else
+  ( cd "$ROOT" && "$(cd "$(dirname "$0")" && pwd)/wf-commit.sh" \
+      "spec($plan_id): stamp review against the reviewed text" \
+      --add "plans/${plan_id}-${slug}/plan.md" >/dev/null ) || true
+  echo "$plan_id: review stamped ${fp:0:12}"
+fi

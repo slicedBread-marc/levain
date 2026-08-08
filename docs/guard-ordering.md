@@ -78,6 +78,28 @@ microseconds between the grep and the `exec` — as close to closed as a check-t
 gets — but a check-then-act it remains. The ordering in the skills is what actually removes
 the race.
 
+## The successor a correct exit cannot start
+
+The same ordering has a second consequence, and it is not a race — it is arithmetic. The
+post-commit hook that starts `verify` fires from *inside* `wf-commit.sh`, at step 1. The claim
+does not come down until step 3. So the hook always meets a claim, always held by the worker
+that triggered it, and `wf-spawn.sh`'s claim guard declined every time: the hook's inline spawn
+was structurally dead for the exact sequence this document mandates (client-a WFI-086,
+WFI-091, two plans, same message).
+
+Spawning anyway is worse than declining — the successor's claim would be written at step 1 and
+deleted by the outgoing worker's own `wf-unclaim.sh` at step 3, leaving a live worker on a plan
+that reads as free. So the trigger moved to the release:
+
+```
+wf-spawn.sh   claim is ours     → write .claude/orchestrator/pending/<num>-<role>.spawn, exit 2
+wf-unclaim.sh claim is released → serve the marker, spawn for real
+```
+
+`wf_claim_mine` distinguishes our claim from a stranger's (by `WF_CLAIM_PID`, or by ancestry).
+A stranger's claim is still a hard stop. The daemon's sweep remains the safety net behind
+both — the marker is a low-latency nudge, never the only path.
+
 ## Reviewing a change
 
 When a skill's exit path is edited, check that the last three commands are still in this
