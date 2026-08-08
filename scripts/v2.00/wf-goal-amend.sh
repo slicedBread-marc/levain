@@ -29,6 +29,8 @@ set -euo pipefail
 
 # shellcheck source=wf-lock.sh
 source "$(dirname "$0")/wf-lock.sh"
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
 
 # Registry work is develop-root work — see wf-goal-push.sh for the full note.
 _wf_root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //') || true
@@ -71,17 +73,19 @@ wf_lock_acquire "plan-$plan_id"
 # which of the two targets their text is about to land in.
 cell_goal=${new_goal//|/\\|}
 
-# The row a pop would restore: the last one whose Resolution is still em-dash.
-unresolved_line=""
+# The row a pop would restore: the last one inside ### Goal History whose
+# Resolution is still an em dash. Scoped to the section for the same reason the
+# pop is — any four-column table in the plan can end a row in an em dash, and
+# amending the wrong one rewrites a Tests row with the plan's goal (WFI-013).
+line_num=""
 if ! $force_active; then
-  unresolved_line=$(grep -n "| — |[[:space:]]*$" "$plan_file" | tail -1 || true)
+  line_num=$(wf_goal_history_row "$plan_file")
 fi
 
 today=$(date +%Y-%m-%d)
 
-if [ -n "$unresolved_line" ]; then
-  line_num=${unresolved_line%%:*}
-  old_goal=$(printf '%s' "${unresolved_line#*:}" | awk -F'|' '{print $3}' \
+if [ -n "$line_num" ]; then
+  old_goal=$(sed -n "${line_num}p" "$plan_file" | awk -F'|' '{print $3}' \
              | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   awk -v n="$line_num" -v goal="$cell_goal" -v note="$reason" -v today="$today" '
     NR == n {
@@ -103,9 +107,8 @@ if [ -n "$unresolved_line" ]; then
   echo "  was: $old_goal"
   echo "  now: $new_goal"
 else
-  goal_line_num=$(grep -n "^## Goal" "$plan_file" | head -1 | cut -d: -f1)
-  [ -n "$goal_line_num" ] || { echo "Error: no '## Goal' section in $plan_file" >&2; exit 1; }
-  content_line=$((goal_line_num + 1))
+  content_line=$(wf_goal_line "$plan_file")
+  [ -n "$content_line" ] || { echo "Error: no goal one-liner under '## Goal' in $plan_file" >&2; exit 1; }
   old_goal=$(sed -n "${content_line}p" "$plan_file")
   awk -v n="$content_line" -v goal="$new_goal" '
     NR == n { print goal; next }

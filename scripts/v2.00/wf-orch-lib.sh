@@ -214,6 +214,43 @@ wf_plan_body_fingerprint() {
   ' "$plan_md" | shasum 2>/dev/null | awk '{print $1}' || true
 }
 
+# ── The goal stack ────────────────────────────────────────────────────────
+#
+# Three scripts read and write `### Goal History` — push, pop, amend — and the
+# section is a four-column markdown table inside a file full of other
+# four-column markdown tables. Locating it by shape rather than by section is
+# how a goal push once prepended its row to `## Tests` (fixed in
+# wf-goal-push.sh), and how a pop later wrote `~~E2E~~` into `## Goal` and
+# stamped "Resolved" onto a withdrawn Tests row whose last cell happened to be
+# an em dash (client-e WFI-013). The pop reported success both times.
+#
+# So the lookup lives here, once, and every caller scopes to the section.
+
+# wf_goal_history_row <plan.md> → line number of the LAST unresolved Goal
+# History row (Resolution still `—`), or empty if the section has none.
+wf_goal_history_row() {
+  awk '
+    /^### Goal History([ \t]|$)/ { hist = 1; next }
+    hist && /^#/                 { hist = 0 }
+    hist && /^\|/ && /\|[ \t]*—[ \t]*\|[ \t]*$/ { last = NR }
+    END { if (last) print last }
+  ' "$1"
+}
+
+# wf_goal_line <plan.md> → line number of the plan's goal one-liner: the first
+# non-blank line under `## Goal`. Empty when there is no goal to replace.
+#
+# Not "the line after the heading" — a plan whose `## Goal` is followed by a
+# blank line would have its goal written into the blank and the old one left
+# standing underneath, which reads as two goals to everything downstream.
+wf_goal_line() {
+  awk '
+    /^## Goal([ \t]|$)/ { goal = 1; next }
+    goal && /^#/        { exit }
+    goal && NF          { print NR; exit }
+  ' "$1"
+}
+
 # ── Claims ────────────────────────────────────────────────────────────────
 #
 # A claim says "a live session is working this artifact". It is only worth

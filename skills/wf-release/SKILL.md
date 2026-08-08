@@ -35,6 +35,27 @@ release branch    → staging environment for E2E validation
    git merge origin/develop --no-edit
    ```
    If this fails with non-trivial conflicts, inform the user and stop — do not proceed to E2E.
+
+5a. **Check the harness survived the merge** — run this immediately, before anything else:
+   ```bash
+   [ -x scripts/wf-exec.sh ] && [ -f scripts/version-map.txt ] && echo "harness ok" \
+     || echo "HARNESS MISSING"
+   ```
+   `harness ok` → continue at step 6.
+
+   `HARNESS MISSING` means the merge carried in the commit that stops tracking the generated harness while this branch still tracked it, so git deleted the files — and they are gitignored now, so nothing puts them back. Restore them with plain git, which needs neither the harness nor the library:
+   ```bash
+   git ls-tree -r --name-only HEAD@{1} -- scripts .claude \
+     | grep -E '^(scripts/(wf-exec\.sh|wf-prune-versions\.sh|version-map\.txt|v[^/]+/)|\.claude/(skills/wf-|workflow\.md))' \
+     > /tmp/wf-harness-paths
+   xargs git checkout HEAD@{1} -- < /tmp/wf-harness-paths
+   xargs git rm --cached --quiet -- < /tmp/wf-harness-paths
+   ```
+   The checkout brings the files back; the `rm --cached` returns them to untracked, which is what the ignore rules already describe — so the working tree ends clean. Once the harness is back, `scripts/wf-exec.sh wf-harness-restore.sh` does the same thing in one call for any future occurrence.
+
+   Never `git rm -r --cached scripts` wholesale — a project may keep its own tooling there, and untracking it turns a recovery into a larger accident.
+
+   This happens **once per client**, on the first release after the harness is untracked on develop, and it self-clears when the change reaches `main`. It is silent and total while it lasts: client-c lost 106 files including `wf-exec.sh` mid-skill and only found out at step 8, with exit 127 (WFI-006).
 6. **Push release branch:**
    ```bash
    git push origin release

@@ -139,6 +139,22 @@ paths on develop. A feature branch cut earlier still tracks them, so the next
 `git merge develop` in that worktree applies the deletion and the worktree loses its
 skills mid-plan — the session running there breaks.
 
+**The same hazard reaches `release` and `main`, and there it is worse.** A feature
+worktree that loses the harness can copy it back from the main worktree. The main
+worktree cannot — there is no second copy on disk. client-c ran `git pull origin
+release` inside `/wf-release` step 5, from a `release` sitting at main's tip, and the
+untrack commit's deletions took 106 files including `wf-exec.sh`. The skill discovered it
+at its own last step, with exit 127 (WFI-006). Switching back to develop restores
+nothing: ignored files are not materialised by a checkout.
+
+`wf-harness-restore.sh` is the answer for that case — it checks the files out of the
+newest ref that still tracks them, then `git rm --cached`s them back to untracked, which
+needs neither the library nor the network. `wf-merge-develop.sh` and
+`wf-merge-release.sh` call it when the copy-from-main path finds nothing to copy, and
+`/wf-release` step 5a carries the same recovery as plain git for the case where
+`wf-exec.sh` itself is one of the casualties. It is one-shot per client and self-clears
+once the untrack commit reaches `main`.
+
 Two mitigations, and the second is the one to build:
 
 - Migrate when no plan is mid-flight (fine for a one-person portfolio, not a policy).

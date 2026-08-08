@@ -82,7 +82,15 @@ fi
 # branch cut before the untrack commit still tracks those paths, so merging
 # develop DELETES them from this worktree. Putting them back as ignored files
 # leaves the session working and the tree clean.
-_restore_harness() { "$(dirname "$0")/wf-worktree-harness.sh" . >/dev/null 2>&1 || true; }
+# In a feature worktree the main worktree still has the files, so copying is
+# enough. In the MAIN worktree there is nothing to copy from — that is the case
+# client-c hit on the release side, losing the harness outright (WFI-006) —
+# so fall back to pulling it out of git history and untracking it again.
+_restore_harness() {
+  "$(dirname "$0")/wf-worktree-harness.sh" . >/dev/null 2>&1 || true
+  [ -x scripts/wf-exec.sh ] && [ -f scripts/version-map.txt ] && return 0
+  "$(dirname "$0")/wf-harness-restore.sh" >/dev/null 2>&1 || true
+}
 
 # Attempt clean merge first
 if git merge develop --no-edit 2>/dev/null; then

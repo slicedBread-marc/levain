@@ -533,6 +533,7 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
     ```bash
     scripts/wf-exec.sh wf-goal-pop.sh PLN-NNN
     ```
+    It prints the goal it restored. **Read that line** — it must be the plan's original promise, not a table cell. The pop used to find its row by shape rather than by section, so on a plan carrying a withdrawn Tests row it wrote `~~E2E~~` into `## Goal` and reported success (client-e WFI-013, fixed in 5.6.x). If what it echoes is not a goal, stop: `## Goal` is what `wf-plan-info.sh` hands to the implementer, the tester and every PR description.
 6c. **Stamp the verdict against the text it judged, then check it.** This is the last write to `plan.md` in a replan, which is the whole reason it sits here:
     ```bash
     scripts/wf-exec.sh wf-review-stamp.sh PLN-NNN --no-commit

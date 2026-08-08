@@ -45,6 +45,14 @@ Before starting, confirm E2E passed on release:
    git merge -X theirs --no-ff release -m "release: promote to main"
    ```
    The `-X theirs` option automatically accepts release's version of any conflicting files in `plans/`.
+
+6a. **Check the harness survived the merge:**
+   ```bash
+   [ -x scripts/wf-exec.sh ] && [ -f scripts/version-map.txt ] && echo "harness ok" \
+     || echo "HARNESS MISSING"
+   ```
+   `HARNESS MISSING` means this merge carried the commit that stops tracking the generated harness onto a branch that still tracked it, so git deleted the files — and they are gitignored, so nothing puts them back. Restore with `scripts/wf-exec.sh wf-harness-restore.sh` if the dispatcher survived; if it did not, use the plain-git recovery in `/wf-release` step 5a, which needs neither the harness nor the library. Run the same check again after step 11's `git checkout develop` (WFI-006).
+
 7. **Run full test suite** (final integration check):
    ```bash
    {{build_command}}

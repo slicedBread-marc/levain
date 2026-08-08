@@ -12,6 +12,8 @@ set -euo pipefail
 
 # shellcheck source=wf-lock.sh
 source "$(dirname "$0")/wf-lock.sh"
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
 
 # Registry work is develop-root work. Sourced/derived paths below are relative
 # ("plans/REGISTRY.md", "plans/PLN-NNN-slug/..."), and verify and implement
@@ -46,16 +48,21 @@ plan_file="$plan_dir/plan.md"
 # two workers on different plans need not wait on each other.
 wf_lock_acquire "plan-$plan_id"
 
-# Find the most recent unresolved row (Resolution = —)
+# Find the most recent unresolved row (Resolution = —) INSIDE ### Goal History.
 # Goal History rows: | Date | Previous Goal | Trigger | — |
-unresolved_line=$(grep -n "| — |[[:space:]]*$" "$plan_file" | tail -1)
-if [ -z "$unresolved_line" ]; then
-  echo "No unresolved goal in history — nothing to pop" >&2
+#
+# Scoped to the section, because a plan.md is full of four-column tables and
+# any of them may end a row in an em dash. client-e's PLN-100 had a withdrawn
+# Tests row — `| ~~T14~~ | ~~E2E~~ | Withdrawn by A3 | — |` — further down the
+# file; the unscoped search latched onto it, wrote `~~E2E~~` into `## Goal`,
+# stamped it Resolved, and reported success (WFI-013).
+line_num=$(wf_goal_history_row "$plan_file")
+if [ -z "$line_num" ]; then
+  echo "No unresolved goal in ### Goal History — nothing to pop" >&2
   exit 1
 fi
 
-line_num=$(echo "$unresolved_line" | cut -d: -f1)
-line_content=$(echo "$unresolved_line" | cut -d: -f2-)
+line_content=$(sed -n "${line_num}p" "$plan_file")
 
 # Extract the previous goal from the row (field 3, pipe-delimited)
 previous_goal=$(echo "$line_content" | awk -F'|' '{print $3}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
@@ -73,8 +80,11 @@ awk -v n="$line_num" -v today="$today" '
 ' "$plan_file" > "$plan_file.tmp" && mv "$plan_file.tmp" "$plan_file"
 
 # Replace the current goal line with the restored goal
-goal_line_num=$(grep -n "^## Goal" "$plan_file" | head -1 | cut -d: -f1)
-content_line=$((goal_line_num + 1))
+content_line=$(wf_goal_line "$plan_file")
+if [ -z "$content_line" ]; then
+  echo "Error: no goal one-liner under '## Goal' in $plan_file" >&2
+  exit 1
+fi
 awk -v n="$content_line" -v goal="$previous_goal" '
   NR == n { print goal; next }
   { print }

@@ -2304,6 +2304,120 @@ assert_eq "an open entry still resolves" "true" \
 rm -f WORKFLOW-ISSUES.md
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A goal pop reads the Goal History table, not any table (client-e WFI-013)"
+
+# wf-goal-pop.sh found its row with `grep "| — |$"` over the whole file. A plan
+# amended by A3 carries withdrawn Tests rows whose last cell is a bare em dash,
+# and PLN-100 had one: the pop wrote `~~E2E~~` into `## Goal`, stamped
+# "Resolved" onto the Tests row, and reported success. `## Goal` is what
+# wf-plan-info.sh feeds to wf-implement, wf-test and every PR description.
+registry_add_row PLN-913 goal-scope draft
+cat > plans/PLN-913-goal-scope/plan.md << 'PLAN913'
+# PLN-913
+
+## Goal
+
+Remove the duplicated brochure pages
+
+### Goal History
+| Date | Previous Goal | Trigger | Resolution |
+|-|-|-|-|
+| 2026-08-07 | Retire the duplicate brochure routes | Verify: 2 findings | — |
+
+## Tests
+
+| ID | Type | Notes | Command |
+|-|-|-|-|
+| ~~T14~~ | ~~E2E~~ | **Withdrawn by A3** | — |
+PLAN913
+
+"$SCRIPT_DIR/wf-goal-pop.sh" PLN-913 >/dev/null 2>&1
+goal913=$(awk '/^## Goal([ \t]|$)/ { g = 1; next } g && /^#/ { exit } g && NF { print; exit }' \
+  plans/PLN-913-goal-scope/plan.md)
+assert_eq "the pop restores the archived goal" "Retire the duplicate brochure routes" "$goal913"
+assert_eq "and does not write a Tests cell into the goal" "false" \
+  "$(printf '%s' "$goal913" | grep -q 'E2E' && echo true || echo false)"
+assert_eq "the withdrawn Tests row is left alone" "true" \
+  "$(grep -q '| ~~T14~~ | ~~E2E~~ | \*\*Withdrawn by A3\*\* | — |' plans/PLN-913-goal-scope/plan.md && echo true || echo false)"
+assert_eq "and the history row is the one marked resolved" "true" \
+  "$(grep -q '| Retire the duplicate brochure routes | Verify: 2 findings | Resolved' plans/PLN-913-goal-scope/plan.md && echo true || echo false)"
+
+# Nothing left to pop is an error, not a silent grab at some other table.
+assert_fails "a second pop finds no unresolved row" \
+  "$SCRIPT_DIR/wf-goal-pop.sh" PLN-913
+
+# wf-goal-amend.sh matched rows the same way, so it could rewrite a Tests row
+# with the plan's goal.
+registry_add_row PLN-914 amend-scope draft
+cat > plans/PLN-914-amend-scope/plan.md << 'PLAN914'
+# PLN-914
+
+## Goal
+The live sub-goal
+
+## Tests
+
+| ID | Type | Notes | Command |
+|-|-|-|-|
+| ~~T9~~ | ~~E2E~~ | Withdrawn | — |
+PLAN914
+
+"$SCRIPT_DIR/wf-goal-amend.sh" PLN-914 "A narrower promise" >/dev/null 2>&1
+assert_eq "an amend with no history row edits the live goal" "true" \
+  "$(grep -q '^A narrower promise$' plans/PLN-914-amend-scope/plan.md && echo true || echo false)"
+assert_eq "and leaves the Tests table untouched" "true" \
+  "$(grep -q '| ~~T9~~ | ~~E2E~~ | Withdrawn | — |' plans/PLN-914-amend-scope/plan.md && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A merge that deletes the harness is recoverable (client-c WFI-006)"
+
+# The harness is gitignored as of 5.0.0, so the first merge that carries the
+# untrack commit onto a branch which still tracks it deletes the files from
+# disk — and nothing puts them back. client-c lost 106 files including
+# wf-exec.sh inside /wf-release step 5 and found out at step 8, exit 127.
+harness_repo=$(mktemp -d)
+(
+  cd "$harness_repo" || exit 1
+  git init -qb main && git config user.email t@t && git config user.name t
+  mkdir -p scripts/v2.00 .claude/skills/wf-spec
+  printf '#!/bin/sh\n' > scripts/wf-exec.sh && chmod +x scripts/wf-exec.sh
+  printf 'x\n' > scripts/version-map.txt
+  printf '#!/bin/sh\n' > scripts/v2.00/wf-claim.sh
+  printf 'skill\n' > .claude/skills/wf-spec/SKILL.md
+  printf 'the project own tooling\n' > scripts/my-own-tool.sh
+  git add -A && git commit -qm "tracked harness"
+
+  git checkout -qb release
+  git rm -r --cached -q scripts/wf-exec.sh scripts/version-map.txt scripts/v2.00 .claude/skills/wf-spec
+  printf 'scripts/wf-exec.sh\nscripts/version-map.txt\nscripts/v2.00/\n.claude/skills/wf-*/\n' > .gitignore
+  git add .gitignore && git commit -qm "chore: stop tracking generated workflow harness"
+
+  git checkout -q main && git merge -q --no-edit release -m merge
+) >/dev/null 2>&1
+
+assert_eq "the merge deletes the harness from disk" "false" \
+  "$([ -x "$harness_repo/scripts/wf-exec.sh" ] && echo true || echo false)"
+assert_fails "--check reports it missing rather than passing silently" \
+  bash -c "cd '$harness_repo' && '$SCRIPT_DIR/wf-harness-restore.sh' --check"
+
+( cd "$harness_repo" && "$SCRIPT_DIR/wf-harness-restore.sh" ) >/dev/null 2>&1
+assert_eq "the restore puts the dispatcher back" "true" \
+  "$([ -x "$harness_repo/scripts/wf-exec.sh" ] && echo true || echo false)"
+assert_eq "and the versioned scripts with it" "true" \
+  "$([ -f "$harness_repo/scripts/v2.00/wf-claim.sh" ] && echo true || echo false)"
+assert_eq "and the skills" "true" \
+  "$([ -f "$harness_repo/.claude/skills/wf-spec/SKILL.md" ] && echo true || echo false)"
+assert_eq "the tree is left clean, not dirty with restored files" "" \
+  "$(git -C "$harness_repo" status --porcelain)"
+assert_eq "the restored harness is untracked, as the ignore rules say" "false" \
+  "$(git -C "$harness_repo" ls-files | grep -q 'scripts/wf-exec.sh' && echo true || echo false)"
+# The recovery must never reach for scripts/ wholesale: a project keeps its own
+# tooling there, and untracking it would turn a recovery into a bigger accident.
+assert_eq "the project's own tooling is still tracked" "true" \
+  "$(git -C "$harness_repo" ls-files | grep -q 'scripts/my-own-tool.sh' && echo true || echo false)"
+rm -rf "$harness_repo"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

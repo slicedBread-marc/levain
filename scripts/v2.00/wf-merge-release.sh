@@ -33,8 +33,20 @@ if ! git config core.sparseCheckout 2>/dev/null | grep -q true; then
 fi
 
 
+# Restore the harness after the merge, on every successful path.
+#
+# A branch cut before the v5.0.0 untrack commit still TRACKS these paths, so
+# merging a branch that has taken it deletes them from this worktree — and they
+# are gitignored afterwards, so nothing puts them back (client-c WFI-006).
+_restore_harness() {
+  "$(dirname "$0")/wf-worktree-harness.sh" . >/dev/null 2>&1 || true
+  [ -x scripts/wf-exec.sh ] && [ -f scripts/version-map.txt ] && return 0
+  "$(dirname "$0")/wf-harness-restore.sh" >/dev/null 2>&1 || true
+}
+
 # Attempt clean merge first
 if git merge origin/release --no-edit 2>/dev/null; then
+  _restore_harness
   echo "Merged release cleanly."
   exit 0
 fi
