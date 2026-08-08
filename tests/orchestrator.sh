@@ -980,7 +980,11 @@ section "A worker recognises the claim its dispatcher took out for it (WFI-073/0
 # exited in ~15s reporting a human who did not exist, and every plan reaching
 # testing under the daemon parked after three no-op dispatches.
 registry_add_row PLN-900 self-claim active
-claim_plan="plans/PLN-900-self-claim"
+# The claim keys on the artifact NUMBER and lives under the orchestrator dir,
+# not in the plan folder — a brief has no plan folder and still needs claiming
+# (WFI-004).
+claim_plan="$ORCH/claims/900"
+mkdir -p "$claim_plan"
 
 # 1. The dispatcher's claim, recognised through the exported PID.
 printf '%s\n%s\n' "$(date +%s)" "$$" > "$claim_plan/.wf-claim"
@@ -1223,6 +1227,131 @@ offenders=$(grep -rln "sed -i ''" "$SCRIPT_DIR"/*.sh 2>/dev/null | while read -r
   grep -v '^[[:space:]]*#' "$f" | grep -q "sed -i ''" && basename "$f"
 done)
 assert_eq "no executable 'sed -i' remains in $SCRIPT_FOLDER" "" "$offenders"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "An artifact with no plan folder can still be claimed (WFI-004)"
+
+# client-c: a spec worker dispatched onto BRF-002 could not claim it —
+# `wf-claim.sh BRF-002 --if-free` exited 1 with "plan directory not found",
+# because the claim lived in a folder the worker had not created yet. The whole
+# window between spawn and mkdir was unclaimed, and two spec workers in it both
+# pass --if-free.
+brf_rc=0
+"$SCRIPT_DIR/wf-claim.sh" BRF-002 --if-free >/dev/null 2>&1 || brf_rc=$?
+assert_eq "a brief with no plan folder claims cleanly" "0" "$brf_rc"
+assert_eq "the claim lands under the artifact's number" "true" \
+  "$([ -f "$ORCH/claims/2/.wf-claim" ] && echo true || echo false)"
+
+# The brief and the plan it becomes are one piece of work, so one claim.
+foreign2_rc=0
+sleep 30 & foreign2=$!
+printf '%s\n%s\n' "$(date +%s)" "$foreign2" > "$ORCH/claims/2/.wf-claim"
+"$SCRIPT_DIR/wf-claim.sh" PLN-002-durable-state --if-free >/dev/null 2>&1 || foreign2_rc=$?
+assert_eq "the plan inherits the brief's claim rather than a fresh one" "2" "$foreign2_rc"
+
+# The list script must not offer work somebody is already specced onto — it
+# used to emit bugs and briefs unconditionally, having no folder to check.
+mkdir -p bugs/open/BUG-002-claimed
+printf '# A claimed bug\n\n> **Severity:** High\n\nBUG-002\n' > bugs/open/BUG-002-claimed/bug.md
+offered=$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | grep -c '^BUG-002' || true)
+assert_eq "wf-list-specable withholds a bug under a live claim" "0" "$offered"
+
+{ kill "$foreign2"; wait "$foreign2"; } 2>/dev/null
+rm -f "$ORCH/claims/2/.wf-claim"
+offered_free=$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | grep -c '^BUG-002' || true)
+assert_eq "and offers it again once the claim is gone" "1" "$offered_free"
+rm -rf bugs/open/BUG-002-claimed
+
+# A claim written by a pre-v5.6 worker still counts, or the upgrade itself
+# double-books whatever was in flight across it.
+registry_add_row PLN-901 legacy-claim active
+sleep 30 & legacy_holder=$!
+printf '%s\n%s\n' "$(date +%s)" "$legacy_holder" > "plans/PLN-901-legacy-claim/.wf-claim"
+legacy_type=$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null \
+  | awk -F'\t' '$2 == "PLN-901-legacy-claim" {print $1}')
+assert_eq "a pre-v5.6 claim in the plan folder is still honoured" "processing" "$legacy_type"
+{ kill "$legacy_holder"; wait "$legacy_holder"; } 2>/dev/null
+rm -f "plans/PLN-901-legacy-claim/.wf-claim"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Ticking a criterion does not invalidate an answered gate (WFI-005)"
+
+# client-c: wf-defer-criterion.sh tells a tester to tick a deferred
+# criterion in plan.md by hand. The gate ledger hashed the whole file, so the
+# tick reported GATE_STALE=true and a plan later routed back to draft would
+# re-gate an approval the human had already given — the WFI-047 loop.
+registry_add_row PLN-902 fingerprint testing
+plan902="plans/PLN-902-fingerprint/plan.md"
+{
+  printf '## Goal\nProve a tick is not a revision\n\n'
+  printf '### Human Test Criteria\n\n#### Manual\n- [ ] Someone external confirms it (external)\n'
+} > "$plan902"
+
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-902 spec-approval "approve?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-902 "approved" >/dev/null 2>&1
+
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-902 spec-approval)"
+assert_eq "a freshly closed gate reads as answered" "true" "$GATE_ANSWERED"
+
+# The tick wf-defer-criterion.sh instructs.
+sed 's/- \[ \] Someone external/- [x] Someone external/' "$plan902" > "$plan902.tmp" && mv "$plan902.tmp" "$plan902"
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-902 spec-approval)"
+assert_eq "ticking a criterion leaves it answered" "true" "$GATE_ANSWERED"
+assert_eq "and does not report the plan as changed" "false" "$GATE_STALE"
+
+# A real edit to the specification must still re-open it.
+printf '\n## Steps\n1. Something the human never approved\n' >> "$plan902"
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-902 spec-approval)"
+assert_eq "an edit to the spec still goes stale" "true" "$GATE_STALE"
+assert_eq "and stops reading as answered" "false" "$GATE_ANSWERED"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A plan ID collision has a procedure (WFI-011)"
+
+# client-e: BRF-091 would inherit PLN-091, already held by an unrelated
+# completed plan. wf-spec forbade the counter and gave no collision rule, so
+# the only two moves were overwriting a live plan or departing from the docs.
+registry_add_row PLN-903 already-taken complete
+
+eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-905)"
+assert_eq "a free number is inherited" "PLN-905" "$PLAN_ID"
+assert_eq "and says so" "true" "$PLAN_ID_INHERITED"
+
+eval "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-903)"
+assert_eq "a taken number is not reused" "false" "$PLAN_ID_INHERITED"
+assert_eq "the collision names what held it" "true" \
+  "$(printf '%s' "$PLAN_ID_COLLISION" | grep -q 'PLN-903' && echo true || echo false)"
+assert_eq "the allocated ID is past every live artifact" "true" \
+  "$([ "$((10#${PLAN_ID#*-}))" -gt 903 ] && echo true || echo false)"
+
+# The counter is only a usable fallback if it cannot itself hand out a live
+# number — client-e's read 11 while live IDs were at 099.
+awk '{sub(/<!-- Counter: [0-9]+ -->/, "<!-- Counter: 11 -->"); print}' plans/REGISTRY.md \
+  > plans/REGISTRY.tmp && mv plans/REGISTRY.tmp plans/REGISTRY.md
+drifted=$("$SCRIPT_DIR/wf-counter-next.sh" PLN 2>/dev/null)
+assert_eq "a counter behind reality advances past it" "true" \
+  "$([ "$((10#${drifted#*-}))" -gt 903 ] && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A verify worker may not exit on work it never collected (WFI-012)"
+
+# client-e: the worker exited rc=0 having written two lines — a permission
+# warning, then "Waiting for the background test run to complete." It was still
+# waiting. findings.md was never written and the plan sat in `verify`, a state
+# whose only owner is the worker that just left.
+assert_ok "wf-verify forbids backgrounded checks" \
+  grep -q 'never a backgrounded Bash call' "$LIB_ROOT/skills/wf-verify/SKILL.md"
+assert_ok "wf-verify states what finishing means" \
+  grep -q 'You have not finished until' "$LIB_ROOT/skills/wf-verify/SKILL.md"
+assert_ok "an uncompletable check is a finding, not an exit" \
+  grep -q 'Routing on incomplete evidence is recoverable' "$LIB_ROOT/skills/wf-verify/SKILL.md"
+
+# The other line in that log: a permission rule matched by nothing. The prose
+# still names it, so this looks only at the allow-list entry itself.
+assert_eq "the worktree grants writes through Edit(), not Write()" "" \
+  "$(grep -o '"Write(//\*\*)"' "$LIB_ROOT/skills/wf-implement/SKILL.md" | head -1)"
+assert_ok "and uses the rule that is actually honoured" \
+  grep -q '"Edit(//\*\*)"' "$LIB_ROOT/skills/wf-implement/SKILL.md"
 
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n══════════════════════════════════════════════════════════════\n'

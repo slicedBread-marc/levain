@@ -395,7 +395,8 @@ fi
 mkdir -p "$TARGET_DIR/.claude/orchestrator/gates" \
          "$TARGET_DIR/.claude/orchestrator/gates/resolved" \
          "$TARGET_DIR/.claude/orchestrator/logs" \
-         "$TARGET_DIR/.claude/orchestrator/attempts"
+         "$TARGET_DIR/.claude/orchestrator/attempts" \
+         "$TARGET_DIR/.claude/orchestrator/claims"
 if ! grep -qF ".claude/orchestrator/" "$GITIGNORE" 2>/dev/null; then
     echo ".claude/orchestrator/" >> "$GITIGNORE"
 fi

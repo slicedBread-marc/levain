@@ -154,9 +154,9 @@ How a skill hands a plan back is also a contract: **commit the state transition,
 
 All artifacts (plans, bugs, briefs) use a **global shared counter** embedded in `plans/REGISTRY.md` as `<!-- Counter: N -->`.
 
-- When creating a **brief or bug**, allocate a new counter number (`wf-counter-next.sh`).
-- When converting a brief/bug to a **plan**, the plan **inherits the same number** — no new allocation. BRF-041 → PLN-041, BUG-043 → PLN-043.
+- When creating a **brief or bug**, allocate a new counter number (`wf-counter-next.sh`). It advances past any live artifact first, so a counter left behind by a migration or a bad merge cannot hand out a number already in use.
+- When converting a brief/bug to a **plan**, the plan **inherits the same number** — no new allocation. BRF-041 → PLN-041, BUG-043 → PLN-043. `wf-plan-id.sh` decides this; when the inherited number is already taken it allocates a fresh one and says so, because the alternative is overwriting a live plan (WFI-011).
 - IDs are type-prefixed: `PLN-NNN`, `BUG-NNN`, `BRF-NNN`.
-- Numbers are globally unique across all types.
+- Numbers are globally unique across all types, and the number is what the orchestrator treats as identity — one claim and one already-running guard cover a brief and the plan it becomes.
 
 **Schema version:** `6` (see `docs/schema.md`). Registry-based model — plans never move, state in REGISTRY.md, `.plan-ref` on feature branches. v5 added Tags and Deps columns plus the goal stack. v6 adds typed reason tags on `#### Manual` criteria (`eyes:blocking`, `eyes:cosmetic`, `external`, `soak`, linted by `wf-manual-lint.sh`), a live `## Steps` checklist in progress.md as the forward-progress signal, a `## Consistency` section, and a producer for `plans/deferred-criteria.md`.

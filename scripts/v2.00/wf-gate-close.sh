@@ -80,17 +80,29 @@ fi
 # The record is fingerprinted with the plan text that was approved. An approval
 # is for a REVISION, not for a plan forever — edit the plan afterwards and the
 # fingerprint stops matching, which is what should re-open the question.
+#
+# GATE_PLAN_BODY_FP is the one that decides, because the question is "did the
+# SPECIFICATION change since the answer?" and not "did any byte of plan.md
+# change?". A raw hash answers the second: ticking a deferred criterion in the
+# Human Test Criteria — which wf-defer-criterion.sh explicitly instructs a
+# tester to do — flipped an answered spec-approval to stale, and a plan later
+# routed back to draft would then re-gate an approval the human had already
+# given, which is the WFI-047 loop this ledger exists to prevent (client-c
+# WFI-005). GATE_PLAN_FP is still written so a client mid-upgrade reads a
+# record it understands.
 resolved_dir="$(wf_orch_dir)/gates/resolved"
 mkdir -p "$resolved_dir"
 
 plan_fp=$(wf_plan_fingerprint "$id")
+plan_body_fp=$(wf_plan_body_fingerprint "$id")
 
 {
-  wf_emit GATE_ID         "$id"
-  wf_emit GATE_NAME       "$gate_name"
-  wf_emit GATE_RESOLUTION "$resolution"
-  wf_emit GATE_RESOLVED   "$(wf_now)"
-  wf_emit GATE_PLAN_FP    "$plan_fp"
+  wf_emit GATE_ID           "$id"
+  wf_emit GATE_NAME         "$gate_name"
+  wf_emit GATE_RESOLUTION   "$resolution"
+  wf_emit GATE_RESOLVED     "$(wf_now)"
+  wf_emit GATE_PLAN_FP      "$plan_fp"
+  wf_emit GATE_PLAN_BODY_FP "$plan_body_fp"
 } > "$resolved_dir/${id}.${gate_name}"
 
 wf_event gate-close "$id" "$gate_name: $resolution"

@@ -26,6 +26,16 @@ This skill is **always** unattended. Unlike `wf-spec`, `wf-implement` and `wf-te
 | Exit | The plan needs a decision no finding can express | **[GATE]** | Park it and exit cleanly rather than guessing:<br>`scripts/wf-exec.sh wf-gate-open.sh <PLN-ID> needs-input "<question>" --skill wf-verify` |
 
 4. **Never guess.** Anything not covered above is a [GATE] with gate name `needs-input`.
+5. **Never leave work running when you stop.** Run the build and the test suite in the **foreground** and read their output — never `&`, never a backgrounded Bash call, never "I'll collect this later". There is no later: your session ends when you stop producing output, and anything still running is killed with nothing recorded.
+
+   client-e's PLN-100 verify worker exited rc=0 after six minutes having written two lines — a permission warning, then *"Waiting for the background test run to complete."* It was still waiting. `findings.md` was never written, REGISTRY still read `verify`, and the plan sat in a state whose only owner is you (WFI-012).
+
+   **You have not finished until all three are true**, in this order:
+   - `findings.md` has been written (an empty findings section is a result, and must be written as one),
+   - `wf-registry-update.sh` has moved the plan out of `verify`,
+   - `wf-unclaim.sh` has released it.
+
+   If a check cannot be completed — the suite is too slow, a runner hangs — that is a **finding**, recorded with the command and what it printed, and you route on the findings you have. Routing on incomplete evidence is recoverable; exiting on none is not.
 
 ## Input
 
@@ -62,7 +72,7 @@ If `$TEST_ARGS` is empty → run the **full suite** (backward-compat fallback). 
 
 `testScopes` / `testMappings` / `testScopeMandatory` define the categories and auto-detect mappings. The aggregation guarantee is preserved: `wf-release` always runs the full suite with no filter.
 
-Spawn **haiku agents in parallel** for data gathering, then synthesize:
+Spawn **haiku agents in parallel** for data gathering, then synthesize. Wait for every agent to return before you write findings — an agent whose result you never read is a check that did not run, and rule 5 above is what happens when the test agent is the one you leave behind:
 
 ```
 # Launch all in parallel:

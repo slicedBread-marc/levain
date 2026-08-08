@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# wf-plan-id.sh <source-id>
+#
+# Decides the plan ID for the brief or bug being specced, and says why.
+#
+# THE RULE, AND WHERE IT BREAKS
+#
+# A plan inherits its number from the source artifact: BRF-041 → PLN-041,
+# BUG-043 → PLN-043. The number was allocated when the brief or bug was
+# created, so allocating a second one would burn an ID and break the link
+# between the two names for one piece of work.
+#
+# That rule assumes the inherited number is free, and it is not always. In
+# client-e, BRF-091 would have inherited PLN-091 — already allocated to an
+# unrelated, completed plan with a folder on disk. wf-spec forbids the counter
+# and gives no collision procedure, so the only two moves available were
+# overwriting a completed plan or departing from the documented rule (WFI-011).
+#
+# So the rule gets an exception with a defined shape: inherit when free,
+# allocate when taken, and say which happened. Both branches are legal; a
+# silent overwrite is not.
+#
+# Output (eval-friendly):
+#   PLAN_ID='PLN-091'          the ID to use
+#   PLAN_NUM='091'
+#   PLAN_ID_INHERITED=true     false when the number was taken and reallocated
+#   PLAN_ID_COLLISION='...'    what held the inherited number (empty if free)
+#
+# Exit 0 on success, 1 on bad usage or an unusable registry.
+
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=wf-orch-lib.sh
+source "$SELF_DIR/wf-orch-lib.sh"
+
+src="${1:?Usage: $0 <BRF-NNN|BUG-NNN|PLN-NNN>}"
+
+id=$(printf '%s' "$src" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
+[ -n "$id" ] || { echo "Error: '$src' is not a PLN/BUG/BRF id" >&2; exit 1; }
+
+cd "$(wf_develop_root)"
+REGISTRY="plans/REGISTRY.md"
+[ -f "$REGISTRY" ] || { echo "Error: $REGISTRY not found" >&2; exit 1; }
+
+num="${id#*-}"
+prefix="${id%%-*}"
+
+# Already a plan: nothing to decide.
+if [ "$prefix" = "PLN" ]; then
+  wf_emit PLAN_ID           "$id"
+  wf_emit PLAN_NUM          "$num"
+  wf_emit PLAN_ID_INHERITED "true"
+  wf_emit PLAN_ID_COLLISION ""
+  exit 0
+fi
+
+# Taken means either half is taken — a registry row without a folder is a plan
+# mid-creation, and a folder without a row is a plan whose row was lost. Either
+# one is somebody else's number.
+collision=""
+if grep -q "^| PLN-${num} |" "$REGISTRY" 2>/dev/null; then
+  collision="REGISTRY row PLN-${num}"
+fi
+existing_dir=$(ls -d "plans/PLN-${num}-"* 2>/dev/null | head -1 || true)
+if [ -n "$existing_dir" ]; then
+  collision="${collision:+$collision, }folder $existing_dir"
+fi
+
+if [ -z "$collision" ]; then
+  wf_emit PLAN_ID           "PLN-${num}"
+  wf_emit PLAN_NUM          "$num"
+  wf_emit PLAN_ID_INHERITED "true"
+  wf_emit PLAN_ID_COLLISION ""
+  exit 0
+fi
+
+# Taken. Allocate a fresh number — wf-counter-next.sh advances past anything
+# already in use, so this cannot land on a second collision — and record that
+# the link between source number and plan number was broken deliberately.
+new_id=$("$SELF_DIR/wf-counter-next.sh" PLN)
+new_num="${new_id#*-}"
+
+wf_event id-collision "$id" "PLN-${num} taken ($collision) — allocated $new_id"
+
+wf_emit PLAN_ID           "$new_id"
+wf_emit PLAN_NUM          "$new_num"
+wf_emit PLAN_ID_INHERITED "false"
+wf_emit PLAN_ID_COLLISION "$collision"

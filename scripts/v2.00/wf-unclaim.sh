@@ -19,11 +19,14 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SELF_DIR/wf-orch-lib.sh"
 
 # Always resolve to the develop root (first worktree) so unclaim works
-# regardless of whether this runs from develop or a feature worktree.
+# regardless of whether this runs from develop or a feature worktree. Both
+# locations are removed: the canonical number-keyed claim, and any pre-v5.6
+# claim left in the plan folder by a worker that started before the upgrade.
 develop_root="$(wf_develop_root)"
-claimfile="$develop_root/plans/${plan_name}/.wf-claim"
-
-rm -f "$claimfile"
+if claim_dir=$(wf_claim_dir "$plan_name"); then
+  rm -f "$claim_dir/.wf-claim"
+fi
+rm -f "$develop_root/plans/${plan_name}/.wf-claim"
 echo "Released $plan_name"
 
 # ── Flush any spawn deferred behind that claim ────────────────────────────

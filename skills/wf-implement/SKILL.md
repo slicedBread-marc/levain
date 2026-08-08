@@ -198,13 +198,14 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
      "permissions": {
        "allow": [
          "Read(//**)",
-         "Write(//**)",
+         "Edit(//**)",
          "Bash(*)"
        ]
      }
    }
    EOF
    ```
+   `Edit(//**)`, not `Write(//**)`: Edit rules cover every file-editing tool, and a `Write(...)` rule is matched by nothing. Claude Code says so on startup — *"Write(//\*\*) is not matched by file permission checks — only Edit(path) rules are"* — and that warning was the first of the two lines an entire stranded verify run wrote to its log (client-e WFI-012).
 
 ---
 

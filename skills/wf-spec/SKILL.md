@@ -15,10 +15,13 @@ If `WF_UNATTENDED=1` is set in your environment, you were launched by the orches
 
 Rules, in force for the whole session:
 
-0. **Claim the artifact before you read anything.** If it has a plan folder:
+0. **Claim the artifact before you read anything** — by whatever ID you were handed, whether or not a plan folder exists yet:
    ```bash
-   scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug> --if-free
+   scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug> --if-free   # a plan
+   scripts/wf-exec.sh wf-claim.sh BRF-NNN --if-free          # a brief, no plan folder yet
+   scripts/wf-exec.sh wf-claim.sh BUG-NNN --if-free          # a bug, likewise
    ```
+   Claims key on the artifact **number**, not on the plan folder, so `BRF-002` and the `PLN-002` it becomes are one claim (v5.6; before that, claiming a brief failed with "plan directory not found" and every brief-sourced spec run was unclaimed until it happened to create the folder — client-c WFI-004).
    Exit 2 means **another** live session is already on it — print the message and exit 0. Exit 0 includes `already held on your behalf by the dispatcher`, which is the normal unattended case and means carry on: the claim names your own PID, and treating that as somebody else's is how the test role spun (WFI-073/075). Claiming *after* the work is claiming after the race: client-a ran two unattended wf-spec workers over one plan for twenty minutes, and the second wrote its `## Review` block on top of the first's, leaving plan.md with two contradicting verdicts (WFI-067). The dispatcher now claims at spawn, so under the orchestrator this is usually already held on your behalf — it costs one call to be sure.
 1. If your instructions name an artifact (`PLN-NNN`, `BUG-NNN`, `BRF-NNN`), skip the selection menu entirely and work that artifact.
 2. Prompts marked **[AUTO]** below resolve to their stated default. Take it and move on.
@@ -118,21 +121,29 @@ Plans inherit their number from the source artifact — no new counter allocatio
 - **From brief BRF-041** → plan becomes **PLN-041**
 - **From bug BUG-043** → plan becomes **PLN-043**
 
-Extract the number from the source ID:
+Do not derive the ID by hand and do not call `wf-counter-next.sh` yourself. Ask:
+
 ```bash
-# Example: source_id="BRF-041" or "BUG-043"
-plan_num="${source_id##*-}"          # "041"
-new_id="PLN-${plan_num}"            # "PLN-041"
+eval "$(scripts/wf-exec.sh wf-plan-id.sh BRF-041)"
+# → PLAN_ID, PLAN_NUM, PLAN_ID_INHERITED, PLAN_ID_COLLISION
 ```
 
-Do **not** call `wf-counter-next.sh` — the number was already allocated when the brief or bug was created.
+`PLAN_ID_INHERITED=true` is the ordinary case: the number was free and the plan keeps it.
+
+**`PLAN_ID_INHERITED=false` means the inherited number was already taken** — by another plan's REGISTRY row, its folder, or both — and the script allocated a fresh number instead. `PLAN_ID_COLLISION` names what held it. Use `$PLAN_ID` and say so in the plan's Context line:
+
+```markdown
+> Source: BRF-091. Plan ID PLN-100 — PLN-091 was taken by folder plans/PLN-091-otlp-exporter-cve.
+```
+
+Never resolve a collision by writing into the existing plan's folder or row. client-e hit exactly this (WFI-011): the rule forbade the counter, gave no collision procedure, and left overwriting a completed plan as the only move that followed the documented instructions.
 
 ## Plan from bug
 
 If the user picks a bug BUG-NNN:
 
 1. **Read the bug** — read `bugs/open/BUG-NNN-<slug>/bug.md`
-2. **Inherit the plan ID** — BUG-NNN becomes PLN-NNN (same number, see [ID Inheritance](#id-inheritance))
+2. **Inherit the plan ID** — BUG-NNN becomes PLN-NNN via `wf-plan-id.sh` (see [ID Inheritance](#id-inheritance))
 3. **Use it as context** — the bug's description, steps, and expected behavior become the plan's Goal and acceptance criteria
 4. **Choose a feature name** — a short kebab-case slug describing the fix (e.g. `login-crash`, `webhook-timeout`)
 5. **Construct the plan folder name** — `PLN-NNN-<slug>` (e.g. `PLN-003-login-crash`)
@@ -160,7 +171,7 @@ If the user picks a bug BUG-NNN:
     ```
     Do not delete rows by hand — the consumed row is the record that the criterion was picked up rather than dropped.
 2. **Choose a feature name** — a short kebab-case slug describing the work (e.g. `user-auth`, `payment-webhook`, `login-crash`)
-3. **Inherit the plan ID** — reuse the source artifact's number (see [ID Inheritance](#id-inheritance)). Do not call `wf-counter-next.sh`.
+3. **Inherit the plan ID** — `eval "$(scripts/wf-exec.sh wf-plan-id.sh <SRC-ID>)"` and use `$PLAN_ID` (see [ID Inheritance](#id-inheritance)). Do not derive it by hand and do not call `wf-counter-next.sh`.
 4. **Explore the codebase** — spawn **haiku agents** to find existing patterns, file structures, and signatures you need to reference in the plan. Keep agents focused: one per question, output under 2000 characters.
 4b. **Draft the one-liner goal** — before creating any files, write a single sentence describing what this plan achieves and show it to the user:
     ```

@@ -18,8 +18,10 @@
 # before. Nothing in the state said "already answered". Unbounded.
 #
 # The answer is scoped to a plan REVISION. An approval is given to a document,
-# not to an ID: if plan.md has changed since, the approval no longer covers what
-# is now in front of the human, and the gate genuinely should re-open.
+# not to an ID: if the plan's SPECIFICATION has changed since, the approval no
+# longer covers what is now in front of the human, and the gate genuinely should
+# re-open. Bookkeeping that leaves the specification alone — a ticked criterion,
+# a review stamp — is not a revision (WFI-005).
 #
 # Output (eval-friendly):
 #   GATE_OPEN=true|false         a gate of this name is open right now
@@ -65,9 +67,20 @@ resolved_at=""
 if [ -f "$resolved_file" ]; then
   resolution=$(grep -m1 "^GATE_RESOLUTION=" "$resolved_file" | sed "s/^GATE_RESOLUTION='//; s/'$//" || true)
   resolved_at=$(grep -m1 "^GATE_RESOLVED=" "$resolved_file" | sed "s/^GATE_RESOLVED='//; s/'$//" || true)
-  was_fp=$(grep -m1 "^GATE_PLAN_FP=" "$resolved_file" | sed "s/^GATE_PLAN_FP='//; s/'$//" || true)
-
-  now_fp=$(wf_plan_fingerprint "$id")
+  # The body fingerprint decides when the record carries one: it normalises the
+  # regions that move under machine control while the specification stands still
+  # — ticked checkboxes above all. A tester ticking a deferred criterion, as
+  # wf-defer-criterion.sh tells them to, is recording a disposition, not
+  # revising the spec, and used to make every answered gate on that plan read
+  # stale (client-c WFI-005). Records written before v5.6 have only the raw
+  # hash; fall back to it so an upgrade does not invalidate them wholesale.
+  was_fp=$(grep -m1 "^GATE_PLAN_BODY_FP=" "$resolved_file" | sed "s/^GATE_PLAN_BODY_FP='//; s/'$//" || true)
+  if [ -n "$was_fp" ]; then
+    now_fp=$(wf_plan_body_fingerprint "$id")
+  else
+    was_fp=$(grep -m1 "^GATE_PLAN_FP=" "$resolved_file" | sed "s/^GATE_PLAN_FP='//; s/'$//" || true)
+    now_fp=$(wf_plan_fingerprint "$id")
+  fi
 
   if [ -z "$was_fp" ] || [ -z "$now_fp" ]; then
     # No fingerprint on either side — an older record, or a plan whose file is

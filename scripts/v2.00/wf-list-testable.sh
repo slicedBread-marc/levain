@@ -43,7 +43,7 @@ while IFS='|' read -r _ id slug state priority branch _rest; do
   [ -d "$plan_dir" ] || continue
 
   # Claimed by a live session? Report it, don't offer it.
-  if wf_claim_live "$plan_dir"; then
+  if wf_claim_held "${id}-${slug}"; then
     claimed_plans+=("${id}-${slug}:${WF_CLAIM_AGE}")
     continue
   fi

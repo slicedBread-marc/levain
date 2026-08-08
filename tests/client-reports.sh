@@ -1867,8 +1867,12 @@ section "A claim names a process that outlives the shell (client-a WFI-062)"
 # call — so every attended claim read as stale and the daemon dispatched
 # unattended workers straight into worktrees a human was using.
 registry_add_row PLN-901 claimed active
+# The claim file keys on the artifact number under .claude/orchestrator/, not
+# on the plan folder — a brief being specced has no folder and still needs one
+# (client-c WFI-004).
+claim_901=".claude/orchestrator/claims/901/.wf-claim"
 "$SCRIPT_DIR/wf-claim.sh" PLN-901-claimed >/dev/null 2>&1
-claim_pid=$(sed -n '2p' plans/PLN-901-claimed/.wf-claim)
+claim_pid=$(sed -n '2p' "$claim_901")
 assert_eq "the claim records a live process" "true" \
   "$(kill -0 "$claim_pid" 2>/dev/null && echo true || echo false)"
 assert_eq "and not the shell that has already exited" "false" \
@@ -1879,7 +1883,7 @@ assert_eq "and not the shell that has already exited" "false" \
 # "somebody else is in here" half of WFI-062 has to be posed with an owner that
 # is genuinely foreign — a live process this one did not descend from.
 sleep 30 & other_session=$!
-printf '%s\n%s\n' "$(date +%s)" "$other_session" > plans/PLN-901-claimed/.wf-claim
+printf '%s\n%s\n' "$(date +%s)" "$other_session" > "$claim_901"
 assert_eq "so the plan reads as processing, not free" "processing" \
   "$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null | awk -F'\t' '$2 == "PLN-901-claimed" { print $1 }')"
 
@@ -1888,7 +1892,7 @@ assert_fails "a live claim refuses a second claimant" \
   "$SCRIPT_DIR/wf-claim.sh" PLN-901-claimed --if-free
 { kill "$other_session"; wait "$other_session"; } 2>/dev/null
 # A claim whose owner is gone must not park the artifact forever.
-printf '%s\n999999\n' "$(date +%s)" > plans/PLN-901-claimed/.wf-claim
+printf '%s\n999999\n' "$(date +%s)" > "$claim_901"
 assert_ok "a dead owner's claim is reaped" \
   "$SCRIPT_DIR/wf-claim.sh" PLN-901-claimed --if-free
 "$SCRIPT_DIR/wf-unclaim.sh" PLN-901-claimed >/dev/null 2>&1

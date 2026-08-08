@@ -636,7 +636,7 @@ case "$mode" in
         # plan's claim. Wait on whichever is live — with neither, a bare
         # `break` here spins the whole loop at full speed until MAX_ITERATIONS.
         wait_pidfile="$(wf_orch_dir)/logs/${pln_id#*-}-${role}.pid"
-        wait_claimfile="$ROOT/plans/${artifact}/.wf-claim"
+        wait_claimfile="$(wf_claim_dir "$artifact")/.wf-claim"
         waited=0
         while [ "$waited" -lt "$ORCH_PEER_WAIT" ]; do
           other_pid=$(cat "$wait_pidfile" 2>/dev/null || echo "")

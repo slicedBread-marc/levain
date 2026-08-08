@@ -15,9 +15,11 @@
 #   wf_emit <KEY> <value>            → eval-safe KEY='value' line
 #   wf_plan_fingerprint <PLN-NNN>    → hash of that plan's plan.md (may be empty)
 #   wf_session_pid                   → PID of the long-lived session, not the shell
+#   wf_claim_dir <artifact>          → the directory that holds this artifact's claim
 #   wf_claim_write <dir> [pid]       → write <dir>/.wf-claim
 #   wf_claim_live <dir>              → 0 if a live claim holds it; sets WF_CLAIM_AGE
 #   wf_claim_mine <dir>              → 0 if that claim is this caller's own
+#   wf_claim_held <artifact>         → wf_claim_live against wf_claim_dir + legacy
 #   wf_event <type> <artifact> <msg> → append to events.log
 #   wf_now                           → ISO-8601 UTC timestamp
 
@@ -37,7 +39,8 @@ wf_orch_dir() {
   local d="$(wf_develop_root)/.claude/orchestrator"
   # pending/: spawns deferred behind the requester's own claim, served by
   # wf-unclaim.sh when it comes down (WFI-086, WFI-091).
-  mkdir -p "$d/gates" "$d/logs" "$d/pending"
+  # claims/:  one directory per artifact NUMBER, holding its .wf-claim (WFI-004).
+  mkdir -p "$d/gates" "$d/logs" "$d/pending" "$d/claims"
   printf '%s' "$d"
 }
 
@@ -244,6 +247,56 @@ wf_session_pid() {
     esac
   done
   printf '%s' "$pid"
+}
+
+# wf_claim_dir <artifact> → the directory holding that artifact's claim.
+#
+# WHY NOT THE PLAN FOLDER
+#
+# Claims used to live at plans/<PLN-NNN-slug>/.wf-claim, which makes the claim
+# depend on a folder the work does not have yet. A spec worker dispatched onto
+# BRF-002 has no plan folder — the folder is one of the things it creates — so
+# wf-spawn.sh's claim was skipped entirely and `wf-claim.sh BRF-002 --if-free`
+# exited 1 with "plan directory not found". Every brief- and bug-sourced spec
+# run was therefore unclaimed from spawn until it happened to mkdir the plan
+# folder, and two workers in that window both pass --if-free: the exact WFI-067
+# race the claim exists to stop (client-c WFI-004).
+#
+# The claim now hangs off the artifact NUMBER, which is the identity that work
+# actually has: the counter is global and one piece of work carries two names
+# through spec (BUG-022 → PLN-022, BRF-002 → PLN-002). This is the same key
+# wf-spawn.sh's already-running pidfile guard uses, and for the same reason — a
+# name-keyed claim cannot see its own other name.
+#
+# Accepts any of PLN-NNN, PLN-NNN-slug, BUG-NNN, BRF-NNN. Prints nothing and
+# returns 1 for a string carrying no artifact id.
+wf_claim_dir() {
+  local artifact="$1" num d
+  num=$(printf '%s' "$artifact" | grep -oE '(PLN|BUG|BRF)-[0-9]+' | head -1 | sed 's/.*-//')
+  [ -n "$num" ] || return 1
+  # 10# strips the padding, so PLN-002 and PLN-2 name one claim rather than two.
+  num=$((10#$num))
+  d="$(wf_orch_dir)/claims/$num"
+  mkdir -p "$d"
+  printf '%s' "$d"
+}
+
+# wf_claim_held <artifact> — 0 when a live session holds this artifact's claim.
+#
+# Checks the canonical number-keyed claim, then any pre-v5.6 claim still sitting
+# in the plan folder, so an upgrade mid-flight does not read a live worker's
+# claim as absent and double-book it. Sets WF_CLAIM_AGE and WF_CLAIM_HELD_DIR
+# (the directory the live claim was found in) for callers that report on it.
+wf_claim_held() {
+  local artifact="$1" dir legacy
+  WF_CLAIM_HELD_DIR=""
+  dir=$(wf_claim_dir "$artifact") || return 1
+  if wf_claim_live "$dir"; then WF_CLAIM_HELD_DIR="$dir"; return 0; fi
+  legacy="$(wf_develop_root)/plans/${artifact}"
+  if [ -d "$legacy" ] && wf_claim_live "$legacy"; then
+    WF_CLAIM_HELD_DIR="$legacy"; return 0
+  fi
+  return 1
 }
 
 # wf_claim_write <plan-dir> [pid] — timestamp on line 1, owning PID on line 2.

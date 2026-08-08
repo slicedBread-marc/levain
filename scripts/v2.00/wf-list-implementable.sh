@@ -141,7 +141,7 @@ while IFS='|' read -r _ id slug state priority branch _rest; do
     # A claim held by this caller's own dispatch describes the asker, not a
     # rival. Classifying it as "processing" told an explicitly dispatched
     # implementer to exit 0 and stranded a plan mid-implementation (WFI-076).
-    if wf_claim_live "$plan_dir" && ! wf_claim_mine "$plan_dir"; then
+    if wf_claim_held "$plan_name" && ! wf_claim_mine "$WF_CLAIM_HELD_DIR"; then
       claim_age_min=$(( WF_CLAIM_AGE / 60 ))
       processing_lines+=("$(printf "processing\t%s\t%s\t%s\t%s" "$plan_name" "$goal" "$priority" "${claim_age_min}m ago")")
       found=1

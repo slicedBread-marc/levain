@@ -142,9 +142,13 @@ fi
 # WFI-067 workers started inside that window. The claim belongs to whoever hands
 # out the work. Attended sessions claim through wf-claim.sh the same way, so an
 # attended /wf-test and the daemon now contend for one file instead of racing.
-plan_dir="$ROOT/plans/${artifact}"
-if [ -d "$plan_dir" ] && wf_claim_live "$plan_dir"; then
-  holder=$(sed -n '2p' "$plan_dir/.wf-claim" 2>/dev/null || true)
+#
+# The claim keys on the artifact NUMBER rather than the plan folder, so a spec
+# worker dispatched onto a BRF/BUG — which has no plan folder until it writes
+# one — is claimed from spawn like every other role (client-c WFI-004).
+claim_dir=$(wf_claim_dir "$artifact")
+if wf_claim_held "$artifact"; then
+  holder=$(sed -n '2p' "$WF_CLAIM_HELD_DIR/.wf-claim" 2>/dev/null || true)
 
   # ── Our own claim: queue, do not decline ────────────────────────────────
   #
@@ -165,7 +169,7 @@ if [ -d "$plan_dir" ] && wf_claim_live "$plan_dir"; then
   # So the trigger moves to where it belongs — the release. Queue the intent
   # here; wf-unclaim.sh flushes the queue the moment the claim comes down, by
   # which point every guard can answer honestly.
-  if wf_claim_mine "$plan_dir"; then
+  if wf_claim_mine "$WF_CLAIM_HELD_DIR"; then
     mkdir -p "$ORCH/pending"
     printf '%s\t%s\t%s\n' "$role" "$artifact" "$model_override" \
       > "$ORCH/pending/${num}-${role}.spawn"
@@ -255,7 +259,7 @@ log="$ORCH/logs/${artifact}-${role}-${ts}.log"
 if $foreground; then
   wf_event spawn "$id" "$role ($model) foreground"
   echo $$ > "$pidfile"
-  [ -d "$plan_dir" ] && wf_claim_write "$plan_dir" $$
+  wf_claim_write "$claim_dir" $$
   set +e
   # WF_CLAIM_PID names the claim we just took out FOR this worker, so its own
   # "is this plan free?" check recognises the claim as its own (WFI-073/075).
@@ -266,7 +270,7 @@ if $foreground; then
   rm -f "$pidfile"
   # Release what we claimed, however the worker ended. A claim outliving its
   # worker parks the artifact until the TTL expires or someone notices.
-  [ -d "$plan_dir" ] && rm -f "$plan_dir/.wf-claim"
+  rm -f "$claim_dir/.wf-claim"
   wf_event exit "$id" "$role rc=$rc"
   exit "$rc"
 fi
@@ -278,8 +282,7 @@ export WF_PROMPT="$prompt"
 export WF_UNATTENDED=1 WF_ROLE="$role" WF_ARTIFACT="$artifact"
 event_sh="$(cd "$(dirname "$0")" && pwd)/wf-event.sh"
 
-claimfile=""
-[ -d "$plan_dir" ] && claimfile="$plan_dir/.wf-claim"
+claimfile="$claim_dir/.wf-claim"
 
 # $$ inside the bash -c is the PID this shell records as $! below, which is the
 # same PID wf_claim_write stamps on the claim — so the worker can name its own
@@ -298,7 +301,7 @@ worker_pid=$!
 echo "$worker_pid" > "$pidfile"
 # The claim names the worker, so it dies with the worker rather than with the
 # shell that launched it.
-[ -n "$claimfile" ] && wf_claim_write "$plan_dir" "$worker_pid"
+wf_claim_write "$claim_dir" "$worker_pid"
 disown "$worker_pid" 2>/dev/null || true
 
 wf_event spawn "$id" "$role ($model) pid $worker_pid"

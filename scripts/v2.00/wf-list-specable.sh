@@ -64,7 +64,7 @@ while IFS='|' read -r _ id slug state priority _rest; do
   [ -d "$plan_dir" ] || continue
 
   # Claimed by a live session? Not ours to offer.
-  wf_claim_live "$plan_dir" && continue
+  wf_claim_held "${id}-${slug}" && continue
 
   findings="$plan_dir/findings.md"
   if [ -f "$findings" ] && grep -q '^\- \[ \]' "$findings" 2>/dev/null; then
@@ -118,6 +118,10 @@ for bug_md in bugs/open/*/bug.md; do
   severity=$(grep -E "Severity:" "$bug_md" 2>/dev/null | head -1 | sed 's/.*Severity:\*\*[[:space:]]*//' | sed 's/^> //')
   title=$(head -1 "$bug_md" | sed 's/^# //')
   [ -n "$bug_id" ] || continue
+  # A bug being specced right now is claimed under its number, even though no
+  # plan folder exists yet to hold the claim (WFI-004). Offering it anyway is
+  # how two spec workers end up on one artifact.
+  wf_claim_held "$bug_id" && continue
   if [ $bugs_found -eq 0 ]; then echo "# bugs"; fi
   printf "%s\t%s\t%s\n" "$bug_id" "$severity" "$title"
   bugs_found=1
@@ -140,6 +144,8 @@ if [ -f "plans/briefs/INDEX.md" ]; then
       link=$(echo "$line" | grep -oE '\([^)]+\)' | head -1 | tr -d '()')
       brief_id=$(echo "$link" | grep -oE 'BRF-[0-9]+' | head -1)
       [ -n "$brief_id" ] || brief_id="—"
+      # Same claim check as bugs: a brief under spec has no plan folder yet.
+      if [ "$brief_id" != "—" ] && wf_claim_held "$brief_id"; then continue; fi
       desc=$(echo "$line" | sed 's/^[^—]*— //')
       if [ $briefs_found -eq 0 ]; then echo "# briefs"; fi
       printf "%s\t%s\t%s\n" "$brief_id" "$name" "$desc"

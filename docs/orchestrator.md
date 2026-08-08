@@ -79,7 +79,7 @@ An artifact is not dispatched when any of these hold:
 | Condition | Detected by |
 |-|-|
 | A gate is open on it | `wf-list-gates.sh <ID>` |
-| Another session holds its claim | `.wf-claim` (via the list scripts) |
+| Another session holds its claim | `claims/<NNN>/.wf-claim` (via the list scripts) |
 | Its deps are not `complete` | `PLAN_BLOCKED` / list-script `blocked` rows |
 | Its role is at `max_concurrent` | live pidfiles under `.claude/orchestrator/logs/` |
 | It's over `max_attempts_per_plan` | `.claude/orchestrator/attempts/<ID>.<role>` |
@@ -107,6 +107,27 @@ caller that lost the environment. `wf-claim.sh --if-free` refreshes a claim it
 recognises as its own and exits 0; exit 2 now means, and only means, somebody
 else. An attended session's claim names that session, which is never an ancestor
 of a different one, so a human mid-test is still protected.
+
+### A claim keys on the number, not on the folder
+
+Claims live at `.claude/orchestrator/claims/<NNN>/.wf-claim`, keyed on the
+artifact **number** — the same identity `wf-spawn.sh`'s already-running pidfile
+guard uses, and the only one the work actually keeps: the counter is global and
+one piece of work carries two names through spec (`BUG-022 → PLN-022`,
+`BRF-002 → PLN-002`).
+
+They used to live at `plans/<PLN-NNN-slug>/.wf-claim`, which ties the claim to a
+folder the work does not have yet. A spec worker dispatched onto a brief creates
+that folder — so `wf-spawn.sh` skipped the claim entirely and `wf-claim.sh
+BRF-002 --if-free` exited 1 with "plan directory not found". Every brief- and
+bug-sourced spec run was unclaimed from spawn until it happened to `mkdir`, and
+two workers inside that window both pass `--if-free` (client-c WFI-004).
+`wf-list-specable.sh` now filters bugs and briefs on the claim too; before, it
+offered them unconditionally because there was no folder to check.
+
+A pre-v5.6 claim left in a plan folder is still honoured (`wf_claim_held`) and
+adopted into the new location on the next `wf-claim.sh`, so an upgrade mid-flight
+does not read a live worker's claim as absent.
 
 The attempt budget is the loop breaker. A plan bouncing `active ⇄ verify`
 forever burns tokens silently; after N implement spawns it parks as a `stuck`

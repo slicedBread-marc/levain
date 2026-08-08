@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# wf-claim.sh <plan-name> [--pid N] [--if-free]
-# Marks a plan as actively being worked on by writing a timestamp + PID.
-# Claim file: plans/<plan-name>/.wf-claim  (line 1: timestamp, line 2: PID)
+# wf-claim.sh <artifact> [--pid N] [--if-free]
+# Marks an artifact as actively being worked on by writing a timestamp + PID.
+# Claim file: .claude/orchestrator/claims/<NNN>/.wf-claim
+#             (line 1: timestamp, line 2: PID)
 # Other terminals see this as "processing" in list scripts.
+#
+# <artifact> is any of PLN-NNN, PLN-NNN-slug, BUG-NNN, BRF-NNN. The claim keys
+# on the NUMBER, so a brief and the plan it becomes share one claim and a spec
+# worker can claim before the plan folder exists (WFI-004).
 # Claims expire when the owning process dies or after 2 hours (7200 seconds).
 #
 #   --pid N     record N as the owner instead of this session (wf-spawn.sh
@@ -33,15 +38,21 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "$plan_name" ] || { echo "Usage: $0 <plan-name> [--pid N] [--if-free]" >&2; exit 1; }
+[ -n "$plan_name" ] || { echo "Usage: $0 <artifact> [--pid N] [--if-free]" >&2; exit 1; }
 
 # Always resolve to the develop root (first worktree) so the claim is visible
 # to list scripts regardless of whether this runs from develop or a feature worktree.
-plan_dir="$(wf_develop_root)/plans/${plan_name}"
-
-if [ ! -d "$plan_dir" ]; then
-  echo "Error: plan directory not found: $plan_dir" >&2
+if ! plan_dir=$(wf_claim_dir "$plan_name"); then
+  echo "Error: '$plan_name' carries no PLN/BUG/BRF id" >&2
   exit 1
+fi
+
+# A pre-v5.6 claim still in the plan folder belongs to a live worker that has
+# not been restarted yet. Honour it, and adopt it into the canonical location
+# so one release cycle is enough to retire the old path.
+legacy_dir="$(wf_develop_root)/plans/${plan_name}"
+if [ -d "$legacy_dir" ] && [ -f "$legacy_dir/.wf-claim" ] && [ ! -f "$plan_dir/.wf-claim" ]; then
+  mv "$legacy_dir/.wf-claim" "$plan_dir/.wf-claim" 2>/dev/null || true
 fi
 
 if $if_free && wf_claim_live "$plan_dir"; then
