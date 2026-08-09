@@ -75,10 +75,16 @@ done
 # ── Where we are ──────────────────────────────────────────────────────────
 # The registry lives on develop. A worker compacting inside a feature worktree
 # must still read the real one, not that worktree's sparse-excluded shadow.
-CWD="$PWD"
+#
+# Both paths are resolved with `pwd -P`. Without it the CWD/ROOT comparison is
+# wrong wherever a symlink sits above the repo — /var vs /private/var on macOS
+# is the everyday case — and the whole "is this .plan-ref mine?" guard below
+# silently inverts, because every directory looks like a worktree.
+CWD=$(pwd -P)
 ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //') || true
 [ -n "$ROOT" ] || ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || true
-[ -n "$ROOT" ] || ROOT="$PWD"
+[ -n "$ROOT" ] || ROOT="$CWD"
+ROOT=$(cd "$ROOT" 2>/dev/null && pwd -P) || ROOT="$CWD"
 REGISTRY="$ROOT/plans/REGISTRY.md"
 ORCH="$ROOT/.claude/orchestrator"
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || BRANCH=""
@@ -87,7 +93,12 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || BRANCH=""
 # Read it whether or not we need it — a hook that leaves stdin unread can hand
 # the harness a broken pipe on a large payload. No jq: clients are not required
 # to have it, and every other script here is pure bash.
-if [ -n "$MODE" ]; then
+#
+# `[ -t 0 ]` is not politeness. A hook always gets a payload on stdin, but this
+# script is also run by hand with --hook to see what the hook will say, and a
+# bare `cat` on a terminal waits for EOF forever — a wedged shell, and a wedged
+# test suite, for a value we only want for its `source` field.
+if [ -n "$MODE" ] && [ ! -t 0 ]; then
   HOOK_JSON=$(cat 2>/dev/null || true)
   if [ -z "$SOURCE" ]; then
     SOURCE=$(printf '%s' "$HOOK_JSON" \
@@ -205,11 +216,18 @@ emit_pipeline() {
     plan_dir="$ROOT/plans/${id}-${slug}"
     prog=""
     if [ -f "$plan_dir/progress.md" ]; then
-      total=$(grep -cE '^- \[[ x]\]' "$plan_dir/progress.md" 2>/dev/null || echo 0)
-      done_count=$(grep -cE '^- \[x\]' "$plan_dir/progress.md" 2>/dev/null || echo 0)
-      [ "${total:-0}" -gt 0 ] && prog="step ${done_count}/${total}"
+      # `grep -c || echo 0` is wrong here and looks right: on no match grep
+      # PRINTS 0 and EXITS 1, so the fallback appends a second 0 and the count
+      # becomes a two-line string. A plan with no ticked steps then renders as
+      # "step 0\n0/3" — every plan not yet started, which is most of them.
+      total=$(grep -cE '^- \[[ x]\]' "$plan_dir/progress.md" 2>/dev/null) || total=0
+      done_count=$(grep -cE '^- \[x\]' "$plan_dir/progress.md" 2>/dev/null) || done_count=0
+      [ "$total" -gt 0 ] && prog="step ${done_count}/${total}"
     fi
     goal=$(goal_of "$plan_dir/plan.md")
+    # The registry writes an em dash for "unset". It is three bytes wide and one
+    # column wide, so printf's %-Ns padding is off by two wherever it appears.
+    [ "$priority" = "—" ] && priority=""
 
     if [ "$found" -eq 0 ]; then
       echo "PIPELINE (non-terminal plans, from plans/REGISTRY.md):"
@@ -221,12 +239,43 @@ emit_pipeline() {
   return $((1 - found))
 }
 
+# Is this .plan-ref describing THIS session's work, or is it litter?
+#
+# .plan-ref belongs to a feature worktree. It is not cleaned up when a branch
+# merges, so develop roots accumulate one naming the last plan built there —
+# three of five clients had one at the time this guard was written, all pointing
+# at `complete` plans. Trusting it blindly is worse than having no rehydration
+# at all: it hands a session a finished plan as its current work, with a STATE
+# line and a step checklist, in a block that says "these values win".
+#
+# Trusted only when both hold:
+#   - the plan is not in a terminal state, and
+#   - we are in a linked worktree, OR HEAD is the branch the registry names.
+ref_is_live() {
+  local id="$1" row state branch_col
+  row=$(registry_row "$id") || return 1
+  state=$(field "$row" 4)
+  wf_state_is_terminal "$state" && return 1
+  [ "$CWD" != "$ROOT" ] && return 0
+  branch_col=$(field "$row" 6)
+  [ -n "$BRANCH" ] && [ "$BRANCH" = "$branch_col" ]
+}
+
 build_state() {
-  local plan_id="" had=0
+  local plan_id="" stale_ref="" had=0
 
   # A feature worktree names its plan in .plan-ref — one line, the plan ID.
   if [ -f "$CWD/.plan-ref" ]; then
     plan_id=$(head -1 "$CWD/.plan-ref" 2>/dev/null | tr -d '[:space:]') || true
+  fi
+
+  # An id that IS in the registry but is not this session's work: drop it and
+  # show the pipeline instead. An id the registry does not know at all is a
+  # different problem, and emit_plan_detail reports it.
+  if [ -n "$plan_id" ] && registry_row "$plan_id" >/dev/null 2>&1 \
+     && ! ref_is_live "$plan_id"; then
+    stale_ref="$plan_id"
+    plan_id=""
   fi
 
   if [ -n "$MODE" ]; then
@@ -255,6 +304,11 @@ build_state() {
   else
     echo ""
     if emit_pipeline; then had=1; fi
+    if [ -n "$stale_ref" ]; then
+      echo ""
+      echo "NOTE:     .plan-ref here names $stale_ref, which is not this session's"
+      echo "          work. Ignored — it is left over from a merged branch."
+    fi
   fi
 
   [ "$had" -eq 1 ] || return 1

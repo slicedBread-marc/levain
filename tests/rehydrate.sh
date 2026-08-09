@@ -100,6 +100,15 @@ seed_repo
 OUT=$("$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
 assert_contains "pipeline lists the active plan"   "PLN-041"  "$OUT"
 assert_contains "pipeline shows step progress"     "step 1/3" "$OUT"
+
+# A plan with NO ticked steps — the common case, and the one that broke.
+# `grep -c || echo 0` emits two lines on no match, rendering "step 0\n0/3".
+sed -i.bak 's/^- \[x\] Step 1/- [ ] Step 1/' plans/PLN-041-relay-hardening/progress.md
+OUT=$("$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+assert_contains "zero ticked steps render on one line" "step 0/3" "$OUT"
+N=$(printf '%s' "$OUT" | grep -c "PLN-041")
+[ "$N" = "1" ] && ok "pipeline row is a single line" || bad "pipeline row is a single line" "lines=$N"
+mv plans/PLN-041-relay-hardening/progress.md.bak plans/PLN-041-relay-hardening/progress.md
 if printf '%s' "$OUT" | grep -q "PLN-030"; then
   bad "terminal plans excluded" "PLN-030 (complete) appeared"
 else
@@ -128,13 +137,38 @@ OUT=$(cd wt && "$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
 assert_contains "open gate surfaced" "GATE OPEN: contract" "$OUT"
 rm -f .claude/orchestrator/gates/PLN-041.gate
 
-# 5. A .plan-ref naming a plan the registry does not have must not read as fine.
+# 5. A stale .plan-ref must not be presented as the session's current work.
+#
+# .plan-ref is not cleaned up when a branch merges, so develop roots accumulate
+# one naming the last plan built there — three of five clients had exactly this
+# when the guard was written, all pointing at `complete` plans. Presenting one
+# is worse than no rehydration: it hands the session a finished plan, complete
+# with a step checklist, inside a block that says "these values win".
+echo "PLN-030" > .plan-ref            # complete, per the seeded registry
+OUT=$("$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+if printf '%s' "$OUT" | grep -q "^PLAN: *PLN-030"; then
+  bad "terminal .plan-ref not presented as current work" "PLN-030 shown as the plan"
+else
+  ok "terminal .plan-ref not presented as current work"
+fi
+assert_contains "stale .plan-ref called out" "names PLN-030" "$OUT"
+assert_contains "pipeline shown instead"     "PLN-041"       "$OUT"
+
+# At the develop root, a .plan-ref is only this session's work if HEAD is the
+# branch the registry names for it. PLN-041 is active but lives on a feature
+# branch; a develop-root session holding that ref is holding litter.
+echo "PLN-041" > .plan-ref
+OUT=$("$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+assert_contains "root .plan-ref off-branch treated as stale" "names PLN-041" "$OUT"
+rm -f .plan-ref
+
+# 6. A .plan-ref naming a plan the registry does not have must not read as fine.
 echo "PLN-999" > wt/.plan-ref
 OUT=$(cd wt && "$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
 assert_contains "unknown .plan-ref flagged" "ABSENT from REGISTRY.md" "$OUT"
 echo "PLN-041" > wt/.plan-ref
 
-# 6. Nothing in flight → no output at all, in either hook mode.
+# 7. Nothing in flight → no output at all, in either hook mode.
 cat > plans/REGISTRY.md << 'SEED'
 # Plan Registry
 
@@ -147,14 +181,14 @@ SEED
 EMPTY=$(printf '{"source":"compact"}' | "$SCRIPTS/wf-rehydrate.sh" --hook session-start 2>/dev/null)
 assert_empty "empty pipeline emits no JSON" "$EMPTY"
 
-# 7. PostCompact mode is one plain line for the human — never JSON.
+# 8. PostCompact mode is one plain line for the human — never JSON.
 LINE=$(printf '{"trigger":"auto"}' | "$SCRIPTS/wf-rehydrate.sh" --hook post-compact 2>/dev/null)
 assert_contains "post-compact says nothing is in flight" "nothing in flight" "$LINE"
 case "$LINE" in *'hookSpecificOutput'*) bad "post-compact is not JSON" ;; *) ok "post-compact is not JSON" ;; esac
 
-# 8. A repo with no registry at all must exit clean, not error.
+# 9. A repo with no registry at all must exit clean, not error.
 rm -rf plans
-OUT=$("$SCRIPTS/wf-rehydrate.sh" --hook session-start 2>&1)
+OUT=$("$SCRIPTS/wf-rehydrate.sh" --hook session-start </dev/null 2>&1)
 RC=$?
 if [ "$RC" = "0" ] && [ -z "$OUT" ]; then ok "no registry → silent exit 0"; else bad "no registry → silent exit 0" "rc=$RC out=[$OUT]"; fi
 
