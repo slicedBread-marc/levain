@@ -432,6 +432,57 @@ else
     echo -e "${GREEN}  Updated .git/hooks/post-commit${NC}"
 fi
 
+# Install the Claude Code session hooks (state rehydration after compaction).
+#
+# These are CLAUDE CODE hooks in .claude/settings.json — a different mechanism
+# from the git hook above, and the reason both live here is that they are the
+# only two places the harness gets to run without a skill asking it to.
+#
+# SessionStart(compact) is the load-bearing one: it is the only event whose
+# output reaches the MODEL after a compaction. PostCompact's stdout is shown to
+# the human and nothing else. See docs/rehydration.md and wf-rehydrate.sh.
+#
+# settings.json is the client's file, not ours — it may hold their permissions,
+# env and their own hooks. So this MERGES rather than overwriting; the rules are
+# in templates/hooks/settings-merge.py, which is where to look before changing
+# what gets written.
+SETTINGS="$TARGET_DIR/.claude/settings.json"
+REHYDRATE_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-rehydrate.sh --hook"
+if command -v python3 >/dev/null 2>&1; then
+    SETTINGS_RESULT=$(SETTINGS_PATH="$SETTINGS" REHYDRATE_CMD="$REHYDRATE_CMD" \
+        python3 "$SCRIPT_DIR/templates/hooks/settings-merge.py")
+    case "$SETTINGS_RESULT" in
+        created)      echo -e "${GREEN}  Created .claude/settings.json with the rehydration hooks${NC}" ;;
+        updated)      echo -e "${GREEN}  Updated .claude/settings.json rehydration hooks${NC}" ;;
+        unchanged)    echo -e "${YELLOW}  .claude/settings.json hooks already up to date — skipping${NC}" ;;
+        unparseable:*)
+            echo -e "${YELLOW}  .claude/settings.json is not valid JSON (${SETTINGS_RESULT#unparseable:})${NC}"
+            echo -e "${YELLOW}  Left untouched. Fix it and re-run, or add the hooks by hand:${NC}"
+            echo "    SessionStart  matcher compact|clear|resume  → $REHYDRATE_CMD session-start 2>/dev/null || true"
+            echo "    PostCompact   matcher manual|auto           → $REHYDRATE_CMD post-compact 2>/dev/null || true" ;;
+        *)            echo -e "${YELLOW}  .claude/settings.json: unexpected result '$SETTINGS_RESULT'${NC}" ;;
+    esac
+else
+    echo -e "${YELLOW}  python3 not found — skipping .claude/settings.json hooks${NC}"
+    echo -e "${YELLOW}  Add them by hand (see docs/rehydration.md):${NC}"
+    echo "    SessionStart  matcher compact|clear|resume  → $REHYDRATE_CMD session-start 2>/dev/null || true"
+    echo "    PostCompact   matcher manual|auto           → $REHYDRATE_CMD post-compact 2>/dev/null || true"
+fi
+
+# .claude/settings.json stays TRACKED, deliberately.
+#
+# It is not generated harness — the merge above touches two keys and leaves the
+# project's own permissions and hooks alone — and it must be tracked for a
+# reason specific to this workflow: git materialises tracked files into a new
+# worktree, and an untracked settings.json means every feature worktree runs
+# WITHOUT the rehydration hooks. That is exactly the session most likely to
+# compact mid-implementation.
+if [ -f "$SETTINGS" ] && ! git -C "$TARGET_DIR" ls-files --error-unmatch ".claude/settings.json" >/dev/null 2>&1; then
+    echo -e "${YELLOW}  .claude/settings.json is untracked — commit it, or feature worktrees${NC}"
+    echo -e "${YELLOW}  will start without the rehydration hooks:${NC}"
+    echo "    git add .claude/settings.json && git commit -m 'chore: workflow session hooks'"
+fi
+
 # REGISTRY.md is TRACKED (v3.2.0).
 #
 # It used to be gitignored as "operational state", which left the pipeline's

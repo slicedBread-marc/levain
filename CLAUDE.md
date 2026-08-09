@@ -148,6 +148,8 @@ What a feature worktree may and may not contain is a contract, not a preference 
 
 How a skill hands a plan back is also a contract: **commit the state transition, then close the gate, then unclaim** — never the reverse. Read `docs/guard-ordering.md` before editing any skill's exit path.
 
+State survives a compacted conversation because `wf-rehydrate.sh` re-reads it from the registry afterwards, wired to `SessionStart(compact)` — **not** `PostCompact`, whose output reaches the human and never the model. Read `docs/rehydration.md` before touching either hook.
+
 ---
 
 ### Artifact ID System

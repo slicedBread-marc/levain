@@ -135,7 +135,20 @@ scripts/wf-exec.sh wf-list-gates.sh       # what is waiting on a human
 | `.git/hooks/post-commit` | commit message starts `implement(` **and HEAD is a `feature/*` branch** | Starts/refreshes the local dev environment |
 | `.claude/on-verify-trigger.sh` | called by the hook above | Shim over `wf-spawn.sh verify` |
 | `.claude/on-implement-commit.sh` | called by the hook above | Docker local-env lifecycle |
+| `SessionStart` (`compact`/`clear`/`resume`) | Claude Code context is rebuilt | Re-reads pipeline state from `REGISTRY.md` and injects it into the conversation |
+| `PostCompact` | after any compaction | Prints a one-line receipt saying what rehydration found |
 | Orchestrator daemon | `wf-orchestrate.sh --daemon` (manual start) | Sweeps `REGISTRY.md` and dispatches unattended workers by state |
+
+The last two are Claude Code hooks in `.claude/settings.json`, not git hooks.
+They exist because a compacted session keeps a **prose summary** of what it was
+doing, and a summary is the wrong shape for pipeline state — it will happily
+report a step count that was true four commits ago. After compaction the state
+arrives again from disk, so the summary is allowed to be lossy about it.
+
+**Commit `.claude/settings.json`.** git only materialises tracked files into a
+new worktree, so while it is untracked every feature worktree runs without these
+hooks — the session most likely to compact mid-implementation. See
+`docs/rehydration.md` in the workflow library.
 
 The daemon is **off by default** (`orchestrator.enabled: false` in
 `claude-workflow.yml`). Workers run with `--dangerously-skip-permissions`, so
