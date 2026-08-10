@@ -131,6 +131,40 @@ assert_contains "plan detail resolved from .plan-ref" "PLAN:     PLN-041-relay-h
 assert_contains "live Steps checklist included"       "[ ] Step 2: guard"                 "$OUT"
 assert_contains "amendment surfaced"                  "AMENDMENTS: 1 amendment(s)"        "$OUT"
 
+# 3a. The block is a snapshot and has to say so (WFI-099). An old block survives
+# into the next summary word for word; without a timestamp and a scoped
+# precedence claim, an hour-old STATE line outranks a script run seconds ago.
+OUT=$("$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+if printf '%s' "$OUT" | grep -qE 'read from disk at [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z'; then
+  ok "the block stamps when it was read"
+else
+  bad "the block stamps when it was read" "no ISO-8601 stamp in the header"
+fi
+assert_contains "precedence is over the summary, not over everything" \
+  "Where the summary disagrees, these values win" "$OUT"
+assert_contains "says it does not outrank a later script run" "SNAPSHOT, not a subscription" "$OUT"
+assert_contains "an older block is explicitly superseded" "superseded" "$OUT"
+if printf '%s' "$OUT" | grep -q "read from disk just now"; then
+  bad "no unqualified freshness claim" "'just now' still present"
+else
+  ok "no unqualified freshness claim"
+fi
+
+# 3b. The feature worktree's absolute path, because cwd does not survive a
+# compaction (WFI-098) — a relative read from the wrong root looks exactly like
+# a broken feature.
+git -c user.email=t@t -c user.name=t add -A >/dev/null 2>&1
+git -c user.email=t@t -c user.name=t commit -qm seed >/dev/null 2>&1
+git worktree add -q -b feature/PLN-041-relay-hardening "$TEST_DIR/feature-branches/PLN-041" >/dev/null 2>&1
+echo "PLN-041" > "$TEST_DIR/feature-branches/PLN-041/.plan-ref"
+OUT=$(cd wt && "$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+# git reports the resolved path; on macOS $TMPDIR is a symlink (/var → /private/var).
+WT_REAL=$(cd "$TEST_DIR/feature-branches/PLN-041" && pwd -P)
+assert_contains "the plan's worktree path is restated absolute" \
+  "WORKTREE: $WT_REAL" "$OUT"
+assert_contains "and says the working directory did not survive" \
+  "did not survive the compaction" "$OUT"
+
 # 4. An open gate is not something a rehydrated worker may walk past.
 printf "GATE_NAME='contract'\n" > .claude/orchestrator/gates/PLN-041.gate
 OUT=$(cd wt && "$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)

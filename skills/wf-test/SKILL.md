@@ -124,13 +124,15 @@ After user picks:
 
 ## Testing
 
-**CWD note:** All commands in this section run from within `feature-branches/$PLAN_NAME/` — the working directory was changed in Entry step 4 and persists. Do NOT prepend `cd feature-branches/$PLAN_NAME &&` to any command here.
+**CWD note:** All commands in this section run from within `feature-branches/$PLAN_NAME/` — the working directory was changed in Entry step 4. Do NOT prepend `cd feature-branches/$PLAN_NAME &&` to any command here.
 
-**Assert it before anything observes the code — every time you re-enter, not only on first entry:**
+**Assert it before anything observes the code — every time you re-enter, and after every compaction:**
 ```bash
 scripts/wf-exec.sh wf-branch-check.sh feature/$PLAN_NAME
 ```
 Exit 1 here means you are standing somewhere else — almost always the develop root, which a re-test lands in by default. Fix the directory, do not proceed.
+
+**A compaction is a re-entry.** This skill used to say the working directory "persists", and it does — right up until the conversation is summarised, which resets it to the develop root with nothing in the transcript saying so. client-a's WFI-098: after a mid-session compaction a relative read of a file that exists only on the feature branch returned "No such file or directory" and a grep for the feature came back empty — the WFI-094 shape again, one step from being written up as a broken feature. The post-compaction `WORKFLOW STATE` block restates the worktree path absolute for exactly this reason; re-run the assertion above the moment you see one.
 
 **Why this is an assertion and not a reminder.** A verification command run from the develop root reads develop's tree, where the branch's work has not merged, and it fails *correctly* — which is indistinguishable from the feature being broken. client-a's WFI-094 wrote up exactly that as a behavior finding claiming a fix "was not implemented", and bounced a fully-built, verify-clean plan back through spec. Two shapes to watch, both from the same root cause:
 

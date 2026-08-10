@@ -154,6 +154,34 @@ emit_plan_detail() {
   goal=$(goal_of "$plan_md")
   [ -n "$goal" ] && echo "GOAL:     $goal"
 
+  # ── Where this plan's commands actually run ──────────────────────────────
+  #
+  # The working directory does NOT survive a compaction. A skill that told the
+  # session to cd into the feature worktree in its entry step, and then says
+  # that directory "persists", is describing something the compaction throws
+  # away with the rest of the conversation. client-a's WFI-098: after a
+  # compaction mid-/wf-test, cwd had silently reverted to the develop root, a
+  # relative read of a file that exists only on the feature branch returned
+  # "No such file or directory", and a grep for the feature came back empty —
+  # which is indistinguishable from the feature being broken. Findings were one
+  # step from being written off a directory the session was no longer in.
+  #
+  # So the path is restated here, absolute, every time state is rehydrated.
+  if [ -n "$branch" ] && [ "$branch" != "—" ]; then
+    local wt
+    wt=$(git -C "$ROOT" worktree list --porcelain 2>/dev/null | awk -v b="refs/heads/$branch" '
+      /^worktree /  { p = substr($0, 10) }
+      /^branch /    { if ($2 == b) { print p; exit } }
+    ') || true
+    if [ -n "$wt" ]; then
+      echo "WORKTREE: $wt"
+      echo "          This plan'\''s code lives THERE, not in $ROOT. Your working"
+      echo "          directory did not survive the compaction — re-anchor before"
+      echo "          reading or running anything, and prefer absolute paths or"
+      echo "          git -C over a bare relative path."
+    fi
+  fi
+
   # The live Steps checklist — the v6 forward-progress signal, and the single
   # thing a prose summary is most reliably wrong about. Verbatim, not counted:
   # which step is next matters more than how many are left.
@@ -278,15 +306,31 @@ build_state() {
     plan_id=""
   fi
 
+  local stamp; stamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
   if [ -n "$MODE" ]; then
-    echo "WORKFLOW STATE — re-read from disk after ${SOURCE}."
+    echo "WORKFLOW STATE — read from disk at ${stamp} after ${SOURCE}."
   else
-    echo "WORKFLOW STATE — re-read from disk just now."
+    echo "WORKFLOW STATE — read from disk at ${stamp}."
   fi
   echo ""
   echo "The conversation above is a summary and is NOT authoritative for pipeline"
   echo "state. Everything below was read from plans/REGISTRY.md and the plan folder"
-  echo "just now. Where they disagree, these values win."
+  echo "at ${stamp}. Where the summary disagrees, these values win."
+  echo ""
+  # ── Why the precedence is scoped, and why the timestamp is on every line ──
+  #
+  # This block wins over PROSE. It does not win over a script. A block from an
+  # earlier compaction survives into the next summary word for word, carrying a
+  # STATE line that was true an hour ago under a sentence saying it wins.
+  # client-a's WFI-099: a block reading `PLN-007 draft` sat above a
+  # wf-list-gates.sh run that correctly said `testing`, the attendant believed
+  # the block, classified an ok-fit gate as stale-by-state, and closed it —
+  # which then let the daemon dispatch onto a plan under manual test (WFI-100,
+  # WFI-102). The timestamp is what makes the two distinguishable at all.
+  echo "This is a SNAPSHOT, not a subscription. It does not outrank anything you"
+  echo "ran after ${stamp}, and an older WORKFLOW STATE block above is superseded"
+  echo "by this one. Before acting on a state that is more than a few minutes old,"
+  echo "re-read it: scripts/wf-exec.sh wf-rehydrate.sh"
   echo ""
   [ -n "$BRANCH" ] && echo "BRANCH:   $BRANCH"
   [ "$CWD" != "$ROOT" ] && echo "CWD:      $CWD"
