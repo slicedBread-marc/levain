@@ -34,9 +34,10 @@ Show `Blocking` as a plain count, and `—` when it is 0.
 
 **A row whose `<fit>` is `mismatch` is not answerable as written — say so on the row and handle it first.** The gate outlived the state it was opened in: the plan has moved on, and the role this gate hands work to cannot act from where the plan now is. Mark it in the table (`⚠ stale — plan is <state>`) and treat the decision as *reconcile*, not *answer*:
 
-1. Read the plan's `findings.md` and `## Review` to establish what actually happened since the gate was opened.
-2. If the question has already been settled by that history, close the gate as answered, quoting the evidence: `wf-gate-close.sh <PLN-ID> "<what settled it, and where>"`.
-3. If it has not, the gate is on the wrong artifact state — close it and let the skill that owns the plan's current state re-open a gate that fits.
+1. **`mismatch` is the script's verdict, never yours.** Re-run `wf-list-gates.sh <PLN-ID>` and read column 8 immediately before acting. A state you are carrying from anywhere else — a `WORKFLOW STATE` block, a summary, something you read earlier this session — is not evidence, and it is the thing that has been wrong. client-a's WFI-099/100: a rehydration block left over from an earlier compaction said `draft` while the live registry said `testing`; the attendant treated an `ok` row as stale on the strength of it and closed a gate nobody had answered. The daemon then dispatched an unattended tester onto a plan a human was mid-test on, and it destroyed the running container (WFI-102). If the script says `ok`, the row is ordinary work — go to its section below.
+2. Read the plan's `findings.md` and `## Review` to establish what actually happened since the gate was opened.
+3. If the question has already been settled by that history, close the gate as answered, quoting the evidence *and naming it as prior history*: `wf-gate-close.sh <PLN-ID> "already settled: <what settled it, and where>"`. **Never pass an earlier cycle's outcome as though it were this one's.** The resolution is the record of the decision you just made; a verbatim replay of the last cycle's result records a test run, an approval or an escalation that did not happen, and the ledger has no way to tell it from a real one.
+4. If it has not, the gate is on the wrong artifact state — close it and let the skill that owns the plan's current state re-open a gate that fits.
 
 Never route a `mismatch` row to its normal skill. client-a's WFI-082: a `manual-test` gate left over from a fixed bug sat on a plan that had gone back to `draft` with five unaddressed findings, the queue showed it as ordinary work, and the attendant was sent to `/wf-test` — which cannot run on a draft plan. Worse, the unattended tester that had already reached that plan overwrote a human FAIL with PASS on the way past.
 
@@ -186,6 +187,7 @@ When the queue is empty: "Queue clear. The daemon will pick these up on its next
 - **Never edit source code.** You route to `/wf-implement`; you do not fix.
 - **Never approve, pass, or reject on the user's behalf.** Every gate exists precisely because a machine shouldn't decide it. If the user is vague, ask again rather than picking.
 - **Never close a gate you did not resolve.** An unresolved gate that's been closed silently re-enters the pipeline.
+- **The resolution text describes the decision just made.** It is written to an append-only ledger and read later by whoever reconstructs who approved what. Copying an earlier outcome into it fabricates a record (WFI-100); if nothing was decided this cycle, say that.
 - Hand real work to the skill that owns it (`/wf-spec`, `/wf-test`, `/wf-implement`) instead of reimplementing their exit paths here.
 
 ## When the workflow misbehaves

@@ -287,6 +287,33 @@ assert_fails "closed gate no longer probes open" "$SCRIPT_DIR/wf-list-gates.sh" 
 assert_ok "closing an already-closed gate is a no-op" "$SCRIPT_DIR/wf-gate-close.sh" PLN-010
 assert_fails "a bad artifact id is rejected" "$SCRIPT_DIR/wf-gate-open.sh" NOPE-1 x "y"
 
+# ── The resolved slot has no memory; the ledger does (WFI-100) ─────────────
+#
+# `resolved/<id>.<gate>` is one slot per plan per gate name, and a manual-test
+# gate is opened and answered once per test CYCLE. Every cycle overwrote the
+# record of the one before it, so a resolution carrying the previous cycle's
+# outcome verbatim — an escalation that never happened — was indistinguishable
+# from a real one. The state at close time is written down for the same reason.
+resolved_dir="$(git rev-parse --show-toplevel)/.claude/orchestrator/gates/resolved"
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-019 manual-test "cycle one?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-019 "criteria 1-8 pass" >/dev/null 2>&1
+assert_ok "a close records the registry state it happened in" \
+  grep -q "^GATE_RESOLVED_STATE=" "$resolved_dir/PLN-019.manual-test"
+
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-019 manual-test "cycle two?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-019 "criterion 8 FAIL, escalated" >/dev/null 2>&1
+assert_eq "the slot carries the latest outcome" "1" \
+  "$(grep -c "criterion 8 FAIL, escalated" "$resolved_dir/PLN-019.manual-test" | xargs)"
+assert_eq "the ledger keeps both cycles" "2" \
+  "$(wc -l < "$resolved_dir/PLN-019.manual-test.log" | xargs)"
+assert_ok "the earlier outcome is still readable" \
+  grep -q "criteria 1-8 pass" "$resolved_dir/PLN-019.manual-test.log"
+
+# The ledger sits in the directory wf-gate-status.sh looks up by exact path.
+# A reader that globbed it would eval a tab-separated line as shell.
+assert_ok "gate-status still resolves the slot, not the ledger" \
+  grep -q 'resolved/\${id}\.\${gate_name}"' "$SCRIPT_DIR/wf-gate-status.sh"
+
 section "Events"
 
 log_for() { "$SCRIPT_DIR/wf-event.sh" --for "$1" 2>/dev/null; }
