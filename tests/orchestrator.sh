@@ -1446,12 +1446,20 @@ assert_ok "wf-verify states what finishing means" \
 assert_ok "an uncompletable check is a finding, not an exit" \
   grep -q 'Routing on incomplete evidence is recoverable' "$LIB_ROOT/skills/wf-verify/SKILL.md"
 
-# The other line in that log: a permission rule matched by nothing. The prose
-# still names it, so this looks only at the allow-list entry itself.
+# The other line in that log: a permission rule matched by nothing. The
+# allow-list now lives in wf-worktree-harness.sh, because a heredoc in the
+# skill is something the permission classifier can refuse and did (WFI-015).
+# Both files are checked — the skill still explains the rule in prose, and the
+# grep below looks only at a literal allow-list entry.
 assert_eq "the worktree grants writes through Edit(), not Write()" "" \
-  "$(grep -o '"Write(//\*\*)"' "$LIB_ROOT/skills/wf-implement/SKILL.md" | head -1)"
+  "$(grep -ho '"Write(//\*\*)"' "$LIB_ROOT/skills/wf-implement/SKILL.md" \
+       "$SCRIPT_DIR/wf-worktree-harness.sh" | head -1)"
 assert_ok "and uses the rule that is actually honoured" \
-  grep -q '"Edit(//\*\*)"' "$LIB_ROOT/skills/wf-implement/SKILL.md"
+  grep -q '"Edit(//\*\*)"' "$SCRIPT_DIR/wf-worktree-harness.sh"
+assert_ok "the harness script is what writes it, not a heredoc in the skill" \
+  grep -q 'settings.local.json' "$SCRIPT_DIR/wf-worktree-harness.sh"
+assert_eq "the skill no longer heredocs it into the worktree" "" \
+  "$(grep -c "cat > feature-branches.*settings.local.json" "$LIB_ROOT/skills/wf-implement/SKILL.md" | grep -v '^0$' || true)"
 
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n══════════════════════════════════════════════════════════════\n'

@@ -43,17 +43,29 @@ release branch    → staging environment for E2E validation
    ```
    `harness ok` → continue at step 6.
 
-   `HARNESS MISSING` means the merge carried in the commit that stops tracking the generated harness while this branch still tracked it, so git deleted the files — and they are gitignored now, so nothing puts them back. Restore them with plain git, which needs neither the harness nor the library:
+   `HARNESS MISSING` means the untrack commit reached a branch that still tracked the generated harness, so git deleted the files — and they are gitignored now, so nothing puts them back. Restore them with plain git, which needs neither the harness nor the library. **Find the ref first — do not assume `HEAD@{1}`:**
    ```bash
-   git ls-tree -r --name-only HEAD@{1} -- scripts .claude \
+   for n in $(seq 1 40); do
+     ref="HEAD@{$n}"
+     git rev-parse --verify --quiet "$ref" >/dev/null || continue
+     git ls-tree -r --name-only "$ref" -- scripts/version-map.txt | grep -q . && { echo "$ref"; break; }
+   done
+   ```
+   Then, with that ref in `$ref`:
+   ```bash
+   git ls-tree -r --name-only "$ref" -- scripts .claude \
      | grep -E '^(scripts/(wf-exec\.sh|wf-prune-versions\.sh|version-map\.txt|v[^/]+/)|\.claude/(skills/wf-|workflow\.md))' \
      > /tmp/wf-harness-paths
-   xargs git checkout HEAD@{1} -- < /tmp/wf-harness-paths
+   xargs git checkout "$ref" -- < /tmp/wf-harness-paths
    xargs git rm --cached --quiet -- < /tmp/wf-harness-paths
    ```
-   The checkout brings the files back; the `rm --cached` returns them to untracked, which is what the ignore rules already describe — so the working tree ends clean. Once the harness is back, `scripts/wf-exec.sh wf-harness-restore.sh` does the same thing in one call for any future occurrence.
+   The checkout brings the files back; the `rm --cached` returns them to untracked, which is what the ignore rules already describe — so the working tree ends clean. Once the harness is back, `scripts/wf-exec.sh wf-harness-restore.sh` does the same search in one call for any future occurrence.
+
+   **Why the search, and not a fixed distance.** The deletion is not reliably one step behind. client-e's WFI-014: step 5's `git pull origin release` fast-forwarded 75 commits, straight through the untrack commit — so `HEAD@{1}` was already *past* the deletion, the path list came back empty, and the recovery restored zero files while reporting nothing wrong. `HEAD@{2}` held all 82 paths. A local release branch many commits behind origin is the normal case.
 
    Never `git rm -r --cached scripts` wholesale — a project may keep its own tooling there, and untracking it turns a recovery into a larger accident.
+
+   **After any restore, keep running everything through `scripts/wf-exec.sh`.** A client that predates v5 may still carry flat `scripts/wf-*.sh` files tracked in git; those are pre-untracking copies and they are stale. `scripts/v*/` is the live harness, and `wf-exec.sh` is what resolves to it — calling a flat script directly silently runs old code (WFI-014).
 
    This happens **once per client**, on the first release after the harness is untracked on develop, and it self-clears when the change reaches `main`. It is silent and total while it lasts: client-c lost 106 files including `wf-exec.sh` mid-skill and only found out at step 8, with exit 127 (WFI-006).
 6. **Push release branch:**

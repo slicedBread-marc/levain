@@ -63,12 +63,26 @@ if $check_only; then
   exit 1
 fi
 
-# The most recent ref that still tracks it. The reflog entry before the
-# operation that deleted it is the closest and the most likely to be right;
+# The most recent ref that still tracks it. The reflog is searched BACKWARDS,
+# entry by entry, because the deletion is not reliably one step behind.
+#
+# This used to try HEAD@{1} and nothing else from the reflog. client-e's
+# WFI-014: `git pull origin release` in /wf-release step 5 fast-forwarded 75
+# commits, sailing straight through the untrack commit, and the merge that
+# followed was blamed for it. HEAD@{1} was therefore the post-pull commit —
+# already past the deletion — so the path list came back empty and the restore
+# was a silent no-op. HEAD@{2} carried all 82 paths. A local release branch
+# many commits behind origin is the normal case, not the exception, so no fixed
+# reflog distance is right; what is right is "the nearest ref that still has
+# the files".
+#
 # main is the fallback, because main is the last branch to take the untrack
 # commit and therefore the last to stop carrying the files.
 restored_from=""
-for ref in "HEAD@{1}" main origin/main release origin/release; do
+reflog_refs=""
+for n in $(seq 1 40); do reflog_refs="$reflog_refs HEAD@{$n}"; done
+# shellcheck disable=SC2086
+for ref in $reflog_refs main origin/main release origin/release; do
   git rev-parse --verify --quiet "$ref" >/dev/null 2>&1 || continue
   git ls-tree -r --name-only "$ref" -- scripts/wf-exec.sh 2>/dev/null | grep -q . || continue
   restored_from="$ref"

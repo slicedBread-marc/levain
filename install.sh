@@ -351,6 +351,7 @@ HARNESS_IGNORED=0
 for pattern in \
     ".claude/skills/wf-*/" \
     ".claude/workflow.md" \
+    ".claude/settings.local.json" \
     ".claude/on-implement-commit.sh" \
     ".claude/on-verify-trigger.sh" \
     "scripts/wf-exec.sh" \
