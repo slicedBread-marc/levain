@@ -98,8 +98,8 @@ All steps passed. The bug is fixed. Update the plan:
   Plan Status: Complete → Debug Verified
   
 Then commit:
-  git add plans/PLN-*/
-  git commit -m "debug: <feature-name> — fix verified"
+  scripts/wf-exec.sh wf-commit.sh "debug(PLN-NNN-<slug>): <feature-name> — fix verified" \
+    --add plans/PLN-NNN-<slug>/
 
 You can now close the bug.
 ```
@@ -130,10 +130,15 @@ If the user chooses option 1 and wants to file a bug, guide them through `/wf-bu
 ### 5. Commit the debug session
 
 Once verdict is reached:
+```bash
+scripts/wf-exec.sh wf-commit.sh "debug(PLN-NNN-<slug>): <feature-name> — <verified|issue found>" \
+  --add plans/PLN-NNN-<slug>/
 ```
-git add plans/PLN-*/
-git commit -m "debug: <feature-name> — <verified|issue found>"
-```
+
+**Name this plan's folder, never `plans/PLN-*/`.** A wildcard over the plans tree
+is as wide as `git commit -a` over it, and on develop that tree holds every
+concurrent worker's in-flight files (WFI-109, WFI-110). `wf-commit.sh` also
+builds the commit from a pathspec, so it cannot carry whatever else is staged.
 
 ## debug.md format
 
@@ -177,9 +182,9 @@ Created in the plan folder (e.g., `plans/PLN-NNN-<slug>/debug.md`):
 
 After the debug session is complete:
 
-```
-git add plans/PLN-*/
-git commit -m "debug: <feature-name> — <verified|issue found>"
+```bash
+scripts/wf-exec.sh wf-commit.sh "debug(PLN-NNN-<slug>): <feature-name> — <verified|issue found>" \
+  --add plans/PLN-NNN-<slug>/
 ```
 
 ## Workflow integration

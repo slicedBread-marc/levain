@@ -582,7 +582,9 @@ assert_contains "bug status → Triaged" "Triaged" "$bug_status"
 bug_plan=$(grep "Plan:" bugs/triaged/BUG-002-test-crash/bug.md | head -1)
 assert_contains "bug linked to plan" "PLN-004-bug-002-test-crash" "$bug_plan"
 
-git add -A && git commit -q -m "spec: consume BUG-002"
+# wf-bug-consume.sh commits the rename itself now (WFI-112), so there is
+# normally nothing left here — the caller's commit is a no-op, not a failure.
+git add -A; git diff --cached --quiet || git commit -q -m "spec: consume BUG-002"
 
 # Close bug (by wf-test on pass)
 "$SCRIPT_DIR/wf-bug-close.sh" BUG-002 PLN-004-bug-002-test-crash

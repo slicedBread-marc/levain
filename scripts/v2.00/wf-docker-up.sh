@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# wf-docker-up.sh [plan-folder-name]
+# wf-docker-up.sh [plan-folder-name] [--tunnel]
 # Starts a Docker container for a feature branch plan.
 # If no plan folder given, derives from current branch name.
 # Sets up port, project name, builds, waits for health, and provisions the
 # test account the acceptance criteria will need.
 #
-# Output: FEATURE_PORT, COMPOSE_PROJECT_NAME, TEST_ACCOUNT (eval-friendly)
+#   --tunnel   also publish the container at a public HTTPS URL, for criteria
+#              that need a real device. See "Device testing" below.
+#
+# Output: FEATURE_PORT, COMPOSE_PROJECT_NAME, TEST_ACCOUNT, PUBLIC_URL
+#         (eval-friendly)
 # Exit 0 on healthy, 1 on timeout.
 
 set -euo pipefail
@@ -15,7 +19,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=wf-orch-lib.sh
 source "$SCRIPT_DIR/wf-orch-lib.sh"
 
-plan_folder="${1:-}"
+plan_folder=""
+want_tunnel=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tunnel) want_tunnel=true; shift ;;
+    -*) echo "Unknown option: $1" >&2; exit 1 ;;
+    *)  plan_folder="$1"; shift ;;
+  esac
+done
+
 if [ -z "$plan_folder" ]; then
   branch=$(git branch --show-current)
   plan_folder=$(echo "$branch" | sed 's|feature/||')
@@ -74,4 +87,65 @@ if [ -n "$account_note" ]; then
   echo "wf-docker-up: test account — $account_note" >&2
 elif [ -n "$account_cmd" ]; then
   echo "wf-docker-up: test account provisioned (set test_account_note in claude-workflow.yml to print the credentials here)" >&2
+fi
+
+# ── Device testing ────────────────────────────────────────────────────────
+#
+# The container publishes plain HTTP on a local port, which is right for
+# everything a browser on this machine can test and wrong for everything a
+# phone can.
+#
+# The reason is not reachability — a LAN IP is reachable. It is that a session
+# cookie set with `Secure` is stored on `http://localhost`, which browsers
+# treat as a trustworthy origin, and silently DROPPED on `http://<lan-ip>`,
+# which they do not. So the phone POSTs the login, gets HTTP 200, discards the
+# cookie, reloads unauthenticated, and shows no error anywhere. client-a's
+# PLN-006 criterion 9 (one-handed phone usability) was untestable for exactly
+# this reason and was only completed by hand-rolling a cloudflared tunnel
+# outside the harness (WFI-113). Every `#### Manual` criterion that needs a
+# real device sits behind this.
+#
+# --tunnel puts an HTTPS origin in front of the same container, so `Secure`
+# cookies are stored and the criterion is reachable. It is opt-in: it publishes
+# a development build to a public URL, which is a deliberate act.
+#
+#   tunnel_command: from claude-workflow.yml. Runs with FEATURE_PORT exported
+#                   and must print a URL on stdout or stderr. Defaults to a
+#                   cloudflared quick tunnel, which needs no account.
+if $want_tunnel; then
+  tunnel_cmd=$(wf_cfg tunnel_command "cloudflared tunnel --url http://localhost:\$FEATURE_PORT")
+  tunnel_bin=$(printf '%s' "$tunnel_cmd" | awk '{print $1}')
+
+  if ! command -v "$tunnel_bin" >/dev/null 2>&1; then
+    echo "wf-docker-up: --tunnel needs '$tunnel_bin', which is not installed." >&2
+    echo "      Install it (macOS: brew install cloudflared), or set tunnel_command in claude-workflow.yml." >&2
+    echo "      Without it, device criteria cannot be tested: a Secure cookie is dropped on http://<lan-ip>," >&2
+    echo "      so the phone signs in, gets a 200, and reloads logged out with no error shown (WFI-113)." >&2
+    wf_emit PUBLIC_URL ""
+  else
+    tunnel_log="${TMPDIR:-/tmp}/wf-tunnel-$COMPOSE_PROJECT_NAME.log"
+    tunnel_pidfile="${TMPDIR:-/tmp}/wf-tunnel-$COMPOSE_PROJECT_NAME.pid"
+    : > "$tunnel_log"
+    export FEATURE_PORT
+    nohup bash -c "$tunnel_cmd" >>"$tunnel_log" 2>&1 &
+    echo $! > "$tunnel_pidfile"
+
+    # Quick tunnels print their hostname a second or two after start.
+    public_url=""
+    for _ in $(seq 1 30); do
+      public_url=$(grep -oE 'https://[a-zA-Z0-9.-]+\.[a-z]+' "$tunnel_log" 2>/dev/null \
+                     | grep -v 'cloudflare.com\|argotunnel.com' | head -1 || true)
+      [ -n "$public_url" ] && break
+      sleep 1
+    done
+
+    if [ -n "$public_url" ]; then
+      echo "wf-docker-up: device URL — $public_url (HTTPS, so Secure cookies work; tunnel log: $tunnel_log)" >&2
+    else
+      echo "wf-docker-up: tunnel started but printed no URL within 30s — see $tunnel_log" >&2
+    fi
+    wf_emit PUBLIC_URL "$public_url"
+  fi
+else
+  wf_emit PUBLIC_URL ""
 fi

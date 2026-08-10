@@ -150,11 +150,13 @@ How to confirm the rollback succeeded.
 - [ ] Build passes and tests are green
 
 ## Consistency
-> Filled by the cross-plan consistency pass (`wf-consistency`) when this plan
-> declares Deps. Its presence is the done-marker — do not write it by hand.
+> Not yet checked. Filled by the cross-plan consistency pass (`wf-consistency`)
+> when this plan declares Deps — do not write it by hand. The pass appends a
+> line of the shape below; the ISO date in it is the done-marker
+> `wf-list-consistency.sh` reads, so nothing here may carry one.
 >
-> **Checked:** YYYY-MM-DD — closure: PLN-NNN, PLN-MMM
-> **Result:** clean | amended PLN-NNN (<what and why>) | escalated (<migration>)
+> `> **Checked:** <ISO date> — closure: <plan ids> — docs: <paths>`
+> `> **Result:** clean | amended PLN-NNN (<what and why>) | escalated (<migration>)`
 
 ## Review
 > Filled by the planner's review gate before status is set to Ready.

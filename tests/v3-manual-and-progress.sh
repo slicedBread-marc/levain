@@ -197,6 +197,17 @@ assert_contains "step 1 is still open" "- \[ \] Step 1" "$(cat plans/PLN-020-leg
 assert_eq "--blocked logs without ticking" "2/3" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
 assert_contains "the blocked reason is logged" "Step 1 — blocked" "$(cat plans/PLN-020-legacy/progress.md)"
 
+# An amendment grows plan.md's Steps and leaves progress.md's checklist behind.
+# The tick appends the missing row rather than reporting a frozen total (WFI-111).
+"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 11 "amendment step" >/dev/null 2>&1
+assert_eq "an amendment step joins the checklist" "3/4" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+assert_contains "and is ticked where it landed" "- \[x\] Step 11: amendment step" \
+  "$(cat plans/PLN-020-legacy/progress.md)"
+"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 11 "amendment step" >/dev/null 2>&1
+assert_eq "re-ticking it appends nothing" "3/4" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+assert_eq "the appended row stays inside ## Steps" "1" \
+  "$(awk '/^## Steps/{s=1;next} /^## /{s=0} s && /Step 11/' plans/PLN-020-legacy/progress.md | wc -l | tr -d ' ')"
+
 # ── P-002 manual criterion lint ────────────────────────────────────────
 section "wf-manual-lint (P-002)"
 
@@ -284,6 +295,18 @@ assert_eq "skips an already-checked plan" "0" "$(printf '%s\n' "$cand" | grep -c
 assert_eq "skips plans that are not ready" "0" "$(printf '%s\n' "$cand" | grep -c '^PLN-004')"
 assert_exit "filters to one plan when asked" 0 "$SCRIPT_DIR/wf-list-consistency.sh" PLN-011
 assert_exit "exits 1 when the filtered plan is done" 1 "$SCRIPT_DIR/wf-list-consistency.sh" PLN-013
+
+# The plan template ships the Consistency section pre-filled. For as long as
+# any `> **Checked:**` line was the done-marker, every plan was born already
+# checked and this list was permanently empty — PLN-010 declared five deps and
+# reached verify without a pass ever being dispatched (WFI-108).
+cat >> plans/PLN-011-dep/plan.md << 'P'
+
+## Consistency
+> **Checked:** YYYY-MM-DD — closure: PLN-NNN, PLN-MMM
+> **Result:** clean | amended PLN-NNN
+P
+assert_exit "the template placeholder is not a pass" 0 "$SCRIPT_DIR/wf-list-consistency.sh" PLN-011
 
 # ── config reads ───────────────────────────────────────────────────────
 section "wf-config-get"

@@ -33,11 +33,19 @@ You receive a plan ID. From it:
 
 ```bash
 eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"     # PLAN_SLUG, PLAN_STATE, PLAN_DIR, PLAN_NAME
-scripts/wf-exec.sh wf-claim.sh $PLAN_NAME
+scripts/wf-exec.sh wf-claim.sh PLN-NNN
 scripts/wf-exec.sh wf-check-deps.sh PLN-NNN              # the declared Deps and their states
 scripts/wf-exec.sh wf-list-closure.sh PLN-NNN            # the TRANSITIVE closure — id, slug, state
 scripts/wf-exec.sh wf-list-cited-docs.sh PLN-NNN         # the reference docs those plans cite
 ```
+
+**A shell variable does not survive to your next Bash call.** Each call is a
+fresh shell: `eval "$(wf-plan-info.sh …)"` in one call and `wf-claim.sh
+$PLAN_NAME` in the next means claiming the empty string, which is why this ran
+as `wf-claim.sh` with no argument and printed a usage error that read like a
+rejected plan name (WFI-107). Either keep the `eval` and every use of its
+variables **inside one Bash call**, or substitute the literal — `wf-claim.sh`
+keys on the number, so the bare `PLN-NNN` above is always enough.
 
 Read `$PLAN_DIR/plan.md`, then `plan.md` for **every plan `wf-list-closure.sh` names** — the plans in `Deps`, the plans in *their* `Deps`, transitively. Read them all before concluding anything; a contradiction is by definition not visible in one file.
 

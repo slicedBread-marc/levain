@@ -67,10 +67,13 @@ Before starting, confirm E2E passed on release:
    ```bash
    scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
    ```
-10. **Commit plan and bug updates**:
+10. **Commit plan and bug updates** — name the plans and bugs this deploy actually
+    carried, not `plans/PLN-*/` and `bugs/closed/`. Those wildcards span every
+    concurrent worker's tree; `wf-commit.sh` commits the pathspec and nothing
+    else staged (WFI-109, WFI-110):
     ```bash
-    git add plans/PLN-*/plan.md bugs/closed/
-    git commit -m "release: complete [plan-names], close bugs"
+    scripts/wf-exec.sh wf-commit.sh "release: complete <plan-names>, close bugs" \
+      --add plans/PLN-NNN-<slug>/plan.md bugs/closed/BUG-NNN-<slug>/
     ```
 11. **Back-merge `main` → `develop`** (auto-resolve in favor of main):
     ```bash

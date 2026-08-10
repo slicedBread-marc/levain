@@ -53,7 +53,14 @@ You receive a plan ID (e.g. `PLN-003`) as context. From this:
    ```
    The failure is worth recognising on sight (WFI-071): it looks like a corrupt repository and is nothing of the kind.
 1. **Look up the plan** — `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"` → sets PLAN_SLUG, PLAN_STATE, PLAN_BRANCH, PLAN_DIR, PLAN_NAME
-2. **Claim the plan** — `scripts/wf-exec.sh wf-claim.sh $PLAN_NAME`
+2. **Claim the plan** — `scripts/wf-exec.sh wf-claim.sh PLN-NNN`
+
+> **`$PLAN_*` are placeholders, not live shell variables.** Every Bash call is a
+> fresh shell, so nothing the `eval` set survives to the next one. Read the
+> values out of the eval's output and substitute them literally into the
+> commands below, or repeat the `eval` in the same call that uses them. Passing
+> an unset `$PLAN_NAME` to `wf-claim.sh` claims the empty string and prints a
+> usage error that reads like a rejected plan name (WFI-107).
 3. **Read the plan** — `$PLAN_DIR/plan.md` on develop
 4. **Read the code** — in the feature worktree at `feature-branches/$PLAN_NAME/`
 
@@ -72,18 +79,42 @@ If `$TEST_ARGS` is empty → run the **full suite** (backward-compat fallback). 
 
 `testScopes` / `testMappings` / `testScopeMandatory` define the categories and auto-detect mappings. The aggregation guarantee is preserved: `wf-release` always runs the full suite with no filter.
 
-Spawn **haiku agents in parallel** for data gathering, then synthesize. Wait for every agent to return before you write findings — an agent whose result you never read is a check that did not run, and rule 5 above is what happens when the test agent is the one you leave behind:
+Spawn **haiku agents in parallel** for data gathering, then synthesize. Wait for every agent to return before you write findings — an agent whose result you never read is a check that did not run, and rule 5 above is what happens when the test agent is the one you leave behind.
+
+**Confirm every reported test failure against the log before it becomes a finding.**
+An agent's summary is a claim about output, not the output. client-a's PLN-026
+verify agent reported two `DecryptionTests` methods as failed and quoted expected
+strings that appear nowhere in that file; two independent reruns showed all three
+of its tests passing, and the run's three real failures were in entirely different
+classes. Nothing in the summary marked it as invented (WFI-104). Acted on, it would
+have bounced a clean plan back to `active` to fix a regression that never existed.
+
+So for each failure the agent names:
+
+```bash
+grep -n "<test name>" /tmp/wf-tests-PLN-NNN.log
+```
+
+A failure that is not in the log did not happen — drop it, and say in the verify
+log that the agent reported it and the log did not corroborate it. If the log is
+missing or empty, the test check did not run: rerun the command yourself in the
+foreground and read it. **A finding you have not seen in tool output of your own
+is not a finding.**
 
 ```
 # Launch all in parallel:
 Agent(model: haiku, prompt: "Run `{{build_command}}` in feature-branches/PLN-NNN-<slug>/. 
   Report: success/failure, any errors or warnings. Response under 1000 chars.")
 
-Agent(model: haiku, prompt: "Run the test command in feature-branches/PLN-NNN-<slug>/.
+Agent(model: haiku, prompt: "Run the test command in feature-branches/PLN-NNN-<slug>/,
+  tee'd to a log: append ` 2>&1 | tee /tmp/wf-tests-PLN-NNN.log` to whichever command you run.
   If TEST_ARGS is non-empty: `eval \"{{test_command}} $TEST_ARGS\"`
   Otherwise (full-suite fallback): `{{test_command}} {{test_exclude_e2e}}`
   Report: total tests, passed, failed, skipped. Quote the 'scope: ...' line from /tmp/wf-scope.log.
-  List failures. Response under 1500 chars.")
+  For each failure, quote the runner's own failure line VERBATIM — copy it from the
+  output, do not paraphrase it, do not reconstruct the test name or the expected
+  value from memory. If you cannot quote a line, do not report the failure.
+  End with the log path. Response under 1500 chars.")
 
 Agent(model: haiku, prompt: "Read [file] in feature-branches/PLN-NNN-<slug>/. 
   Check: project conventions, TODO/HACK markers, hardcoded values. Response under 1000 chars.")

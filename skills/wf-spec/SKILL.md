@@ -360,7 +360,7 @@ Final response under 2000 characters.")
    | Consumed | Add |
    |-|-|
    | a brief | `plans/briefs/INDEX.md plans/briefs/BRF-NNN-<slug>.md` |
-   | a bug | `bugs/open/BUG-NNN-<slug>/ bugs/triaged/BUG-NNN-<slug>/` (both sides — the consume is a rename, and a rename is two paths) |
+   | a bug | `bugs/open/BUG-NNN-<slug>/ bugs/triaged/BUG-NNN-<slug>/` (both sides — the consume is a rename, and a rename is two paths). Usually already committed by `wf-bug-consume.sh` itself, in which case these add nothing and cost nothing; name them anyway, for the `--no-commit` case |
    | neither | nothing extra |
    The row and the plan it describes land together. Transitioning first and committing the plan afterwards leaves a window where the registry advertises a `ready` plan whose approved content is not in history yet.
 
@@ -600,7 +600,14 @@ When the plan being created is a fix for a tracked bug:
    ```bash
    scripts/wf-exec.sh wf-bug-consume.sh BUG-NNN PLN-NNN-<slug>
    ```
-   This updates bug.md (Status→Triaged, Plan→linked) and moves open→triaged.
+   This updates bug.md (Status→Triaged, Plan→linked), moves open→triaged, **and
+   commits the move**. It commits rather than staging on purpose: this call runs
+   at plan-creation time and your exit commit is on the far side of the whole
+   review loop, so a staged rename would sit on the shared develop index for
+   every round of it. Twice on client-a it was carried off before wf-spec
+   could commit it — once by an unrelated plan's test commit, once by a merge,
+   which sweeps the entire index and which no pathspec discipline here can
+   defend against (WFI-112, WFI-106).
 2. **Link back in `plan.md`** — add to the Goal section: `> **Bug:** BUG-NNN — <title>`
 
 ## Rules

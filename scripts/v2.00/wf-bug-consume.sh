@@ -1,18 +1,44 @@
 #!/usr/bin/env bash
-# wf-bug-consume.sh <bug-id> <plan-id>
+# wf-bug-consume.sh <bug-id> <plan-id> [--no-commit]
 # Moves a bug from open → triaged and links it to a plan.
 # Updates bug.md Status to Triaged and sets Plan field.
+#
+# The rename is COMMITTED here, not left staged for the caller.
+#
+# It used to be left staged, for wf-spec's exit commit to name alongside the
+# plan. That put a staged rename on the shared develop index for the whole
+# review loop — three rounds and ~20 minutes on client-a's BUG-031 — and a
+# staged path on a shared index belongs to whoever commits next. Twice in one
+# hour it was somebody else: once an unrelated plan's test commit (WFI-112),
+# once a feature-branch merge, which sweeps the entire index by construction
+# and no pathspec discipline in the writing worker can prevent (WFI-106). Both
+# times the content was right and the audit trail said a different plan did it.
+# By the time wf-spec's own commit ran there was nothing left to stage.
+#
+# A commit is not stealable. --no-commit restores the old behaviour for a
+# caller that really does want to bundle it.
 #
 # Example: wf-bug-consume.sh BUG-003 PLN-005-login-crash
 # Exit 0 on success, 1 on error.
 
 set -euo pipefail
 
-bug_id="${1:-}"
-plan_id="${2:-}"
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+bug_id=""
+plan_id=""
+do_commit=true
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-commit) do_commit=false; shift ;;
+    -*) echo "Unknown option: $1" >&2; exit 1 ;;
+    *)  if [ -z "$bug_id" ]; then bug_id="$1"; else plan_id="$1"; fi; shift ;;
+  esac
+done
 
 if [ -z "$bug_id" ] || [ -z "$plan_id" ]; then
-  echo "Usage: $0 <bug-id> <plan-id>" >&2
+  echo "Usage: $0 <bug-id> <plan-id> [--no-commit]" >&2
   exit 1
 fi
 
@@ -87,3 +113,15 @@ if ! git mv "$bug_dir" "bugs/triaged/$bug_slug" 2>/dev/null; then
 fi
 
 echo "$bug_id → triaged (linked to $plan_id)"
+
+# Land it now. Both sides of the rename are named, because `git diff --cached
+# --name-only --no-renames` is how wf-commit.sh builds its pathspec and a
+# rename is two paths — naming only the destination leaves the deletion staged,
+# which is how a bug once appeared in bugs/open/ AND bugs/triaged/ at the same
+# HEAD (WFI-066).
+if $do_commit; then
+  if ! "$SELF_DIR/wf-commit.sh" "bug($bug_id): triaged — consumed by $plan_id" \
+        --add "bugs/open/$bug_slug" "bugs/triaged/$bug_slug"; then
+    echo "wf-bug-consume: the move is staged but could not be committed — commit it before another worker does" >&2
+  fi
+fi

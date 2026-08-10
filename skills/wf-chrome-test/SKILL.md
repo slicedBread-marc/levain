@@ -42,10 +42,15 @@ Then tell the user: "Run `/model sonnet`, then pick a number."
 
 After user picks:
 1. `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"` to get plan details
-2. If `$PLAN_GOAL_MISSING` is `true`, ask the user: "This plan has no goal summary. Please provide a one-line goal." Then write their answer as the first line under `## Goal` in `$PLAN_DIR/plan.md`, stage and commit: `git add $PLAN_DIR/plan.md && git commit -m "spec($PLAN_NAME): add missing goal"`. Re-run the eval to pick up the goal.
-3. `scripts/wf-exec.sh wf-claim.sh $PLAN_NAME`
-4. `cd feature-branches/$PLAN_NAME/`
+2. If `$PLAN_GOAL_MISSING` is `true`, ask the user: "This plan has no goal summary. Please provide a one-line goal." Then write their answer as the first line under `## Goal` in `$PLAN_DIR/plan.md`, commit it scoped: `scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): add missing goal" --add plans/PLN-NNN-<slug>/plan.md` — a bare `git commit` takes the whole shared index (WFI-048/049). Re-run the eval to pick up the goal.
+3. `scripts/wf-exec.sh wf-claim.sh PLN-NNN`
+4. `cd feature-branches/<plan-name>/` — note the **absolute** path; anchor every later Bash call with it (WFI-105)
 5. Continue to testing
+
+> **`$PLAN_*` are placeholders, not live shell variables.** Every Bash call is a
+> fresh shell, so nothing the `eval` set survives to the next one. Substitute
+> the literal values, or repeat the `eval` in the same call that uses them
+> (WFI-107).
 
 **If on a feature branch:**
 1. `eval "$(scripts/wf-exec.sh wf-plan-ref.sh)"` to get PLAN_ID, PLAN_DIR, PLAN_NAME

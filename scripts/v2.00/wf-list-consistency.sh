@@ -17,8 +17,17 @@
 # migration.
 #
 # The done-marker is a `## Consistency` section in plan.md carrying a
-# `> **Checked:**` line — committed with the plan, so it survives a restart and
-# never re-runs on work that has not changed.
+# `> **Checked:** <ISO date>` line — committed with the plan, so it survives a
+# restart and never re-runs on work that has not changed.
+#
+# The DATE is load-bearing, not decoration. The marker used to be any line
+# beginning `> **Checked:**`, and the plan template ships that section
+# pre-filled with the placeholder `> **Checked:** YYYY-MM-DD`. So every plan
+# created from the template was born already-checked and this script never
+# returned a single candidate: client-a's PLN-010 declared five Deps and
+# went draft → ready → active → verify without a consistency pass ever being
+# dispatched, and no commit mentioning one exists anywhere in its history
+# (WFI-108). A placeholder cannot satisfy the marker any more.
 
 set -euo pipefail
 
@@ -53,8 +62,9 @@ while IFS='|' read -r _ id slug state _priority _branch _updated _wf _tags deps 
   plan_file="plans/${id}-${slug}/plan.md"
   [ -f "$plan_file" ] || continue
 
-  # Already checked at its current revision.
-  grep -q '^> \*\*Checked:\*\*' "$plan_file" 2>/dev/null && continue
+  # Already checked at its current revision. A real ISO date only — the
+  # template's `YYYY-MM-DD` placeholder is not a pass that ran.
+  grep -qE '^> \*\*Checked:\*\* *[0-9]{4}-[0-9]{2}-[0-9]{2}' "$plan_file" 2>/dev/null && continue
 
   goal=$(grep -A 1 "^## Goal" "$plan_file" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//' || true)
   printf "%s\t%s\t%s\n" "${id}-${slug}" "$deps" "$goal"

@@ -20,6 +20,25 @@ Rules, in force for the whole session:
    scripts/wf-exec.sh wf-gate-open.sh <PLN-ID> <gate-name> "<question>" --skill wf-implement
    ```
 4. **Never guess.** Anything not in the table is a [GATE] with gate name `needs-input`.
+5. **Never leave work running when you stop.** Run every build, test suite and
+   long job in the **foreground** with a generous timeout, and read its output
+   before you say anything about it. No `&`, no `run_in_background: true`, no
+   backgrounded subagent, no "I'll wait for the completion notification."
+
+   **There is no notification.** An unattended session is a headless `claude -p`
+   run: it ends the moment you stop producing output, and everything you
+   backgrounded is killed unread. client-a's PLN-030 was dispatched three
+   times and produced three byte-identical two-line logs, each announcing that
+   the suite was running in the background and that the worker would wait. Each
+   session then ended. Three launches, zero forward progress, attempt budget
+   spent, plan parked `stuck` — for a step whose only problem was that it takes
+   longer than one turn (WFI-114).
+
+   A step that genuinely cannot finish inside one foreground call — three
+   sequential full-suite runs, a soak — is **not** a thing to background. Run
+   what fits, `wf-progress-tick.sh` what completed, and record the remainder in
+   `progress.md` so the next dispatch resumes instead of restarting. Recorded
+   partial progress is what makes the attempt budget mean something.
 
 | Where | Prompt | Mode | Unattended behavior |
 |-|-|-|-|
@@ -90,7 +109,7 @@ You are in **implementer mode**. Your job is to execute an implementation plan c
 
 Do NOT use agents for writing code — implementation is inherently sequential and context-dependent. Agents are used for:
 
-- **Build and test verification (step 16):** Launch haiku agents in background to run build, unit tests, and E2E tests while you do code/architecture review in parallel.
+- **Build and test verification (step 18):** *Attended only* — launch haiku agents in the background to run build, unit tests, and E2E tests while you do code/architecture review in parallel. Under `WF_UNATTENDED=1` run them in the foreground yourself; see rule 5 above.
 - **Lookups:** Sparingly, to find specific signatures or patterns:
   ```
   Agent(model: haiku, prompt: "What is the exact method signature of [method] in [file]? Response under 500 chars.")
@@ -171,7 +190,7 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
 
    A gate can open after you were dispatched: `wf-consistency` runs against `ready` plans and opens one the moment it finds a cross-plan contradiction. client-a's WFI-063 had an implementer land on a plan carrying an unanswered `consistency-migration` gate, with the worklist showing it as ordinary `new` work; it implemented three steps before discovering the gate by reading `.claude/orchestrator/gates/` by hand. The worklist names this now (`gated` rows in `wf-list-implementable.sh`), and this check is the second line of defence for a gate that opened between the dispatch and you.
 2. **Read the plan** — `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"` then read `$PLAN_DIR/plan.md`
-3. **Goal check** — if `$PLAN_GOAL_MISSING` is `true`: under `WF_UNATTENDED=1` this is a **[GATE]** — open gate `goal-missing` and exit 0. Otherwise ask the user: "This plan has no goal summary. Please provide a one-line goal describing what this achieves." Write their answer as the first line under `## Goal` in `$PLAN_DIR/plan.md`, stage the file, and commit: `git add $PLAN_DIR/plan.md && git commit -m "spec($PLAN_NAME): add missing goal"`. Re-run `eval "$(scripts/wf-exec.sh wf-plan-info.sh $PLAN_NAME)"` to pick up the goal.
+3. **Goal check** — if `$PLAN_GOAL_MISSING` is `true`: under `WF_UNATTENDED=1` this is a **[GATE]** — open gate `goal-missing` and exit 0. Otherwise ask the user: "This plan has no goal summary. Please provide a one-line goal describing what this achieves." Write their answer as the first line under `## Goal` in `$PLAN_DIR/plan.md`, then commit it scoped: `$DEVELOP_ROOT/scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): add missing goal" --add plans/PLN-NNN-<slug>/plan.md` — a bare `git commit` takes the whole shared index (WFI-048/049). Re-run `eval "$(scripts/wf-exec.sh wf-plan-info.sh $PLAN_NAME)"` to pick up the goal.
 4. **Update REGISTRY.md** — lock the plan:
    ```bash
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN ready active feature/PLN-NNN-<slug>
@@ -202,6 +221,25 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
 ## Phase 2: Implementation (in the worktree)
 
 **CWD RULE: After step 9 runs `cd` into the worktree, you are INSIDE the worktree for the rest of Phase 2. The path `feature-branches/...` does not exist from inside the worktree. Never `cd feature-branches/...` again. Use `$DEVELOP_ROOT` (resolved via `git worktree list`) for any path back to develop.**
+
+**And do not trust that you are still there.** The working directory has been
+observed resetting from the worktree back to the main worktree between two
+consecutive Bash calls with no `cd` in between — twice in one session. One
+occurrence built develop's copy of the solution instead of the branch's and
+reported *"Build succeeded"* for code that was not in that tree at all
+(WFI-105). A false green from the wrong worktree is the most expensive thing
+this role can produce, because everything downstream believes it.
+
+So **anchor every build, test, or run command** with an absolute prefix in the
+same call:
+
+```bash
+cd /abs/path/to/feature-branches/PLN-NNN-<slug> && git branch --show-current && <build or test command>
+```
+
+`git branch --show-current` in the same call is the receipt: if it does not name
+`feature/PLN-NNN-<slug>`, the output that follows describes someone else's tree
+and must be discarded, not reported.
 
 8. **Claim the plan — on its own, before anything with a `cd` in it:**
    ```bash
@@ -248,7 +286,16 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
     $DEVELOP_ROOT/scripts/wf-exec.sh wf-config-get.sh local_deploy_command
     ```
     Empty means this project has no local container — skip the step and say so in `progress.md`. Non-empty means the container is expected; a failure there is a failure to report, not a step to drop.
-18. **Launch build and test agents in background:**
+18. **Run build and tests.**
+
+    **Under `WF_UNATTENDED=1`, run both commands yourself, in the foreground,
+    and read the output** — see rule 5 in [Unattended mode](#unattended-mode).
+    Backgrounding here is what ended three PLN-030 dispatches with nothing done
+    (WFI-114). Steps 19–20 are then done after the output is in hand rather
+    than alongside it; that costs wall-clock and nothing else.
+
+    Attended only — a human is present to receive the completion notification,
+    so the reviews in steps 19–20 can run in parallel:
     ```
     Agent(model: haiku, run_in_background: true, prompt:
       "Run `{{build_command}}` in the current directory.

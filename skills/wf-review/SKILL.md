@@ -100,20 +100,24 @@ Append directly to `findings.md`:
 ## Determining Outcome (Plan Review)
 
 - **Any Critical finding** → Result is `Blocked`, state stays `draft`; commit findings:
-  ```
-  git add plans/
-  git commit -m "review: <feature-name> — blocked"
+  ```bash
+  scripts/wf-exec.sh wf-commit.sh "review(PLN-NNN-<slug>): blocked" --add plans/PLN-NNN-<slug>/
   ```
 - **Warnings only** → Result is `Approved with notes`, present to user for acknowledgement; commit findings:
-  ```
-  git add plans/
-  git commit -m "review: <feature-name> — approved with notes"
+  ```bash
+  scripts/wf-exec.sh wf-commit.sh "review(PLN-NNN-<slug>): approved with notes" --add plans/PLN-NNN-<slug>/
   ```
 - **Notes only or clean** → Result is `Approved`, state advances to `ready`; commit:
+  ```bash
+  scripts/wf-exec.sh wf-commit.sh "review(PLN-NNN-<slug>): approved" --add plans/PLN-NNN-<slug>/
   ```
-  git add plans/
-  git commit -m "review: <feature-name> — approved"
-  ```
+
+**Always the one plan folder, never `plans/`.** That pathspec is as wide as
+`git commit -a` over the whole plans tree, and on develop the tree holds every
+concurrent worker's in-flight files — a `plans/`-wide commit has twice carried
+off a live worker's uncommitted plan under an unrelated message (WFI-109,
+WFI-110). `wf-commit.sh` builds the commit from the pathspec, so it also cannot
+pick up whatever a neighbour left staged (WFI-048, WFI-049).
 
 ## Rules
 
@@ -133,7 +137,7 @@ scripts/wf-exec.sh wf-list-verify.sh  # plans in verify state
 ## Committing work
 
 After writing findings, commit:
-```
-git add plans/
-git commit -m "review: <feature-name> — <Approved|Approved with notes|Blocked>"
+```bash
+scripts/wf-exec.sh wf-commit.sh "review(PLN-NNN-<slug>): <Approved|Approved with notes|Blocked>" \
+  --add plans/PLN-NNN-<slug>/
 ```

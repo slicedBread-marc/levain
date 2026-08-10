@@ -27,7 +27,13 @@ Order of work:
 
    Exit 0 is the normal case and includes `already held on your behalf by the dispatcher` — the orchestrator claims a plan before launching you, and that claim names *your* PID. Standing down there is standing down against yourself: it ended ~15s runs reporting a human who did not exist, and parked every plan that reached testing after three no-op dispatches (WFI-073, WFI-075). Only exit 2 means someone else.
 1. If your instructions name a plan, skip the selection menu and work that plan.
-2. Run the automated suites and e2e scope as normal.
+2. Run the automated suites and e2e scope as normal — **in the foreground, with
+   a generous timeout, reading the output yourself.** No `&`, no
+   `run_in_background: true`, no backgrounded subagent. A headless run ends the
+   moment you stop producing output, so anything still running is killed unread
+   and the turn is recorded as a worker that accomplished nothing (WFI-114).
+   Where this skill spawns a background test agent below, that is the attended
+   path only.
 3. Work every `#### Chrome-Assisted` criterion — these are scripted navigations and assertions, so run them and record PASS/FAIL yourself. **Every one of them ends at PASS, FAIL or a recorded reason it could not run** — leaving them at `—` and then gating for "one Manual criterion" misreports what is actually left, and the gate question is the only thing a human reads (WFI-070).
 4. For every criterion where the mode menu applies, take `[a]` (auto-test) whenever the criterion matches a recurring auto-testable shape. On auto-test FAIL, record it as a Candidate as normal — do **not** fall through to the manual flow.
 5. Dispose of the criteria that never need a human, whatever remains untested:
@@ -110,9 +116,9 @@ Tell the user: "Run `/model sonnet`, then pick a number."
 
 After user picks:
 1. `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"` to get plan details
-2. If `$PLAN_GOAL_MISSING` is `true`: under `WF_UNATTENDED=1` this is a **[GATE]** — open gate `goal-missing` and exit 0. Otherwise ask the user: "This plan has no goal summary. Please provide a one-line goal." Then write their answer as the first line under `## Goal` in `$PLAN_DIR/plan.md`, stage and commit: `git add $PLAN_DIR/plan.md && git commit -m "spec($PLAN_NAME): add missing goal"`. Re-run the eval to pick up the goal.
-3. `scripts/wf-exec.sh wf-claim.sh $PLAN_NAME`
-4. `cd feature-branches/$PLAN_NAME/`
+2. If `$PLAN_GOAL_MISSING` is `true`: under `WF_UNATTENDED=1` this is a **[GATE]** — open gate `goal-missing` and exit 0. Otherwise ask the user: "This plan has no goal summary. Please provide a one-line goal." Then write their answer as the first line under `## Goal` in `$PLAN_DIR/plan.md`, commit it scoped: `scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): add missing goal" --add plans/PLN-NNN-<slug>/plan.md` — a bare `git commit` takes the whole shared index (WFI-048/049). Re-run the eval to pick up the goal.
+3. `scripts/wf-exec.sh wf-claim.sh PLN-NNN`
+4. `cd feature-branches/<plan-name>/` — note the **absolute** path it prints; you need it on every later call
 5. Continue to testing
 
 **If on a feature branch:**
@@ -120,11 +126,29 @@ After user picks:
 2. Read the plan from `$PLAN_DIR/plan.md`
 3. Continue to testing
 
+> **`$PLAN_*` are placeholders, not live shell variables.** Every Bash call is a
+> fresh shell, so nothing the `eval` set survives to the next one. Read the
+> values out of the eval's output and substitute them literally, or repeat the
+> `eval` in the same call that uses them. An unset `$PLAN_NAME` passed to
+> `wf-claim.sh` claims the empty string and prints a usage error that reads like
+> a rejected plan name (WFI-107).
+
 ---
 
 ## Testing
 
-**CWD note:** All commands in this section run from within `feature-branches/$PLAN_NAME/` — the working directory was changed in Entry step 4. Do NOT prepend `cd feature-branches/$PLAN_NAME &&` to any command here.
+**CWD note:** Every command in this section must run from inside the feature
+worktree — but **do not assume you are still there.** The working directory has
+been observed resetting to the main worktree between two consecutive Bash calls
+with no `cd` issued in between, twice in one session; one occurrence built
+develop's copy of the solution instead of the branch's and reported "Build
+succeeded" for code that was not there (WFI-105). A false pass is the worst
+possible failure of this role.
+
+So **anchor every call**: begin each Bash command with an absolute
+`cd /abs/path/to/feature-branches/<plan-name> &&`. It is one clause, it is
+idempotent, and it is the only thing standing between a re-anchored session and
+a green build of the wrong tree.
 
 **Assert it before anything observes the code — every time you re-enter, and after every compaction:**
 ```bash
@@ -160,6 +184,23 @@ Exit 1 here means you are standing somewhere else — almost always the develop 
    **If `$TEST_ACCOUNT` is empty and any criterion needs a signed-in session, stop and say so before walking criteria.** Attended: ask the user how to get an account, and once they answer, tell them to record it as `test_account_command` / `test_account_note` in `claude-workflow.yml` so the next run does not repeat this. Unattended: **[GATE]** `needs-input` with the question "criteria N, M need a signed-in session and the container has no account — what provisions one?".
 
    Do not work around it silently and do not mark those criteria skipped, untested or passed. client-a's WFI-072 stalled a run at criterion 5 of 5 for exactly this, and the reporter's read of the earlier runs is the reason this paragraph exists: two prior plans shipped with every criterion behind the login unexecuted, and nothing in the record said so.
+
+   **If any criterion needs a real phone or tablet, bring the container up with `--tunnel`:**
+   ```bash
+   eval "$(../../scripts/wf-exec.sh wf-docker-up.sh --tunnel)"
+   ```
+   `$PUBLIC_URL` is then an HTTPS origin serving this same container, and it is
+   what you hand the human — **not** the LAN address. A LAN URL is reachable and
+   still unusable: a session cookie set `Secure` is stored on `http://localhost`
+   and silently dropped on `http://<lan-ip>`, so the phone signs in, receives
+   HTTP 200, discards the cookie and reloads signed out with no error shown.
+   client-a's PLN-006 criterion 9 was untestable for exactly this until
+   someone tunnelled it by hand (WFI-113).
+
+   Empty `$PUBLIC_URL` means no tunnel binary is installed — the script says
+   which and how to install it. That is a **[GATE]** (`needs-input`) unattended,
+   and a thing to tell the user attended. It is never grounds for marking a
+   device criterion passed, skipped or untested-without-reason.
 3b. **Check for injectable test parameters** — scan `appsettings.json` (and `appsettings.Development.json` if present) for numeric fields whose names suggest probability, rate, chance, or frequency. If any are found, note them and surface them before the criteria list:
    ```
    💡 Injectable parameters detected — modify these in appsettings.json to force or suppress behaviors:
@@ -174,7 +215,10 @@ Exit 1 here means you are standing somewhere else — almost always the develop 
    E2E_SCOPE=$(awk '/^## E2E Scope/{found=1;next} found && /^## /{exit} found && /[^[:space:]]/ && !/^_/{print}' ../../plans/$PLAN_NAME/plan.md | tr '\n' ' ' | xargs)
    ```
 
-   If `$E2E_SCOPE` is non-empty, run only those tests. Otherwise run the full suite:
+   If `$E2E_SCOPE` is non-empty, run only those tests. Otherwise run the full suite.
+
+   **Under `WF_UNATTENDED=1` run the command yourself, in the foreground** — the
+   background agent below is the attended path (WFI-114).
    ```
    Agent(model: haiku, run_in_background: true, prompt:
      "Run `{{test_command}} {{test_only_e2e}} $E2E_SCOPE` in the current directory.
@@ -728,18 +772,25 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    eval "$(scripts/wf-exec.sh wf-stash.sh pop merge)"
    # Auto-resolve infra conflicts from the restore (infra files always match develop)
    git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
-   # Commit plan/brief changes THIS run stashed. Guarded on WF_RESTORED: with an
-   # unconditional pop this committed whatever a previous session had left in
-   # the stack, which is how a superseded workflow deploy nearly got committed
-   # over a current one (WFI-036).
+   # Commit YOUR OWN plan folder, if the restore brought it back dirty.
+   # Guarded on WF_RESTORED: with an unconditional pop this committed whatever a
+   # previous session had left in the stack, which is how a superseded workflow
+   # deploy nearly got committed over a current one (WFI-036).
    if [ "${WF_RESTORED:-false}" = "true" ]; then
-     if ! git diff --quiet -- plans/ plans/briefs/ 2>/dev/null || git ls-files --others --exclude-standard -- plans/ plans/briefs/ | grep -q .; then
-       git add -u -- plans/ plans/briefs/
-       git add -- plans/ plans/briefs/
-       git commit -m "plans: commit pending changes (restored from stash)"
-     fi
+     scripts/wf-exec.sh wf-commit.sh "test(PLN-NNN-<slug>): pending plan changes restored after merge" \
+       --add plans/PLN-NNN-<slug>/
    fi
    ```
+
+   **Scoped to your plan's folder, never to `plans/`.** The stash took the whole
+   shared working tree, so what the pop restores includes every *other* live
+   worker's in-flight files; a `plans/`-wide add then commits them under this
+   plan's message. client-a saw it twice inside four minutes: one commit
+   carried a live wf-spec worker's 207-line PLN-030 amendment plus PLN-010 and
+   PLN-012 edits belonging to two more sessions, filed as "plans: commit pending
+   changes (restored from stash)" (WFI-109, WFI-110). Nothing was lost and
+   nothing was findable. Anything the pop restored that is not yours is restored
+   *for its owner* — leave it dirty; that is where they left it.
 4. Move the plan out of `testing` **first**, then drop the guards:
    ```bash
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete - \
@@ -801,13 +852,12 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    eval "$(scripts/wf-exec.sh wf-stash.sh pop checkout)"
    # Auto-resolve infra conflicts from the restore (infra files always match develop)
    git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
-   # Same guard as the all-pass path: only commit what this run restored.
+   # Same guard as the all-pass path, and the same scope: this plan's folder
+   # only. A `plans/`-wide add here commits other live workers' in-flight files
+   # under your message (WFI-109, WFI-110).
    if [ "${WF_RESTORED:-false}" = "true" ]; then
-     if ! git diff --quiet -- plans/ plans/briefs/ 2>/dev/null || git ls-files --others --exclude-standard -- plans/ plans/briefs/ | grep -q .; then
-       git add -u -- plans/ plans/briefs/
-       git add -- plans/ plans/briefs/
-       git commit -m "plans: commit pending changes (restored from stash)"
-     fi
+     scripts/wf-exec.sh wf-commit.sh "test(PLN-NNN-<slug>): pending plan changes restored after checkout" \
+       --add plans/PLN-NNN-<slug>/
    fi
    ```
 4. Determine the route, move the plan out of `testing` **first**, then drop the guards:

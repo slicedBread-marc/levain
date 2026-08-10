@@ -27,6 +27,19 @@ if [ -z "${COMPOSE_PROJECT_NAME:-}" ]; then
   exit 0
 fi
 
+# Kill the device tunnel first, if wf-docker-up.sh --tunnel started one. A
+# quick tunnel outliving its container is a public URL pointing at nothing, or
+# worse, at whatever binds that port next.
+tunnel_pidfile="${TMPDIR:-/tmp}/wf-tunnel-$COMPOSE_PROJECT_NAME.pid"
+if [ -f "$tunnel_pidfile" ]; then
+  tunnel_pid=$(tr -d '[:space:]' < "$tunnel_pidfile")
+  if [ -n "$tunnel_pid" ] && kill -0 "$tunnel_pid" 2>/dev/null; then
+    kill "$tunnel_pid" 2>/dev/null || true
+    echo "Device tunnel for $COMPOSE_PROJECT_NAME stopped"
+  fi
+  rm -f "$tunnel_pidfile"
+fi
+
 docker compose -f docker/docker-compose.yml \
   -p "$COMPOSE_PROJECT_NAME" \
   down -v 2>/dev/null || true
