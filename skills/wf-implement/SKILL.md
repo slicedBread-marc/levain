@@ -185,10 +185,10 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
 6. **Write `.plan-ref` in the worktree:**
    ```bash
    echo "PLN-NNN" > feature-branches/PLN-NNN-<slug>/.plan-ref
-   git -C feature-branches/PLN-NNN-<slug> add .plan-ref
-   git -C feature-branches/PLN-NNN-<slug> commit -m "chore(PLN-NNN): add .plan-ref"
    ```
-   **`git -C <path>`, never `cd <path> && git …`.** The two are equivalent to git and are not equivalent to the auto-mode permission classifier, which refuses the compound form outright — client-e's WFI-015 lost three separate steps to `Blocked by classifier` and had to substitute `git -C` by hand mid-run. Use `git -C` in every example that touches a directory other than the current one; the one place a real `cd` is required is step 9, where the session's working directory itself has to move.
+   **Do not commit it.** As of v6.0.0 `.plan-ref` is gitignored — it says which plan *this worktree* is building, and a merge has no business carrying that anywhere. It used to be added and committed here, and every merge then took it along: feature → release → main → develop, until develop itself tracked a pointer to a finished plan (client-a WFI-103). `git worktree add` materialises tracked files, so the next worktree cut from develop started out pointing at that plan. See [`docs/worktrees.md`](../../docs/worktrees.md).
+
+   Whenever a step here does need git in another directory, reach for `git -C <path>`, **never `cd <path> && git …`.** The two are equivalent to git and are not equivalent to the auto-mode permission classifier, which refuses the compound form outright — client-e's WFI-015 lost three separate steps to `Blocked by classifier` and had to substitute `git -C` by hand mid-run. Use `git -C` in every example that touches a directory other than the current one; the one place a real `cd` is required is step 9, where the session's working directory itself has to move.
 7. **Give the worktree its session permissions:**
    ```bash
    scripts/wf-exec.sh wf-worktree-harness.sh feature-branches/PLN-NNN-<slug>

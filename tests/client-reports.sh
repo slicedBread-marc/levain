@@ -2442,6 +2442,54 @@ assert_eq "the project's own tooling is still tracked" "true" \
 rm -rf "$harness_repo"
 
 # ═══════════════════════════════════════════════════════════════════════
+section ".plan-ref stays in its worktree (client-a WFI-103)"
+
+# .plan-ref names the plan a WORKTREE is building. It was COMMITTED until
+# v6.0.0, so it rode every merge out of that worktree — feature → release →
+# main → develop. client-a found develop tracking a .plan-ref reading
+# PLN-015, carried in by that plan's own PR merge. The next worktree cut from
+# develop is then born pointing at a finished plan.
+assert_eq "install.sh seeds the .plan-ref ignore" "true" \
+  "$(grep -q '^    echo "\.plan-ref" >> "\$GITIGNORE"' "$LIB_ROOT/install.sh" && echo true || echo false)"
+# .gitignore never untracks what is already in the index, so a pre-v6.0.0
+# client keeps propagating it until told to run the one-time removal.
+assert_eq "install.sh prints the untrack migration when it is still tracked" "true" \
+  "$(grep -q 'git rm --cached --quiet --ignore-unmatch \.plan-ref' "$LIB_ROOT/install.sh" && echo true || echo false)"
+assert_eq "wf-implement no longer commits it" "false" \
+  "$(grep -q 'commit -m "chore(PLN-NNN): add \.plan-ref"' "$LIB_ROOT/skills/wf-implement/SKILL.md" && echo true || echo false)"
+assert_eq "and says not to" "true" \
+  "$(grep -q '\*\*Do not commit it\.\*\*' "$LIB_ROOT/skills/wf-implement/SKILL.md" && echo true || echo false)"
+
+# A branch cut BEFORE the migration still tracks it, so the conflict path is
+# still reachable — and must resolve by dropping it from the index while
+# leaving the right ID on disk. Re-adding it (what the old code did) puts the
+# leak straight back on the very merge that was supposed to end it.
+PR="$TEST_DIR/planref"
+mkdir -p "$PR" && (
+  cd "$PR" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf 'feature-branches/\n.plan-ref\n' > .gitignore
+  printf 'code\n' > src.txt
+  printf 'PLN-001\n' > .plan-ref
+  git add -A -f && git commit -qm "init with a tracked .plan-ref"
+  git worktree add -q feature-branches/wt -b feature/PLN-042-x HEAD
+  cd feature-branches/wt && printf 'PLN-042\n' > .plan-ref
+  git add -f .plan-ref && git commit -qm "chore(PLN-042): add .plan-ref"
+  cd "$PR"
+  printf 'PLN-002\n' > .plan-ref
+  git add -f .plan-ref && git commit -qm "another plan leaked its ref onto develop"
+) >/dev/null 2>&1
+
+( cd "$PR/feature-branches/wt" && "$SCRIPT_DIR/wf-merge-develop.sh" ) >/dev/null 2>&1
+assert_eq "the .plan-ref conflict resolves" "0" \
+  "$(git -C "$PR/feature-branches/wt" ls-files -u | wc -l | xargs)"
+assert_eq "the worktree still knows which plan it is building" "PLN-042" \
+  "$(cat "$PR/feature-branches/wt/.plan-ref" 2>/dev/null)"
+assert_eq "but git no longer carries it" "false" \
+  "$(git -C "$PR/feature-branches/wt" ls-files --error-unmatch .plan-ref >/dev/null 2>&1 && echo true || echo false)"
+assert_eq "and the tree is clean, so the merge to develop takes nothing along" "0" \
+  "$(git -C "$PR/feature-branches/wt" status --porcelain | wc -l | xargs)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

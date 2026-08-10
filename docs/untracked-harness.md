@@ -190,3 +190,23 @@ One line, and it is currently false:
 ```
 
 Today that prints 253 files.
+
+## Postscript — `.plan-ref`, v6.0.0
+
+This doc scoped itself to paths **deploy** writes, and so it missed one that a **session**
+writes: `.plan-ref`, the one-line pointer naming the plan a worktree is building. Same
+dilemma, different second writer — a path cannot be both git-managed and session-managed
+either.
+
+Tracked, it did not merely go dirty; it *travelled*. A committed pointer rides the branch
+it sits on: feature → release on the PR merge, release → main on deploy, main → develop on
+the back-merge. client-a's WFI-103 found develop tracking a `.plan-ref` reading
+`PLN-015`, delivered by that plan's own merge commit — after which every new worktree cut
+from develop was born pointing at a finished plan, and each session's correction to it read
+as a tracked modification the next `git add -u` would carry onward.
+
+Untracked in **v6.0.0**, by the same three steps: `install.sh` seeds the ignore and prints
+the one-time `git rm --cached .plan-ref`; `wf-implement` writes the file without committing
+it; the merge scripts resolve a legacy conflict by dropping it from the index and leaving
+the right ID on disk. Delivery needs nothing new — the same skill that creates the worktree
+already writes it. See [`worktrees.md`](worktrees.md).

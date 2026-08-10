@@ -106,11 +106,14 @@ bugs/
 feature-branches/              # git worktrees
   PLN-003-payment-hook/
     .plan-ref                  # contains "PLN-003" — one line, links to plans/ on develop
+                               # gitignored: per-worktree state, never committed
     src/                       # code only, no plan content
 ```
 
 **Plans never move.** State is a column value in `REGISTRY.md`, not a folder location.
-**Feature branches have no plan content** — only a `.plan-ref` file with the plan ID.
+**Feature branches have no plan content** — only a `.plan-ref` file with the plan ID, and that
+file is gitignored, so the branch carries nothing but code. A committed `.plan-ref` rides every
+merge out of the worktree it describes and ends up tracked on develop, release and main.
 
 ### State Machine
 

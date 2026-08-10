@@ -24,7 +24,9 @@ All workflow artifacts (plans, bugs, briefs) carry a `schema_version` field in t
 - **Registry-based model** — plans never move. State is tracked in `plans/REGISTRY.md`.
 - **Counter embedded** in REGISTRY.md as `<!-- Counter: N -->` — no separate `.counter` file
 - **No folder movement** — each plan lives at `plans/PLN-NNN-<slug>/` forever
-- **No plan content on feature branches** — only a `.plan-ref` file containing the plan ID
+- **No plan content on feature branches** — only a `.plan-ref` file containing the plan ID, and
+  that file is gitignored as of v6.0.0, so the branch carries nothing but code
+  (see [`worktrees.md`](worktrees.md))
 - **Verify agent** replaces manual wf-verify skill — triggered automatically on state change to `verify`
 - **Simplified findings** — flat checklists instead of FND-NNN tables with status columns
 

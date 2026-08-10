@@ -146,12 +146,17 @@ while IFS= read -r file; do
       echo "  resolved: $file (deleted on develop — accepted)"
     fi
   elif [[ "$file" == .plan-ref ]]; then
-    # Derive plan ID from branch name — more reliable than git checkout --ours
-    # which can fail with "pathspec did not match" in some conflict states
+    # Only reachable on a branch cut before v6.0.0, when .plan-ref was still
+    # committed. It is per-worktree state now (docs/worktrees.md), so resolve by
+    # dropping it from the INDEX while leaving the correct ID on disk — the
+    # session still reads the file, git no longer carries it to develop.
+    #
+    # Deriving the ID from the branch name beats `git checkout --ours`, which
+    # fails with "pathspec did not match" in some conflict states.
     plan_id=$(echo "$branch" | sed 's#^feature/##; s#^\(PLN-[0-9]*\).*#\1#')
+    git rm --cached -q -f -- "$file" 2>/dev/null || true
     echo "$plan_id" > "$file"
-    git add "$file"
-    echo "  resolved: $file (kept $plan_id from branch name)"
+    echo "  resolved: $file (untracked; $plan_id kept on disk)"
   else
     has_non_plan_conflicts=true
     echo "  CONFLICT: $file (requires manual resolution)"

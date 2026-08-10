@@ -391,6 +391,36 @@ if ! grep -qF "feature-branches/" "$GITIGNORE" 2>/dev/null; then
     echo -e "${GREEN}  Added feature-branches/ to .gitignore${NC}"
 fi
 
+# The plan pointer.
+#
+# `.plan-ref` names which plan a WORKTREE is building. It is per-worktree
+# runtime state, not branch content — and it was tracked until v6.0.0, which
+# means every merge carried it out of the worktree it described: feature →
+# release, release → main, main → develop. client-a's WFI-103 found develop
+# tracking a `.plan-ref` reading PLN-015, delivered by that plan's own PR merge.
+#
+# A tracked pointer on develop is not cosmetic. `git worktree add` materialises
+# tracked files, so every NEW worktree starts life pointing at someone else's
+# finished plan until step 6 of wf-implement overwrites it — and that overwrite
+# then shows as a modification to a tracked file, which the next `git add -u`
+# commits and the next merge propagates. The loop feeds itself.
+#
+# Per docs/worktrees.md this is the gitignored row: the harness generates it,
+# and a session reads it off its own disk. wf-implement writes it into the
+# worktree; nothing else needs it to exist.
+if ! grep -qxF ".plan-ref" "$GITIGNORE" 2>/dev/null; then
+    echo ".plan-ref" >> "$GITIGNORE"
+    echo -e "${GREEN}  Added .plan-ref to .gitignore${NC}"
+fi
+# .gitignore does not untrack anything already in the index, so a client that
+# tracked it before v6.0.0 keeps propagating it until this is run.
+if git -C "$TARGET_DIR" ls-files --error-unmatch .plan-ref >/dev/null 2>&1; then
+    echo -e "${YELLOW}  .plan-ref is still TRACKED here — it will keep leaking across merges.${NC}"
+    echo -e "${YELLOW}  On develop, run:${NC}"
+    echo "    git rm --cached --quiet --ignore-unmatch .plan-ref"
+    echo "    git commit -m 'chore: stop tracking .plan-ref (per-worktree state)'"
+fi
+
 # Orchestrator runtime dirs — gates, worker logs, events.log, locks.
 # All runtime state, none of it belongs in git.
 mkdir -p "$TARGET_DIR/.claude/orchestrator/gates" \
