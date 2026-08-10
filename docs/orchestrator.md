@@ -102,11 +102,29 @@ dispatched implementer its own plan was `processing` (WFI-076).
 
 So ownership is now answerable. `wf-spawn.sh` exports `WF_CLAIM_PID` into the
 worker's environment, and `wf_claim_mine` also accepts a claim whose PID is an
-ancestor of the asking process — which covers the foreground spawn path and any
-caller that lost the environment. `wf-claim.sh --if-free` refreshes a claim it
-recognises as its own and exits 0; exit 2 now means, and only means, somebody
-else. An attended session's claim names that session, which is never an ancestor
-of a different one, so a human mid-test is still protected.
+ancestor of the asking process, or one naming the asking session directly —
+which covers the foreground spawn path, a caller that lost the environment, and
+a caller whose ancestry chain is broken by a sandbox wrapper. `wf-claim.sh
+--if-free` refreshes a claim it recognises as its own and exits 0; exit 2 now
+means, and only means, somebody else. An attended session's claim names that
+session, which is never an ancestor of a different one, so a human mid-test is
+still protected.
+
+### Which PID a claim records
+
+A claim is only worth what its PID outlives. `wf_session_pid` records, in order:
+`$WF_SESSION_PID` if a caller set it, then `$CLAUDE_PID` — the agent session's
+own process — and only then falls back to walking up the process tree to the
+first non-shell ancestor.
+
+The walk is last because it is a guess, and it guesses wrong wherever something
+that is not a shell sits between the script and the session. A sandboxed tool
+call inserts exactly that, so the walk stopped on a wrapper that died with the
+call and **every attended claim read as stale**. client-a's WFI-102: the
+daemon dispatched an unattended `wf-test` onto a plan a human was mid-test on,
+and that worker's container cleanup destroyed the container the attended session
+was testing in and blanked `test-progress.md`. `$CLAUDE_PID` lives exactly as
+long as the session that took the claim, which is the lifetime a claim means.
 
 ### A claim keys on the number, not on the folder
 
@@ -186,6 +204,28 @@ nothing starves.
 
 Gates live under the **develop root**, not the current worktree — a worker inside
 `feature/PLN-097-foo` must open a gate that `/wf-attend` on develop can see.
+
+### Closing one: a slot readers look up, a ledger that remembers
+
+`wf-gate-close.sh` writes two things:
+
+| Path | Shape | Read by |
+|-|-|-|
+| `gates/resolved/<id>.<gate>` | latest resolution, `wf_emit` key/values | `wf-gate-status.sh`, by exact path |
+| `gates/resolved/<id>.<gate>.log` | append-only, one tab-separated line per close | humans, after the fact |
+
+The slot is a *single* file per plan per gate name, and some gates are opened and
+answered once per cycle — `manual-test` once per test run. Each cycle therefore
+overwrote the record of the one before it, and a resolution carrying an earlier
+cycle's outcome verbatim was indistinguishable from a real one. client-a's
+WFI-100: a `manual-test` gate resolved with "criterion 8 FAIL ← ESCALATED to
+spec" for a run that never happened, against a row still reading `testing`. The
+ledger is what makes "who approved what, when, and from which state" answerable
+later; `GATE_RESOLVED_STATE` in the slot is what makes a resolution that
+contradicts its own registry row visible at all.
+
+The resolution text is the record of the decision **just made**. Restating an
+earlier outcome fabricates a run.
 
 ## Unattended mode
 

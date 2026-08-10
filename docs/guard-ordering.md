@@ -96,7 +96,8 @@ wf-spawn.sh   claim is ours     → write .claude/orchestrator/pending/<num>-<ro
 wf-unclaim.sh claim is released → serve the marker, spawn for real
 ```
 
-`wf_claim_mine` distinguishes our claim from a stranger's (by `WF_CLAIM_PID`, or by ancestry).
+`wf_claim_mine` distinguishes our claim from a stranger's (by `WF_CLAIM_PID`, by ancestry, or by
+the claim naming this session's own PID — see "Which PID a claim records" in `docs/orchestrator.md`).
 A stranger's claim is still a hard stop. The daemon's sweep remains the safety net behind
 both — the marker is a low-latency nudge, never the only path.
 

@@ -81,9 +81,36 @@ narrowed is the failure that line prevents.
 From the develop root it emits the non-terminal pipeline instead — one line per
 plan with state, priority, step progress and goal.
 
+It also restates the plan's **feature worktree path, absolute**. The working
+directory does not survive a compaction: it reverts to the develop root with
+nothing in the transcript saying so, and a relative read from there fails
+*correctly*, which is indistinguishable from the feature being broken
+(client-a WFI-098, and WFI-094 before it).
+
 **When there is nothing in flight it emits nothing at all.** A repo between
 plans should not pay tokens on every compaction to be told the pipeline is
 empty.
+
+## The block is a snapshot, and has to say which one
+
+The block wins over the prose summary. It does not win over a script.
+
+That distinction is not pedantry — it is a defect the harness shipped. The block
+used to say "re-read from disk just now. Where they disagree, these values win",
+with no timestamp on it. But a block from an *earlier* compaction survives into
+the *next* summary word for word, so a session can be holding an hour-old STATE
+line under a sentence claiming it is current. client-a's WFI-099: a block
+reading `PLN-007 draft` sat above a `wf-list-gates.sh` run that correctly said
+`testing`. The attendant believed the block, treated an `ok`-fit gate as
+stale-by-state, and closed a gate nobody had answered — which wrote a false
+resolution record (WFI-100) and let the daemon dispatch onto a plan a human was
+mid-test on (WFI-102). One stale line, three reports.
+
+So every block now carries the UTC instant it was read, in its header and in the
+precedence sentence, and states three things: it does not outrank anything run
+after that instant, an older block above it is superseded, and
+`wf-rehydrate.sh` re-reads it on demand. A skill that has to choose between a
+block and a script it just ran should choose the script.
 
 ## Matchers
 
