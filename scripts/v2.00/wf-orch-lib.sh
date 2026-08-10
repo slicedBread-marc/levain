@@ -266,8 +266,30 @@ wf_goal_line() {
 # /wf-test session claimed a plan, the daemon dispatched an unattended tester
 # onto the same worktree 36 seconds later, and only luck kept it from removing
 # the worktree out from under a human mid-test.
+#
+# THE WALK IS A GUESS; ASK THE SESSION INSTEAD
+#
+# Fixing the comm match was not enough, because the walk only reaches a
+# session-stable process when every process between here and the session is a
+# SHELL. It is not: a sandboxed tool call inserts a wrapper (sandbox-exec,
+# bwrap) that is not a shell, so the walk stops on it and records a PID that
+# dies with the call. client-a's WFI-102 caught the consequence in full — an
+# attended /wf-test held a claim, `wf-claim.sh --if-free` from the daemon read
+# it as stale seconds later and returned 0, and the unattended tester it
+# dispatched destroyed the container the human was testing in and overwrote
+# test-progress.md.
+#
+# No PID-liveness test can be satisfied by walking, so we do not walk when we
+# can be told. $CLAUDE_PID is the agent session's own process — it lives
+# exactly as long as the session that took the claim, which is precisely the
+# lifetime a claim is meant to describe. $WF_SESSION_PID overrides it for
+# callers that know better (a daemon claiming on its own behalf).
 wf_session_pid() {
   local pid name parent
+  if [ -n "${WF_SESSION_PID:-}" ]; then printf '%s' "$WF_SESSION_PID"; return 0; fi
+  if [ -n "${CLAUDE_PID:-}" ] && kill -0 "$CLAUDE_PID" 2>/dev/null; then
+    printf '%s' "$CLAUDE_PID"; return 0
+  fi
   pid=${1:-$PPID}
   for _ in 1 2 3 4 5; do
     name=$(ps -o comm= -p "$pid" 2>/dev/null) || break
@@ -366,11 +388,16 @@ wf_claim_write() {
 #     it) and the foreground spawn path, where the claim names wf-spawn.sh
 #     itself. A human's attended claim names their own session, which is never
 #     an ancestor of a different session, so this cannot swallow a real one.
+#   - identity — the claim names the PID wf_session_pid would record for THIS
+#     caller. Same session, therefore same owner. Ancestry usually covers this,
+#     but a sandbox wrapper between the tool call and the session breaks the
+#     walk (WFI-102), and a session must always recognise its own claim.
 wf_claim_mine() {
   local dir="$1" claim_pid pid parent
   claim_pid=$(sed -n '2p' "$dir/.wf-claim" 2>/dev/null | tr -cd '0-9')
   [ -n "$claim_pid" ] || return 1
   [ -n "${WF_CLAIM_PID:-}" ] && [ "$claim_pid" = "$WF_CLAIM_PID" ] && return 0
+  [ "$claim_pid" = "$(wf_session_pid)" ] && return 0
   pid=$$
   for _ in $(seq 1 20); do
     [ "$pid" = "$claim_pid" ] && return 0

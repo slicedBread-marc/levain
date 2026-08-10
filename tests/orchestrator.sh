@@ -1066,6 +1066,42 @@ rm -f "$claim_plan/.wf-claim"
 assert_ok "wf-spawn exports WF_CLAIM_PID to the worker" \
   grep -q "WF_CLAIM_PID" "$SCRIPT_DIR/wf-spawn.sh"
 
+# ═══════════════════════════════════════════════════════════════════════
+section "An attended claim records the session, not the shell that ran it (WFI-102)"
+
+# Every tool call in an attended session is its own short-lived process, and a
+# sandbox wrapper between it and the session is not a shell — so the ancestor
+# walk stops on something that dies within the second. client-a's WFI-102:
+# the daemon read a live attended claim as stale, dispatched an unattended
+# tester onto the plan a human was testing, and that worker tore down the
+# container mid-test and blanked test-progress.md.
+sleep 60 & session=$!
+
+# The claim is taken from a subshell that exits immediately — the WFI-102
+# shape. What lands on disk must be the session PID, which outlives it.
+( CLAUDE_PID=$session "$SCRIPT_DIR/wf-claim.sh" PLN-900-self-claim >/dev/null 2>&1 )
+assert_eq "the claim records CLAUDE_PID, not the transient caller" \
+  "$session" "$(sed -n '2p' "$claim_plan/.wf-claim")"
+
+# And it still reads live to somebody else once that caller is gone. The claim
+# names a child of this shell, so neither ancestry nor identity can call it
+# ours: this is the daemon's view of a human's claim.
+CLAUDE_PID=$$ "$SCRIPT_DIR/wf-claim.sh" PLN-900-self-claim --if-free >/dev/null 2>&1
+assert_eq "another session still sees that claim as live" "2" "$?"
+
+{ kill "$session"; wait "$session"; } 2>/dev/null
+
+# Dead session, same claim file: the artifact must not stay parked forever.
+"$SCRIPT_DIR/wf-claim.sh" PLN-900-self-claim --if-free >/dev/null 2>&1
+assert_eq "a claim whose session died is reaped" "0" "$?"
+rm -f "$claim_plan/.wf-claim"
+
+# WF_SESSION_PID is the escape hatch for a caller that knows its own identity.
+( WF_SESSION_PID=4242 "$SCRIPT_DIR/wf-claim.sh" PLN-900-self-claim >/dev/null 2>&1 )
+assert_eq "WF_SESSION_PID overrides both CLAUDE_PID and the walk" \
+  "4242" "$(sed -n '2p' "$claim_plan/.wf-claim")"
+rm -f "$claim_plan/.wf-claim"
+
 section "Test-account keys reach a client's config (WFI-074)"
 
 # The keys lived only in wf-docker-up.sh's source comments: five clients on
