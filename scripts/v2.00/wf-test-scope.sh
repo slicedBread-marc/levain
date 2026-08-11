@@ -114,8 +114,17 @@ while IFS= read -r line; do
     break
   fi
   if [ "$in_scope" -eq 1 ] && echo "$line" | grep -qE '^- '; then
-    cat_name=$(echo "$line" | sed 's/^- *//')
-    declared+=("$cat_name")
+    # A bullet is a bare category name. Anything after it is annotation, not
+    # part of the key: plans routinely justify a scope inline —
+    #   - vectors <!-- A3: Step 1a edits src/Tracker.Cli/**, mapped to vectors -->
+    # — and reading the comment as part of the name made `vectors` an "unknown
+    # category" that was silently skipped. client-a only kept the scope
+    # because testMappings happened to auto-detect it from the same diff; a
+    # plan whose changed files did not also map to it would have lost the
+    # category with nothing but a warning (WFI-116).
+    cat_name=$(echo "$line" \
+      | sed -e 's/^-[[:space:]]*//' -e 's/<!--.*$//' -e 's/[[:space:]]*$//')
+    [ -n "$cat_name" ] && declared+=("$cat_name")
   fi
 done < "$PLAN_FILE"
 

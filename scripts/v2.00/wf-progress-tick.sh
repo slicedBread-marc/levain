@@ -43,8 +43,12 @@ while [ $# -gt 0 ]; do
 done
 
 plan_id=$(printf '%s' "$raw_id" | grep -oE 'PLN-[0-9]+' || true)
-if [ -z "$plan_id" ] || ! printf '%s' "$step" | grep -qE '^[0-9]+$'; then
-  echo "Usage: $0 <plan-id-or-name> <step-number> [description] [--blocked]" >&2
+# A step label is a number, optionally sub-lettered: 3, 1a, 1a-i, 12b-iv.
+# Plans do sub-letter their steps, and the label is matched WHOLE below, so
+# the argument has to be able to carry the whole thing.
+if [ -z "$plan_id" ] || ! printf '%s' "$step" | grep -qE '^[0-9]+[A-Za-z0-9]*(-[A-Za-z0-9]+)*$'; then
+  echo "Usage: $0 <plan-id-or-name> <step-label> [description] [--blocked]" >&2
+  echo "  <step-label> is 3, or a sub-lettered step such as 1a or 1a-iii" >&2
   exit 1
 fi
 
@@ -61,6 +65,56 @@ progress="$ROOT/plans/${plan_id}-${slug}/progress.md"
 wf_lock_acquire "plan-$plan_id"
 
 today=$(date +%Y-%m-%d)
+
+# ── Which row does this label mean? ───────────────────────────────────────
+#
+# The label is matched WHOLE. It used to be reduced to its leading digits —
+# strip everything before the first digit, then everything from the first
+# non-digit on — so a checklist written as `Step 1a-i` … `Step 1a-v`, `Step 1b`
+# collapsed to six rows all keyed `1`, and one `wf-progress-tick.sh PLN-016 1`
+# ticked every one of them. Among them was a soak window explicitly not the
+# builder's to satisfy, ticked weeks before it could close (client-a
+# WFI-115). A tick is a claim about one step and may only touch the row it
+# names.
+#
+# A label that matches no row is normally an amendment's new step and gets
+# appended (WFI-111, below). But when rows exist that this label is a PREFIX of
+# — `1` against `1a-i` — that is a caller naming a family instead of a step.
+# Appending `- [x] Step 1` next to `Step 1a-i` would answer a caller bug by
+# corrupting the one checklist the orchestrator reads for forward progress, so
+# this exits instead, naming the rows it could have meant.
+step_label_scan=$(awk -v want="$step" '
+  function steplabel(line,   n) {
+    n = line
+    sub(/^[^0-9]*/, "", n)            # up to the first digit
+    sub(/[^0-9A-Za-z-].*$/, "", n)    # digits, letters and hyphens are the label
+    sub(/-+$/, "", n)                 # a trailing hyphen is punctuation, not label
+    return n
+  }
+  /^## Steps/ { in_steps = 1; next }
+  /^## /      { in_steps = 0 }
+  !in_steps   { next }
+  /^[[:space:]]*-[[:space:]]*\[[[:space:]xX]*\][[:space:]]*[Ss]tep[[:space:]]+[0-9]/ {
+    n = steplabel($0); ln = tolower(n); lw = tolower(want)
+    if (ln == lw) { exact = 1; next }
+    # A prefix only counts as the same family when what follows is not another
+    # digit — otherwise `1` would claim `12`.
+    if (substr(ln, 1, length(lw)) == lw && substr(ln, length(lw) + 1) !~ /^[0-9]/) {
+      family = family " " n
+    }
+  }
+  END { print (exact ? "exact" : "none"); print family }
+' "$progress")
+
+if [ "$(printf '%s\n' "$step_label_scan" | head -1)" != "exact" ]; then
+  family=$(printf '%s\n' "$step_label_scan" | sed -n '2p' | xargs || true)
+  if [ -n "$family" ]; then
+    wf_lock_release "plan-$plan_id" 2>/dev/null || true
+    echo "Error: $plan_id has no 'Step $step' row — its checklist sub-letters that step as: $family" >&2
+    echo "       Name one of those exactly (e.g. $0 $plan_id ${family%% *} \"...\"); each is ticked on its own." >&2
+    exit 1
+  fi
+fi
 
 # ── Tick the checklist row ────────────────────────────────────────────────
 # Matches "- [ ] Step N:" and "- [ ] Step N " inside `## Steps` only, so a Log
@@ -95,10 +149,13 @@ if [ "$status" = "done" ]; then
     in_steps { flush_held() }
     in_steps && /^[[:space:]]*-[[:space:]]*\[[[:space:]xX]*\][[:space:]]*[Ss]tep[[:space:]]+[0-9]+/ {
       line = $0
+      # Whole-label match — see the WFI-115 note above. `1` ticks `Step 1`,
+      # never `Step 1a-i` and never `Step 12`.
       n = line
       sub(/^[^0-9]*/, "", n)
-      sub(/[^0-9].*$/, "", n)
-      if (n + 0 == want + 0) {
+      sub(/[^0-9A-Za-z-].*$/, "", n)
+      sub(/-+$/, "", n)
+      if (tolower(n) == tolower(want)) {
         # Matching an already-ticked row too is what makes a re-run a no-op
         # instead of appending a second copy of the same step.
         hit = 1

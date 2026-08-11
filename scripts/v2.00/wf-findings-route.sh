@@ -6,9 +6,16 @@
 #   active    → has unchecked non-escalated items (route to active)
 #   clean     → no unchecked findings (route to testing)
 #
-# Exit 0 always.
+# A relative <plan-dir> is anchored to the develop root, like every other
+# wf-*.sh script, because `plans/` exists nowhere else.
+#
+# Exit 0 with a verdict on stdout; exit 1 if the plan directory cannot be
+# found at all.
 
 set -euo pipefail
+
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
 
 plan_dir="${1:-}"
 
@@ -17,8 +24,40 @@ if [ -z "$plan_dir" ]; then
   exit 1
 fi
 
-findings="$plan_dir/findings.md"
+# ── Where is the plan? ────────────────────────────────────────────────────
+#
+# The skills all invoke this as `wf-findings-route.sh plans/PLN-NNN-<slug>`,
+# and verify runs inside the FEATURE worktree, where `plans/` is sparse-
+# excluded and so does not exist. A CWD-relative read therefore found nothing —
+# and the missing-file branch answered `clean`, the one verdict that sends a
+# plan onward to testing. client-a watched a plan with an unchecked finding
+# route `clean` from the worktree and `active` from the root, on the same
+# findings.md, with no warning either way (WFI-117).
+#
+# So: resolve like the rest of the harness. Absolute wins, then CWD (a caller
+# already standing in the right tree keeps working), then the develop root.
+# Nothing found is a caller bug, not a verdict — say so and exit non-zero,
+# because "I could not look" and "I looked and it was clean" must never leave
+# this script wearing the same output.
+if [ "${plan_dir#/}" != "$plan_dir" ]; then
+  resolved="$plan_dir"
+elif [ -d "$PWD/$plan_dir" ]; then
+  resolved="$PWD/$plan_dir"
+else
+  resolved="$(wf_develop_root)/$plan_dir"
+fi
 
+if [ ! -d "$resolved" ]; then
+  echo "wf-findings-route: plan directory not found: $plan_dir" >&2
+  echo "wf-findings-route: tried '$PWD/$plan_dir' and '$(wf_develop_root)/$plan_dir'." >&2
+  echo "wf-findings-route: refusing to emit a verdict — no routing decision was made." >&2
+  exit 1
+fi
+
+findings="$resolved/findings.md"
+
+# An existing plan directory with no findings.md is the genuine article: verify
+# found nothing worth writing down.
 if [ ! -f "$findings" ]; then
   echo "clean"
   exit 0

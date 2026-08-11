@@ -2490,6 +2490,150 @@ assert_eq "and the tree is clean, so the merge to develop takes nothing along" "
   "$(git -C "$PR/feature-branches/wt" status --porcelain | wc -l | xargs)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "Routing reads the plan wherever the caller stands (client-a WFI-117)"
+
+# `plans/` is sparse-excluded from every feature worktree, and verify runs
+# inside one. A CWD-relative read found nothing there, and the missing-file
+# branch answered `clean` — the one verdict that sends a plan onward to
+# testing. The same findings.md answered `active` from the develop root. Two
+# opposite verdicts, byte-identical output, no warning.
+cd "$TEST_DIR/main" || exit 1
+registry_add_row PLN-920 route-cwd verify
+cat > plans/PLN-920-route-cwd/findings.md << 'FEOF'
+## Verify — 2026-08-10
+
+- [ ] **Code**: the guard runs after the write
+FEOF
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-920" >/dev/null 2>&1
+# The worktree is cut BEFORE findings.md is written, so `plans/PLN-920-route-cwd`
+# genuinely does not resolve against its CWD — the client's exact shape.
+git worktree add -q -b feature/PLN-920 "$TEST_DIR/wt-909" HEAD~1 2>/dev/null \
+  || git worktree add -q -b feature/PLN-920 "$TEST_DIR/wt-909" develop 2>/dev/null
+rm -rf "$TEST_DIR/wt-909/plans"
+
+assert_eq "an unchecked finding routes active from the develop root" "active" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-920-route-cwd 2>/dev/null)"
+assert_eq "and reads the same from inside the feature worktree" "active" \
+  "$(env -C "$TEST_DIR/wt-909" "$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-920-route-cwd 2>/dev/null)"
+assert_eq "an absolute path still works" "active" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" "$TEST_DIR/main/plans/PLN-920-route-cwd" 2>/dev/null)"
+
+# "I could not look" must never wear the same output as "I looked and it was
+# clean" — that verdict promotes a plan.
+assert_fails "a plan directory that exists nowhere is an error, not a verdict" \
+  "$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-999-does-not-exist
+assert_eq "and it emits no verdict at all" "" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-999-does-not-exist 2>/dev/null || true)"
+
+# A plan dir with no findings.md is the genuine clean case and still routes.
+mkdir -p plans/PLN-920-route-cwd-empty
+assert_eq "no findings.md in a real plan dir is still clean" "clean" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-920-route-cwd-empty 2>/dev/null)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A tick names one step, not a family (client-a WFI-115)"
+
+# The label was reduced to its leading digits, so a checklist written as
+# `Step 1a-i` … `Step 1a-v`, `Step 1b` collapsed to six rows all keyed `1` and
+# one `wf-progress-tick.sh PLN-016 1` ticked every one of them — including a
+# soak window that could not close for another three weeks.
+registry_add_row PLN-921 sub-lettered active
+cat > plans/PLN-921-sub-lettered/progress.md << 'PEOF'
+# PLN-921
+
+## Steps
+
+- [ ] Step 1a-i: parse the input
+- [ ] Step 1a-ii: validate it
+- [ ] Step 1b: soak window, closes 2026-09-03
+- [ ] Step 2: wire the command
+- [ ] Step 12: the last one
+
+## Log
+PEOF
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-921" >/dev/null 2>&1
+
+ticked() { grep -c "^- \[x\] Step $1" plans/PLN-921-sub-lettered/progress.md | xargs; }
+
+assert_fails "the bare family label is refused" \
+  "$SCRIPT_DIR/wf-progress-tick.sh" PLN-921 1 "everything at once"
+# Captured first, then matched: the refusal exits 1, and under `pipefail` a
+# pipeline off it reports that failure no matter what grep found.
+tick_refusal=$("$SCRIPT_DIR/wf-progress-tick.sh" PLN-921 1 x 2>&1 || true)
+assert_eq "the refusal names the rows it could have meant" "true" \
+  "$(printf '%s' "$tick_refusal" | grep -q '1a-i 1a-ii 1b' && echo true || echo false)"
+assert_eq "and nothing was ticked" "0/5" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-921)"
+# Nor invented: appending `- [x] Step 1` beside `Step 1a-i` would corrupt the
+# one checklist the orchestrator reads for forward progress.
+assert_eq "nor was a bogus row appended" "0" "$(ticked 1$)"
+
+"$SCRIPT_DIR/wf-progress-tick.sh" PLN-921 1a-i "parsed" >/dev/null 2>&1
+assert_eq "the named sub-step ticks" "1" "$(ticked '1a-i')"
+assert_eq "and only that one" "1/5" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-921)"
+assert_eq "the soak window is untouched" "0" "$(ticked '1b')"
+
+# `2` must not reach `12` either — the same prefix bug, one digit over.
+"$SCRIPT_DIR/wf-progress-tick.sh" PLN-921 2 "wired" >/dev/null 2>&1
+assert_eq "a plain step still ticks" "1" "$(ticked '2:')"
+assert_eq "and does not reach the step it prefixes" "0" "$(ticked '12')"
+assert_eq "two of five" "2/5" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-921)"
+
+# A label matching nothing at all is still an amendment's new step (WFI-111).
+"$SCRIPT_DIR/wf-progress-tick.sh" PLN-921 7 "added by amendment" >/dev/null 2>&1
+assert_eq "an unheard-of step is still appended, ticked" "3/6" \
+  "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-921)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A Test Scope bullet may carry a comment (client-a WFI-116)"
+
+# Plans justify a scope inline —
+#   - vectors <!-- A3: Step 1a edits src/Tracker.Cli/**, mapped to vectors -->
+# — and the comment was read as part of the category name, so the key missed
+# and the scope was dropped with a "warning: unknown category". client-a
+# kept `vectors` only because testMappings auto-detected it from the same diff;
+# a plan whose changed files did not also map to it would have silently lost
+# the category and run a narrower suite than it declared.
+#
+# wf-test-scope.sh finds its config by walking up from its OWN directory, so
+# the fixture needs a copy of the scripts beside a claude-workflow.yml.
+if ! command -v yq >/dev/null 2>&1; then
+  printf '  \033[33m—\033[0m skipped: yq not installed\n'
+else
+  SC="$TEST_DIR/scope-comment"
+  mkdir -p "$SC/plans/PLN-950-annotated" "$SC/plans/PLN-951-bare"
+  cp -R "$LIB_SCRIPTS" "$SC/scripts"
+  cat > "$SC/claude-workflow.yml" << 'YEOF'
+project_slug: scope-fixture
+testScopes:
+  vectors:
+    - Demo.Vector.Tests
+testScopeMandatory: []
+YEOF
+  cp "$LIB_ROOT/templates/plans/REGISTRY.md" "$SC/plans/REGISTRY.md"
+  awk '/<!-- Counter:/ && !d {
+         print "| PLN-950 | annotated | draft | — | — | 2026-08-02 | 2.00 | — | — |"
+         print "| PLN-951 | bare | draft | — | — | 2026-08-02 | 2.00 | — | — |"; d = 1 }
+       { print }' "$SC/plans/REGISTRY.md" > "$SC/plans/R.tmp" && mv "$SC/plans/R.tmp" "$SC/plans/REGISTRY.md"
+  printf '# x\n\n## Test Scope\n- vectors <!-- A3: Step 1a edits src/Cli/**, mapped to vectors -->\n\n## E2E Scope\n' \
+    > "$SC/plans/PLN-950-annotated/plan.md"
+  printf '# x\n\n## Test Scope\n- vectors\n\n## E2E Scope\n' > "$SC/plans/PLN-951-bare/plan.md"
+  ( cd "$SC" && git init -qb develop . && git config user.email t@t && git config user.name t \
+      && git add -A && git commit -qm seed ) >/dev/null 2>&1
+
+  # env -C: wf-plan-info.sh, which resolves the plan directory, anchors on the
+  # CALLER's repo — and the caller here is standing in a different fixture.
+  scope_run() { env -C "$SC" "$SC/scripts/$SCRIPT_FOLDER/wf-test-scope.sh" "$@"; }
+  annotated=$(scope_run PLN-950-annotated 2>/dev/null)
+  annotated_err=$(scope_run PLN-950-annotated 2>&1 >/dev/null || true)
+  assert_eq "the annotated bullet resolves" "FullyQualifiedName~Demo.Vector.Tests" "$annotated"
+  assert_eq "and is not reported unknown" "false" \
+    "$(printf '%s' "$annotated_err" | grep -q 'unknown category' && echo true || echo false)"
+  assert_eq "it reads identically to the bare bullet" \
+    "$(scope_run PLN-951-bare 2>/dev/null)" "$annotated"
+  cd "$TEST_DIR/main" || exit 1
+fi
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

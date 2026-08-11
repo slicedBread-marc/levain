@@ -149,6 +149,23 @@ filter=$(run_scope PLN-992-fixture-unit)
 assert_contains "HomePageTests in mandatory smoke" "App.E2E.Tests.HomePageTests" "$filter"
 assert_contains "LogoutTests in mandatory smoke" "App.E2E.Tests.LogoutTests" "$filter"
 
+# Case 6: an annotated bullet is still the category (client-a WFI-116)
+#
+# Plans justify a scope inline — "- unit <!-- Step 1a edits src/**, mapped to
+# unit -->". The comment was read as part of the key, so the category came back
+# "unknown" and was silently skipped; client-a only kept it because
+# testMappings auto-detected the same category from the diff.
+echo ""
+echo "Case 6: trailing HTML comment on a bullet → category still resolves"
+make_fixture_plan "PLN-995" "PLN-995-fixture-annotated" "- unit <!-- A3: Step 1a edits src/Core/**, mapped to unit -->"
+filter=$(run_scope PLN-995-fixture-annotated)
+stderr_out=$(run_scope_stderr PLN-995-fixture-annotated)
+assert_contains "annotated 'unit' still resolves" "App.Core.Tests" "$filter"
+assert_eq "and is not reported unknown" "false" \
+  "$(echo "$stderr_out" | grep -q 'unknown category' && echo true || echo false)"
+assert_eq "the annotated bullet reads identically to the bare one" \
+  "$(run_scope PLN-992-fixture-unit)" "$filter"
+
 echo ""
 echo "=== Results: $pass passed, $fail failed ==="
 
