@@ -113,6 +113,15 @@ if ! grep -q "^test_account_command:" "$CONFIG_FILE" 2>/dev/null; then
     echo -e "${YELLOW}    Set them if the app needs a login, or a tester gets a URL with no way in${NC}"
 fi
 
+# v6.3: which changes make a filtered test run untrustworthy. Empty by default,
+# so nothing changes until a project names its shared test state.
+if ! grep -q "^testScopeFullSuiteGlobs:" "$CONFIG_FILE" 2>/dev/null; then
+    printf '\n' >> "$CONFIG_FILE"
+    extract_block "# ── Shared test state" >> "$CONFIG_FILE"
+    echo -e "${GREEN}  Added testScopeFullSuiteGlobs to $CONFIG_FILE (empty — no behavior change)${NC}"
+    echo -e "${YELLOW}    Fill it in if your tests share fixtures; a filtered run cannot see ordering bugs${NC}"
+fi
+
 # v3.0: manual-test gating keys on the surface the diff touches, not on how
 # many `#### Manual` criteria the planner wrote. Absent, wf-manual-gate.sh
 # falls back to pre-3.0 behavior (stop whenever anything manual remains).
@@ -351,6 +360,7 @@ HARNESS_IGNORED=0
 for pattern in \
     ".claude/skills/wf-*/" \
     ".claude/workflow.md" \
+    ".claude/workflow-source" \
     ".claude/settings.local.json" \
     ".claude/on-implement-commit.sh" \
     ".claude/on-verify-trigger.sh" \
@@ -585,6 +595,20 @@ done
 WORKFLOW_VERSION=$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
 echo "$WORKFLOW_VERSION" > "$TARGET_DIR/.claude/workflow-version"
 echo -e "${GREEN}  Stamped workflow version $WORKFLOW_VERSION → .claude/workflow-version${NC}"
+
+# Record where this harness came from, so a client that loses it can ask the
+# library for a fresh one instead of digging a stale one out of its own history.
+#
+# client-a's WFI-119: the reflog recovery found the newest ref that still
+# TRACKED the harness — necessarily a ref from before the v5.0.0 untrack commit,
+# i.e. a v3.3.0-era harness — and installed it into a project stamped 6.2.1, with
+# no version check and a success message either way. Three major versions of
+# stale wf-* scripts, silently. Re-running the installer is the correct recovery
+# whenever the library is reachable; this file is what makes it reachable.
+#
+# Untracked, like the rest of the generated harness: it is a local fact about
+# this machine, not something to carry to another clone.
+echo "$SCRIPT_DIR" > "$TARGET_DIR/.claude/workflow-source"
 
 # WORKFLOW.md at the project root — the entry-point contract for anyone (or
 # anything) that lands in this repo without prior context: how work enters the

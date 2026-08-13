@@ -386,7 +386,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    ```bash
    cd /absolute/path/to/project
    git checkout develop
-   git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
+   scripts/wf-exec.sh wf-infra-reset.sh
    scripts/wf-exec.sh wf-stash.sh push merge
    ```
    **Use `wf-stash.sh`, never a bare `git stash` / `git stash pop`.** On a clean
@@ -409,7 +409,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    fi
    scripts/wf-exec.sh wf-stash.sh pop merge
    # Auto-resolve infra conflicts from the restore (infra files always match develop)
-   git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
+   scripts/wf-exec.sh wf-infra-reset.sh
    ```
 4. Move the plan out of `testing` **first**, then release the claim:
    ```bash
@@ -430,9 +430,14 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
 7. Clean up test progress and commit REGISTRY/bug changes:
    ```bash
    rm -f plans/PLN-NNN-<slug>/test-progress.md
-   git add plans/PLN-NNN-<slug>/test-progress.md bugs/ 2>/dev/null || true
-   git commit --allow-empty -m "test(PLN-NNN-<slug>): complete — merged to develop"
+   scripts/wf-exec.sh wf-commit.sh "test(PLN-NNN-<slug>): complete — merged to develop" --allow-empty \
+     --add plans/PLN-NNN-<slug>/test-progress.md bugs/closed/BUG-NNN-<slug>/ \
+     --branch develop
    ```
+   **Never a bare `git add … ; git commit --allow-empty` here** — that takes the
+   whole shared develop index, and on develop the index holds every other live
+   worker's staged work (WFI-122, WFI-123). Name the bug folder if the plan
+   closed one; drop the path otherwise, never `bugs/` wholesale.
 8. Display:
    ```
    Human test passed
@@ -462,12 +467,12 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
 3. Switch to develop:
    ```bash
    cd /absolute/path/to/project
-   git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
+   scripts/wf-exec.sh wf-infra-reset.sh
    scripts/wf-exec.sh wf-stash.sh push checkout
    git checkout develop
    scripts/wf-exec.sh wf-stash.sh pop checkout
    # Auto-resolve infra conflicts from the restore (infra files always match develop)
-   git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
+   scripts/wf-exec.sh wf-infra-reset.sh
    ```
 4. Determine the route, transition the plan, **then** release the claim:
    ```bash

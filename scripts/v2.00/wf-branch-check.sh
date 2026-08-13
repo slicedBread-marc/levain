@@ -9,7 +9,24 @@
 #   wf-branch-check.sh feature         → checks if on any feature/* branch
 #
 # Output: CURRENT_BRANCH=<branch-name>
-# Exit 0 if on correct branch (or switched), 1 if wrong branch.
+# Exit 0 if on correct branch (or switched), 1 if wrong branch,
+#        2 refused to auto-switch a shared checkout somebody else parked.
+#
+# WHY EXIT 2 EXISTS
+#
+# `auto-switch` moves the branch of whatever worktree the caller is standing
+# in, and for every develop-side role that worktree is the SHARED main one. A
+# human working interactively parks it wherever they like. client-a's
+# WFI-123: the daemon's workers found the main worktree on
+# `fix/BUG-039-ci-test-portability`, committed four PLN-038 commits on top of a
+# hand-made commit there, and then switched the shared working directory to
+# develop mid-session — from under the human using it. `git checkout -b` offers
+# no protection against this, because the branch was never the thing being
+# guarded; the worktree was.
+#
+# So: an auto-switch away from a branch that is not one of the pipeline's own
+# (develop / release / main / feature/*) is refused unattended, and warned
+# about interactively — where the human whose branch it is can see it.
 
 set -euo pipefail
 
@@ -40,9 +57,31 @@ if [ "$current" = "$expected" ]; then
 fi
 
 if [ "$auto_switch" = "true" ]; then
-  # Reset infra files before switching — prevents unmerged/dirty conflicts
-  # Use HEAD to resolve both dirty and unmerged (U) states
-  git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
+  # A branch this pipeline did not create is somebody's working session.
+  case "$current" in
+    develop|release|main|feature/*) ;;
+    *)
+      if [ "${WF_UNATTENDED:-0}" = "1" ]; then
+        echo "Error: refusing to switch '$current' → '$expected'." >&2
+        echo "       '$current' is not a pipeline branch, so another session owns this" >&2
+        echo "       checkout. Switching it would move a ref out from under them (WFI-123)." >&2
+        echo "CURRENT_BRANCH=$current"
+        echo "REFUSED_SWITCH=$expected"
+        exit 2
+      fi
+      echo "Warning: '$current' is not a pipeline branch — switching it to '$expected'." >&2
+      echo "         If another session is using this checkout, stop and let it finish." >&2
+      ;;
+  esac
+
+  # Reset infra files before switching — prevents unmerged/dirty conflicts.
+  #
+  # This was an inline `git checkout HEAD -- <both paths>`, which is atomic
+  # across its pathspecs: once .claude/workflow.md became gitignored (v5.0.0)
+  # the whole command failed "did not match any file(s) known to git" and reset
+  # NOTHING, silently, because stderr was dropped and the failure swallowed
+  # (WFI-118). wf-infra-reset.sh does it one tracked path at a time.
+  "$(dirname "$0")/wf-infra-reset.sh" --dirty || true
 
   # A missing target branch used to be indistinguishable from any other
   # failure: `git checkout 2>/dev/null` swallowed "pathspec did not match",

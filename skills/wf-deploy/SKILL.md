@@ -51,7 +51,7 @@ Before starting, confirm E2E passed on release:
    [ -x scripts/wf-exec.sh ] && [ -f scripts/version-map.txt ] && echo "harness ok" \
      || echo "HARNESS MISSING"
    ```
-   `HARNESS MISSING` means this merge carried the commit that stops tracking the generated harness onto a branch that still tracked it, so git deleted the files — and they are gitignored, so nothing puts them back. Restore with `scripts/wf-exec.sh wf-harness-restore.sh` if the dispatcher survived; if it did not, use the plain-git recovery in `/wf-release` step 5a, which needs neither the harness nor the library. Run the same check again after step 11's `git checkout develop` (WFI-006).
+   `HARNESS MISSING` means this merge carried the commit that stops tracking the generated harness onto a branch that still tracked it, so git deleted the files — and they are gitignored, so nothing puts them back. Restore with `scripts/wf-exec.sh wf-harness-restore.sh` if the dispatcher survived — it reinstalls from the library recorded in `.claude/workflow-source` and only falls back to history, with a version check, if the library is gone. **Exit 3 means it could only find a stale harness**: treat that as unrecovered and reinstall from the library before doing anything else (WFI-119). If the dispatcher itself did not survive, use the recovery in `/wf-release` step 5a, which needs no harness. Run the same check again after step 11's `git checkout develop` (WFI-006).
 
 7. **Run full test suite** (final integration check):
    ```bash

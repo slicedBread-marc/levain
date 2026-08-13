@@ -59,6 +59,13 @@ Exiting to `verify` is unchanged: it is a normal state transition, and the verif
    scripts/wf-exec.sh wf-branch-check.sh develop true
    ```
 
+   **Exit 2 means the check refused to switch.** Another session has this shared
+   checkout parked on a branch the pipeline does not own; switching it would move
+   a ref out from under them, which is how four commits for one plan landed on a
+   human's topic branch (WFI-123). Stop — do not `git checkout` past it. Under
+   `WF_UNATTENDED=1` exit 0 without claiming anything; the dispatcher offers the
+   work again once the checkout is back on a pipeline branch.
+
 2. Spawn a **haiku subagent** to fetch and format the worklist:
 
 ```
@@ -198,9 +205,12 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
 5. **Create feature branch and worktree:**
    ```bash
    mkdir -p feature-branches
-   git worktree add -b feature/PLN-NNN-<slug> feature-branches/PLN-NNN-<slug> HEAD
+   git worktree add -b feature/PLN-NNN-<slug> feature-branches/PLN-NNN-<slug> develop
    scripts/wf-exec.sh wf-worktree-sparse.sh feature-branches/PLN-NNN-<slug>
    ```
+   **`develop`, not `HEAD`.** `HEAD` means "whatever this shared checkout happens to be on", and that is not yours to assume: client-a's WFI-123 had a concurrent interactive session park the main worktree on a topic branch, so plans branched off a stranger's work and their commits stacked on a hand-made commit. Naming `develop` makes the base a fact about the pipeline instead of a fact about the moment.
+
+   If this fails with `already exists`, the branch is **not** yours to take — stop. Under `WF_UNATTENDED=1` open a **[GATE]** `branch-exists` naming the branch; attended, show it to the user. Never `git checkout` an existing branch and build on it: a branch this plan did not create belongs to another plan, another session, or a human, and reusing it is how four PLN-038 commits landed on someone else's `fix/BUG-039-…` (WFI-123).
 6. **Write `.plan-ref` in the worktree:**
    ```bash
    echo "PLN-NNN" > feature-branches/PLN-NNN-<slug>/.plan-ref
@@ -252,10 +262,13 @@ and must be discarded, not reported.
    DEVELOP_ROOT=$(pwd)
    cd $DEVELOP_ROOT/feature-branches/PLN-NNN-<slug>
    git branch --show-current
+   $DEVELOP_ROOT/scripts/wf-exec.sh wf-branch-check.sh feature/PLN-NNN-<slug> || exit 1
    git add -u -- ':(exclude)scripts/wf-*.sh' ':(exclude).claude/' ':(exclude)plans/' ':(exclude)templates/' 2>/dev/null; git diff --cached --quiet || git commit -m "implement(PLN-NNN-<slug>): wip before merge"
    $DEVELOP_ROOT/scripts/wf-exec.sh wf-merge-develop.sh
    ```
    Shell variables do NOT persist across bash calls — run these together so `DEVELOP_ROOT` and `cd` stay in scope. In any later bash call that needs develop paths, re-resolve: `DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')`
+
+   **The branch check is a hard stop, not a receipt.** Printing `git branch --show-current` only helps if something reads it; the explicit check refuses to go on. A resume that finds anything other than `feature/PLN-NNN-<slug>` here is standing in the wrong directory or on a branch that is not this plan's, and everything after this line commits code (WFI-123).
 12. **Set the Docker project name and port:**
     ```bash
     eval "$($DEVELOP_ROOT/scripts/wf-exec.sh wf-plan-port.sh PLN-NNN-<slug>)"

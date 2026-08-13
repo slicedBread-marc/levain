@@ -20,11 +20,27 @@
 # allocate when taken, and say which happened. Both branches are legal; a
 # silent overwrite is not.
 #
+# THE THIRD CASE: THE NUMBER IS HELD BY THIS SAME WORK
+#
+# "Taken" was read as "taken by SOMEBODY ELSE", and that is not the only way a
+# folder gets there. A spec run writes plans/PLN-039-.../plan.md, reviews it,
+# and dies before the REGISTRY row or the commit. Redispatched on the same bug,
+# the collision check finds the folder its own previous attempt left behind and
+# allocates PLN-040 — so following the documented instruction literally creates
+# a SECOND plan for one bug and orphans the reviewed one (client-a WFI-121).
+#
+# A crashed unattended run is routine, so a plan folder derived from the very
+# artifact being specced is a RESUME, not a collision. It is recognised by
+# plan.md naming that artifact in its header: `> **Bug:** BUG-039` or
+# `> **Brief:** ... BRF-041`. Nobody else's plan says that.
+#
 # Output (eval-friendly):
 #   PLAN_ID='PLN-091'          the ID to use
 #   PLAN_NUM='091'
 #   PLAN_ID_INHERITED=true     false when the number was taken and reallocated
 #   PLAN_ID_COLLISION='...'    what held the inherited number (empty if free)
+#   PLAN_ID_RESUME=true        the folder is this same artifact's own, from an
+#                              earlier attempt — keep the number, keep the work
 #
 # Exit 0 on success, 1 on bad usage or an unusable registry.
 
@@ -52,6 +68,7 @@ if [ "$prefix" = "PLN" ]; then
   wf_emit PLAN_NUM          "$num"
   wf_emit PLAN_ID_INHERITED "true"
   wf_emit PLAN_ID_COLLISION ""
+  wf_emit PLAN_ID_RESUME    "false"
   exit 0
 fi
 
@@ -72,7 +89,27 @@ if [ -z "$collision" ]; then
   wf_emit PLAN_NUM          "$num"
   wf_emit PLAN_ID_INHERITED "true"
   wf_emit PLAN_ID_COLLISION ""
+  wf_emit PLAN_ID_RESUME    "false"
   exit 0
+fi
+
+# Held by this same artifact's own earlier attempt? Then it is not a collision.
+#
+# The header line is the evidence: TEMPLATE.md writes `> **Bug:** BUG-NNN — …`
+# and `> **Brief:** …` for a brief, so the source ID appears in the first few
+# quoted lines and nowhere else by accident. Searched in the block before the
+# first `##` heading, so a passing mention of the bug in a Step cannot claim it.
+if [ -n "$existing_dir" ] && [ -f "$existing_dir/plan.md" ]; then
+  header=$(sed -n '1,/^## /p' "$existing_dir/plan.md")
+  if printf '%s' "$header" | grep -qE "(^|[^A-Za-z0-9-])${id}([^0-9]|$)"; then
+    wf_event id-resume "$id" "PLN-${num} folder $existing_dir is this artifact's own — resuming, not reallocating"
+    wf_emit PLAN_ID           "PLN-${num}"
+    wf_emit PLAN_NUM          "$num"
+    wf_emit PLAN_ID_INHERITED "true"
+    wf_emit PLAN_ID_COLLISION ""
+    wf_emit PLAN_ID_RESUME    "true"
+    exit 0
+  fi
 fi
 
 # Taken. Allocate a fresh number — wf-counter-next.sh advances past anything
@@ -87,3 +124,4 @@ wf_emit PLAN_ID           "$new_id"
 wf_emit PLAN_NUM          "$new_num"
 wf_emit PLAN_ID_INHERITED "false"
 wf_emit PLAN_ID_COLLISION "$collision"
+wf_emit PLAN_ID_RESUME    "false"

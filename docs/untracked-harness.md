@@ -94,6 +94,7 @@ by name (`wf-*`), never all skills, so a project's own hand-written skills stay 
 |-|-|
 | `.claude/skills/wf-*/` | Generated per deploy. Note the `wf-` prefix: a project's own skills are its source and stay tracked |
 | `.claude/workflow.md` | Generated from `claude-md/workflow-snippet.md` |
+| `.claude/workflow-source` | The library path this harness was installed from — a fact about this machine, not about the repo. Untracked also means no checkout can delete it, which is what makes it usable as a recovery route (WFI-119) |
 | `.claude/on-implement-commit.sh`, `.claude/on-verify-trigger.sh` | Generated, templated with project config |
 | `scripts/v*/` | Generated snapshots — the bulk of the churn |
 | `scripts/wf-exec.sh`, `scripts/version-map.txt`, `scripts/wf-prune-versions.sh` | Generated |
@@ -147,13 +148,29 @@ untrack commit's deletions took 106 files including `wf-exec.sh`. The skill disc
 at its own last step, with exit 127 (WFI-006). Switching back to develop restores
 nothing: ignored files are not materialised by a checkout.
 
-`wf-harness-restore.sh` is the answer for that case — it checks the files out of the
-newest ref that still tracks them, then `git rm --cached`s them back to untracked, which
-needs neither the library nor the network. `wf-merge-develop.sh` and
-`wf-merge-release.sh` call it when the copy-from-main path finds nothing to copy, and
-`/wf-release` step 5a carries the same recovery as plain git for the case where
-`wf-exec.sh` itself is one of the casualties. It is one-shot per client and self-clears
-once the untrack commit reaches `main`.
+`wf-harness-restore.sh` is the answer for that case. It tries two recoveries, in order:
+
+1. **The library.** `install.sh` writes its own path to `.claude/workflow-source` —
+   untracked, so no checkout can delete it — and re-running it regenerates the harness
+   the project's `.claude/workflow-version` actually names.
+2. **History.** Check the files out of the newest ref that still tracks them, then
+   `git rm --cached` them back to untracked. Needs neither the library nor the network.
+
+`wf-merge-develop.sh` and `wf-merge-release.sh` call it when the copy-from-main path
+finds nothing to copy, and `/wf-release` step 5a carries the same recovery as plain git
+for the case where `wf-exec.sh` itself is one of the casualties. It is one-shot per
+client and self-clears once the untrack commit reaches `main`.
+
+**Why history is second, and why it now reports a version.** The newest ref that still
+*tracks* the harness is, by construction, a ref from before that client's untrack
+commit — so the older the migration, the staler the restore, and there is no ref anywhere
+in the repository carrying a current copy. client-a's WFI-119: the search landed on a
+v3.3.0-era commit and installed those scripts into a project stamped 6.2.1, reporting
+success. Three major versions of stale `wf-*` scripts, which is exactly the silent-drift
+failure WFI-014 describes, arrived at by running the documented recovery. The script now
+reads each candidate ref's own `.claude/workflow-version`, prefers a match, and exits **3**
+with a loud warning when all it could find was a stale one. Exit 3 means *not recovered* —
+reinstall from the library.
 
 Two mitigations, and the second is the one to build:
 

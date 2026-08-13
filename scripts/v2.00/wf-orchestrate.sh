@@ -237,6 +237,45 @@ skip_clear() {
   rm -f "$ORCH/skips/${1}.${2}" 2>/dev/null || true
 }
 
+# ── Preflight: is the shared checkout ours to use? ────────────────────────
+#
+# Every develop-side worker — spec, test, consistency, and the setup half of
+# implement — runs in the MAIN worktree. The daemon does not own that worktree;
+# a human working interactively parks it on whatever branch they like, and
+# nothing about being dispatched makes a worker notice.
+#
+# client-a's WFI-123, one daemon and one interactive /wf-release session in
+# the same repo: workers took the human's checked-out `fix/BUG-039-…` as their
+# working branch, stacked four PLN-038 commits on a hand-made commit there, and
+# then switched the shared working directory to develop mid-session. Per-worker
+# guards cannot fix this — by the time a worker runs, the damage is a commit
+# away — so the dispatcher declines instead. A branch is not a lock, but
+# "develop is checked out" is a sound proxy for "no human is mid-something",
+# and the cost of being wrong is a paused daemon rather than a rewritten ref.
+#
+# The test is "is this one of the pipeline's own branches?", not "is this
+# develop?" — same rule as wf-branch-check.sh, and for the same reason. A
+# release or a deploy legitimately parks the root on release or main, and a
+# greenfield project has not created develop yet; neither is a foreign session.
+# A branch this pipeline never creates always is one.
+#
+# It clears itself: the next sweep after the checkout returns to a pipeline
+# branch dispatches normally.
+checkout_available() {
+  local root branch
+  root=$(wf_develop_root)
+  branch=$(git -C "$root" branch --show-current 2>/dev/null || true)
+  case "$branch" in
+    develop|release|main|master|feature/*) return 0 ;;
+  esac
+
+  skip_note "orchestrator" "—" \
+    "main worktree is on '${branch:-detached HEAD}' — not a pipeline branch, so another session owns it; dispatching nothing" \
+    blocked
+  echo "$(wf_now)  paused — main worktree is on '${branch:-detached HEAD}', which the pipeline does not own"
+  return 1
+}
+
 # dispatch <role> <artifact> — run every skip rule, then spawn.
 # Returns 0 if a worker was spawned, 1 if skipped.
 dispatch() {
@@ -352,6 +391,14 @@ SWEPT=0
 
 sweep() {
   local spawned=0 role cap running artifact
+
+  # Nothing is dispatchable into a checkout somebody else is standing in.
+  if ! checkout_available; then
+    SWEPT=0
+    return 0
+  fi
+  skip_clear "orchestrator" "—"
+
   for role in $SWEEP_ROLES; do
     cap=$(max_concurrent "$role")
     running=$(role_running "$role")
@@ -531,6 +578,15 @@ case "$mode" in
 
   drive)
     require_enabled || exit 1
+
+    # Same rule as a sweep, but fatal rather than latched: an external caller
+    # driving one plan gets an answer, not a silent pause (WFI-123).
+    if ! checkout_available >/dev/null; then
+      echo "Error: the main worktree is not on develop — another session owns this" >&2
+      echo "       checkout. Driving a plan into it would move refs out from under" >&2
+      echo "       them (WFI-123). Retry once it is back on develop." >&2
+      exit 1
+    fi
 
     id=$(bare_id "$target")
     [ -n "$id" ] || { echo "Error: '$target' is not a PLN/BUG/BRF id" >&2; exit 1; }

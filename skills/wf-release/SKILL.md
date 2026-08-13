@@ -43,15 +43,28 @@ release branch    → staging environment for E2E validation
    ```
    `harness ok` → continue at step 6.
 
-   `HARNESS MISSING` means the untrack commit reached a branch that still tracked the generated harness, so git deleted the files — and they are gitignored now, so nothing puts them back. Restore them with plain git, which needs neither the harness nor the library. **Find the ref first — do not assume `HEAD@{1}`:**
+   `HARNESS MISSING` means the untrack commit reached a branch that still tracked the generated harness, so git deleted the files — and they are gitignored now, so nothing puts them back.
+
+   **Reinstall from the library first.** `install.sh` recorded its own path when this project was set up, and it survives any checkout because it is untracked:
    ```bash
+   lib=$(cat .claude/workflow-source 2>/dev/null)
+   [ -n "$lib" ] && [ -f "$lib/install.sh" ] && bash "$lib/install.sh" "$PWD"
+   ```
+   That regenerates the harness this project's `.claude/workflow-version` actually names, and leaves the tree clean because the files are gitignored. Re-run the step 5a check; on `harness ok`, continue at step 6.
+
+   **Only if the library is unreachable**, recover from history with plain git — but understand what you are getting. The newest ref that still *tracks* the harness is, by definition, a ref from before this client's untrack commit, so the further back that migration is, the staler the restore. client-a's WFI-119 recovered a v3.3.0-era harness into a project stamped 6.2.1 and reported success: three major versions of stale `wf-*` scripts, which is the exact failure mode WFI-014 warns about. **Find the ref first — do not assume `HEAD@{1}` — and check its version before trusting it:**
+   ```bash
+   want=$(cat .claude/workflow-version 2>/dev/null | tr -d '[:space:]')
    for n in $(seq 1 40); do
      ref="HEAD@{$n}"
      git rev-parse --verify --quiet "$ref" >/dev/null || continue
-     git ls-tree -r --name-only "$ref" -- scripts/version-map.txt | grep -q . && { echo "$ref"; break; }
+     git ls-tree -r --name-only "$ref" -- scripts/version-map.txt | grep -q . || continue
+     got=$(git show "$ref:.claude/workflow-version" 2>/dev/null | tr -d '[:space:]')
+     echo "$ref carries workflow ${got:-unknown} (this project declares $want)"
+     break
    done
    ```
-   Then, with that ref in `$ref`:
+   If `got` does not equal `want`, this ref is **not** a recovery — restoring it silently downgrades the harness. Stop, and get the library reachable instead. If they match, with that ref in `$ref`:
    ```bash
    git ls-tree -r --name-only "$ref" -- scripts .claude \
      | grep -E '^(scripts/(wf-exec\.sh|wf-prune-versions\.sh|version-map\.txt|v[^/]+/)|\.claude/(skills/wf-|workflow\.md))' \
@@ -59,7 +72,7 @@ release branch    → staging environment for E2E validation
    xargs git checkout "$ref" -- < /tmp/wf-harness-paths
    xargs git rm --cached --quiet -- < /tmp/wf-harness-paths
    ```
-   The checkout brings the files back; the `rm --cached` returns them to untracked, which is what the ignore rules already describe — so the working tree ends clean. Once the harness is back, `scripts/wf-exec.sh wf-harness-restore.sh` does the same search in one call for any future occurrence.
+   The checkout brings the files back; the `rm --cached` returns them to untracked, which is what the ignore rules already describe — so the working tree ends clean. Once the harness is back, `scripts/wf-exec.sh wf-harness-restore.sh` does all of this in one call for any future occurrence: library first, then a version-matched ref, and it exits 3 rather than lying to you when all it could find was a stale one.
 
    **Why the search, and not a fixed distance.** The deletion is not reliably one step behind. client-e's WFI-014: step 5's `git pull origin release` fast-forwarded 75 commits, straight through the untrack commit — so `HEAD@{1}` was already *past* the deletion, the path list came back empty, and the recovery restored zero files while reporting nothing wrong. `HEAD@{2}` held all 82 paths. A local release branch many commits behind origin is the normal case.
 

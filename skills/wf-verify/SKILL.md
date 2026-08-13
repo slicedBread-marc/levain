@@ -291,9 +291,11 @@ new_id=$(scripts/wf-exec.sh wf-counter-next.sh BUG)
 #   Source: agent:wf-verify
 #   Description: the finding text from findings.md
 #   Links: "discovered during verify of PLN-NNN"
-# Then:
-git add bugs/open/BUG-NNN-<slug>/
-git commit -m "bug: $new_id — security: <short title> (from PLN-NNN verify)"
+# Then — pathspec-scoped, never a bare `git add` + `git commit`, which takes
+# the whole shared develop index and everything other live workers left staged
+# in it (WFI-048/049, WFI-122, WFI-123):
+scripts/wf-exec.sh wf-commit.sh "bug: $new_id — security: <short title> (from PLN-NNN verify)" \
+  --add bugs/open/BUG-NNN-<slug>/ --branch develop
 git push origin develop
 [ -n "${SWITCHED_FROM:-}" ] && git checkout "$SWITCHED_FROM"
 ```

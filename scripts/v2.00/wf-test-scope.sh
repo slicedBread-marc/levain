@@ -182,6 +182,41 @@ else
   echo "wf-test-scope.sh: auto-detect skipped: develop ref unavailable" >&2
 fi
 
+# ── Changes that no filter can be trusted around ──────────────────────────
+#
+# A filtered run answers "do the selected tests pass?", and for most changes
+# that is the same question as "did this break anything?". It is not the same
+# question when the change is to something the OTHER tests share: a collection
+# fixture, a test base class, a seeded database helper, a DI container built
+# once per assembly. Those failures depend on what else ran, and in what order,
+# so a subset run can pass while the assembly fails.
+#
+# client-a's WFI-123: PLN-038 touched a shared test helper, verify and the
+# test gate both passed, and AdminCapsuleListTests failed on develop the moment
+# the merge landed — the failure needed a test-class ordering the filtered run
+# never produced. Nothing was wrong with the gating; it was answering a
+# narrower question than the one being asked of it.
+#
+# So: name those files in config, and a diff that touches one drops the filter.
+# There is no way to infer the list — "shared" is a fact about the project's
+# test architecture, not about a path — but stating it is cheap and the failure
+# mode of leaving it empty is exactly today's behaviour.
+full_suite_count=$(yq_count '.testScopeFullSuiteGlobs | length')
+if [ -n "${changed_files:-}" ] && [ "$full_suite_count" -gt 0 ]; then
+  for (( i = 0; i < full_suite_count; i++ )); do
+    glob=$(yq e ".testScopeFullSuiteGlobs[$i]" "$CONFIG")
+    pattern="${glob#./}"
+    while IFS= read -r f; do
+      case "$f" in
+        $pattern)
+          echo "wf-test-scope.sh: '$f' matches testScopeFullSuiteGlobs ('$glob') — running the FULL suite." >&2
+          echo "wf-test-scope.sh: a filtered run cannot see an ordering-dependent failure in shared test state (WFI-123)." >&2
+          exit 0 ;;
+      esac
+    done <<< "$changed_files"
+  done
+fi
+
 # Mandatory categories.
 mandatory=()
 mandatory_count=$(yq_count '.testScopeMandatory | length')

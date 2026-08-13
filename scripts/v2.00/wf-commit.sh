@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# wf-commit.sh <message> [--add <path>...] [--allow-empty]
+# wf-commit.sh <message> [--add <path>...] [--allow-empty] [--branch <name>]
 #
-# Commits exactly the paths it is given, and nothing else.
+# Commits exactly the paths it is given, and nothing else, on a branch that is
+# allowed to carry them.
 #
 # WHY THIS EXISTS
 #
@@ -44,7 +45,27 @@
 #     So --allow-empty with nothing to commit is built with plumbing: a commit
 #     whose tree IS HEAD's tree, which cannot carry anyone else's work.
 #
-# Exit 0 on success or when there was nothing to do; 1 on a real git failure.
+# AND THE BRANCH IT LANDS ON
+#
+# A pathspec makes the commit carry the right FILES. It says nothing about
+# which branch receives them, and on the shared main worktree that is not
+# fixed: a concurrent interactive session can check out a topic branch at any
+# point in a skill's run. Every develop-side skill checks its branch at entry
+# and nothing re-checks before the commit, so client-a's WFI-120 put a
+# BUG-039 open→triaged rename and an unrelated plan's progress commit onto
+# `fix/BUG-039-ci-test-portability`, minutes apart, both reporting success.
+#
+# So the check moves to the last possible moment — here, immediately before
+# the commit, which is the only place it cannot be raced. Plan content in the
+# MAIN worktree belongs on an integration branch (develop / release / main);
+# wf-deploy legitimately commits it on main and wf-release on release, so the
+# rule names the class, not one branch. A feature worktree is exempt: legacy
+# non-sparse worktrees genuinely do carry and commit plans/ (wf-merge-*.sh).
+#
+#   --branch <name>   require exactly this branch. For callers that know.
+#
+# Exit 0 on success or when there was nothing to do; 1 on a real git failure
+# or a commit refused because the branch is wrong.
 
 set -euo pipefail
 
@@ -56,6 +77,7 @@ shift || true
 
 paths=()
 allow_empty=false
+want_branch=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -64,20 +86,70 @@ while [ $# -gt 0 ]; do
       while [ $# -gt 0 ] && [[ "$1" != --* ]]; do paths+=("$1"); shift; done
       ;;
     --allow-empty) allow_empty=true; shift ;;
+    --branch) shift; want_branch="${1:-}"; shift || true ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
 
 if [ -z "$message" ]; then
-  echo "Usage: $0 <message> [--add <path>...] [--allow-empty]" >&2
+  echo "Usage: $0 <message> [--add <path>...] [--allow-empty] [--branch <name>]" >&2
   exit 1
 fi
+
+# assert_branch <path>... — refuse the commit if this branch may not carry it.
+#
+# Called at the LAST moment, not at entry: the whole point is that the branch
+# can change under a long-running skill (WFI-120).
+assert_branch() {
+  local current toplevel develop_root p
+  current=$(git branch --show-current 2>/dev/null || true)
+  # Detached HEAD or no branch: nothing to assert against, and refusing here
+  # would break a rebase or bisect that has nothing to do with us.
+  [ -n "$current" ] || return 0
+
+  if [ -n "$want_branch" ] && [ "$current" != "$want_branch" ]; then
+    echo "wf-commit: refusing to commit on '$current' — caller requires '$want_branch'." >&2
+    echo "           Another session moved this checkout mid-run (WFI-120). Nothing committed." >&2
+    return 1
+  fi
+
+  # The rule applies to the MAIN worktree only. A feature worktree that still
+  # tracks plans/ (legacy, non-sparse) commits it deliberately, via wf-merge-*.sh.
+  toplevel=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  develop_root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+  [ -n "$toplevel" ] && [ "$toplevel" = "$develop_root" ] || return 0
+
+  # feature/* is exempt for the same reason: a client that works feature
+  # branches in the main checkout instead of a worktree is doing the pipeline's
+  # own thing. What is refused is a branch the pipeline never creates — which is
+  # what a foreign session's branch always is.
+  case "$current" in
+    develop|release|main|feature/*) return 0 ;;
+  esac
+
+  for p in "$@"; do
+    case "$p" in
+      plans/*|plans|bugs/*|bugs|briefs/*|briefs)
+        echo "wf-commit: refusing to commit plan content on '$current'." >&2
+        echo "           '$p' belongs on develop (or release/main during a deploy)." >&2
+        echo "           This checkout is on a branch the pipeline does not own — another" >&2
+        echo "           session moved it mid-run (WFI-120). Nothing committed; get back" >&2
+        echo "           onto develop and re-run." >&2
+        return 1 ;;
+    esac
+  done
+  return 0
+}
 
 # Serialize commits in this repo. The pathspec is what makes the commit
 # correct; the lock keeps two workers from colliding on .git/index.lock and
 # keeps the stage→commit window from interleaving. Re-entrant, so a caller
 # already holding it (wf-registry-update.sh) does not deadlock.
 wf_lock_acquire commit
+
+# Before staging: a refusal after `git add` would leave the wrong branch's
+# index dirty, which is a worse state than the one being prevented.
+assert_branch "${paths[@]+"${paths[@]}"}" || exit 1
 
 # Stage one path at a time, and do NOT discard the result.
 #
@@ -149,6 +221,10 @@ if [ "${#paths[@]}" -gt 0 ]; then
     [ -n "$f" ] && changed+=("$f")
   done < <(git diff --cached --name-only --no-renames -- "${paths[@]}" 2>/dev/null || true)
 fi
+
+# Again, on the real list and after the staging window — this is the check that
+# cannot be raced.
+assert_branch "${changed[@]+"${changed[@]}"}" || exit 1
 
 if [ "${#changed[@]}" -gt 0 ]; then
   git commit -q -m "$message" -- "${changed[@]}"

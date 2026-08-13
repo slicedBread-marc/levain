@@ -73,6 +73,13 @@ What that mode costs, stated plainly: some Criticals are found by *cross-plan* r
    scripts/wf-exec.sh wf-branch-check.sh develop true
    ```
 
+   **Exit 2 means the check refused to switch.** Another session has this shared
+   checkout parked on a branch the pipeline does not own; switching it would move
+   a ref out from under them, which is how four commits for one plan landed on a
+   human's topic branch (WFI-123). Stop — do not `git checkout` past it. Under
+   `WF_UNATTENDED=1` exit 0 without claiming anything; the dispatcher offers the
+   work again once the checkout is back on a pipeline branch.
+
 2. Spawn a **haiku subagent** to fetch and format the worklist:
 
 ```
@@ -125,10 +132,14 @@ Do not derive the ID by hand and do not call `wf-counter-next.sh` yourself. Ask:
 
 ```bash
 eval "$(scripts/wf-exec.sh wf-plan-id.sh BRF-041)"
-# → PLAN_ID, PLAN_NUM, PLAN_ID_INHERITED, PLAN_ID_COLLISION
+# → PLAN_ID, PLAN_NUM, PLAN_ID_INHERITED, PLAN_ID_COLLISION, PLAN_ID_RESUME
 ```
 
 `PLAN_ID_INHERITED=true` is the ordinary case: the number was free and the plan keeps it.
+
+**`PLAN_ID_RESUME=true` means the folder already there is yours** — an earlier attempt at this same artifact wrote it and did not finish. `PLAN_ID` is the inherited number and the folder is the work in progress: read what is in it, keep what is still right, and continue. Do **not** create a second folder and do not treat it as a collision.
+
+An unattended run dying mid-spec is ordinary — after writing and reviewing `plan.md` but before the REGISTRY row and the commit is the widest window it has. client-a's WFI-121 hit that window and the collision rule, read literally, would have produced a duplicate PLN-040 for one bug and orphaned the reviewed PLN-039. The check now distinguishes the two: a plan folder whose `plan.md` header names the artifact you are specced on is your own.
 
 **`PLAN_ID_INHERITED=false` means the inherited number was already taken** — by another plan's REGISTRY row, its folder, or both — and the script allocated a fresh number instead. `PLAN_ID_COLLISION` names what held it. Use `$PLAN_ID` and say so in the plan's Context line:
 
@@ -199,6 +210,17 @@ If the user picks a bug BUG-NNN:
    - `plan.md` — goal, steps, tests, checklist, design decisions, out of scope
    - `findings.md` — empty (no table header needed — findings are appended as flat checklists)
    - `progress.md` — step list (copied from plan steps), empty log
+
+5a. **Commit the folder as soon as it is written** — before the review gate, not after:
+   ```bash
+   scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): plan drafted" \
+     --add plans/PLN-NNN-<slug>/ --branch develop
+   ```
+   The plan stays `draft`; this commits the document, not the decision. No REGISTRY row moves and nothing downstream can pick the plan up.
+
+   **Why not wait for the exit commit.** Between here and the exit commit sits the whole review loop, and until v6.3.0 the new files spent all of it *staged on the shared develop index*. Anyone else's commit sweeps that index. client-a's WFI-122: PLN-039's reviewed `plan.md` was committed by an unrelated `test(PLN-038-…): complete` merge, so the spec commit that approved it carried only `findings.md`, `progress.md` and `REGISTRY.md`, and `git log -- plans/PLN-039-…/plan.md` names a different plan's test run. No pathspec on the spec side defends against a merge; the only fix is to not be staged for that long. Same reasoning as `wf-bug-consume.sh` committing rather than staging (WFI-106, WFI-112).
+
+   If the run dies after this point, the folder is in history and the next dispatch resumes it — see [ID Inheritance](#id-inheritance) and `PLAN_ID_RESUME`.
 6. **Specify everything** — every step must include:
    - Exact file paths to create or modify
    - Class/method/component names and signatures

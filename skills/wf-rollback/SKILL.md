@@ -88,8 +88,8 @@ Update `plan.md`:
 Update REGISTRY.md — change the plan's state to `rolled-back` and commit:
 ```bash
 scripts/wf-exec.sh wf-registry-update.sh PLN-NNN <current-state> rolled-back -
-git add plans/PLN-NNN-<slug>/plan.md
-git commit -m "rollback(PLN-NNN-<slug>): <reason>"
+scripts/wf-exec.sh wf-commit.sh "rollback(PLN-NNN-<slug>): <reason>" \
+  --add plans/PLN-NNN-<slug>/plan.md --branch develop
 ```
 
 The plan folder stays in place — only the REGISTRY state changes.
@@ -127,8 +127,8 @@ If the user stops partway through:
 3. Add `Rollback Partial` note to plan.md Amendments
 4. Commit the partial state:
    ```
-   git add plans/PLN-NNN-<slug>/plan.md
-   git commit -m "rollback: PLN-NNN-<slug> — partial, stopped at step N"
+   scripts/wf-exec.sh wf-commit.sh "rollback: PLN-NNN-<slug> — partial, stopped at step N" \
+     --add plans/PLN-NNN-<slug>/plan.md --branch develop
    ```
 5. Recommend filing a bug and getting help before continuing
 

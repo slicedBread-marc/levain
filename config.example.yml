@@ -175,6 +175,26 @@ autoTestGrowth:
   logCandidatesOnFail: true
   logFile: plans/auto-test-log.md
 
+# ── Shared test state ───────────────────────────────────────────────────────
+# Changes that switch the scope filter off entirely.
+#
+# A filtered run answers "do the selected tests pass?" — which stops being the
+# same question as "did this break anything?" the moment the change is to
+# something the other tests SHARE: a collection fixture, a test base class, a
+# seeded-database helper, an assembly-wide DI container. Those failures depend
+# on what else ran and in what order, so a subset run passes while the full
+# assembly fails. client-a merged exactly that regression to develop with a
+# green verify and a green test gate (WFI-123).
+#
+# List the files whose blast radius is the whole assembly. A diff touching one
+# of them runs the full suite, whatever the plan's `## Test Scope` says. Empty
+# is the pre-6.3.0 behavior: filter always honoured.
+testScopeFullSuiteGlobs: []
+#   - "tests/**/Fixtures/**"
+#   - "tests/**/*Fixture.cs"
+#   - "tests/**/*CollectionDefinition.cs"
+#   - "tests/**/TestBase.cs"
+
 # ── Test account ────────────────────────────────────────────────────────────
 # How a FRESH test container gets an account the acceptance criteria can sign
 # in as, and what to tell the tester.

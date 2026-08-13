@@ -747,7 +747,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    ```bash
    cd /absolute/path/to/project
    git checkout develop
-   git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
+   scripts/wf-exec.sh wf-infra-reset.sh
    scripts/wf-exec.sh wf-stash.sh push merge
    ```
    **Use `wf-stash.sh`, never a bare `git stash` / `git stash pop`.** On a clean
@@ -771,7 +771,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    fi
    eval "$(scripts/wf-exec.sh wf-stash.sh pop merge)"
    # Auto-resolve infra conflicts from the restore (infra files always match develop)
-   git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
+   scripts/wf-exec.sh wf-infra-reset.sh
    # Commit YOUR OWN plan folder, if the restore brought it back dirty.
    # Guarded on WF_RESTORED: with an unconditional pop this committed whatever a
    # previous session had left in the stack, which is how a superseded workflow
@@ -813,9 +813,25 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
 7. Clean up test progress and commit REGISTRY/bug changes:
    ```bash
    rm -f plans/PLN-NNN-<slug>/test-progress.md
-   git add plans/PLN-NNN-<slug>/test-progress.md plans/auto-test-log.md plans/deferred-criteria.md bugs/ 2>/dev/null || true
-   git commit --allow-empty -m "test(PLN-NNN-<slug>): complete — merged to develop"
+   scripts/wf-exec.sh wf-commit.sh "test(PLN-NNN-<slug>): complete — merged to develop" --allow-empty \
+     --add plans/PLN-NNN-<slug>/test-progress.md plans/auto-test-log.md \
+           plans/deferred-criteria.md bugs/closed/BUG-NNN-<slug>/ \
+     --branch develop
    ```
+   **Never a bare `git add … ; git commit --allow-empty` here.** That was this
+   line until v6.3.0 and it is the widest index-sweep left in the pipeline: the
+   `git add` is atomic, so one absent path (`deferred-criteria.md` in a project
+   that has never deferred a criterion) staged nothing at all, and the bare
+   commit that followed took *the entire shared develop index* — every other
+   live worker's staged work, filed under this plan's completion message.
+   client-a saw one such commit carry an interactive session's unreviewed
+   test edits to develop (WFI-123) and another swallow a concurrent spec run's
+   reviewed `plan.md` (WFI-122). `wf-commit.sh` builds the commit from the
+   pathspec, skips paths that do not exist, and — as of v6.3.0 — refuses
+   outright if the checkout has been moved off develop under you.
+
+   Name the bug folder if the plan closed one; drop that path otherwise. Never
+   `bugs/` wholesale — that is as wide as the index sweep this replaced.
 8. Display:
    ```
    Human test passed
@@ -846,12 +862,12 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
 3. Switch to develop:
    ```bash
    cd /absolute/path/to/project
-   git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
+   scripts/wf-exec.sh wf-infra-reset.sh
    scripts/wf-exec.sh wf-stash.sh push checkout
    git checkout develop
    eval "$(scripts/wf-exec.sh wf-stash.sh pop checkout)"
    # Auto-resolve infra conflicts from the restore (infra files always match develop)
-   git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
+   scripts/wf-exec.sh wf-infra-reset.sh
    # Same guard as the all-pass path, and the same scope: this plan's folder
    # only. A `plans/`-wide add here commits other live workers' in-flight files
    # under your message (WFI-109, WFI-110).
