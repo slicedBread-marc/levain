@@ -819,7 +819,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
      --branch develop
    ```
    **Never a bare `git add … ; git commit --allow-empty` here.** That was this
-   line until v6.3.0 and it is the widest index-sweep left in the pipeline: the
+   line until v6.3.1 and it is the widest index-sweep left in the pipeline: the
    `git add` is atomic, so one absent path (`deferred-criteria.md` in a project
    that has never deferred a criterion) staged nothing at all, and the bare
    commit that followed took *the entire shared develop index* — every other
@@ -827,7 +827,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    client-a saw one such commit carry an interactive session's unreviewed
    test edits to develop (WFI-123) and another swallow a concurrent spec run's
    reviewed `plan.md` (WFI-122). `wf-commit.sh` builds the commit from the
-   pathspec, skips paths that do not exist, and — as of v6.3.0 — refuses
+   pathspec, skips paths that do not exist, and — as of v6.3.1 — refuses
    outright if the checkout has been moved off develop under you.
 
    Name the bug folder if the plan closed one; drop that path otherwise. Never

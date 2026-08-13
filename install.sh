@@ -113,7 +113,7 @@ if ! grep -q "^test_account_command:" "$CONFIG_FILE" 2>/dev/null; then
     echo -e "${YELLOW}    Set them if the app needs a login, or a tester gets a URL with no way in${NC}"
 fi
 
-# v6.3: which changes make a filtered test run untrustworthy. Empty by default,
+# v6.3.1: which changes make a filtered test run untrustworthy. Empty by default,
 # so nothing changes until a project names its shared test state.
 if ! grep -q "^testScopeFullSuiteGlobs:" "$CONFIG_FILE" 2>/dev/null; then
     printf '\n' >> "$CONFIG_FILE"

@@ -188,7 +188,7 @@ autoTestGrowth:
 #
 # List the files whose blast radius is the whole assembly. A diff touching one
 # of them runs the full suite, whatever the plan's `## Test Scope` says. Empty
-# is the pre-6.3.0 behavior: filter always honoured.
+# is the pre-6.3.1 behavior: filter always honoured.
 testScopeFullSuiteGlobs: []
 #   - "tests/**/Fixtures/**"
 #   - "tests/**/*Fixture.cs"

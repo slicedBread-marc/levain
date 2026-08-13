@@ -29,7 +29,7 @@
 #    returns them to exactly the state the ignore rules describe — present on
 #    disk, invisible to git. Needs no library and no network.
 #
-# History was the only recovery until v6.3.0, and on its own it is a trap. The
+# History was the only recovery until v6.3.1, and on its own it is a trap. The
 # newest ref that still TRACKS the harness is by definition a ref from before
 # that client's untrack commit — so the older the migration, the staler the
 # restore. client-a's WFI-119: the search landed on a v3.3.0-era commit and
