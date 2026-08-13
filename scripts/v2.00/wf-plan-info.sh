@@ -78,10 +78,18 @@ deps=$(echo "$row" | awk -F'|' '{print $10}' | xargs)
 plan_dir="plans/${id}-${slug}"
 plan_name="${id}-${slug}"
 
-# Extract goal from plan.md if it exists
+# Extract goal from plan.md if it exists: the first non-blank line under
+# `## Goal`, stopping at the next heading — the same rule wf_goal_line() in
+# wf-orch-lib.sh uses.
+#
+# Not "the line after the heading". `grep -A 1 | tail -1` captured the blank
+# line every markdown convention leaves under a heading, so a well-formed plan
+# reported PLAN_GOAL='' and PLAN_GOAL_MISSING=true. client-a's WFI-125 and
+# WFI-128: PLN-041 had a fully written goal and the orchestrator opened a
+# goal-missing gate on it, handing a human a question with no real answer.
 goal=""
 if [ -f "$plan_dir/plan.md" ]; then
-  goal=$(grep -A 1 "^## Goal" "$plan_dir/plan.md" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//' || true)
+  goal=$(awk '/^## Goal([ \t]|$)/{g=1;next} g&&/^#/{exit} g&&NF{sub(/^[[:space:]]+/,"");print;exit}' "$plan_dir/plan.md" 2>/dev/null || true)
 fi
 
 # Check if any dep is not complete.

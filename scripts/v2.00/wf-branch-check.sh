@@ -12,6 +12,19 @@
 # Exit 0 if on correct branch (or switched), 1 if wrong branch,
 #        2 refused to auto-switch a shared checkout somebody else parked.
 #
+# STDOUT IS AN EVAL CONTRACT
+#
+# Callers run `eval "$(wf-branch-check.sh develop true)"`, so every byte this
+# script writes to stdout is executed as shell. Only its own KEY='value' lines
+# may go there; everything else — git's own chatter, helper progress notes —
+# goes to stderr, where a human can still see it.
+#
+# client-a's WFI-124: switching a dirty checkout let `git checkout`'s
+# carried-over "M <file>" list and wf-infra-reset.sh's "reset ... (was 'M')"
+# note through, and the caller's eval tried to run them — `no matches found:
+# (was  M)`, then `command not found: M` once per modified file. The variables
+# happened to survive; arbitrary git output reaching eval is the defect.
+#
 # WHY EXIT 2 EXISTS
 #
 # `auto-switch` moves the branch of whatever worktree the caller is standing
@@ -81,7 +94,7 @@ if [ "$auto_switch" = "true" ]; then
   # the whole command failed "did not match any file(s) known to git" and reset
   # NOTHING, silently, because stderr was dropped and the failure swallowed
   # (WFI-118). wf-infra-reset.sh does it one tracked path at a time.
-  "$(dirname "$0")/wf-infra-reset.sh" --dirty || true
+  "$(dirname "$0")/wf-infra-reset.sh" --dirty >&2 || true
 
   # A missing target branch used to be indistinguishable from any other
   # failure: `git checkout 2>/dev/null` swallowed "pathspec did not match",
@@ -91,17 +104,19 @@ if [ "$auto_switch" = "true" ]; then
   if ! git rev-parse --verify --quiet "refs/heads/$expected" >/dev/null; then
     # Track an existing remote branch if there is one, otherwise create it.
     if git rev-parse --verify --quiet "refs/remotes/origin/$expected" >/dev/null; then
-      git checkout -b "$expected" --track "origin/$expected" || {
+      git checkout -b "$expected" --track "origin/$expected" >&2 || {
         echo "Error: branch '$expected' exists on origin but could not be checked out" >&2
         exit 1
       }
-      echo "CREATED_BRANCH=$expected (tracking origin/$expected)"
+      # Quoted: the parenthesised provenance is part of the value, and bare
+      # parens in an eval'd line are a syntax error, not a comment.
+      echo "CREATED_BRANCH='$expected (tracking origin/$expected)'"
     else
-      git checkout -b "$expected" || {
+      git checkout -b "$expected" >&2 || {
         echo "Error: branch '$expected' does not exist and could not be created from '$current'" >&2
         exit 1
       }
-      echo "CREATED_BRANCH=$expected (from $current)"
+      echo "CREATED_BRANCH='$expected (from $current)'"
     fi
     echo "CURRENT_BRANCH=$expected"
     echo "SWITCHED_FROM=$current"
@@ -109,8 +124,9 @@ if [ "$auto_switch" = "true" ]; then
   fi
 
   # Real git errors surface — no 2>/dev/null. A dirty tree that blocks the
-  # switch is something the caller has to see.
-  if ! git checkout "$expected"; then
+  # switch is something the caller has to see. stdout goes to stderr for the
+  # eval contract above: git prints the carried-over "M <file>" list there.
+  if ! git checkout "$expected" >&2; then
     echo "Error: could not switch from '$current' to '$expected'" >&2
     exit 1
   fi

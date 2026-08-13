@@ -42,8 +42,11 @@ fi
 if [ "$auto_switch" = "true" ]; then
   # Reset infra files before switching — prevents unmerged/dirty conflicts
   # Use HEAD to resolve both dirty and unmerged (U) states
-  git checkout HEAD -- .claude/workflow-version .claude/workflow.md 2>/dev/null || true
-  git checkout "$expected" 2>/dev/null
+  # stdout goes to stderr: callers eval this script's output, and git prints
+  # the carried-over "M <file>" list to stdout when it switches a dirty tree
+  # (WFI-124).
+  git checkout HEAD -- .claude/workflow-version .claude/workflow.md >/dev/null 2>&1 || true
+  git checkout "$expected" >/dev/null 2>&1
   echo "CURRENT_BRANCH=$expected"
   echo "SWITCHED_FROM=$current"
   exit 0

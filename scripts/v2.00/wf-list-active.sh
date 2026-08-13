@@ -34,7 +34,7 @@ while IFS='|' read -r _ id slug state priority branch _rest; do
     step_progress="Step ${done_count}/${total}"
   fi
 
-  goal=$(grep -A 1 "^## Goal" "$plan_dir/plan.md" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//' || true)
+  goal=$(awk '/^## Goal([ \t]|$)/{g=1;next} g&&/^#/{exit} g&&NF{sub(/^[[:space:]]+/,"");print;exit}' "$plan_dir/plan.md" 2>/dev/null || true)
 
   printf "%s\t%s\t%s\t%s\t%s\n" "$plan_name" "$branch" "$step_progress" "$goal" "$priority"
   found=1

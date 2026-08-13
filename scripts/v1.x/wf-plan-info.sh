@@ -52,7 +52,7 @@ plan_name="${id}-${slug}"
 # Extract goal from plan.md if it exists
 goal=""
 if [ -f "$plan_dir/plan.md" ]; then
-  goal=$(grep -A 1 "^## Goal" "$plan_dir/plan.md" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//' || true)
+  goal=$(awk '/^## Goal([ \t]|$)/{g=1;next} g&&/^#/{exit} g&&NF{sub(/^[[:space:]]+/,"");print;exit}' "$plan_dir/plan.md" 2>/dev/null || true)
 fi
 
 # Every value is single-quoted so eval survives spaces, semicolons, backticks, etc.

@@ -81,6 +81,19 @@ state_of() {
 # gate name this table does not know — a new gate is not a stale one.
 gate_fit() {
   local want=""
+  # A terminal artifact answers no question. Whatever the gate asked, the plan
+  # has stopped moving and acting on the answer would restart something already
+  # finished — so `complete` and `abandoned` are a mismatch for EVERY gate name,
+  # including the ones the table below treats as always-ok.
+  #
+  # client-a's WFI-126: a `needs-input` gate on PLN-039 was listed state=
+  # complete fit=ok. Its question — "land PLN-039 and drive it through the
+  # pipeline" — had been answered by the pipeline itself in the 45 minutes after
+  # the gate opened: committed, merged, completed, promoted to main. Answering it
+  # as written would have re-landed all of it. Only reading git history caught it.
+  case "$2" in
+    complete|abandoned) printf 'mismatch'; return 0 ;;
+  esac
   case "$1" in
     manual-test)                        want="testing" ;;
     spec-approval|spec-stuck|scope-reduction) want="draft" ;;

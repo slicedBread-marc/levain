@@ -48,7 +48,7 @@ plan_file="$plan_dir/plan.md"
 wf_lock_acquire "plan-$plan_id"
 
 # Read current goal (first non-empty line after ## Goal)
-current_goal=$(grep -A 1 "^## Goal" "$plan_file" | tail -1 | sed 's/^[[:space:]]*//')
+current_goal=$(awk '/^## Goal([ \t]|$)/{g=1;next} g&&/^#/{exit} g&&NF{sub(/^[[:space:]]+/,"");print;exit}' "$plan_file")
 [ -n "$current_goal" ] || { echo "Error: no current goal found in $plan_file" >&2; exit 1; }
 
 today=$(date +%Y-%m-%d)

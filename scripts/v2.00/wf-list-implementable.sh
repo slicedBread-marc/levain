@@ -101,7 +101,7 @@ while IFS='|' read -r _ id slug state priority branch _rest; do
   [ "$state" = "ready" ] || [ "$state" = "active" ] || continue
   [ -d "$plan_dir" ] || continue
 
-  goal=$(grep -A 1 "^## Goal" "$plan_dir/plan.md" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//' || true)
+  goal=$(awk '/^## Goal([ \t]|$)/{g=1;next} g&&/^#/{exit} g&&NF{sub(/^[[:space:]]+/,"");print;exit}' "$plan_dir/plan.md" 2>/dev/null || true)
   plan_name="${id}-${slug}"
 
   # A gate outranks every other reason: nothing about this plan is settled

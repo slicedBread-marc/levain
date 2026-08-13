@@ -76,6 +76,26 @@ SEED
   assert_eq "PLAN_GOAL intact" "Split the portal; don't break auth" "${PLAN_GOAL:-<unset>}"
   assert_eq "PLAN_GOAL_MISSING false" "false" "${PLAN_GOAL_MISSING:-<unset>}"
 
+  # A blank line under the heading — the markdown convention, and what wf-spec
+  # writes. `grep -A 1 | tail -1` captured the blank, so a fully-written plan
+  # reported PLAN_GOAL='' and PLAN_GOAL_MISSING=true, and the orchestrator
+  # opened a goal-missing gate on it (client-a WFI-125, WFI-128).
+  printf '# PLN-093\n\n## Goal\n\nSplit the portal; don'"'"'t break auth\n\n## Steps\n- [ ] one\n' \
+    > plans/PLN-093-subdomain-split/plan.md
+  unset PLAN_GOAL PLAN_GOAL_MISSING
+  eval "$("$scripts/wf-plan-info.sh" PLN-093)" 2>/dev/null || true
+  assert_eq "goal found under a blank line" "Split the portal; don't break auth" "${PLAN_GOAL:-<unset>}"
+  assert_eq "and not reported missing" "false" "${PLAN_GOAL_MISSING:-<unset>}"
+
+  # No goal at all still reads as missing — the fix must not invent one from
+  # the next section's heading or body.
+  printf '# PLN-093\n\n## Goal\n\n## Steps\n- [ ] one\n' \
+    > plans/PLN-093-subdomain-split/plan.md
+  unset PLAN_GOAL PLAN_GOAL_MISSING
+  eval "$("$scripts/wf-plan-info.sh" PLN-093)" 2>/dev/null || true
+  assert_eq "an empty Goal section is still missing" "" "${PLAN_GOAL-<unset>}"
+  assert_eq "and says so" "true" "${PLAN_GOAL_MISSING:-<unset>}"
+
   cd "$REPO_ROOT"
   rm -rf "$TEST_DIR"
   TEST_DIR=""

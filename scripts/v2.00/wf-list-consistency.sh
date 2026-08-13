@@ -66,7 +66,7 @@ while IFS='|' read -r _ id slug state _priority _branch _updated _wf _tags deps 
   # template's `YYYY-MM-DD` placeholder is not a pass that ran.
   grep -qE '^> \*\*Checked:\*\* *[0-9]{4}-[0-9]{2}-[0-9]{2}' "$plan_file" 2>/dev/null && continue
 
-  goal=$(grep -A 1 "^## Goal" "$plan_file" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//' || true)
+  goal=$(awk '/^## Goal([ \t]|$)/{g=1;next} g&&/^#/{exit} g&&NF{sub(/^[[:space:]]+/,"");print;exit}' "$plan_file" 2>/dev/null || true)
   printf "%s\t%s\t%s\n" "${id}-${slug}" "$deps" "$goal"
   found=1
 done < <(grep "^|" "$REGISTRY" | tail -n +3)

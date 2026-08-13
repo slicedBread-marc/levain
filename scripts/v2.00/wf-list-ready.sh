@@ -22,7 +22,7 @@ while IFS='|' read -r _ id slug state priority _rest; do
   priority=$(echo "$priority" | xargs)
   [ "$state" = "ready" ] || continue
   plan_dir="plans/${id}-${slug}"
-  goal=$(grep -A 1 "^## Goal" "$plan_dir/plan.md" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//' || true)
+  goal=$(awk '/^## Goal([ \t]|$)/{g=1;next} g&&/^#/{exit} g&&NF{sub(/^[[:space:]]+/,"");print;exit}' "$plan_dir/plan.md" 2>/dev/null || true)
   printf "%s\t%s\t%s\n" "${id}-${slug}" "$goal" "$priority"
   found=1
 done < <(grep "^|" "$REGISTRY" | tail -n +3)

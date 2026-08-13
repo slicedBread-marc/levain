@@ -238,6 +238,8 @@ If the user picks a bug BUG-NNN:
 
    `plans/TEMPLATE.md` is not a second opinion here. Its example was rendered from the config **when the harness was first installed** and is never re-rendered, so on any project whose runner changed since, the template's example is the stale one and the config is right.
 
+   **Write commands the implementer's host actually has.** A test command runs on whatever machine picks the plan up, and the GNU coreutils a Linux CI image ships are not on a stock macOS host. `timeout` is the one that bites — client-a's PLN-043 specified `timeout 30 dotnet run …` and the implementer hit `command not found: timeout` (WFI-127), then had to reproduce the cap with a background job and a sleep-then-kill watcher before the test could run at all. Same for `gtimeout`, `realpath`, `sha256sum`, `sed -i` without a backup suffix, and `date -d`. Prefer the runner's own facilities (a test-level timeout attribute, `dotnet test --blame-hang-timeout`) or plain shell; if a coreutils binary is genuinely required, say so in the plan's Design Decisions so the implementer installs it rather than improvising.
+
    **Maximize automation:** API responses, data correctness, markup structure, auth gates, redirects, and status codes are all automatable (unit tests, integration tests, curl commands, scripts). Only use `Manual` type for things that genuinely require human eyes — visual rendering, subjective UX, complex multi-step physical interactions.
 
    **Default-automated patterns** — past plans have repeatedly shipped these classes of criteria as automated tests (see `plans/auto-test-log.md` Realized section for proofs). If a criterion you're drafting fits one of these shapes, put it in the Tests table (not Human Test Criteria) from the start:

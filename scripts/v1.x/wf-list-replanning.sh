@@ -17,7 +17,7 @@ while IFS='|' read -r _ id slug state _rest; do
   [ -f "$findings" ] && grep -q "ESCALATED" "$findings" 2>/dev/null || continue
 
   escalated=$(grep -c "ESCALATED" "$findings" 2>/dev/null || echo 0)
-  goal=$(grep -A 1 "^## Goal" "$plan_dir/plan.md" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//' || true)
+  goal=$(awk '/^## Goal([ \t]|$)/{g=1;next} g&&/^#/{exit} g&&NF{sub(/^[[:space:]]+/,"");print;exit}' "$plan_dir/plan.md" 2>/dev/null || true)
   printf "%s\t%s\t%s\n" "${id}-${slug}" "$escalated" "$goal"
   found=1
 done < <(grep "^|" "$REGISTRY" | tail -n +3)

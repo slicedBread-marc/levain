@@ -107,13 +107,48 @@ section "Branch check on a greenfield repo (client-a WFI-001)"
 # and stderr, so "develop does not exist yet" was indistinguishable from any
 # other failure. Every greenfield project hit this on its first spec.
 git checkout -q -b main 2>/dev/null || git checkout -q main
-out=$("$SCRIPT_DIR/wf-branch-check.sh" nonexistent-branch true 2>&1)
+out=$("$SCRIPT_DIR/wf-branch-check.sh" nonexistent-branch true 2>/dev/null)
 assert_eq "a missing branch is created rather than failing silently" "true" \
-  "$(printf '%s' "$out" | grep -q 'CREATED_BRANCH=nonexistent-branch' && echo true || echo false)"
+  "$(printf '%s' "$out" | grep -q "CREATED_BRANCH='nonexistent-branch" && echo true || echo false)"
 assert_eq "and the caller is told what it is now on" "true" \
   "$(printf '%s' "$out" | grep -q 'CURRENT_BRANCH=nonexistent-branch' && echo true || echo false)"
 git checkout -q develop
 git branch -q -D nonexistent-branch main 2>/dev/null || true
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Branch check stdout is an eval contract (client-a WFI-124)"
+
+# Callers run `eval "$(wf-branch-check.sh develop true)"`. Switching a DIRTY
+# checkout let git's carried-over "M <file>" list and wf-infra-reset.sh's
+# progress note reach stdout, so eval tried to run them: `no matches found:
+# (was  M)`, then `command not found: M` once per modified file.
+# Empty output is not a pass: a script that printed nothing would satisfy
+# "no stray lines" while telling the caller nothing.
+stdout_is_assignments() {
+  printf '%s\n' "$1" | awk '
+    NF && $0 !~ /^[A-Z_]+=/ { bad = 1 }
+    NF                      { seen = 1 }
+    END { print (seen && !bad) ? "true" : "false" }'
+}
+
+# The file has to be tracked and identical on both branches, so the switch
+# succeeds and git carries the edit across — which is when it prints the
+# "M <file>" line that used to reach the caller's eval.
+printf 'seed\n' > carried.txt
+git add -A && git commit -q -m "wfi124 fixture: tracked file on develop"
+git checkout -q -b feature/wfi124-side
+printf 'local edit\n' >> carried.txt   # uncommitted
+out=$("$SCRIPT_DIR/wf-branch-check.sh" develop true 2>/dev/null)
+assert_eq "a dirty switch emits only KEY=VALUE lines" "true" "$(stdout_is_assignments "$out")"
+assert_eq "and still reports the branch it landed on" "true" \
+  "$(printf '%s' "$out" | grep -q 'CURRENT_BRANCH=develop' && echo true || echo false)"
+assert_eq "and where it came from" "true" \
+  "$(printf '%s' "$out" | grep -q 'SWITCHED_FROM=feature/wfi124-side' && echo true || echo false)"
+
+git checkout -q -- carried.txt 2>/dev/null || true
+git checkout -q develop
+git rm -q carried.txt && git commit -q -m "wfi124 cleanup"
+git branch -q -D feature/wfi124-side 2>/dev/null || true
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Registry writes from a feature worktree (app WFI-002)"
@@ -1624,7 +1659,9 @@ assert_eq "and the reason names the untagged criteria, not the surface" "true" \
   "$(printf '%s' "$gate_out" | grep '^GATE_REASON=' | grep -q 'no reason tag' && echo true || echo false)"
 
 # The surface rule must still work for the case it was written for: a v6 plan
-# whose criteria someone actually tagged eyes:*.
+# whose criteria someone actually tagged eyes:* — and, since WFI-129, only for
+# the cosmetic ones. Dismissing a COSMETIC criterion on a surface miss fails
+# open: the plan ships unseen, which is the documented trade.
 cat > "$GATE_DIR/plans/PLN-004-tool-cli/plan.md" << 'PLANEOF'
 schema_version: 6
 
@@ -1632,11 +1669,30 @@ schema_version: 6
 A CLI.
 
 #### Manual
-- [ ] (eyes:blocking) /app/board — the column spacing reads clearly at 1280px
+- [ ] (eyes:cosmetic) /app/board — the column spacing reads clearly at 1280px
 PLANEOF
 tagged_out=$(cd "$GATE_DIR" && ./scripts/wf-manual-gate.sh PLN-004 2>/dev/null || true)
-assert_eq "a genuinely eyes-tagged criterion still skips on a surface miss" "GATE='false'" \
+assert_eq "a cosmetic eyes criterion still skips on a surface miss" "GATE='false'" \
   "$(printf '%s' "$tagged_out" | grep "^GATE=")"
+
+# A BLOCKING criterion fails into a deadlock instead: an unattended worker
+# cannot judge it, and with no matching surface no gate opens, so the plan
+# neither ships nor asks. client-a's PLN-041 sat in `testing` through three
+# wf-test runs until the stuck detector noticed (WFI-129).
+cat > "$GATE_DIR/plans/PLN-004-tool-cli/plan.md" << 'PLANEOF'
+schema_version: 6
+
+## Goal
+A CLI.
+
+#### Manual
+- [ ] (eyes:blocking) tool --help — the command list is readable enough to use
+PLANEOF
+blocking_out=$(cd "$GATE_DIR" && ./scripts/wf-manual-gate.sh PLN-004 2>/dev/null || true)
+assert_eq "a blocking eyes criterion gates even on a surface miss" "GATE='true'" \
+  "$(printf '%s' "$blocking_out" | grep "^GATE=")"
+assert_eq "and the reason names the blocking criterion, not the surface" "true" \
+  "$(printf '%s' "$blocking_out" | grep '^GATE_REASON=' | grep -q 'eyes:blocking' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "One gate is one record (client-a WFI-049)"
@@ -2211,6 +2267,19 @@ assert_eq "in the state it belongs to, it is ordinary work" "ok" \
 "$SCRIPT_DIR/wf-gate-open.sh" PLN-910 needs-input "Which way?" --skill wf-implement >/dev/null 2>&1
 assert_eq "needs-input fits any state" "ok" \
   "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
+# …except a terminal one. A gate that outlives its plan's completion asks a
+# question the pipeline has already answered. client-a's WFI-126: a
+# needs-input gate reading "land PLN-039 and drive it through the pipeline"
+# listed state=complete fit=ok, 45 minutes after PLN-039 was committed, merged,
+# completed and promoted to main. Answering it as written would have re-landed
+# all of it; only reading git history caught that.
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-910 testing complete >/dev/null 2>&1
+assert_eq "but not once the plan is complete" "mismatch" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-910 complete abandoned >/dev/null 2>&1
+assert_eq "nor abandoned" "mismatch" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-910 abandoned testing >/dev/null 2>&1
 # The six documented fields are untouched — consumers index by position.
 assert_eq "the original contract still holds at field 6" "0" \
   "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null | cut -f6)"

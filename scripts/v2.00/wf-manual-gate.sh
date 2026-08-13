@@ -27,6 +27,11 @@
 # `external` and `soak` criteria never gate under any condition — they cannot be
 # satisfied at gate time either, so gating on them buys a stop and nothing else.
 #
+# Conversely, an unresolved `eyes:blocking` criterion ALWAYS gates: condition 1
+# is a claim about what renders, and dismissing a blocking criterion on it leaves
+# the plan unable to ship and unable to ask (WFI-129). The surface rule dismisses
+# cosmetic criteria only.
+#
 # Output (eval-safe), always exit 0 unless the plan cannot be resolved:
 #   GATE='true|false'
 #   GATE_REASON='<one line, why>'
@@ -187,6 +192,28 @@ elif [ "$cfg_require_surface" = "true" ] && [ -n "$surfaces" ] && [ "${MANUAL_OP
   # An untagged criterion is not evidence of anything visual, so it cannot be
   # dismissed by a fact about visuals. Gate, and say which criteria did it.
   reason="$MANUAL_OPEN_UNTAGGED unresolved criteria carry no reason tag of their own (schema v$MANUAL_SCHEMA) — untagged criteria say nothing about rendering, so a surface miss cannot dismiss them"
+elif [ "$cfg_require_surface" = "true" ] && [ -n "$surfaces" ] && [ "$MANUAL_OPEN_BLOCKING" -gt 0 ]; then
+  # The surface rule dismisses criteria; a blocking criterion is the one kind it
+  # may not dismiss. Where the rule fails open for `eyes:cosmetic` — the plan
+  # ships unseen, which is the documented trade — for `eyes:blocking` it fails
+  # into a deadlock: an unattended worker cannot judge the criterion, and with no
+  # matching surface no gate ever opens, so the plan neither ships nor asks. It
+  # just sits in `testing` until the stuck detector notices.
+  #
+  # client-a's WFI-129: PLN-041's sole criterion was "(eyes:blocking) tool
+  # --help — the command list is readable enough", its diff touched src/
+  # Tracker.Cli/ only, and renderingSurfaces listed web directories. wf-test ran
+  # three times, wrote no test-progress.md, moved neither the registry row nor
+  # progress.md, and PLN-041.stuck opened instead.
+  #
+  # The premise the surface rule rests on — "a human can see this" means a
+  # browser — is what breaks. A terminal renders too, and CLI help text is
+  # exactly the output only a human can call readable. Rather than ask every
+  # client to enumerate its non-web surfaces, blocking criteria gate on their
+  # own: somebody tagged this one as needing eyes and blocking release without
+  # them, and a fact about file paths does not overrule that.
+  reason="$MANUAL_OPEN_BLOCKING unresolved eyes:blocking criteria — a surface miss cannot dismiss a blocking criterion, which would neither ship nor gate"
+  [ -n "$surface_hit" ] && reason="$reason; diff touches a rendering surface ($surface_hit)"
 elif [ "$cfg_require_surface" = "true" ] && [ -n "$surfaces" ] && [ -z "$surface_hit" ]; then
   gate=false
   reason="the diff renders nothing to a human — no file matches manualTestGate.renderingSurfaces"
