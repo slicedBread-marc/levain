@@ -1251,16 +1251,69 @@ assert_eq "a number inside a slug is not mistaken for an artifact ID" "true" \
 assert_eq "and the audit is clean on client-a's actual shape" "registry audit: clean" \
   "$(printf '%s' "$slug_audit" | grep 'registry audit:')"
 
-# The check must still fire for a counter that really is behind.
+# The check must still fire for a counter that really is behind — but as a note,
+# not a fault. wf-counter-next.sh derives its floor from the artifacts that
+# exist and advances past drift, so the collision the old wording asserted
+# cannot happen; the one way to cause it is to take the old advice and
+# hand-edit the counter. client-a read a standing "1 problem(s)" on every
+# /wf-status and /wf-board render for a registry with nothing wrong (WFI-133).
 ( cd "$SLUG" && sed -i.bak 's/<!-- Counter: 21 -->/<!-- Counter: 19 -->/' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak )
 behind_audit=$(cd "$SLUG" && "$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
-assert_eq "a genuinely stale counter is still caught" "true" \
+assert_eq "a counter behind the highest live ID is still surfaced" "true" \
   "$(printf '%s' "$behind_audit" | grep -q 'COUNTER.*highest ID in use (20)' && echo true || echo false)"
-assert_eq "and it advises the next free number, not a slug's digits" "true" \
-  "$(printf '%s' "$behind_audit" | grep -q 'Set it to 21\.' && echo true || echo false)"
+assert_eq "and it says the allocator handles it, not 'set it by hand'" "true" \
+  "$(printf '%s' "$behind_audit" | grep -q 'advances past it on its own' && echo true || echo false)"
+assert_eq "no hand-edit is advised — that is the one way to cause a collision" "false" \
+  "$(printf '%s' "$behind_audit" | grep -q 'Set it to' && echo true || echo false)"
+assert_eq "and it does not count as a problem" "registry audit: clean" \
+  "$(printf '%s' "$behind_audit" | grep 'registry audit:')"
+# The allocator's own behaviour is the reason the audit can stand down.
+( cd "$SLUG" && "$SCRIPT_DIR/wf-counter-next.sh" BUG >/dev/null 2>&1 ) || true
+assert_eq "the next allocation skips every live ID rather than colliding" "true" \
+  "$(cd "$SLUG" && grep -qE '<!-- Counter: 2[12] -->' plans/REGISTRY.md && echo true || echo false)"
 
 assert_eq "wf-status runs the audit" "true" \
   "$(grep -q 'wf-registry-audit.sh' "$LIB_ROOT/skills/wf-status/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Filing a bug goes through the counter (client-a WFI-133)"
+
+# Every skill that files a bug carried the same instruction as a COMMENT —
+# "create bugs/open/BUG-NNN-<slug>/bug.md with these fields". A comment
+# addressed to a model is a suggestion: client-a hand-created BUG-051 and
+# BUG-052, bypassing the counter, then reported that no script for this existed
+# and reached for a `wf-bug-new.sh` that wasn't there.
+BUGNEW="$TEST_DIR/bugnew"
+mkdir -p "$BUGNEW/plans" "$BUGNEW/bugs/open" && (
+  cd "$BUGNEW" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf '| ID | Slug | State |\n|-|-|-|\n\n<!-- Counter: 40 -->\n' > plans/REGISTRY.md
+  git add -A && git commit -qm seed
+) >/dev/null 2>&1
+
+bugnew_out=$(cd "$BUGNEW" && "$SCRIPT_DIR/wf-bug-new.sh" 'Guest logout loops forever' \
+  --severity High --source agent:wf-test --description 'session cookie is never cleared' 2>/dev/null)
+assert_eq "stdout is the eval contract and nothing else" "true" \
+  "$(printf '%s' "$bugnew_out" | grep -qvE "^(BUG_ID|BUG_DIR)='.*'$" && echo false || echo true)"
+eval "$bugnew_out"
+assert_eq "the ID came from the counter, not from a guess" "BUG-040" "$BUG_ID"
+assert_eq "the counter advanced" "true" \
+  "$(grep -q '<!-- Counter: 41 -->' "$BUGNEW/plans/REGISTRY.md" && echo true || echo false)"
+assert_eq "bug.md is written where wf-list-bugs.sh looks" "true" \
+  "$([ -f "$BUGNEW/$BUG_DIR/bug.md" ] && echo true || echo false)"
+assert_eq "and in the shape it parses" "BUG-040	High	Guest logout loops forever" \
+  "$(cd "$BUGNEW" && "$SCRIPT_DIR/wf-list-bugs.sh" 2>/dev/null | grep '^BUG-040' | cut -f1-3)"
+assert_eq "unstated fields are TBD, never invented" "true" \
+  "$(grep -q '^TBD$' "$BUGNEW/$BUG_DIR/bug.md" && echo true || echo false)"
+assert_eq "it commits its own work rather than leaving it staged" "true" \
+  "$(cd "$BUGNEW" && git status --short | grep -q . && echo false || echo true)"
+assert_fails "a bad severity is refused, not silently recorded" \
+  env -C "$BUGNEW" "$SCRIPT_DIR/wf-bug-new.sh" 'whatever' --severity Urgent
+
+# The skills that used to hand-write the folder now call it.
+for skill in wf-bug wf-test wf-verify wf-implement; do
+  assert_eq "$skill files through wf-bug-new.sh" "true" \
+    "$(grep -q 'wf-bug-new.sh' "$LIB_ROOT/skills/$skill/SKILL.md" && echo true || echo false)"
+done
 
 # ═══════════════════════════════════════════════════════════════════════
 section "client-c's first three reports (WFI-001/002/003)"

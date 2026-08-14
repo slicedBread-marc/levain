@@ -64,6 +64,13 @@ detail() {
   [ "$QUIET" = "true" ] || printf '%s\n' "$1"
 }
 
+# Something worth knowing that is not something to fix. It prints, but it does
+# not count — an audit that reports a standing "1 problem(s)" for a condition
+# nothing can go wrong from trains its readers to ignore the count (WFI-133).
+note() {
+  [ "$QUIET" = "true" ] || printf '%s\n' "$1"
+}
+
 # ── One pass over the registry ───────────────────────────────────────────
 #
 # Every check below reads the same rows, so they are parsed ONCE into shell
@@ -160,9 +167,18 @@ if [ -n "$counter" ]; then
     } | { grep -oE '(PLN|BUG|BRF)-[0-9]+' || true; } \
       | sed -E 's/^[A-Z]+-0*//' | { grep -E '^[0-9]+$' || true; } | sort -n | tail -1
   )
+  # Drift is a note, not a problem. wf-counter-next.sh derives its floor from
+  # the artifacts that actually exist and advances past anything it finds, so a
+  # counter sitting at or below the highest live ID cannot hand out a duplicate
+  # — it self-corrects on the next allocation. Saying "the next allocation
+  # collides" asserted a failure the allocator provably prevents, and it said
+  # it on every /wf-status and every /wf-board render until someone hand-edited
+  # REGISTRY.md to silence it. Hand-editing the counter is the one way to
+  # actually create the collision this line warned about (WFI-133).
   if [ -n "$highest" ] && [ "$counter" -le "$highest" ]; then
-    report "COUNTER       <!-- Counter: $counter --> is not above the highest ID in use ($highest) — the next allocation collides."
-    detail "              Set it to $((highest + 1))."
+    note   "COUNTER       <!-- Counter: $counter --> is behind the highest ID in use ($highest)."
+    detail "              Not a fault: the next allocation advances past it on its own. Something"
+    detail "              wrote an ID without going through wf-counter-next.sh — worth knowing why."
   fi
 fi
 

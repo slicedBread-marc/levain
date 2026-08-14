@@ -617,12 +617,14 @@ Every `#### Manual` criterion in a schema v6 plan carries a tag saying why a mac
 **Cosmetic failures fail soft.** When an `eyes:cosmetic` criterion fails, do not write a finding and do not block the plan. Instead file it as a normal bug and move on:
 
 ```bash
-new_id=$(../../scripts/wf-exec.sh wf-counter-next.sh BUG)
-# Create ../../bugs/open/$new_id-<slug>/bug.md — Severity: Low,
-# Source: agent:wf-test, Links: "cosmetic criterion from PLN-NNN"
+eval "$(../../scripts/wf-exec.sh wf-bug-new.sh "<what you saw>" \
+  --severity Low --source agent:wf-test \
+  --description "<what the criterion asked for and what rendered instead>" \
+  --links "cosmetic criterion from PLN-NNN")"
+# → $BUG_ID, $BUG_DIR. It allocates through the counter and commits.
 ```
 
-Then check the criterion off in `test-progress.md` with `— COSMETIC (filed $new_id)`. A papercut that should be fixed next week does not hold a merge.
+Then check the criterion off in `test-progress.md` with `— COSMETIC (filed $BUG_ID)`. A papercut that should be fixed next week does not hold a merge.
 
 **`external` and `soak` never gate and never fail.** They cannot be satisfied at gate time by anyone, so gating on them buys nothing and costs a stop. At exit, defer each one and check it off:
 

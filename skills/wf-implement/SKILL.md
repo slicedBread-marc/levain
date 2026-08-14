@@ -479,14 +479,15 @@ The verify agent found code/test/spec issues and set the REGISTRY state back to 
 
    ```bash
    cd $DEVELOP_ROOT
-   new_id=$(scripts/wf-exec.sh wf-counter-next.sh BUG)
-   # Create bugs/open/BUG-NNN-<slug>/bug.md with:
-   #   Severity: the severity you actually observed
-   #   Source: agent:wf-implement
-   #   Description: the finding text, plus how you reproduced it and how reliably
-   #   Links: "surfaced during the fix cycle of PLN-NNN; owning code belongs to PLN-MMM"
-   scripts/wf-exec.sh wf-commit.sh "bug: $new_id — <short title> (surfaced in PLN-NNN fix cycle)" \
-     --add bugs/open/BUG-NNN-<slug>/
+   # One call: allocates through the counter, writes bug.md in the shape the
+   # rest of the pipeline parses, and commits it pathspec-scoped. Hand-writing
+   # the folder is how two bugs bypassed the counter entirely (WFI-133).
+   eval "$(scripts/wf-exec.sh wf-bug-new.sh "<short title>" \
+     --severity "<the severity you actually observed>" --source agent:wf-implement \
+     --description "<the finding text>" \
+     --steps "<how you reproduced it, and how reliably>" \
+     --links "surfaced during the fix cycle of PLN-NNN; owning code belongs to PLN-MMM")"
+   # → $BUG_ID, $BUG_DIR
    ```
    Then in `findings.md`, mark the finding `← BROAD-SCOPE` and name the bug on the same line. `wf-findings-route.sh` deliberately does not route on a `BROAD-SCOPE` finding, so it neither holds the plan in `active` nor sends it to a planner — which is exactly right for work that is now tracked somewhere else. Leave the box unchecked: you did not fix it.
 

@@ -40,28 +40,38 @@ bugs/closed/  → resolved by /wf-deploy when a plan completes
    eval "$(scripts/wf-exec.sh wf-branch-check.sh develop true)"
    ```
    This sets CURRENT_BRANCH (original) and SWITCHED_FROM (if it switched).
-2. **Determine the next bug ID:**
+2. **File it — one call.** This allocates the ID through the counter, writes `bug.md` in the shape the rest of the pipeline parses, and commits it:
    ```bash
-   new_id=$(scripts/wf-exec.sh wf-counter-next.sh BUG)
+   eval "$(scripts/wf-exec.sh wf-bug-new.sh "<title>" \
+     --severity Critical|High|Medium|Low \
+     --project "<repo or app>" \
+     --description "<what's broken and the impact>" \
+     --steps "<numbered list, or TBD>" \
+     --expected "<what should happen>" \
+     --actual "<what does happen>" \
+     --links "<optional: caused by BUG-NNN, regression from PLN-NNN…>")"
    ```
-3. **Choose a slug** — kebab-case title (e.g. `login-crash-empty-password`). The folder will be `BUG-NNN-<slug>`.
-4. **Create the bug folder** — `bugs/open/BUG-NNN-<slug>/`
-5. **Write `bug.md`** — fill in all known fields using the **bug.md format** block below. That block is the format; there is no separate template file to read.
-6. **Handle attachments** — if the user provides a file path, copy or note it:
-   - If the file exists locally, note its path in `bug.md` under `## Attachments` with a relative reference
-   - If the user describes a file they'll add later, add a placeholder: `- [ ] Attach: <description>`
-7. **Commit and push**:
-   ```
-   scripts/wf-exec.sh wf-commit.sh "bug: BUG-NNN — <short title>" --add bugs/open/BUG-NNN-<slug>/
+   It sets `$BUG_ID` and `$BUG_DIR`. Omitted fields land as `TBD`, which is the right value for something the user did not say — never invent them. The slug comes from the title unless you pass `--slug`.
+
+   **Do not hand-write the folder instead.** The counter is the only allocator, and it is only actually the only allocator if using it is easier than not: client-a filed two bugs by hand and pushed its counter into drift (WFI-133).
+3. **Handle attachments** — if the user provides a file path:
+   - Copy it into `$BUG_DIR` and append an `## Attachments` section to `$BUG_DIR/bug.md` referencing it relatively: `[filename.ext](./filename.ext)`
+   - If the user describes a file they'll add later, add the placeholder `- [ ] Attach: <description>`
+   - Then commit the addition: `scripts/wf-exec.sh wf-commit.sh "bug($BUG_ID): attach <filename>" --add "$BUG_DIR"`
+4. **Push**:
+   ```bash
    git push origin develop
    ```
-8. **Restore branch** — if you switched branches in step 1, switch back:
+5. **Restore branch** — if you switched branches in step 1, switch back:
    ```bash
    [ -n "${SWITCHED_FROM:-}" ] && git checkout "$SWITCHED_FROM"
    ```
-9. **Confirm** — show the user the bug ID, folder path, and commit hash
+6. **Confirm** — show the user the bug ID, folder path, and commit hash
 
 ## bug.md format
+
+This is what `wf-bug-new.sh` writes. You do not write it by hand — it is here so
+you know what the fields mean and what a later edit must preserve.
 
 ```markdown
 # [Bug Title]

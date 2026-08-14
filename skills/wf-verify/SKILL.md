@@ -285,17 +285,17 @@ After routing, if any `← BROAD-SCOPE` security findings exist, file an urgent 
 ```bash
 # For each BROAD-SCOPE finding:
 eval "$(scripts/wf-exec.sh wf-branch-check.sh develop true)"
-new_id=$(scripts/wf-exec.sh wf-counter-next.sh BUG)
-# Create bugs/open/BUG-NNN-<slug>/bug.md with:
-#   Severity: Critical
-#   Source: agent:wf-verify
-#   Description: the finding text from findings.md
-#   Links: "discovered during verify of PLN-NNN"
-# Then — pathspec-scoped, never a bare `git add` + `git commit`, which takes
-# the whole shared develop index and everything other live workers left staged
-# in it (WFI-048/049, WFI-122, WFI-123):
-scripts/wf-exec.sh wf-commit.sh "bug: $new_id — security: <short title> (from PLN-NNN verify)" \
-  --add bugs/open/BUG-NNN-<slug>/ --branch develop
+# One call: it allocates through the counter, writes bug.md in the shape the
+# rest of the pipeline parses, and commits pathspec-scoped — never a bare
+# `git add` + `git commit`, which takes the whole shared develop index and
+# everything other live workers left staged in it (WFI-048/049, WFI-122,
+# WFI-123). Hand-writing the folder instead is how two bugs bypassed the
+# counter entirely (WFI-133).
+eval "$(scripts/wf-exec.sh wf-bug-new.sh "security: <short title>" \
+  --severity Critical --source agent:wf-verify \
+  --description "<the finding text from findings.md>" \
+  --links "discovered during verify of PLN-NNN")"
+# → $BUG_ID, $BUG_DIR
 git push origin develop
 [ -n "${SWITCHED_FROM:-}" ] && git checkout "$SWITCHED_FROM"
 ```
