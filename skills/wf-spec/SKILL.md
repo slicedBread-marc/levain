@@ -15,13 +15,12 @@ If `WF_UNATTENDED=1` is set in your environment, you were launched by the orches
 
 Rules, in force for the whole session:
 
-0. **Claim the artifact before you read anything** — by whatever ID you were handed, whether or not a plan folder exists yet:
+0. **Claim the artifact before you read anything** — the shared rule in [Claiming](#claiming), with `--if-free` so you stand down instead of racing:
    ```bash
    scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug> --if-free   # a plan
    scripts/wf-exec.sh wf-claim.sh BRF-NNN --if-free          # a brief, no plan folder yet
    scripts/wf-exec.sh wf-claim.sh BUG-NNN --if-free          # a bug, likewise
    ```
-   Claims key on the artifact **number**, not on the plan folder, so `BRF-002` and the `PLN-002` it becomes are one claim (v5.6; before that, claiming a brief failed with "plan directory not found" and every brief-sourced spec run was unclaimed until it happened to create the folder — client-c WFI-004).
    Exit 2 means **another** live session is already on it — print the message and exit 0. Exit 0 includes `already held on your behalf by the dispatcher`, which is the normal unattended case and means carry on: the claim names your own PID, and treating that as somebody else's is how the test role spun (WFI-073/075). Claiming *after* the work is claiming after the race: client-a ran two unattended wf-spec workers over one plan for twenty minutes, and the second wrote its `## Review` block on top of the first's, leaving plan.md with two contradicting verdicts (WFI-067). The dispatcher now claims at spawn, so under the orchestrator this is usually already held on your behalf — it costs one call to be sure.
 1. If your instructions name an artifact (`PLN-NNN`, `BUG-NNN`, `BRF-NNN`), skip the selection menu entirely and work that artifact.
 2. Prompts marked **[AUTO]** below resolve to their stated default. Take it and move on.
@@ -114,10 +113,26 @@ Display the subagent's output verbatim, then tell the user: "Run `/model opus`, 
 If the user types `u <N>` for a replan: run `scripts/wf-exec.sh wf-set-priority.sh <plan-id> urgent`, then re-run the haiku subagent above to re-display the updated menu.
 If the user types `u <N>` for an already-urgent replan: run `scripts/wf-exec.sh wf-set-priority.sh <plan-id> —` to clear it, then re-run the subagent.
 
-- If they pick an escalated plan: **claim it** (`scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug>`), then go to [Replanning](#replanning)
-- If they pick a bug: go to [Plan from bug](#plan-from-bug)
-- If they pick a brief: go to step 1 below (Read the brief)
+**Claim whatever they pick, before you read it** — the same rule as unattended rule 0, and it is not a mode-specific rule (see [Claiming](#claiming)):
+
+- If they pick an escalated plan: `scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug>`, then go to [Replanning](#replanning)
+- If they pick a bug: `scripts/wf-exec.sh wf-claim.sh BUG-NNN`, then go to [Plan from bug](#plan-from-bug)
+- If they pick a brief: `scripts/wf-exec.sh wf-claim.sh BRF-NNN`, then go to step 1 below (Read the brief)
 - If they describe new work: ask if it should become a brief first (route to `/wf-brainstorm`)
+
+## Claiming
+
+**Claim the artifact before you read anything, in both modes, by whatever ID you were handed — whether or not a plan folder exists yet.** Claims key on the artifact *number*, so `BRF-002` and the `PLN-002` it becomes are one claim (v5.6; before that, claiming a brief failed with "plan directory not found" — client-c WFI-004).
+
+```bash
+scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug>   # a plan
+scripts/wf-exec.sh wf-claim.sh BRF-NNN          # a brief, no plan folder yet
+scripts/wf-exec.sh wf-claim.sh BUG-NNN          # a bug, likewise
+```
+
+This lived inside the unattended section, and the attended menu claimed on one path out of three — the escalated-plan path. So an attended session creating a plan from a bug wrote `plans/PLN-NNN-<slug>/` and committed a `draft` REGISTRY row while holding no claim at all. **A draft row is dispatchable the moment it is committed, whichever mode wrote it:** client-a's daemon put three unattended wf-spec workers onto PLN-048/049/050 within ~3 minutes of an attended session committing their rows, both sessions then edited the same `plan.md` files, and the attended one saw the workers' edits only as unexplained "modified by a linter" notices. One worker finished and set a plan `ready`; two died leaving stale claims (WFI-130). Nothing was lost that time.
+
+The claim is what makes the artifact yours to write. Take it first.
 
 ---
 

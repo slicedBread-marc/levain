@@ -1276,6 +1276,29 @@ assert_eq "wf-status runs the audit" "true" \
   "$(grep -q 'wf-registry-audit.sh' "$LIB_ROOT/skills/wf-status/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "Claiming is not a mode-specific rule (client-a WFI-130)"
+
+# "Claim the artifact before you read anything" lived inside wf-spec's
+# Unattended-mode section, and the attended menu claimed on ONE path out of
+# three — the escalated plan. So an attended session creating a plan from a bug
+# wrote plans/PLN-NNN-<slug>/ and committed a draft REGISTRY row holding no
+# claim, and a draft row is dispatchable the moment it is committed. The daemon
+# put three unattended spec workers onto PLN-048/049/050 within ~3 minutes;
+# both sessions then edited the same plan.md files.
+spec_skill="$LIB_ROOT/skills/wf-spec/SKILL.md"
+assert_eq "the rule has its own section, not a home inside Unattended mode" "true" \
+  "$(grep -q '^## Claiming' "$spec_skill" && echo true || echo false)"
+assert_eq "and says it applies in both modes" "true" \
+  "$(grep -q 'before you read anything, in both modes' "$spec_skill" && echo true || echo false)"
+for path in 'wf-claim.sh BUG-NNN`, then go to \[Plan from bug\]' 'wf-claim.sh BRF-NNN`, then go to step 1' 'wf-claim.sh PLN-NNN-<slug>`, then go to \[Replanning\]'; do
+  assert_eq "the attended menu claims on this path: ${path%%\`*}" "true" \
+    "$(grep -qE "$path" "$spec_skill" && echo true || echo false)"
+done
+# The unattended rule still exists — it is now a pointer, not a second copy.
+assert_eq "unattended rule 0 still claims, with --if-free" "true" \
+  "$(grep -q 'wf-claim.sh BRF-NNN --if-free' "$spec_skill" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "A deploy owns its own changes (client-a WFI-131)"
 
 # Almost everything install.sh writes is gitignored in the client. A handful of
