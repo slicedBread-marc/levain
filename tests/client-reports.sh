@@ -1276,6 +1276,45 @@ assert_eq "wf-status runs the audit" "true" \
   "$(grep -q 'wf-registry-audit.sh' "$LIB_ROOT/skills/wf-status/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A test result carries proof of which tree it measured (client-a WFI-132)"
+
+# An unattended tester recorded "Total: 1120, Passed: 1114, Failed: 6" against
+# PLN-051 and gated saying the implementation "appears incomplete". The feature
+# tree holds 1123 — the plan adds 3 — so 1120 is develop, which does not carry
+# the fix. Verify's own run ten minutes earlier, in the right tree, was 1123/0.
+# Three skills warned about this in prose already (WFI-094, WFI-098, WFI-105);
+# prose did not hold, so the instruction is a precondition now.
+TREE="$TEST_DIR/treecheck"
+mkdir -p "$TREE" && (
+  cd "$TREE" && git init -qb develop . && git config user.email t@t && git config user.name t
+  echo seed > README.md && git add -A && git commit -qm seed
+  git worktree add -q -b feature/PLN-051-mint-names feature-branches/PLN-051-mint-names
+) >/dev/null 2>&1
+
+assert_fails "a run from the main worktree is refused" \
+  env -C "$TREE" "$SCRIPT_DIR/wf-test-tree.sh" PLN-051-mint-names
+tree_err=$(cd "$TREE" && "$SCRIPT_DIR/wf-test-tree.sh" PLN-051-mint-names 2>&1 >/dev/null || true)
+assert_eq "and says the result would be about develop, not this plan" "true" \
+  "$(printf '%s' "$tree_err" | grep -q 'main worktree' && echo true || echo false)"
+assert_eq "and gives the cd that fixes it" "true" \
+  "$(printf '%s' "$tree_err" | grep -q 'Fix: cd .*feature-branches/PLN-051-mint-names' && echo true || echo false)"
+
+tree_ok=$(cd "$TREE/feature-branches/PLN-051-mint-names" && "$SCRIPT_DIR/wf-test-tree.sh" PLN-051-mint-names)
+assert_eq "from the plan's own worktree it stamps the run" "true" \
+  "$(printf '%s' "$tree_ok" | grep -qE '^TREE feature-branches/PLN-051-mint-names @ feature/PLN-051-mint-names [0-9a-f]+ \(' && echo true || echo false)"
+
+# Right path, wrong branch: the directory name says one plan and the code is
+# another. The stamp must not vouch for that.
+( cd "$TREE/feature-branches/PLN-051-mint-names" && git checkout -q -b feature/PLN-052-something-else ) >/dev/null 2>&1
+assert_fails "a worktree moved off its own branch is refused too" \
+  env -C "$TREE/feature-branches/PLN-051-mint-names" "$SCRIPT_DIR/wf-test-tree.sh" PLN-051-mint-names
+
+assert_eq "wf-test chains the stamp ahead of the test command" "true" \
+  "$(grep -q 'wf-test-tree.sh' "$LIB_ROOT/skills/wf-test/SKILL.md" && echo true || echo false)"
+assert_eq "and forbids transcribing a figure from an earlier run" "true" \
+  "$(grep -q 'Never transcribe a figure you did not just produce' "$LIB_ROOT/skills/wf-test/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "Filing a bug goes through the counter (client-a WFI-133)"
 
 # Every skill that files a bug carried the same instruction as a COMMENT —

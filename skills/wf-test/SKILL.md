@@ -27,7 +27,9 @@ Order of work:
 
    Exit 0 is the normal case and includes `already held on your behalf by the dispatcher` — the orchestrator claims a plan before launching you, and that claim names *your* PID. Standing down there is standing down against yourself: it ended ~15s runs reporting a human who did not exist, and parked every plan that reached testing after three no-op dispatches (WFI-073, WFI-075). Only exit 2 means someone else.
 1. If your instructions name a plan, skip the selection menu and work that plan.
-2. Run the automated suites and e2e scope as normal — **in the foreground, with
+2. Run the automated suites and e2e scope as normal — **from inside the plan's
+   own worktree, stamped** (`wf-test-tree.sh` chained ahead of the test command;
+   see [CWD note](#testing)), and **in the foreground, with
    a generous timeout, reading the output yourself.** No `&`, no
    `run_in_background: true`, no backgrounded subagent. A headless run ends the
    moment you stop producing output, so anything still running is killed unread
@@ -71,7 +73,7 @@ Order of work:
 | Exit | `git push` failed | **[GATE]** | `merge-failed` — question is the git error verbatim |
 | Exit | `gh pr merge` failed | [AUTO] | Already routes to the builder on its own — follow that path, don't gate |
 
-**Never guess.** You have no eyes on the running app beyond what Chrome and the test suites report. If a criterion's outcome is not something you established from a test result, a Chrome observation, or a build log, it is **not** a PASS — defer it to the `manual-test` gate. Recording an unverified PASS is worse than recording nothing, because it ships. Anything you are about to ask that isn't in the table above is a [GATE] with gate name `needs-input`.
+**Never guess.** You have no eyes on the running app beyond what Chrome and the test suites report. If a criterion's outcome is not something you established from a test result, a Chrome observation, or a build log, it is **not** a PASS — defer it to the `manual-test` gate. Recording an unverified PASS is worse than recording nothing, because it ships. A test result you did not produce yourself, in this plan's stamped tree, is in the same category as a guess — and a FAIL copied out of the bug report that motivated the plan is the shape this actually took (WFI-132). Anything you are about to ask that isn't in the table above is a [GATE] with gate name `needs-input`.
 
 Everything else (creating the PR, writing findings, routing back to the builder) is a normal state transition and proceeds without asking.
 
@@ -156,6 +158,16 @@ a green build of the wrong tree.
 scripts/wf-exec.sh wf-branch-check.sh feature/$PLAN_NAME
 ```
 Exit 1 here means you are standing somewhere else — almost always the develop root, which a re-test lands in by default. Fix the directory, do not proceed.
+
+**Every command that produces a result you will record must carry its own proof of tree.** Chain it in the same invocation, so `&&` stops before a single test runs in the wrong place:
+```bash
+cd /abs/path/to/feature-branches/PLN-NNN-<slug> \
+  && ../../scripts/wf-exec.sh wf-test-tree.sh PLN-NNN-<slug> \
+  && {{test_command}}
+```
+It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp in `test-progress.md` immediately above the totals it belongs to.** A test result is a measurement of one working tree and nothing in `dotnet test`'s output says which — an unattended tester recorded develop's 1120 tests against a plan whose tree holds 1123, and opened a gate saying the implementation "appears incomplete" while verify's own run of the same plan was 1123 passed / 0 failed (WFI-132). A totals line without a stamp above it is not a result; re-run it.
+
+**Never transcribe a figure you did not just produce.** Totals, failure counts, durations and failing test names that appear in a bug report, an earlier log, `test-progress.md`, or the plan are records of a *different* run, usually the pre-fix one that motivated the work. The only admissible source for a result is a command you executed in this session, in the stamped tree, and read the output of.
 
 **A compaction is a re-entry.** This skill used to say the working directory "persists", and it does — right up until the conversation is summarised, which resets it to the develop root with nothing in the transcript saying so. client-a's WFI-098: after a mid-session compaction a relative read of a file that exists only on the feature branch returned "No such file or directory" and a grep for the feature came back empty — the WFI-094 shape again, one step from being written up as a broken feature. The post-compaction `WORKFLOW STATE` block restates the worktree path absolute for exactly this reason; re-run the assertion above the moment you see one.
 
