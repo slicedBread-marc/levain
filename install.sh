@@ -766,7 +766,7 @@ fi
 # run while other workers have things staged.
 if $INSTALL_COMMIT && git -C "$TARGET_DIR" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
     DEPLOY_PATHS=()
-    for p in claude-workflow.yml WORKFLOW.md .claude/workflow-version plans/TEMPLATE.md CLAUDE.md; do
+    for p in claude-workflow.yml WORKFLOW.md .claude/workflow-version plans/TEMPLATE.md CLAUDE.md .gitignore; do
         git -C "$TARGET_DIR" ls-files --error-unmatch -- "$p" >/dev/null 2>&1 || continue
         git -C "$TARGET_DIR" diff --quiet -- "$p" 2>/dev/null || DEPLOY_PATHS+=("$p")
     done
