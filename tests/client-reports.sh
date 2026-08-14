@@ -1276,6 +1276,63 @@ assert_eq "wf-status runs the audit" "true" \
   "$(grep -q 'wf-registry-audit.sh' "$LIB_ROOT/skills/wf-status/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A deploy owns its own changes (client-a WFI-131)"
+
+# Almost everything install.sh writes is gitignored in the client. A handful of
+# paths are deliberately not — the config, the entry contract, the version
+# stamp — so a deploy left develop dirty and walked away. The next worker in
+# read those as somebody else's work in progress and filed WFI-131 mid-plan;
+# meanwhile they sat on the shared develop index, where the next wf-commit.sh
+# from any live worker would have carried them under that plan's message.
+DEPLOYC="$TEST_DIR/deployclient"
+mkdir -p "$DEPLOYC" && (
+  cd "$DEPLOYC" && git init -qb develop . && git config user.email t@t && git config user.name t
+  echo '# app' > README.md && git add -A && git commit -qm seed
+) >/dev/null 2>&1
+# First run creates the config and stops; second run installs.
+bash "$LIB_ROOT/install.sh" "$DEPLOYC" >/dev/null 2>&1 || true
+( cd "$DEPLOYC" && sed -i.bak 's|^project_slug:.*|project_slug: "deployclient"|' claude-workflow.yml \
+    && rm -f claude-workflow.yml.bak ) >/dev/null 2>&1
+bash "$LIB_ROOT/install.sh" "$DEPLOYC" >/dev/null 2>&1 || true
+( cd "$DEPLOYC" && git add -A && git commit -qm "install" ) >/dev/null 2>&1
+
+# Dirty a tracked path the way a real deploy does (a config backfill, a new
+# version stamp), then re-deploy.
+printf '\n# forced change\n' >> "$DEPLOYC/claude-workflow.yml"
+deploy_out=$(bash "$LIB_ROOT/install.sh" "$DEPLOYC" 2>&1 || true)
+assert_eq "a re-deploy leaves the client's tree clean" "true" \
+  "$(cd "$DEPLOYC" && git status --porcelain | grep -q . && echo false || echo true)"
+assert_eq "and says what it landed" "true" \
+  "$(printf '%s' "$deploy_out" | grep -q 'tree left clean' && echo true || echo false)"
+assert_eq "under its own message, not a plan's" "true" \
+  "$(cd "$DEPLOYC" && git log -1 --pretty=%s | grep -q '^chore: sync workflow harness to v' && echo true || echo false)"
+
+# It must commit ONLY its own paths — never the shared index, which on develop
+# holds every other live worker's staged work (WFI-122, WFI-123).
+( cd "$DEPLOYC" && echo 'someone elses work' > other.txt && git add other.txt ) >/dev/null 2>&1
+printf '\n# forced change\n' >> "$DEPLOYC/claude-workflow.yml"
+bash "$LIB_ROOT/install.sh" "$DEPLOYC" >/dev/null 2>&1 || true
+assert_eq "another worker's staged file is not swept into the deploy commit" "true" \
+  "$(cd "$DEPLOYC" && git diff --cached --name-only | grep -qx 'other.txt' && echo true || echo false)"
+( cd "$DEPLOYC" && git reset -q HEAD other.txt && rm -f other.txt ) >/dev/null 2>&1
+
+# Off a pipeline branch, the deploy's changes are not this branch's to carry.
+( cd "$DEPLOYC" && git checkout -q -- . && git checkout -q -b someones-session ) >/dev/null 2>&1
+printf '\n# forced change\n' >> "$DEPLOYC/claude-workflow.yml"
+foreign_out=$(bash "$LIB_ROOT/install.sh" "$DEPLOYC" 2>&1 || true)
+assert_eq "on a foreign branch it says so instead of committing" "true" \
+  "$(printf '%s' "$foreign_out" | grep -q "not a branch a deploy should commit to" && echo true || echo false)"
+assert_eq "and leaves the change for develop to land" "true" \
+  "$(cd "$DEPLOYC" && git status --porcelain | grep -q 'claude-workflow.yml' && echo true || echo false)"
+
+# --no-commit restores the old behaviour for a caller that wants to bundle it.
+( cd "$DEPLOYC" && git checkout -q develop && git checkout -q -- . ) >/dev/null 2>&1
+printf '\n# forced change\n' >> "$DEPLOYC/claude-workflow.yml"
+bash "$LIB_ROOT/install.sh" "$DEPLOYC" --no-commit >/dev/null 2>&1 || true
+assert_eq "--no-commit leaves the tree dirty on purpose" "true" \
+  "$(cd "$DEPLOYC" && git status --porcelain | grep -q 'claude-workflow.yml' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "A test result carries proof of which tree it measured (client-a WFI-132)"
 
 # An unattended tester recorded "Total: 1120, Passed: 1114, Failed: 6" against

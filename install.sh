@@ -5,7 +5,17 @@ set -euo pipefail
 # Installs the workflow skills, templates, and folder structure into a project.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET_DIR="${1:-.}"
+TARGET_DIR="."
+INSTALL_COMMIT=true
+
+for arg in "$@"; do
+    case "$arg" in
+        --no-commit) INSTALL_COMMIT=false ;;
+        -*) echo "Unknown option: $arg" >&2; exit 1 ;;
+        *)  TARGET_DIR="$arg" ;;
+    esac
+done
+[ "${WF_INSTALL_NO_COMMIT:-0}" = "1" ] && INSTALL_COMMIT=false
 
 # Colors
 GREEN='\033[0;32m'
@@ -732,6 +742,55 @@ if [ -f "$CLAUDE_MD" ]; then
 else
     echo "$IMPORT_LINE" > "$CLAUDE_MD"
     echo -e "${GREEN}  Created CLAUDE.md with workflow import${NC}"
+fi
+
+# ── Land the deploy's own tracked changes ────────────────────────────────
+#
+# Almost everything this installer writes is gitignored in the client as of
+# v5.0.0 — scripts/v*/, .claude/skills/wf-*/, the hooks. A handful of paths are
+# deliberately NOT: the project's config, the entry contract, the version
+# stamp, the plan template. Those are tracked, so a deploy left the client's
+# develop dirty and walked away.
+#
+# That is not cosmetic. The next worker into that repo reads an uncommitted
+# `.claude/workflow-version` and a modified `claude-workflow.yml` as somebody
+# else's work in progress and has to decide what to do about it — client-a's
+# WFI-131 filed exactly that, mid-plan, and worked around it by leaving the
+# changes alone. Meanwhile the files are on the shared develop index, where the
+# next `wf-commit.sh` from any live worker would have carried them under that
+# plan's message.
+#
+# So the deploy owns its own changes: pathspec-scoped, its own commit, nothing
+# else swept in. `git commit -- <paths>` commits those paths from the working
+# tree and leaves the rest of the index alone, which is what makes it safe to
+# run while other workers have things staged.
+if $INSTALL_COMMIT && git -C "$TARGET_DIR" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+    DEPLOY_PATHS=()
+    for p in claude-workflow.yml WORKFLOW.md .claude/workflow-version plans/TEMPLATE.md CLAUDE.md; do
+        git -C "$TARGET_DIR" ls-files --error-unmatch -- "$p" >/dev/null 2>&1 || continue
+        git -C "$TARGET_DIR" diff --quiet -- "$p" 2>/dev/null || DEPLOY_PATHS+=("$p")
+    done
+
+    if [ ${#DEPLOY_PATHS[@]} -gt 0 ]; then
+        DEPLOY_BRANCH=$(git -C "$TARGET_DIR" branch --show-current 2>/dev/null || true)
+        case "$DEPLOY_BRANCH" in
+            develop|main|master|release)
+                if git -C "$TARGET_DIR" commit --quiet \
+                     -m "chore: sync workflow harness to v$WORKFLOW_VERSION" \
+                     -- "${DEPLOY_PATHS[@]}" 2>/dev/null; then
+                    echo -e "${GREEN}  Committed ${#DEPLOY_PATHS[@]} tracked path(s) on $DEPLOY_BRANCH — tree left clean${NC}"
+                else
+                    echo -e "${YELLOW}  Could not commit ${DEPLOY_PATHS[*]} — commit them before another worker does${NC}"
+                fi
+                ;;
+            *)
+                # A feature branch or a human's own session: the deploy's
+                # changes belong on develop, not stacked onto whatever this is.
+                echo -e "${YELLOW}  Left ${DEPLOY_PATHS[*]} uncommitted — checkout is on '${DEPLOY_BRANCH:-detached HEAD}',${NC}"
+                echo -e "${YELLOW}    not a branch a deploy should commit to. Land them from develop.${NC}"
+                ;;
+        esac
+    fi
 fi
 
 echo ""
