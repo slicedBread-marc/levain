@@ -40,6 +40,7 @@ Before starting, confirm E2E passed on release:
    git checkout main
    git pull origin main
    ```
+   From here until step 11 puts it back, the shared main worktree is off `develop` — so `plans/REGISTRY.md` is main's older copy and the orchestrator dispatches nothing at all (WFI-135). That is deliberate: dispatching from a stale registry is how two builders were sent at a completed plan. **Steps 5–11 are one unit.** If you abort anywhere in the middle, `git checkout develop` before you stop, and say that you did.
 6. **Merge `release` into `main`** (auto-resolve in favor of release):
    ```bash
    git merge -X theirs --no-ff release -m "release: promote to main"

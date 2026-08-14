@@ -413,6 +413,39 @@ plan=$(orch --sweep --dry-run 2>/dev/null)
 assert_eq "implement capped at max_concurrent 2" "2" \
   "$(printf '%s' "$plan" | grep -c 'would spawn: implement' | xargs)"
 
+# The registry is a file on develop. Any other branch checked out in the main
+# worktree means the dispatcher is reading a different, older copy of the state
+# machine — client-a's WFI-135: /wf-release parked the shared checkout on
+# release, where PLN-051 still read `active` while develop had it `complete`,
+# and two wf-implement workers were dispatched at a finished plan within three
+# minutes. release and main used to be on the allow-list for exactly the reason
+# that turned out to be wrong.
+seed_branch=$(git branch --show-current)
+git checkout -q -b develop
+plan=$(orch --sweep --dry-run 2>/dev/null)
+assert_eq "on develop, the sweep dispatches" "true" \
+  "$(printf '%s' "$plan" | grep -q 'would spawn' && echo true || echo false)"
+for parked in wf-release-tmp feature/PLN-999-elsewhere someones-session; do
+  git checkout -q -b "$parked"
+  plan=$(orch --sweep --dry-run 2>/dev/null)
+  assert_eq "no dispatch while the checkout is off develop, on '$parked'" "0" \
+    "$(printf '%s' "$plan" | grep -c 'would spawn' | xargs)"
+  assert_eq "and the pause names the branch it is standing on" "true" \
+    "$(printf '%s' "$plan" | grep -q "paused — main worktree is on '$parked'" && echo true || echo false)"
+  git checkout -q develop
+  git branch -q -D "$parked"
+done
+plan=$(orch --sweep --dry-run 2>/dev/null)
+assert_eq "back on develop, dispatch resumes on the next sweep" "true" \
+  "$(printf '%s' "$plan" | grep -q 'would spawn' && echo true || echo false)"
+# Before develop exists there is no other copy to be stale against, so a
+# greenfield client is not paused out of the gate.
+git checkout -q "$seed_branch"
+git branch -q -D develop
+plan=$(orch --sweep --dry-run 2>/dev/null)
+assert_eq "no develop yet: the branch in front of us IS the registry" "true" \
+  "$(printf '%s' "$plan" | grep -q 'would spawn' && echo true || echo false)"
+
 # Disabled by default is the safety posture that matters most.
 sed 's/enabled: true/enabled: false/' claude-workflow.yml > cfg.tmp && mv cfg.tmp claude-workflow.yml
 assert_fails "sweep refuses to run when disabled" orch --sweep

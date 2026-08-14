@@ -86,6 +86,39 @@ An artifact is not dispatched when any of these hold:
 | The hourly spawn budget is spent | `.claude/orchestrator/spawns-<YYYYMMDDHH>` |
 | It still owes a consistency pass (implement only) | `wf-list-consistency.sh` |
 
+And nothing at all is dispatched when the whole sweep is disqualified:
+
+| Condition | Detected by |
+|-|-|
+| The main worktree is not on `develop` | `checkout_available()` in `wf-orchestrate.sh` |
+
+### The registry is a file, and only develop's copy is the state machine
+
+`plans/REGISTRY.md` is tracked on `develop`. Every other branch carries its own
+older copy — whatever it last merged. So when the shared main worktree is
+checked out anywhere else, the dispatcher is not reading the state machine; it
+is reading a snapshot of it.
+
+client-a's WFI-135 is what that costs. An interactive `/wf-release` checked
+out `release`, where PLN-051 still read `active` while develop had it
+`complete`. Within three minutes the daemon dispatched two unattended
+`wf-implement` workers at a finished plan. Nothing raced — the registry was
+moved out from under the dispatcher by a documented step of another skill, and
+every plan whose state had advanced since the last release sync was exposed the
+same way, for as long as the checkout stayed off develop.
+
+`release` and `main` used to be on the allow-list, on the reasoning that a
+release or a deploy legitimately parks the root there. It does — and that is
+precisely when the registry is wrong. So the rule is now "is this develop?",
+with one exception: before `develop` exists there is no other copy to be stale
+against, so a greenfield client dispatches from whatever branch it has.
+
+The pause is latched, self-clearing and loud: the sweep prints which branch it
+is standing on and why, and the next sweep after the checkout returns to
+develop dispatches normally. `/wf-release` and `/wf-deploy` are each responsible
+for handing the checkout back when they finish — a release left parked stops the
+pipeline, silently, until someone notices.
+
 ### Claims name the worker, and the worker knows it
 
 The dispatcher claims an artifact *before* launching the worker, stamping the

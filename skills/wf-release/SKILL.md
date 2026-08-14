@@ -22,6 +22,7 @@ release branch    → staging environment for E2E validation
    ```bash
    scripts/wf-exec.sh wf-branch-check.sh release
    ```
+   **This moves the shared checkout, and the orchestrator reads its `plans/REGISTRY.md`.** On `release` that file is whatever release last merged, so every plan whose state advanced since then reads stale — client-a's PLN-051 read `active` there while develop had it `complete`, and two unattended builders were dispatched at a finished plan (WFI-135, WFI-134). As of v6.4.3 the daemon refuses to dispatch anything while the main worktree is off `develop`, so the cost is a paused pipeline rather than a wrong one. **The pause lasts exactly as long as you hold the checkout — finish, then hand it back at step 9.**
 2. **Check if release has unreleased commits:**
    ```bash
    git log main..release --oneline | head -10
@@ -93,7 +94,12 @@ release branch    → staging environment for E2E validation
    # every test skipped on a feature branch by tiered gating MUST run here.
    ```
    If tests fail, inform the user of failures. The release branch stays as-is for fixes.
-8. **Display result**:
+8. **Hand the checkout back — run this whether the E2E passed or failed:**
+   ```bash
+   scripts/wf-exec.sh wf-branch-check.sh develop true
+   ```
+   The orchestrator dispatches nothing at all while the main worktree sits on `release`, because the registry it would read is release's older copy (WFI-135). Leaving it parked does not stop *this* skill — it stops the whole pipeline, silently, until someone notices. A failed E2E is fixed on a feature branch anyway, so there is no case where release needs to stay checked out.
+9. **Display result**:
 
    **On success:**
    ```
@@ -119,6 +125,7 @@ release branch    → staging environment for E2E validation
 - **Do NOT update REGISTRY.md** — plan states are already set by `wf-test` and `wf-deploy`
 - **Do NOT** force push — use regular merge
 - **Complete all steps** — if the user interrupts, provide a clear resumption point
+- **Never leave the checkout on `release`** — it is the shared main worktree, and while it is parked there the orchestrator dispatches nothing (WFI-135). If you stop early, for any reason, run `wf-branch-check.sh develop true` on the way out and say so
 
 ## On startup
 

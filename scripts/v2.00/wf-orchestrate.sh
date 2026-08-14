@@ -253,26 +253,50 @@ skip_clear() {
 # "develop is checked out" is a sound proxy for "no human is mid-something",
 # and the cost of being wrong is a paused daemon rather than a rewritten ref.
 #
-# The test is "is this one of the pipeline's own branches?", not "is this
-# develop?" — same rule as wf-branch-check.sh, and for the same reason. A
-# release or a deploy legitimately parks the root on release or main, and a
-# greenfield project has not created develop yet; neither is a foreign session.
-# A branch this pipeline never creates always is one.
+# The test was "is this one of the pipeline's own branches?", which allowed
+# release and main on the reasoning that a release or a deploy legitimately
+# parks the root there. client-a's WFI-135 is that reasoning failing: the
+# registry is a file, `plans/REGISTRY.md`, and on release it is whatever
+# release last merged. PLN-051 read `active` there while develop had it
+# `complete`, and within three minutes the daemon dispatched two wf-implement
+# workers at a finished plan. Nothing raced — the state machine was swapped
+# out from under the dispatcher by a documented step of another skill, and
+# every plan whose state moved since the last release sync was exposed the
+# same way for as long as the checkout stayed off develop.
 #
-# It clears itself: the next sweep after the checkout returns to a pipeline
-# branch dispatches normally.
+# So the test is now "is the registry I am about to read develop's?", and only
+# develop answers yes. release, main and feature/* each carry their own older
+# copy; a branch this pipeline never created belongs to a human session
+# (WFI-123). All four mean: dispatch nothing this sweep.
+#
+# It clears itself: the next sweep after the checkout returns to develop
+# dispatches normally, so a release or a deploy costs a pause, not a stop.
 checkout_available() {
   local root branch
   root=$(wf_develop_root)
   branch=$(git -C "$root" branch --show-current 2>/dev/null || true)
+  [ "$branch" = "develop" ] && return 0
+
+  # Before develop exists there is no second copy of the registry to be stale
+  # against — the branch in front of us IS the registry. A greenfield client
+  # would otherwise sit paused forever waiting for a branch the pipeline has
+  # not created yet.
+  if ! git -C "$root" rev-parse --verify --quiet refs/heads/develop >/dev/null 2>&1; then
+    case "$branch" in main|master|release) return 0 ;; esac
+  fi
+
+  local why
   case "$branch" in
-    develop|release|main|master|feature/*) return 0 ;;
+    release|main|master|feature/*)
+      why="main worktree is on '$branch' — plans/REGISTRY.md there is that branch's older copy, not develop's, so every state it reports may be stale (WFI-135)" ;;
+    "")
+      why="main worktree is on a detached HEAD — no branch owns plans/REGISTRY.md, so nothing it reports can be trusted" ;;
+    *)
+      why="main worktree is on '$branch' — not a pipeline branch, so another session owns it" ;;
   esac
 
-  skip_note "orchestrator" "—" \
-    "main worktree is on '${branch:-detached HEAD}' — not a pipeline branch, so another session owns it; dispatching nothing" \
-    blocked
-  echo "$(wf_now)  paused — main worktree is on '${branch:-detached HEAD}', which the pipeline does not own"
+  skip_note "orchestrator" "—" "$why; dispatching nothing" blocked
+  echo "$(wf_now)  paused — $why"
   return 1
 }
 
