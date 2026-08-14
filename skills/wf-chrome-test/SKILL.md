@@ -422,6 +422,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    ```bash
    scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
    ```
+   It commits the rename itself, both sides. Do not add the bug folder to any commit of your own — naming only the destination leaves the deletion staged, and the bug ends up tracked at `triaged/` and `closed/` at once (WFI-136).
 6. Clean up feature branch and worktree:
    ```bash
    git worktree remove feature-branches/PLN-NNN-<slug> --force 2>/dev/null || true
@@ -431,13 +432,13 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    ```bash
    rm -f plans/PLN-NNN-<slug>/test-progress.md
    scripts/wf-exec.sh wf-commit.sh "test(PLN-NNN-<slug>): complete — merged to develop" --allow-empty \
-     --add plans/PLN-NNN-<slug>/test-progress.md bugs/closed/BUG-NNN-<slug>/ \
+     --add plans/PLN-NNN-<slug>/test-progress.md \
      --branch develop
    ```
    **Never a bare `git add … ; git commit --allow-empty` here** — that takes the
    whole shared develop index, and on develop the index holds every other live
-   worker's staged work (WFI-122, WFI-123). Name the bug folder if the plan
-   closed one; drop the path otherwise, never `bugs/` wholesale.
+   worker's staged work (WFI-122, WFI-123). No `bugs/` path belongs here: step 5
+   already committed the rename, both sides (WFI-136).
 8. Display:
    ```
    Human test passed

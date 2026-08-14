@@ -41,6 +41,7 @@ Order of work:
      ```bash
      scripts/wf-exec.sh wf-defer-criterion.sh <PLN-ID> external "<criterion text>"
      ```
+     **Read what it printed.** The DC row is only half the job — the other half is the checkbox in `plan.md`, which is what anyone opening the completed plan actually reads. `ticked in …` means both halves are done. `ACTION REQUIRED: no matching unchecked criterion` means only the row was written: edit `plan.md` yourself, tick the box it listed, append ` — deferred as DC-NNN`, and only then move on. A completed plan with an empty box says "silently dropped", which is the exact ambiguity deferral exists to remove (WFI-056, WFI-137).
    - `(eyes:cosmetic)` — leave untested and unchecked; whether it gates is the gate script's call, not yours.
 6. **Ask the gate script whether a human is needed. Do not decide this yourself:**
    ```bash
@@ -805,6 +806,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    ```bash
    scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
    ```
+   It commits the rename itself, both sides. Do not add the bug folder to any commit of your own — the destination path alone leaves the deletion staged for whoever commits next, which is how six bugs ended up tracked at `triaged/` **and** `closed/` in the same HEAD (WFI-136).
 6. Clean up feature branch and worktree:
    ```bash
    git worktree remove feature-branches/PLN-NNN-<slug> --force 2>/dev/null || true
@@ -815,7 +817,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    rm -f plans/PLN-NNN-<slug>/test-progress.md
    scripts/wf-exec.sh wf-commit.sh "test(PLN-NNN-<slug>): complete — merged to develop" --allow-empty \
      --add plans/PLN-NNN-<slug>/test-progress.md plans/auto-test-log.md \
-           plans/deferred-criteria.md bugs/closed/BUG-NNN-<slug>/ \
+           plans/deferred-criteria.md \
      --branch develop
    ```
    **Never a bare `git add … ; git commit --allow-empty` here.** That was this
@@ -830,8 +832,9 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    pathspec, skips paths that do not exist, and — as of v6.3.1 — refuses
    outright if the checkout has been moved off develop under you.
 
-   Name the bug folder if the plan closed one; drop that path otherwise. Never
-   `bugs/` wholesale — that is as wide as the index sweep this replaced.
+   No `bugs/` path belongs in this pathspec at all — step 5 already committed
+   the rename, both sides. Never `bugs/` wholesale either; that is as wide as
+   the index sweep this replaced.
 8. Display:
    ```
    Human test passed

@@ -162,8 +162,24 @@ eval "$("$(dirname "$0")/wf-plan-info.sh" "$plan_id" 2>/dev/null)" || true
 plan_file="$ROOT/${PLAN_DIR:-}/plan.md"
 
 if [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
-  if awk -v crit="$criterion" -v dc="$next" '
-      BEGIN { done = 0 }
+  # ENVIRON, not -v: awk expands escape sequences in a -v assignment, so a
+  # criterion naming a Windows path (`D:\git\...`) loses its backslashes and
+  # then matches nothing. ENVIRON hands the bytes over untouched.
+  if WF_CRIT="$criterion" awk -v dc="$next" '
+      # The criterion reaching this script is nearly always the plan text with
+      # its inline markdown stripped — a caller reads `- [ ] (external) run
+      # `tool doctor` **and** ...` off the screen and types it back without the
+      # backticks. A literal substring match then fails on every criterion a
+      # planner formatted, which is most of them (WFI-137). Compare a
+      # normalised copy of both sides as the fallback: same characters, minus
+      # the emphasis markers and any whitespace the reflow moved.
+      function norm(s) {
+        gsub(/[`*_]/, "", s)
+        gsub(/[[:space:]]+/, " ", s)
+        gsub(/^ | $/, "", s)
+        return s
+      }
+      BEGIN { done = 0; crit = ENVIRON["WF_CRIT"]; ncrit = norm(crit) }
       /^####[[:space:]]*Manual/ { in_manual = 1; print; next }
       /^(#|##|###|####)[[:space:]]/ {
         if (in_manual && $0 !~ /^####[[:space:]]*Manual/) in_manual = 0
@@ -171,7 +187,8 @@ if [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
       {
         # index() not a regex: the criterion is free text and may contain any
         # metacharacter a planner typed.
-        if (!done && in_manual && $0 ~ /^[[:space:]]*-[[:space:]]*\[[ ]\]/ && index($0, crit) > 0) {
+        if (!done && in_manual && $0 ~ /^[[:space:]]*-[[:space:]]*\[[ ]\]/ &&
+            (index($0, crit) > 0 || (ncrit != "" && index(norm($0), ncrit) > 0))) {
           sub(/\[[ ]\]/, "[x]")
           printf "%s — deferred as %s\n", $0, dc
           done = 1
@@ -185,6 +202,14 @@ if [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
     echo "  ticked in $PLAN_DIR/plan.md — deferred as $next"
   else
     rm -f "$plan_file.tmp"
-    echo "  note: no matching unchecked criterion in $PLAN_DIR/plan.md — tick it by hand and cite $next" >&2
+    echo "  ACTION REQUIRED: no matching unchecked criterion in $PLAN_DIR/plan.md." >&2
+    echo "  Edit that file now: change the matching '- [ ]' to '- [x]' and append ' — deferred as $next'." >&2
+    echo "  Do not complete the plan with the box still empty — an empty box reads as 'silently dropped'." >&2
+    echo "  Unchecked Manual criteria in that file:" >&2
+    awk '
+      /^####[[:space:]]*Manual/ { in_manual = 1; next }
+      /^(#|##|###|####)[[:space:]]/ { if (in_manual) in_manual = 0 }
+      in_manual && /^[[:space:]]*-[[:space:]]*\[[ ]\]/ { printf "    %s\n", $0 }
+    ' "$plan_file" >&2
   fi
 fi

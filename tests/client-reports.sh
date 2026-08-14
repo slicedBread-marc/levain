@@ -1788,6 +1788,49 @@ assert_eq "and the line cites the DC id, so it cannot read as silently dropped" 
   "$(printf '%s' "$defer_line" | grep -q 'deferred as DC-001' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A formatted criterion still ticks (client-a WFI-137)"
+
+# The tick was a literal substring match. The caller reads the criterion off
+# the screen and types it back with the inline markdown gone, so any criterion
+# a planner formatted — backticks round a command, ** round a conjunction —
+# never matched, and the plan completed with the box still empty. Twice in one
+# day on client-a (PLN-051, PLN-052).
+DEFERMD="$TEST_DIR/defer-md"
+mkdir -p "$DEFERMD/scripts" "$DEFERMD/plans/PLN-052-gitignore-probe"
+cp "$SCRIPT_DIR/wf-defer-criterion.sh" "$SCRIPT_DIR/wf-plan-info.sh" \
+   "$SCRIPT_DIR/wf-orch-lib.sh" "$SCRIPT_DIR/wf-lock.sh" "$DEFERMD/scripts/"
+printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-052 | gitignore-probe | testing | — | — | 2026-08-14 | %s | — | — |\n' \
+  "${SCRIPT_FOLDER#v}" > "$DEFERMD/plans/REGISTRY.md"
+cat > "$DEFERMD/plans/PLN-052-gitignore-probe/plan.md" << 'PLANEOF'
+schema_version: 6
+
+## Goal
+Probe the control path.
+
+#### Manual
+- [ ] (external) run `tool doctor` on `D:\git\Enterprise_DevDrive` **and** confirm `gitignore:ddN` names `.git/info/exclude`
+PLANEOF
+(cd "$DEFERMD" && git init -q . && git config user.email t@t && git config user.name t) >/dev/null 2>&1
+
+# The stripped form — what a caller actually passes.
+(cd "$DEFERMD" && ./scripts/wf-defer-criterion.sh PLN-052 external \
+   'run tool doctor on D:\git\Enterprise_DevDrive and confirm gitignore:ddN names .git/info/exclude') >/dev/null 2>&1
+defermd_line=$(grep -- '- \[' "$DEFERMD/plans/PLN-052-gitignore-probe/plan.md")
+assert_eq "a criterion whose plan text carries backticks and ** still ticks" "true" \
+  "$(printf '%s' "$defermd_line" | grep -q '^- \[x\]' && echo true || echo false)"
+assert_eq "and cites its DC id" "true" \
+  "$(printf '%s' "$defermd_line" | grep -q 'deferred as DC-001' && echo true || echo false)"
+assert_eq "and the plan's own formatting survives the tick" "true" \
+  "$(printf '%s' "$defermd_line" | grep -q '`tool doctor`' && echo true || echo false)"
+
+# When it genuinely cannot match, the miss has to read as work to do — the
+# worker treated the old lowercase 'note:' as informational and completed anyway.
+defermd_miss=$(cd "$DEFERMD" && ./scripts/wf-defer-criterion.sh PLN-052 soak \
+   'something no line in the plan resembles' 2>&1 >/dev/null || true)
+assert_eq "an unmatched criterion says ACTION REQUIRED, not 'note'" "true" \
+  "$(printf '%s' "$defermd_miss" | grep -q 'ACTION REQUIRED' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "Verify reads the branch's own config (client-a WFI-052)"
 
 # claude-workflow.yml was located by walking up from SCRIPT_DIR, which
@@ -1913,6 +1956,47 @@ assert_eq "and the open copy is gone from HEAD, not merely from the worktree" "f
   "$(git ls-tree -r --name-only HEAD | grep -qx 'bugs/open/BUG-900-dup/bug.md' && echo true || echo false)"
 assert_eq "and nothing is left staged" "true" \
   "$(git diff --cached --name-only | grep -q . && echo false || echo true)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Closing a bug commits its own rename (client-a WFI-136)"
+
+# wf-bug-close.sh left the rename staged and wf-test's completion commit was
+# pathspec-scoped to bugs/closed/ — a path the caller chose without knowing the
+# source side existed. The addition committed, the deletion did not, and six
+# bugs ended up tracked at BOTH paths in the same HEAD, each with a stale
+# `Status: Triaged` copy beside the authoritative closed one.
+cd "$TEST_DIR/main" || exit 1
+mkdir -p bugs/triaged/BUG-901-close bugs/closed
+printf '# guest logout loops\n\n> **Status:** Triaged\n\n## Notes\n' \
+  > bugs/triaged/BUG-901-close/bug.md
+"$SCRIPT_DIR/wf-commit.sh" "bug: triage BUG-901" --add bugs/triaged/BUG-901-close >/dev/null 2>&1
+"$SCRIPT_DIR/wf-bug-close.sh" BUG-901 PLN-901-claimed >/dev/null 2>&1
+assert_eq "the closed copy is in HEAD" "true" \
+  "$(git ls-tree -r --name-only HEAD | grep -qx 'bugs/closed/BUG-901-close/bug.md' && echo true || echo false)"
+assert_eq "and the triaged copy is gone from HEAD, not just from the worktree" "false" \
+  "$(git ls-tree -r --name-only HEAD | grep -qx 'bugs/triaged/BUG-901-close/bug.md' && echo true || echo false)"
+assert_eq "the caller inherits nothing staged" "true" \
+  "$(git diff --cached --name-only | grep -q . && echo false || echo true)"
+assert_eq "and the commit is attributed to the bug, not to whoever commits next" "true" \
+  "$(git log -1 --pretty=%s | grep -q '^bug(BUG-901): closed' && echo true || echo false)"
+
+# --no-commit still exists for a caller that really does want to bundle it.
+mkdir -p bugs/triaged/BUG-902-close
+printf '# stale token\n\n> **Status:** Triaged\n\n## Notes\n' > bugs/triaged/BUG-902-close/bug.md
+"$SCRIPT_DIR/wf-commit.sh" "bug: triage BUG-902" --add bugs/triaged/BUG-902-close >/dev/null 2>&1
+"$SCRIPT_DIR/wf-bug-close.sh" BUG-902 PLN-901-claimed --no-commit >/dev/null 2>&1
+assert_eq "--no-commit leaves the move staged for the caller" "true" \
+  "$(git diff --cached --name-only | grep -q 'BUG-902-close' && echo true || echo false)"
+"$SCRIPT_DIR/wf-commit.sh" "test: bundle BUG-902" \
+  --add bugs/triaged/BUG-902-close bugs/closed/BUG-902-close >/dev/null 2>&1
+
+# A bug that somehow reached both paths reports as closed, not as work to redo.
+mkdir -p bugs/triaged/BUG-903-dup bugs/closed/BUG-903-dup
+printf '# double\n\n> **Status:** Triaged\n' > bugs/triaged/BUG-903-dup/bug.md
+printf '# double\n\n> **Status:** Closed\n' > bugs/closed/BUG-903-dup/bug.md
+assert_eq "a bug tracked at two paths is not re-offered as triaged" "false" \
+  "$("$SCRIPT_DIR/wf-list-bugs.sh" 2>/dev/null | grep -q 'BUG-903' && echo true || echo false)"
+rm -rf bugs/triaged/BUG-903-dup bugs/closed/BUG-903-dup
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A claim names a process that outlives the shell (client-a WFI-062)"
