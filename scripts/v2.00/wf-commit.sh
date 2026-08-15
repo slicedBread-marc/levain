@@ -215,11 +215,46 @@ fi
 # the same bug in bugs/open/ AND bugs/triaged/. The next worklist re-offered
 # the still-open copy as an unplanned bug, which is how two spec workers ended
 # up on one artifact (WFI-067). Every bug consumed by a spec run hit this.
+#
+# WFI-141: `2>/dev/null || true` on this diff is the SAME swallow the add loop
+# above was written to close, one line further down. Under four concurrent
+# daemon workers the diff itself failed — it refreshes the index and so wants
+# the lock — the failure was discarded, the list came back empty, and the
+# script printed "nothing to commit for the given paths — skipped" and exited 0
+# over a path `git status` reported as ` M` with a 47-insertion diff. Re-running
+# it seconds later committed normally. So the diff is retried and its failure is
+# fatal, exactly like the add.
 changed=()
 if [ "${#paths[@]}" -gt 0 ]; then
+  diff_out=""
+  diff_err=""
+  attempt=0
+  # stderr to its own file, not 2>&1: git writes advisory warnings to stderr on
+  # a SUCCESSFUL run too ("LF will be replaced by CRLF"), and merging the
+  # streams would put one in the pathspec as if it were a filename.
+  err_file=$(mktemp "${TMPDIR:-/tmp}/wf-commit.XXXXXX")
+  while :; do
+    if diff_out=$(git diff --cached --name-only --no-renames -- "${paths[@]}" 2>"$err_file"); then
+      diff_err=""; break
+    fi
+    diff_err=$(cat "$err_file" 2>/dev/null || true)
+    case "$diff_err" in
+      *index.lock*|*"Unable to create"*|*"unable to write"*)
+        attempt=$((attempt + 1))
+        [ "$attempt" -lt 5 ] || break
+        sleep 1 ;;
+      *) break ;;
+    esac
+  done
+  rm -f "$err_file"
+  if [ -n "$diff_err" ]; then
+    echo "wf-commit: could not read the staged path list — not committing." >&2
+    printf '%s\n' "$diff_err" >&2
+    exit 1
+  fi
   while IFS= read -r f; do
     [ -n "$f" ] && changed+=("$f")
-  done < <(git diff --cached --name-only --no-renames -- "${paths[@]}" 2>/dev/null || true)
+  done <<< "$diff_out"
 fi
 
 # Again, on the real list and after the staging window — this is the check that
@@ -230,6 +265,33 @@ if [ "${#changed[@]}" -gt 0 ]; then
   git commit -q -m "$message" -- "${changed[@]}"
   echo "committed ${#changed[@]} path(s): $message"
   exit 0
+fi
+
+# Nothing staged. Before believing it, ask the working tree.
+#
+# "There was nothing to do" and "my write was lost" are the two outcomes this
+# script exists to keep apart, and everything above only rules out the failures
+# that ANNOUNCE themselves. A silent one — a partial add, an index that moved
+# under the diff, anything not yet met — still lands here wearing rc=0 and the
+# word "skipped", which an unattended caller reads as success (WFI-141).
+#
+# So the state is checked instead of assumed: a path that is modified in the
+# working tree but absent from the index AFTER this script's own `git add` is
+# not a no-op, and there is no legitimate way to reach it. Say so and fail.
+#
+# --ignore-submodules=dirty: a submodule with modified or untracked content of
+# its own shows as ` M` here but is not something `git add <path>` stages, and
+# that is genuinely nothing to commit.
+if [ "${#paths[@]}" -gt 0 ]; then
+  dirty=$(git status --porcelain --ignore-submodules=dirty -- "${paths[@]}" 2>/dev/null || true)
+  if [ -n "$dirty" ]; then
+    echo "wf-commit: nothing is staged, but these paths are modified in the working tree:" >&2
+    printf '%s\n' "$dirty" >&2
+    echo "           That combination cannot be legitimate — the add did not take." >&2
+    echo "           NOT reporting this as 'nothing to commit'. Re-run; the write is still" >&2
+    echo "           in the working tree and nothing has been lost yet." >&2
+    exit 1
+  fi
 fi
 
 if [ "$allow_empty" != "true" ]; then
