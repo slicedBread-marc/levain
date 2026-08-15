@@ -236,8 +236,12 @@ scripts/vN.NN/                  versioned script generations
 
 1. **Call scripts through `scripts/wf-exec.sh`**, never by their versioned path.
    The dispatcher picks the script generation a plan was built against.
-2. **Do not hand-edit `plans/REGISTRY.md`.** Use `wf-registry-update.sh` — it
-   holds a lock and rewrites by column.
+2. **Do not hand-edit `plans/REGISTRY.md`.** Use `wf-registry-add.sh` to create a
+   row and `wf-registry-update.sh` to move it — each holds a lock, rewrites by
+   column, and commits the row it wrote in the same step. A row left dirty on
+   the shared `develop` checkout is carried off by whichever worker commits
+   next; both workers legitimately name that file, so no pathspec can prevent
+   it.
 3. **Do not fix bugs inline.** File them; the pipeline exists so changes get
    verified and tested.
 4. **Never retry on exit 20.** A human owns that decision.
