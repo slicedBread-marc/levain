@@ -613,7 +613,7 @@ Never write `plans/deferred-criteria.md` by hand — one script owns it, so IDs 
 
 `external` and `soak` criteria are deferred **automatically at exit** (see [Manual criterion dispositions](#manual-criterion-dispositions)) — you do not walk a human through them. The `unbuilt` path is the one that needs the user's confirmation first.
 
-Do **not** commit this file separately — it is committed as part of the normal test-exit commit (findings or completion).
+**The script commits what it wrote, both sides — do not name either path in a commit of your own.** A deferral is one state change with two halves: the DC row, and the `[x] … — deferred as DC-NNN` checkoff in `plan.md`. It used to write both and commit neither, and the exit pathspec below names `deferred-criteria.md` and never the plan's own `plan.md`, so across one 16-plan sweep six checkoffs stayed uncommitted on plans that had already reached `complete` — read from git those plans show the criterion as `[ ]`, which is the "silently dropped" reading the checkoff exists to remove (WFI-144).
 
 ### Manual criterion dispositions
 
@@ -831,7 +831,6 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    rm -f plans/PLN-NNN-<slug>/test-progress.md
    scripts/wf-exec.sh wf-commit.sh "test(PLN-NNN-<slug>): complete — merged to develop" --allow-empty \
      --add plans/PLN-NNN-<slug>/test-progress.md plans/auto-test-log.md \
-           plans/deferred-criteria.md \
      --branch develop
    ```
    **Never a bare `git add … ; git commit --allow-empty` here.** That was this
@@ -848,7 +847,10 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
 
    No `bugs/` path belongs in this pathspec at all — step 5 already committed
    the rename, both sides. Never `bugs/` wholesale either; that is as wide as
-   the index sweep this replaced.
+   the index sweep this replaced. `plans/deferred-criteria.md` is gone from it
+   for the same reason: `wf-defer-criterion.sh` now commits that file together
+   with the `plan.md` checkoff that belongs to it, and this pathspec could only
+   ever carry one of the two (WFI-144).
 8. Display:
    ```
    Human test passed

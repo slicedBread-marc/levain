@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # wf-defer-criterion.sh — the producer for plans/deferred-criteria.md.
 #
-#   wf-defer-criterion.sh <plan-id> <tag> "<criterion>" [--prereq <text>] [--note <text>]
+#   wf-defer-criterion.sh <plan-id> <tag> "<criterion>" [--prereq <text>] [--note <text>] [--no-commit]
 #   wf-defer-criterion.sh --list [prereq-filter]
 #   wf-defer-criterion.sh --consume <DC-NNN> <plan-id>
+#
+# The add path COMMITS what it wrote — the DC row and the plan.md checkoff
+# together, in one commit. They are two sides of one state change and a caller's
+# pathspec cannot name a path this script chose (WFI-144). --no-commit opts out.
 #
 # An (external) or (soak) criterion cannot be satisfied at gate time by anyone
 # — not the agent, not the human standing next to it. Blocking a plan on one
@@ -36,6 +40,7 @@ source "$(dirname "$0")/wf-orch-lib.sh"
 # shellcheck source=wf-lock.sh
 source "$(dirname "$0")/wf-lock.sh"
 
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(wf_develop_root)"
 FILE="$ROOT/plans/deferred-criteria.md"
 
@@ -108,10 +113,12 @@ shift 3 2>/dev/null || true
 
 prereq=""
 note=""
+do_commit=true
 while [ $# -gt 0 ]; do
   case "$1" in
-    --prereq) prereq="${2:?--prereq requires a value}"; shift 2 ;;
-    --note)   note="${2:?--note requires a value}"; shift 2 ;;
+    --prereq)    prereq="${2:?--prereq requires a value}"; shift 2 ;;
+    --note)      note="${2:?--note requires a value}"; shift 2 ;;
+    --no-commit) do_commit=false; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -160,6 +167,7 @@ echo "Deferred: $next ($tag, prereq $prereq) from $plan_id"
 # for a pipeline stop.
 eval "$("$(dirname "$0")/wf-plan-info.sh" "$plan_id" 2>/dev/null)" || true
 plan_file="$ROOT/${PLAN_DIR:-}/plan.md"
+ticked=false
 
 if [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
   # ENVIRON, not -v: awk expands escape sequences in a -v assignment, so a
@@ -200,6 +208,7 @@ if [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
     ' "$plan_file" > "$plan_file.tmp"; then
     mv "$plan_file.tmp" "$plan_file"
     echo "  ticked in $PLAN_DIR/plan.md — deferred as $next"
+    ticked=true
   else
     rm -f "$plan_file.tmp"
     echo "  ACTION REQUIRED: no matching unchecked criterion in $PLAN_DIR/plan.md." >&2
@@ -211,5 +220,42 @@ if [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
       /^(#|##|###|####)[[:space:]]/ { if (in_manual) in_manual = 0 }
       in_manual && /^[[:space:]]*-[[:space:]]*\[[ ]\]/ { printf "    %s\n", $0 }
     ' "$plan_file" >&2
+  fi
+fi
+
+# ── Land both sides together ──────────────────────────────────────────────
+#
+# A deferral is one state change with two sides: the DC row above, and the
+# `[x] … — deferred as DC-NNN` checkoff in plan.md that anyone opening the
+# completed plan actually reads. This script wrote both and committed neither,
+# leaving them to whatever pathspec the caller happened to name — and
+# `/wf-test`'s exit pathspec names `plans/deferred-criteria.md` and never that
+# plan's `plan.md`.
+#
+# So across one 16-plan sweep DC-030..DC-039 were all recorded and committed
+# while the checkoffs for six of them sat modified and uncommitted in the
+# working tree, on plans that had already reached `complete`. Read from git,
+# those plans show the criterion as `[ ]` — a plan that completed with unmet
+# criteria, the exact reading the checkoff exists to prevent. Which plans got
+# it depended on whether an unrelated stash-restore commit swept the folder,
+# so nothing distinguished them (client-a WFI-144).
+#
+# Same conclusion as wf-bug-close.sh and wf-bug-consume.sh (WFI-106, WFI-112,
+# WFI-136): a script that writes two paths commits them itself, because the
+# caller's pathspec cannot know about a path this script chose.
+#
+# Committed from the develop root, since that is where both files live — the
+# caller is usually standing in a feature worktree, where neither exists.
+if $do_commit; then
+  commit_paths=("plans/deferred-criteria.md")
+  both="plans/deferred-criteria.md"
+  if $ticked; then
+    commit_paths+=("${PLAN_DIR}/plan.md")
+    both="$both and $PLAN_DIR/plan.md"
+  fi
+  if ! (cd "$ROOT" && "$SELF_DIR/wf-commit.sh" \
+        "test($plan_id): $next deferred ($tag)" --add "${commit_paths[@]}"); then
+    echo "  wf-defer-criterion: the deferral is written but could not be committed —" >&2
+    echo "  commit $both before another worker does" >&2
   fi
 fi
