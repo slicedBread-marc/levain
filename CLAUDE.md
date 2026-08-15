@@ -43,6 +43,17 @@ Fix the cause **here**, in the library — never in the client, where the next d
 
 Resolved entries stay in the client's file as the record of what was already reported. `sweep-issues.sh` exits 0 when there is work and 1 when every client is clean.
 
+### VERSION is bumped by a hook, and you state the level
+
+`.git/hooks/pre-commit` bumps `VERSION` into every commit. It bumps a **patch** unless told otherwise:
+
+```bash
+WF_BUMP=minor git commit -m "feat(x): a new script, a new flag"     # 0.x.0
+WF_BUMP=major git commit -m "breaking(x): a changed contract"       # x.0.0
+```
+
+The level is not read from the commit message, and cannot be: `pre-commit` is the only hook whose `git add` git re-reads into the commit, and it is the one hook that has no access to the message — `.git/COMMIT_EDITMSG` still holds the *previous* commit's message when it runs. So an unstated bump understates by design; say `WF_BUMP` when a commit adds a script, a flag, or changes a contract.
+
 ---
 
 ## Process Flow
