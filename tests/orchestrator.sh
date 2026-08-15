@@ -624,6 +624,42 @@ assert_eq "wf-attend forbids deciding for the user" "true" \
 assert_eq "wf-orchestrate refuses to self-enable" "true" \
   "$(grep -qi 'do \*\*not\*\* flip it to `true`' "$LIB_ROOT/skills/wf-orchestrate/SKILL.md" && echo true || echo false)"
 
+section "install.sh reports an untracked registry on every deploy"
+
+# The pipeline's state machine must be in git: plan.md, findings.md and
+# progress.md are all versioned, and a registry that is not leaves the one file
+# indexing them reconstructable only by hand.
+#
+# install.sh warned about this only inside the block that strips
+# `plans/REGISTRY.md` from .gitignore — so it fired ONCE per client, on the
+# single deploy that un-ignored it, and never again. Un-ignoring a file does
+# not add it. client-i's rule came off in `chore: stop tracking the
+# generated workflow harness` and its registry then sat untracked, silently,
+# across every deploy from v5.0.15 to v6.9.0.
+#
+# Driven through a real install rather than a grep, because the bug was the
+# nesting and not the message: a grep for the warning text passed the whole time.
+INST_DIR=$(mktemp -d)
+(
+  cd "$INST_DIR" || exit 1
+  git init -q . && git commit -q --allow-empty -m init
+  "$LIB_ROOT/install.sh" . >/dev/null 2>&1
+  sed -i.bak 's/^project_slug:.*/project_slug: "itest"/' claude-workflow.yml
+  "$LIB_ROOT/install.sh" . > install-1.log 2>&1
+  git add plans/REGISTRY.md && git commit -q -m "track registry"
+  "$LIB_ROOT/install.sh" . > install-2.log 2>&1
+) >/dev/null 2>&1
+
+# No .gitignore rule was ever present here, so the old nested check could not
+# have run at all — this is exactly client-i's state.
+assert_eq "an untracked registry is reported" "1" \
+  "$(grep -c 'REGISTRY.md is untracked' "$INST_DIR/install-1.log" 2>/dev/null || true)"
+assert_eq "and the fix is a command, not a description" "1" \
+  "$(grep -c "git add plans/REGISTRY.md" "$INST_DIR/install-1.log" 2>/dev/null || true)"
+assert_eq "a tracked registry is not reported" "0" \
+  "$(grep -c 'REGISTRY.md is untracked' "$INST_DIR/install-2.log" 2>/dev/null || true)"
+rm -rf "$INST_DIR"
+
 section "Deployed entry-point contract"
 
 WF_TMPL="$LIB_ROOT/templates/WORKFLOW.md"

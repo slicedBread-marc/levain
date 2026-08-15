@@ -557,12 +557,27 @@ GITIGNORE="$TARGET_DIR/.gitignore"
 if grep -qF "plans/REGISTRY.md" "$GITIGNORE" 2>/dev/null; then
     grep -vF "plans/REGISTRY.md" "$GITIGNORE" > "$GITIGNORE.tmp" && mv "$GITIGNORE.tmp" "$GITIGNORE"
     echo -e "${GREEN}  Removed plans/REGISTRY.md from .gitignore — it is tracked now${NC}"
-    if [ -d "$TARGET_DIR/.git" ] || [ -f "$TARGET_DIR/.git" ]; then
-        if ! git -C "$TARGET_DIR" ls-files --error-unmatch plans/REGISTRY.md >/dev/null 2>&1; then
-            echo -e "${YELLOW}  plans/REGISTRY.md has never been committed. Add it:${NC}"
-            echo "    git add .gitignore plans/REGISTRY.md && git commit -m 'chore: track the plan registry'"
-        fi
-    fi
+fi
+
+# Checked on EVERY deploy, not only the one that removes the ignore rule.
+#
+# This test used to be nested inside the block above, so it ran exactly once
+# per client — on the single deploy that un-ignored the registry — and never
+# again. Un-ignoring a file does not add it, so a client that missed that one
+# message, or read it in a deploy log nobody kept, stayed untracked forever
+# with every later deploy silent about it. client-i did: its ignore rule
+# came off in `chore: stop tracking the generated workflow harness`, and the
+# registry then sat untracked across every deploy from v5.0.15 to v6.9.0.
+#
+# The settings.json check above is unconditional for the same reason. A
+# one-shot warning about a persistent condition is a warning that is wrong
+# more often than it is right.
+if [ -f "$REGISTRY_DEST" ] \
+   && git -C "$TARGET_DIR" rev-parse --git-dir >/dev/null 2>&1 \
+   && ! git -C "$TARGET_DIR" ls-files --error-unmatch plans/REGISTRY.md >/dev/null 2>&1; then
+    echo -e "${YELLOW}  plans/REGISTRY.md is untracked — the pipeline's state machine is${NC}"
+    echo -e "${YELLOW}  not in git, and a lost develop worktree takes it with it:${NC}"
+    echo "    git add plans/REGISTRY.md && git commit -m 'chore: track the plan registry'"
 fi
 
 # Install workflow scripts — versioned layout (v2.0+).
