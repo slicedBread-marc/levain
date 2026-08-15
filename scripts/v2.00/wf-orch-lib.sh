@@ -259,7 +259,7 @@ wf_plan_fingerprint() {
 # WHAT ELSE IS EXCLUDED, AND WHY
 #
 # The question the stamp answers is "did the SPECIFICATION change since the
-# verdict?" — not "did any byte of the file change?". Three regions move under
+# verdict?" — not "did any byte of the file change?". Four regions move under
 # machine control while the specification stands still, and hashing them made
 # the stamp report a spec change that never happened:
 #
@@ -272,6 +272,15 @@ wf_plan_fingerprint() {
 #   - `### Goal History`. Owned end-to-end by wf-goal-push.sh / wf-goal-pop.sh
 #     and explicitly not hand-editable; a pop resolving a row is bookkeeping,
 #     not a design change (WFI-092, WFI-093).
+#   - `## Consistency`. The cross-plan pass's own done-marker, written by
+#     wf-consistency and by nothing else — the template says in so many words
+#     not to write it by hand. It lands on every `ready` plan that declares
+#     Deps, and it landed AFTER the review stamp, so the consistency pass
+#     invalidated the verdict of every plan it touched without one word of the
+#     specification changing (client-a WFI-151). When that pass does change
+#     a specification it amends the plan body and `## Amendments`, both still
+#     hashed — so a real consistency amendment still reads as stale, and only
+#     the bookkeeping line stops doing so.
 #   - Trailing whitespace, which no reviewer read.
 #
 # The `## Goal` one-liner stays IN. It is the plan's promise, a scope reduction
@@ -286,7 +295,7 @@ wf_plan_body_fingerprint() {
   plan_md="$root/plans/${id}-${slug}/plan.md"
   [ -f "$plan_md" ] || return 0
   awk '
-    /^## /  { inside = ($0 ~ /^## Review([ \t]|$)/) ? 1 : 0 }
+    /^## /  { inside = ($0 ~ /^## (Review|Consistency)([ \t]|$)/) ? 1 : 0 }
     /^### / { hist   = ($0 ~ /^### Goal History([ \t]|$)/) ? 1 : 0 }
     /^## /  { hist = 0 }
     inside || hist { next }

@@ -1439,6 +1439,45 @@ assert_eq "an edit to the spec still goes stale" "true" "$GATE_STALE"
 assert_eq "and stops reading as answered" "false" "$GATE_ANSWERED"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "The consistency done-marker is not a specification change (WFI-151)"
+
+# client-a PLN-077: wf-consistency appended its `## Consistency` record
+# after the review had been stamped, and REVIEW_STALE flipped to true with the
+# Amendments section still empty. The pass runs on every `ready` plan that
+# declares Deps, so it invalidated the verdict — and, by the same fingerprint,
+# the closed spec-approval gate — of every plan it touched.
+registry_add_row PLN-904 consistency-fp ready
+plan904="plans/PLN-904-consistency-fp/plan.md"
+{
+  printf '## Goal\nProve a done-marker is not a revision\n\n'
+  printf '## Consistency\n> Not yet checked.\n\n'
+  printf '## Review\n> **Result:** Approved\n'
+} > "$plan904"
+
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-904 spec-approval "approve?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-904 "approved" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-review-stamp.sh" PLN-904 --no-commit >/dev/null 2>&1
+
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-904)"
+assert_eq "a freshly stamped review reads as current" "false" "$REVIEW_STALE"
+
+# What wf-consistency writes on exit, per its SKILL and the template.
+sed 's/^> Not yet checked\./> **Checked:** 2026-08-15 — closure: PLN-905 — docs: —\n> **Result:** clean/' \
+  "$plan904" > "$plan904.tmp" && mv "$plan904.tmp" "$plan904"
+
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-904)"
+assert_eq "the consistency record leaves the verdict current" "false" "$REVIEW_STALE"
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-904 spec-approval)"
+assert_eq "and leaves the approval gate answered" "true" "$GATE_ANSWERED"
+assert_eq "and does not report the plan as changed" "false" "$GATE_STALE"
+
+# A consistency pass that actually amends the spec must still go stale — the
+# amendment lands in the plan body, which is hashed.
+printf '\n## Amendments\n2026-08-15 — list API needs a `before=` parameter\n' >> "$plan904"
+eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-904)"
+assert_eq "a real consistency amendment still goes stale" "true" "$REVIEW_STALE"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "A plan ID collision has a procedure (WFI-011)"
 
 # client-e: BRF-091 would inherit PLN-091, already held by an unrelated
