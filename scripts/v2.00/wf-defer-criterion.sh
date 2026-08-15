@@ -63,10 +63,23 @@ SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(wf_develop_root)"
 FILE="$ROOT/plans/deferred-criteria.md"
 
-ensure_file() {
-  [ -f "$FILE" ] && return 0
-  mkdir -p "$(dirname "$FILE")"
-  cat > "$FILE" << 'HEADER'
+# The preamble is documentation, and it is the copy an agent actually reads —
+# it opens the file to see the rows and takes the header as the contract. It
+# was written once, at creation, and never again, so a file created before a
+# verb existed documented a tool that no longer matched the script.
+#
+# client-a's file was created 2026-08-04 and still said only "use the
+# script so IDs stay unique". `--satisfy` shipped in 6.10.0 and was deployed
+# there, in the script and in both skills — and two hours later a worker with
+# two criteria satisfied by a real drive round-trip read that header, concluded
+# no such verb existed, declined to hand-edit, and filed WFI-152. The verb was
+# on disk the whole time. Stale in-file docs do not read as stale; they read as
+# authoritative.
+#
+# So the header is regenerated on every write path, not just creation. The file
+# says do not hand-edit it, which is exactly what makes rewriting it safe.
+wf_dc_header() {
+  cat << 'HEADER'
 # Deferred Criteria
 
 > Manual criteria that no gate could ever satisfy — they need a real external
@@ -92,9 +105,57 @@ ensure_file() {
 HEADER
 }
 
+ensure_file() {
+  [ -f "$FILE" ] && return 0
+  mkdir -p "$(dirname "$FILE")"
+  wf_dc_header > "$FILE"
+}
+
+# Replace whatever preamble the file has with the current one, keeping every
+# row. The table's separator line is the boundary: everything through it is
+# generated, everything after it is data.
+sync_header() {
+  [ -f "$FILE" ] || return 0
+  local sep current
+  sep=$(grep -n '^|-' "$FILE" | head -1 | cut -d: -f1)
+  # No separator means no table — a file mid-hand-edit or truncated. Rewriting
+  # its preamble could not find the row boundary, so leave it entirely alone.
+  [ -n "$sep" ] || return 0
+  current=$(sed -n "1,${sep}p" "$FILE")
+  [ "$current" = "$(wf_dc_header)" ] && return 0
+  { wf_dc_header; sed -n "$((sep + 1)),\$p" "$FILE"; } > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
+  echo "  refreshed the header of plans/deferred-criteria.md — it predated the current verbs" >&2
+}
+
 # ── Modes ─────────────────────────────────────────────────────────────────
 
+# The other place a caller looks for the verb list. It used to name only the
+# add form, so anyone who reached it while trying to close a row learned that
+# closing a row was not supported (WFI-152).
+usage() {
+  cat >&2 << 'USAGE'
+Usage:
+  wf-defer-criterion.sh <plan-id> <external|soak|unbuilt> "<criterion>" [--prereq <text>] [--note <text>] [--no-commit]
+      Defer a criterion its plan cannot satisfy, and tick it off in plan.md.
+
+  wf-defer-criterion.sh --list [prereq-filter]
+      Open rows, tab-separated: ID, criterion, tag, from-plan, prereq, note.
+
+  wf-defer-criterion.sh --consume <DC-NNN> <plan-id> [--no-commit]
+      A later plan adopted the criterion; that plan will check it.
+
+  wf-defer-criterion.sh --satisfy <DC-NNN> [--evidence "<proof>"] [--no-commit]
+      The real use happened and the criterion is true. No plan involved.
+      This is the ordinary ending for an (external) criterion — do not reach
+      for --consume, which records future work on a plan that will not do it.
+USAGE
+}
+
 case "${1:-}" in
+  --help|-h)
+    usage
+    exit 0
+    ;;
   --list)
     [ -f "$FILE" ] || exit 0
     filter="${2:-}"
@@ -151,6 +212,7 @@ case "${1:-}" in
     fi
 
     wf_lock_acquire deferred-criteria
+    sync_header
     WF_DC_STATUS="$status" awk -F'|' -v dc="$dc" 'BEGIN { OFS="|"; st = ENVIRON["WF_DC_STATUS"] }
       {
         id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id)
@@ -195,7 +257,7 @@ done
 
 plan_id=$(printf '%s' "$raw_id" | grep -oE 'PLN-[0-9]+' || true)
 if [ -z "$plan_id" ] || [ -z "$criterion" ]; then
-  echo "Usage: $0 <plan-id> <external|soak|unbuilt> \"<criterion>\" [--prereq <text>] [--note <text>]" >&2
+  usage
   exit 1
 fi
 
@@ -213,6 +275,7 @@ note=$(printf '%s' "$note" | tr '|' '/' | tr -d '\n')
 
 wf_lock_acquire deferred-criteria
 ensure_file
+sync_header
 
 # Next DC id. `10#` forces base 10 — a zero-padded "008" is not octal here.
 last=$(grep -oE '^\| DC-[0-9]+' "$FILE" 2>/dev/null | grep -oE '[0-9]+' | sort -n | tail -1 || true)
