@@ -63,6 +63,58 @@ if [ ! -f "$findings" ]; then
   exit 0
 fi
 
+# ── A finding is a BLOCK, not a line ──────────────────────────────────────
+#
+# Every tag test below is anchored to `$` — the tag ends the finding, and
+# nothing may follow it. That was written against findings.md files where each
+# finding is one physical line, however long, which is how every existing one
+# happened to be written.
+#
+# A verify agent then wrote PLN-060's single finding as a hard-wrapped markdown
+# paragraph: 25 physical lines, continuations indented two spaces. Appending
+# `<- BROAD-SCOPE` to the last of them tagged the FINDING correctly and matched
+# nothing, because no single line both started with `- [ ]` and ended with the
+# tag. The script kept answering `active` while a plain read of the file showed
+# the tag right there, and the only way out was to reflow the finding by hand
+# (client-a WFI-142).
+#
+# Markdown does not promise that a list item is one line, so the parser stops
+# assuming it. Each finding is flattened to a single line before any tag test
+# runs: a block opens at `- [ ]` / `- [x]` and closes at the next such line, at
+# a heading, or at EOF. Blank lines inside it are dropped rather than treated
+# as terminators — a wrapped paragraph has none, and an item with two
+# paragraphs is still one finding.
+#
+# The tags therefore keep their exact meaning: a tag ends the FINDING. What
+# changes is that a finding may now be as long, and as wrapped, as its author
+# needed — and that "prose quoting a tag" stays unmatched for the reason it
+# always was, the closing backtick after it.
+flat=$(mktemp "${TMPDIR:-/tmp}/wf-findings.XXXXXX")
+trap 'rm -f "$flat"' EXIT
+
+awk '
+  function flush() { if (open) { print buf; open = 0; buf = "" } }
+  # Any checkbox line closes the block before it. Only a column-0 one opens a
+  # new block: an INDENTED checkbox has never been a finding here (every test
+  # below anchors at `^`), and folding one into its parent would push the
+  # parent tag off the end of the line and un-tag a finding that was tagged.
+  /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ {
+    flush()
+    if ($0 ~ /^- \[[ xX]\]/) { buf = $0; open = 1 }
+    next
+  }
+  /^[[:space:]]*#{1,6}[[:space:]]/ { flush(); next }
+  {
+    if (!open) next
+    line = $0
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+    if (line != "") buf = buf " " line
+  }
+  END { flush() }
+' "$findings" > "$flat"
+
+findings="$flat"
+
 # A routing tag is a TRAILING tag, not a substring.
 #
 # wf-verify writes these as `← ESCALATED` at the end of the line, and this used
