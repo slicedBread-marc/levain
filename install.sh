@@ -585,6 +585,24 @@ for version_dir in "$SCRIPT_DIR/scripts"/v*/; do
             "$script" > "$DEST"
     done
     chmod +x "$DEST_VDIR"/*.sh 2>/dev/null || true
+
+    # Prune scripts this version no longer ships.
+    #
+    # scripts/v*/ is generated — everything in it was written by this loop — so
+    # a wf-*.sh the source folder does not have is residue from an older
+    # harness, and deploy had no way to remove one. wf-infra-sync.sh was
+    # deleted from the library in v5.0.0 (its whole job was committing
+    # develop's own bytes onto a feature branch, the WFI-021 shape) and four
+    # clients were still carrying the August copy at v6.7.0. A stale script is
+    # not inert: it is on PATH-adjacent disk, it looks current, and the one
+    # thing anybody deletes a script for is that running it is a bad idea.
+    for existing in "$DEST_VDIR"/wf-*.sh; do
+        [ -f "$existing" ] || continue
+        base="${existing##*/}"
+        [ -f "$version_dir/$base" ] && continue
+        rm -f "$existing"
+        echo -e "${YELLOW}  Removed stale scripts/$folder_name/$base — no longer shipped${NC}"
+    done
     echo -e "${GREEN}  Installed scripts/$folder_name/ ($(ls "$DEST_VDIR" | wc -l | tr -d ' ') scripts)${NC}"
 done
 

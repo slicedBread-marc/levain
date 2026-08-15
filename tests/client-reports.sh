@@ -538,6 +538,17 @@ assert_eq "nor stamps the sparse-excluded workflow-version there" "false" \
 # The reconciliation that used to run here is gone, not relocated.
 assert_eq "wf-infra-sync.sh no longer exists" "false" \
   "$([ -e "$SCRIPT_DIR/wf-infra-sync.sh" ] && echo true || echo false)"
+
+# Deleting it from the library was only half the job: deploy writes scripts and
+# never removed one, so every client installed before v5.0.0 still had the
+# August copy of wf-infra-sync.sh sitting in scripts/v2.00/ at v6.7.0 — a
+# script deleted precisely because running it commits develop's own bytes onto
+# a feature branch. scripts/v*/ is generated, so anything there the library
+# does not ship is residue.
+assert_eq "deploy prunes a script the library no longer ships" "true" \
+  "$(grep -q 'Removed stale scripts/\$folder_name/\$base' "$LIB_ROOT/install.sh" && echo true || echo false)"
+assert_eq "and it prunes only inside the generated version folder" "true" \
+  "$(grep -q 'for existing in "\$DEST_VDIR"/wf-\*.sh' "$LIB_ROOT/install.sh" && echo true || echo false)"
 assert_eq "and merge-develop restores the harness on every worktree instead" "true" \
   "$(grep -q 'wf-worktree-harness.sh' "$SCRIPT_DIR/wf-merge-develop.sh" && echo true || echo false)"
 
