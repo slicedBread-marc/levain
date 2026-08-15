@@ -2959,6 +2959,204 @@ YEOF
 fi
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A skipped commit proves the tree was clean (client-a WFI-141)"
+
+# wf-commit.sh printed "nothing to commit for the given paths — skipped" and
+# exited 0 over a path `git status` reported as ' M' with a 47-insertion diff,
+# under four concurrent daemon workers. The message reads as a benign no-op, so
+# an unattended caller trusting rc=0 loses the write silently.
+#
+# The add is simulated as the silent no-op it behaved as: what must not happen
+# is this script agreeing that there was nothing to do.
+cd "$TEST_DIR/main" || exit 1
+mkdir -p fakebin
+# The real git by absolute path: this shim shadows `git` on PATH, so a bare
+# `exec git` inside it re-enters the shim forever.
+real_git=$(command -v git)
+cat > fakebin/git << FAKEGIT
+#!/usr/bin/env bash
+if [ "\$1" = "add" ]; then exit 0; fi
+exec "$real_git" "\$@"
+FAKEGIT
+chmod +x fakebin/git
+printf 'seed\n' > wfi141.txt
+"$SCRIPT_DIR/wf-commit.sh" "seed wfi141" --add wfi141.txt >/dev/null 2>&1
+printf 'a write that must not be lost\n' > wfi141.txt
+
+fake_path="$TEST_DIR/main/fakebin:$PATH"
+out=$(PATH="$fake_path" "$SCRIPT_DIR/wf-commit.sh" "should not skip" --add wfi141.txt 2>&1)
+rc=$?
+assert_eq "a dirty path with nothing staged is not 'skipped'" "false" \
+  "$(printf '%s' "$out" | grep -q 'nothing to commit for the given paths' && echo true || echo false)"
+assert_eq "it exits non-zero instead of reporting success" "true" \
+  "$([ "$rc" -ne 0 ] && echo true || echo false)"
+assert_eq "and names the path it refused to lose" "true" \
+  "$(printf '%s' "$out" | grep -q 'wfi141.txt' && echo true || echo false)"
+
+# The benign case still has to stay benign, or every caller naming an optional
+# path (WFI-053) breaks.
+out=$("$SCRIPT_DIR/wf-commit.sh" "genuinely nothing" --add plans/does-not-exist.md 2>&1)
+assert_eq "a path that was never created is still a skip" "true" \
+  "$(printf '%s' "$out" | grep -q 'nothing to commit for the given paths' && echo true || echo false)"
+assert_ok "and that skip exits 0" "$SCRIPT_DIR/wf-commit.sh" "genuinely nothing" --add plans/does-not-exist.md
+
+"$SCRIPT_DIR/wf-commit.sh" "wfi141 write lands on retry" --add wfi141.txt >/dev/null 2>&1
+assert_eq "re-running commits the write it protected" "a write that must not be lost" \
+  "$(git show HEAD:wfi141.txt 2>/dev/null)"
+rm -rf fakebin
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A finding is a block, not a physical line (client-a WFI-142)"
+
+# A verify agent wrote PLN-060's one finding as a hard-wrapped paragraph — 25
+# physical lines, continuations indented two spaces. The tag on the last of them
+# matched nothing, because every tag test required ONE line to both start with
+# '- [ ]' and end with the tag, so routing answered 'active' while the file
+# plainly showed the tag. The only way out was reflowing the finding by hand.
+mkdir -p plans/PLN-940-wrapped
+cat > plans/PLN-940-wrapped/findings.md << 'FEOF'
+## Verify — 2026-08-15
+
+- [ ] **Design**: the signing-key doc contradicts the implementation, and the
+  contradiction is wider than this plan — three other documents repeat the same
+  claim, so the fix belongs in a doc sweep rather than here.
+  <- BROAD-SCOPE
+FEOF
+assert_eq "a wrapped BROAD-SCOPE finding does not route" "clean" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
+
+cat > plans/PLN-940-wrapped/findings.md << 'FEOF'
+- [ ] **Design**: users expect a different flow, and the plan cannot absorb
+  that without a respec.
+  ← ESCALATED
+FEOF
+assert_eq "a wrapped ESCALATED finding still escalates" "escalated" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
+
+cat > plans/PLN-940-wrapped/findings.md << 'FEOF'
+- [ ] **Behavior**: the button does not respond
+  on mobile Safari.
+FEOF
+assert_eq "a wrapped untagged finding routes back to the builder" "active" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
+
+# WFI-089 must survive the rewrite: prose may name a tag without wearing it.
+cat > plans/PLN-940-wrapped/findings.md << 'FEOF'
+- [ ] **Code**: a code-only fix, not `← PLAN-SCOPED`, so it stays in this plan
+  and gets fixed in place.
+FEOF
+assert_eq "a wrapped mention of a tag is still not a tag" "active" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
+
+# An indented checkbox has never been a finding here; folding one into its
+# parent would push the parent's tag off the end and un-tag a tagged finding.
+cat > plans/PLN-940-wrapped/findings.md << 'FEOF'
+- [x] **Design**: handled, out of this plan's scope ← BROAD-SCOPE
+  - [ ] a sub-note nobody routes on
+FEOF
+assert_eq "an indented checkbox does not un-tag its parent" "clean" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
+rm -rf plans/PLN-940-wrapped
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Both sides of a deferral land in one commit (client-a WFI-144)"
+
+# wf-defer-criterion.sh writes the DC row AND the plan.md checkoff, and
+# committed neither. /wf-test's exit pathspec names deferred-criteria.md and
+# never that plan's plan.md, so six checkoffs across one 16-plan sweep stayed
+# uncommitted on plans already marked complete — read from git those plans show
+# the criterion as '[ ]', the "silently dropped" reading deferral exists to
+# remove.
+registry_add_row PLN-941 defer-both testing
+cat > plans/PLN-941-defer-both/plan.md << 'PEOF'
+> **ID:** PLN-941
+
+## Acceptance Criteria
+
+#### Manual
+
+- [ ] (external) run `tool doctor` **against a real signing service**
+PEOF
+"$SCRIPT_DIR/wf-commit.sh" "seed PLN-941" --add plans/PLN-941-defer-both plans/REGISTRY.md >/dev/null 2>&1
+"$SCRIPT_DIR/wf-defer-criterion.sh" PLN-941 external \
+  "(external) run tool doctor **against a real signing service**" >/dev/null 2>&1
+
+assert_eq "the checkoff is in HEAD, not just the working tree" "true" \
+  "$(git show HEAD:plans/PLN-941-defer-both/plan.md 2>/dev/null | grep -q 'deferred as DC-' && echo true || echo false)"
+assert_eq "the DC row is in the same commit" "true" \
+  "$(git show --name-only --format= HEAD 2>/dev/null | grep -q 'plans/deferred-criteria.md' && echo true || echo false)"
+assert_eq "and the plan.md side is in that same commit" "true" \
+  "$(git show --name-only --format= HEAD 2>/dev/null | grep -q 'plans/PLN-941-defer-both/plan.md' && echo true || echo false)"
+assert_eq "nothing is left dirty for a caller to forget" "" \
+  "$(git status --porcelain -- plans/PLN-941-defer-both plans/deferred-criteria.md)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Closing a bug is idempotent, and takes a duplicate (client-a WFI-143, WFI-139)"
+
+# WFI-143: /wf-test closed 8 of 11 completed plans' bugs and left 3, with
+# identical plan metadata, so /wf-deploy step 9 met a mix of hard errors and
+# real work with nothing distinguishing them. WFI-139: a duplicate is never
+# triaged and has no fixing plan, so no scripted path could close one at all —
+# BUG-061 was closed by hand across two paths, the shape that put six bugs at
+# triaged/ AND closed/ in the same HEAD (WFI-136).
+mkdir -p bugs/triaged/BUG-942-already bugs/open/BUG-943-dup bugs/closed
+printf '# BUG-942 — x\n\n> **Status:** Triaged\n> **Plan:** PLN-942\n\n## Notes\n—\n' \
+  > bugs/triaged/BUG-942-already/bug.md
+printf '# BUG-943 — same as the brief\n\n> **Status:** Open\n\n## Description\nx\n' \
+  > bugs/open/BUG-943-dup/bug.md
+"$SCRIPT_DIR/wf-commit.sh" "seed bugs" --add bugs >/dev/null 2>&1
+
+"$SCRIPT_DIR/wf-bug-close.sh" BUG-942 PLN-942-fix >/dev/null 2>&1
+out=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-942 PLN-942-fix 2>&1)
+rc=$?
+assert_eq "a second close of the same bug exits 0" "0" "$rc"
+assert_eq "and says so rather than erroring" "true" \
+  "$(printf '%s' "$out" | grep -q 'already closed' && echo true || echo false)"
+
+out=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-943 --duplicate-of BRF-944 2>&1)
+assert_eq "a duplicate closes from bugs/open/" "0" "$?"
+assert_eq "the record says it was not fixed" "true" \
+  "$(grep -q 'Closed as duplicate of: BRF-944' bugs/closed/BUG-943-dup/bug.md && echo true || echo false)"
+assert_eq "its status is Closed" "true" \
+  "$(grep -q 'Status:\*\* Closed' bugs/closed/BUG-943-dup/bug.md && echo true || echo false)"
+assert_eq "and the open/ side of the rename is gone from HEAD" "false" \
+  "$(git ls-tree -r --name-only HEAD | grep -q 'bugs/open/BUG-943-dup' && echo true || echo false)"
+assert_fails "a bug that exists nowhere is still an error" \
+  "$SCRIPT_DIR/wf-bug-close.sh" BUG-999 PLN-999-nope
+assert_fails "and a plan and a duplicate are mutually exclusive" \
+  "$SCRIPT_DIR/wf-bug-close.sh" BUG-942 PLN-942-fix --duplicate-of BRF-944
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A new registry row is committed where it is written (client-a WFI-140)"
+
+# The one write to REGISTRY.md left outside wf-registry-update.sh's rule. A
+# hand-edited row sat dirty on the shared develop checkout through the whole
+# review loop, and PLN-060's was carried off by a concurrent implement worker's
+# correctly-pathspecced commit. Both workers legitimately name
+# plans/REGISTRY.md, so no pathspec defends against it — only not being dirty.
+out=$("$SCRIPT_DIR/wf-registry-add.sh" PLN-945 new-row --tags "docs,security" 2>&1)
+assert_eq "the row is added" "draft" "$(registry_state PLN-945)"
+assert_eq "and committed, not left dirty" "" "$(git status --porcelain -- plans/REGISTRY.md)"
+assert_eq "the commit names the registry" "true" \
+  "$(git show --name-only --format= HEAD 2>/dev/null | grep -q 'plans/REGISTRY.md' && echo true || echo false)"
+assert_eq "the tags land in the Tags column" "docs,security" \
+  "$(grep '^| PLN-945 |' plans/REGISTRY.md | awk -F'|' '{print $9}' | xargs)"
+assert_eq "the WF column is stamped from .claude/workflow-version" "$(tr -d '[:space:]' < .claude/workflow-version)" \
+  "$(grep '^| PLN-945 |' plans/REGISTRY.md | awk -F'|' '{print $8}' | xargs)"
+assert_eq "the row is inside the table, above the Counter comment" "true" \
+  "$(awk '/^\| PLN-945 \|/ { row = NR } /<!-- Counter:/ { counter = NR } END { print (row > 0 && row < counter) ? "true" : "false" }' plans/REGISTRY.md)"
+assert_fails "a second row for the same plan is refused" \
+  "$SCRIPT_DIR/wf-registry-add.sh" PLN-945 new-row
+assert_eq "so the plan still has exactly one row" "1" \
+  "$(grep -c '^| PLN-945 |' plans/REGISTRY.md | xargs)"
+assert_fails "an invented state is refused" \
+  "$SCRIPT_DIR/wf-registry-add.sh" PLN-946 bad-state --state wibble
+# A PLN-NNN-slug is the folder name; passing it as the slug must not double it.
+"$SCRIPT_DIR/wf-registry-add.sh" PLN-947 PLN-947-folder-form >/dev/null 2>&1
+assert_eq "a PLN-NNN-slug argument is read as the slug" "folder-form" \
+  "$(grep '^| PLN-947 |' plans/REGISTRY.md | awk -F'|' '{print $3}' | xargs)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"
