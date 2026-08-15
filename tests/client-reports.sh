@@ -3352,6 +3352,43 @@ assert_eq "a draft plan with nothing open on it is still reported" "true" \
   "$(printf '%s' "$closed_audit" | grep -q 'STALE STATE.*PLN-953' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "An unparseable plan is not a passing plan (client-a WFI-150)"
+
+# One stray NUL byte in plan.md made `file` call it binary data, so every grep
+# against it matched nothing. The schema probe fell through to `|| echo 0`, the
+# lint announced "schema_version 0 (< 6) — skipping" and exited 0: a plan that
+# could not be parsed at all got LESS checking than a normal one, silently.
+registry_add_row PLN-954 nul-byte draft
+printf '> **schema_version:** 6\n\n#### Manual\n\n- [ ] (eyes:blocking) a jud\000gment call\n' \
+  > plans/PLN-954-nul-byte/plan.md
+nul_out=$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-954 2>&1 || true)
+assert_eq "a NUL byte fails the lint instead of skipping it" "2" \
+  "$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-954 >/dev/null 2>&1; echo $?)"
+assert_eq "and it says what is wrong with the file" "true" \
+  "$(printf '%s' "$nul_out" | grep -q 'contains a NUL byte' && echo true || echo false)"
+assert_eq "it does not claim the plan is pre-v6" "false" \
+  "$(printf '%s' "$nul_out" | grep -q 'skipping' && echo true || echo false)"
+assert_eq "and it says how to fix it" "true" \
+  "$(printf '%s' "$nul_out" | grep -q "tr -d" && echo true || echo false)"
+
+# Stripped, the same plan lints normally — the guard must not become a new way
+# for a real plan to be refused.
+( LC_ALL=C tr -d '\000' < plans/PLN-954-nul-byte/plan.md > plans/PLN-954-nul-byte/plan.clean \
+  && mv plans/PLN-954-nul-byte/plan.clean plans/PLN-954-nul-byte/plan.md )
+assert_ok "the same plan lints clean once the byte is gone" \
+  "$SCRIPT_DIR/wf-manual-lint.sh" PLN-954
+
+# A genuinely pre-v6 plan still skips — but the message no longer says "0" for
+# a file that simply has no schema line, which is what made the two look alike.
+registry_add_row PLN-955 no-schema draft
+printf '#### Manual\n\n- [ ] an untagged v5 criterion\n' > plans/PLN-955-no-schema/plan.md
+old_out=$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-955 2>&1 || true)
+assert_eq "a pre-v6 plan is still skipped, not failed" "0" \
+  "$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-955 >/dev/null 2>&1; echo $?)"
+assert_eq "and it names the actual reason" "true" \
+  "$(printf '%s' "$old_out" | grep -q 'no schema_version line' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

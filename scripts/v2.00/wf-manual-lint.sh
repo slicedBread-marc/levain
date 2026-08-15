@@ -73,18 +73,51 @@ fi
 
 [ -f "$plan_file" ] || { echo "Error: $plan_file not found" >&2; exit 2; }
 
+# ── Is it text at all? ────────────────────────────────────────────────────
+#
+# Every check below is a grep or an awk over this file, and both stop matching
+# entirely on a file that contains a NUL byte — grep classifies it as binary
+# data and reports nothing rather than failing.
+#
+# So one stray NUL turned the whole lint into a pass. client-a's PLN-077 had
+# exactly one, the schema probe below matched nothing, `|| echo 0` read that as
+# "schema_version 0", and the plan was skipped as pre-v6 with exit 0 (WFI-150).
+# A plan that could not be parsed at all therefore received LESS checking than a
+# normal one, silently, and the exit code said it passed.
+#
+# "I could not read it" and "I read it and it is fine" must never wear the same
+# exit code. tr, unlike grep and awk, is defined on arbitrary bytes.
+if [ "$(LC_ALL=C tr -dc '\000' < "$plan_file" | wc -c | tr -d ' ')" != "0" ]; then
+  # Same trick to locate it: map NUL to a byte grep will match, then count lines.
+  nul_line=$(LC_ALL=C tr '\000' '\001' < "$plan_file" | grep -n "$(printf '\001')" | head -1 | cut -d: -f1)
+  echo "Error: $plan_file contains a NUL byte (line ${nul_line:-?}) — it is not text." >&2
+  echo "       grep and awk silently match nothing in a file like this, so no lint can be trusted on it." >&2
+  echo "       Strip it first, then re-run:" >&2
+  echo "         LC_ALL=C tr -d '\\000' < \"$plan_file\" > \"$plan_file.clean\" && mv \"$plan_file.clean\" \"$plan_file\"" >&2
+  exit 2
+fi
+
+if ! grep -q . "$plan_file" 2>/dev/null; then
+  echo "Error: $plan_file has no readable text — refusing to report a lint verdict on it." >&2
+  exit 2
+fi
+
 # ── Schema guard ──────────────────────────────────────────────────────────
 # Tags arrived in schema v6. A v5 plan already in flight has none, and failing
 # it back to `draft` mid-pipeline would punish plans for being early rather
 # than for being wrong. So: v5 plans are never linted, and for counting they
 # fall back to v5 semantics — every unchecked manual criterion is treated as
 # eyes:blocking, which is exactly what "any Manual criterion gates" meant.
-schema=$(grep -m1 -oE 'schema_version:\*{0,2}[[:space:]]*[0-9]+' "$plan_file" 2>/dev/null | grep -oE '[0-9]+$' || echo 0)
+schema=$(grep -m1 -oE 'schema_version:\*{0,2}[[:space:]]*[0-9]+' "$plan_file" 2>/dev/null | grep -oE '[0-9]+$' || true)
+# Absent and zero are different facts, and the skip message said "0" for both —
+# which is what made WFI-150's unparseable plan look like an ordinary old one.
+schema_said="${schema:-no schema_version line}"
+[ -n "$schema" ] || schema=0
 legacy=0
-[ "${schema:-0}" -lt 6 ] && legacy=1
+[ "$schema" -lt 6 ] && legacy=1
 
 if [ "$mode" = "lint" ] && [ "$legacy" = "1" ]; then
-  echo "wf-manual-lint: $(basename "$(dirname "$plan_file")") is schema_version ${schema:-unset} (< 6) — manual criterion tags not required, skipping" >&2
+  echo "wf-manual-lint: $(basename "$(dirname "$plan_file")") is $schema_said (< 6) — manual criterion tags not required, skipping" >&2
   exit 0
 fi
 
