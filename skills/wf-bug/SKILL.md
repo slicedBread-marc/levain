@@ -68,6 +68,16 @@ bugs/closed/  → resolved by /wf-deploy when a plan completes
    ```
 6. **Confirm** — show the user the bug ID, folder path, and commit hash
 
+## Closing a bug that duplicates something already filed
+
+A duplicate has no fixing plan and is never triaged, so the normal close path — `/wf-deploy` closing a bug when its plan completes — never reaches it. Close it here, with the script, from `bugs/open/`:
+
+```bash
+scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --duplicate-of <BRF-NNN|BUG-NNN|PLN-NNN>
+```
+
+It writes `Status: Closed`, the date, and `Closed as duplicate of: <ID> — closed by decision, not fixed` into `bug.md`, then commits the move naming **both** sides of the rename. Do not do this by hand: a rename is two paths, only the caller's pathspec decides which of them land, and a hand-close that names one leaves the bug tracked at `open/` **and** `closed/` in the same HEAD (WFI-136, WFI-139). Confirm with the user before closing — deciding two artifacts are the same issue is their call, not yours.
+
 ## bug.md format
 
 This is what `wf-bug-new.sh` writes. You do not write it by hand — it is here so

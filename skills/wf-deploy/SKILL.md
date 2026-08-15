@@ -69,6 +69,8 @@ Before starting, confirm E2E passed on release:
    scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
    ```
    Each call commits its own rename, both sides — leave the bug folders out of step 10's pathspec (WFI-136).
+
+   **Run it for every completed plan that names a bug, without checking first.** `/wf-test` closes some bugs at plan completion and some it does not, with nothing in the plan telling them apart (WFI-143), so this step meets a mix. A bug that is already closed is the outcome this step wants: the script says `already closed — nothing to do` and exits 0. Do not skip the call to avoid an error, and do not treat one as a deploy failure.
 10. **Commit plan updates** — name the plans this deploy actually carried, not
     `plans/PLN-*/`. That wildcard spans every concurrent worker's tree;
     `wf-commit.sh` commits the pathspec and nothing else staged (WFI-109,
