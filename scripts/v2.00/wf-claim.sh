@@ -10,6 +10,9 @@
 # worker can claim before the plan folder exists (WFI-004).
 # Claims expire when the owning process dies or after 2 hours (7200 seconds).
 #
+#   --list      report every live claim and stop. Reads nothing else and
+#               writes nothing — `/wf-claim` opens with it, and it is the one
+#               way to see what the write guard is enforcing.
 #   --pid N     record N as the owner instead of this session (wf-spawn.sh
 #               claims on behalf of the worker it is about to launch)
 #   --if-free   do not steal a live claim — exit 2 and print who holds it.
@@ -46,16 +49,61 @@ plan_name=""
 pid=""
 if_free=false
 steal=false
+list=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --pid)     pid="${2:?--pid requires a number}"; shift 2 ;;
     --if-free) if_free=true; shift ;;
     --steal)   steal=true; shift ;;
+    --list)    list=true; shift ;;
     -*)        echo "Unknown option: $1" >&2; exit 1 ;;
     *)         plan_name="$1"; shift ;;
   esac
 done
+
+# ── --list ────────────────────────────────────────────────────────────────
+#
+# Claims are keyed on the artifact NUMBER and live in their own directory, so
+# nothing about a claim says which artifact it belongs to — the registry does.
+# Resolving the number back to a row is what makes the output readable, and an
+# unresolvable number is still reported: a claim on an artifact the registry
+# has never heard of is exactly the kind of thing worth seeing.
+#
+# Liveness is decided by wf_claim_live, which reaps as it reads, so a stale
+# claim disappears from this listing and from the write guard together.
+if $list; then
+  claims_root="$(wf_orch_dir)/claims"
+  registry="$(wf_develop_root)/plans/REGISTRY.md"
+  found=0
+  shopt -s nullglob
+  for d in "$claims_root"/*/; do
+    wf_claim_live "${d%/}" || continue
+    num=$(basename "${d%/}")
+    holder=$(sed -n '2p' "${d%/}/.wf-claim" 2>/dev/null | tr -cd '0-9')
+    # `|| true` on both halves: this script runs under `set -euo pipefail`, and
+    # a grep that matches nothing exits 1 — which pipefail promotes to the
+    # pipeline's status and `set -e` turns into a silent exit mid-listing. The
+    # no-match case is the one this branch exists to report.
+    row=$({ grep -iE "^\| (PLN|BUG|BRF)-0*${num} \|" "$registry" 2>/dev/null || true; } | head -1) || true
+    if [ -n "$row" ]; then
+      id=$(printf '%s' "$row" | awk -F'|' '{print $2}' | xargs)
+      slug=$(printf '%s' "$row" | awk -F'|' '{print $3}' | xargs)
+      state=$(printf '%s' "$row" | awk -F'|' '{print $4}' | xargs)
+      label="$id-$slug ($state)"
+    else
+      label="artifact $num (no registry row)"
+    fi
+    # `if`, not `wf_claim_mine … && mine=…`: under `set -e` a bare `a && b`
+    # whose `a` fails carries that failure out as the statement's status.
+    mine=""
+    if wf_claim_mine "${d%/}"; then mine="  ← yours"; fi
+    printf '%-46s PID %-8s %sm%s\n' "$label" "${holder:-?}" "$((WF_CLAIM_AGE / 60))" "$mine"
+    found=1
+  done
+  [ "$found" = "1" ] || echo "No live claims."
+  exit 0
+fi
 
 [ -n "$plan_name" ] || { echo "Usage: $0 <artifact> [--pid N] [--if-free] [--steal]" >&2; exit 1; }
 

@@ -624,6 +624,54 @@ assert_eq "wf-attend forbids deciding for the user" "true" \
 assert_eq "wf-orchestrate refuses to self-enable" "true" \
   "$(grep -qi 'do \*\*not\*\* flip it to `true`' "$LIB_ROOT/skills/wf-orchestrate/SKILL.md" && echo true || echo false)"
 
+section "wf-claim --list, and the /wf-claim verb"
+
+registry_add_row PLN-907 listed ready
+
+assert_eq "no claims reads as none" "No live claims." \
+  "$("$SCRIPT_DIR/wf-claim.sh" --list 2>&1)"
+
+# A claim of our own, and one held by a live sibling process.
+"$SCRIPT_DIR/wf-claim.sh" PLN-907 >/dev/null 2>&1
+out=$("$SCRIPT_DIR/wf-claim.sh" --list 2>&1)
+case "$out" in *"PLN-907-listed"*) r=1 ;; *) r=0 ;; esac
+assert_eq "a held artifact is listed by name and state" "1" "$r"
+case "$out" in *"← yours"*) r=1 ;; *) r=0 ;; esac
+assert_eq "and our own claim is marked as ours" "1" "$r"
+
+# A claim on a number the registry has never heard of must still be reported —
+# and it is the case that killed the first cut of --list: `grep` matching
+# nothing exits 1, which pipefail promotes and `set -e` turns into a silent
+# exit part-way through the listing, hiding every claim after it.
+mkdir -p "$(pwd)/.claude/orchestrator/claims/994"
+printf '%s\n%s\n' "$(date +%s)" "$$" > ".claude/orchestrator/claims/994/.wf-claim"
+out=$("$SCRIPT_DIR/wf-claim.sh" --list 2>&1)
+case "$out" in *"994"*) r=1 ;; *) r=0 ;; esac
+assert_eq "an artifact with no registry row is still reported" "1" "$r"
+case "$out" in *"PLN-907-listed"*) r=1 ;; *) r=0 ;; esac
+assert_eq "and does not truncate the rest of the listing" "1" "$r"
+rm -rf ".claude/orchestrator/claims/994"
+
+"$SCRIPT_DIR/wf-unclaim.sh" PLN-907 >/dev/null 2>&1
+assert_eq "a released claim leaves the listing" "No live claims." \
+  "$("$SCRIPT_DIR/wf-claim.sh" --list 2>&1)"
+
+# The verb a human reaches for. It must not grow into a skill that edits plans.
+CLAIM_SKILL="$LIB_ROOT/skills/wf-claim/SKILL.md"
+assert_ok "the /wf-claim skill exists" test -f "$CLAIM_SKILL"
+assert_eq "it is user-invocable" "true" \
+  "$(grep -q '^user_invocable: true' "$CLAIM_SKILL" && echo true || echo false)"
+assert_eq "it opens on --list" "true" \
+  "$(grep -q 'wf-claim.sh --list' "$CLAIM_SKILL" && echo true || echo false)"
+assert_eq "it says exit 2 is an answer, not an error" "true" \
+  "$(grep -qi 'exit 2 means another live session' "$CLAIM_SKILL" && echo true || echo false)"
+assert_eq "it forbids deleting the claim file by hand" "true" \
+  "$(grep -qi 'delete a `.wf-claim` file directly' "$CLAIM_SKILL" && echo true || echo false)"
+assert_eq "it warns that releasing is a trigger" "true" \
+  "$(grep -qi 'flushes any spawn the orchestrator deferred' "$CLAIM_SKILL" && echo true || echo false)"
+assert_eq "install.sh lists it" "true" \
+  "$(grep -q '/wf-claim ' "$LIB_ROOT/install.sh" && echo true || echo false)"
+
 section "install.sh reports an untracked registry on every deploy"
 
 # The pipeline's state machine must be in git: plan.md, findings.md and

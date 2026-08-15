@@ -191,8 +191,11 @@ handed, whether or not a plan folder exists yet.
 
 ```bash
 scripts/wf-exec.sh wf-claim.sh PLN-NNN     # or BUG-NNN / BRF-NNN — one claim per number
+scripts/wf-exec.sh wf-claim.sh --list      # what is held right now, and by whom
 scripts/wf-exec.sh wf-unclaim.sh PLN-NNN   # on the way out, after the commit and the gate
 ```
+
+A human drives the same three through `/wf-claim`.
 
 A `PreToolUse` hook (`wf-guard-write.sh`) enforces this: an `Edit` or `Write` under
 `plans/PLN-NNN-*/`, `bugs/`, `briefs/` or `feature-branches/PLN-NNN-*/` is **refused** while

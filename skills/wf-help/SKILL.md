@@ -87,6 +87,19 @@ Deploy (any terminal, after /wf-release passes):
 
 ═══════════════════════════════════════════════════════════════════════════
 
+CLAIMS (any terminal):
+
+  • /wf-claim: take, release, or list the lease on an artifact
+  • A claim keys on the artifact NUMBER — BRF-041 and the PLN-041 it becomes
+    are one claim — and covers plans/, bugs/, briefs/ and the feature worktree
+  • Two things honour it: the dispatcher will not launch a worker onto a
+    claimed artifact, and the PreToolUse write guard refuses edits under it
+  • Expires after 2h and when its owning process dies, so a crashed session
+    never parks an artifact forever
+  • Claim before you write. Release after the commit and the gate, never before
+
+═══════════════════════════════════════════════════════════════════════════
+
 QUEUE STATES:
 
 State is tracked in plans/REGISTRY.md (not by folder):

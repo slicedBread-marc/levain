@@ -70,6 +70,7 @@ The workflow is designed to run across 4 terminal sessions, each with a dedicate
 | T4 | Tester | `/wf-test` | Haiku |
 | Agent | Verifier | `wf-verify` (auto-triggered) | Sonnet |
 | Agent | Consistency | `wf-consistency` (auto-triggered on `ready` + Deps) | Sonnet |
+| Any | Claims | `/wf-claim` | Haiku |
 | Any | Release | `/wf-release`, `/wf-deploy` | Haiku |
 
 Each terminal runs `/wf-init` once per session to establish its role. `/wf-next` auto-routes to the correct skill based on `TERMINAL_ROLE`.
