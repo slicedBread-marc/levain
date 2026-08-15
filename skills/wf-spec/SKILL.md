@@ -231,6 +231,14 @@ If the user picks a bug BUG-NNN:
    scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): plan drafted" \
      --add plans/PLN-NNN-<slug>/ --branch develop
    ```
+   Then, for a new plan, add its REGISTRY row — **here, not at exit**:
+   ```bash
+   scripts/wf-exec.sh wf-registry-add.sh PLN-NNN <slug> --tags "<tags from step 4c>"
+   ```
+   It stamps the WF column from `.claude/workflow-version` so the dispatcher routes the plan to the matching script snapshot, refuses a second row for an ID that already has one, and commits the row itself, under the registry lock.
+
+   **Never hand-edit the table instead.** A row appended by hand sits dirty on the shared develop checkout until this skill's own exit commit — the far side of the whole review loop — and on develop that does not survive: client-a's PLN-060 draft row was carried off by a concurrent implement worker's correctly-pathspecced `implement(PLN-055-…): verified, moved to verify` commit. Pathspec discipline cannot defend against it, because both workers legitimately name `plans/REGISTRY.md` and whoever commits first takes the other's uncommitted rows out of the same file (WFI-140). The fix is not a better pathspec; it is not being dirty for that long.
+
    The plan stays `draft`; this commits the document, not the decision. No REGISTRY row moves and nothing downstream can pick the plan up.
 
    **Why not wait for the exit commit.** Between here and the exit commit sits the whole review loop, and until v6.3.1 the new files spent all of it *staged on the shared develop index*. Anyone else's commit sweeps that index. client-a's WFI-122: PLN-039's reviewed `plan.md` was committed by an unrelated `test(PLN-038-…): complete` merge, so the spec commit that approved it carried only `findings.md`, `progress.md` and `REGISTRY.md`, and `git log -- plans/PLN-039-…/plan.md` names a different plan's test run. No pathspec on the spec side defends against a merge; the only fix is to not be staged for that long. Same reasoning as `wf-bug-consume.sh` committing rather than staging (WFI-106, WFI-112).
@@ -411,15 +419,13 @@ Final response under 2000 characters.")
 
    Then run `scripts/wf-exec.sh wf-check-reboot-flag.sh` and append any output after your completion message.
 
-For new plans, also add the REGISTRY.md row in the same commit. Stamp the WF column with the current workflow version so the dispatcher routes this plan to the matching script snapshot (see `scripts/version-map.txt`):
-```bash
-WF=$(cat .claude/workflow-version 2>/dev/null | tr -d '[:space:]')
+A new plan's REGISTRY row is **not** added here — `wf-registry-add.sh` wrote and committed it back at step 5a, as `draft`, before the review loop began (WFI-140). What this exit does with it is the transition, through `wf-registry-update.sh`, exactly like every other state change:
+
 ```
-Then append (replacing WF with the stamped value):
+| PLN-NNN | <slug> | draft | — | — | YYYY-MM-DD | <WF> | <tags> | — |
 ```
-| PLN-NNN | <slug> | draft | — | — | YYYY-MM-DD | $WF | <tags> | — |
-```
-Columns: `ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps`. Use the tags confirmed in step 4c. Deps defaults to `—`. Then after review passes, update state to `ready`.
+
+Columns, for reading the table: `ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps`.
 
 ---
 
