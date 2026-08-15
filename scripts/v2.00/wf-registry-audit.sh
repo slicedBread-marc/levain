@@ -28,7 +28,8 @@
 #   3. Duplicate plan IDs, in either place     (ambiguous resolution)
 #   4. Counter below the highest ID in use     (the next allocation collides)
 #   5. State values outside the documented set (unroutable; orchestrator fails)
-#   6. draft/ready plan whose feature branch is ahead of develop (lost write)
+#   6. draft/ready plan whose feature branch is ahead of develop (lost write),
+#      unless open findings explain it — that is the fix cycle, and it is noted
 #
 # Exit 0 when clean, 1 when anything was found. Reports only — it never edits
 # the registry, because every finding here has more than one correct repair and
@@ -199,6 +200,30 @@ while IFS=' ' read -r id slug state; do
   git rev-parse --verify "$branch" >/dev/null 2>&1 || continue
   ahead=$(git rev-list --count "develop..$branch" 2>/dev/null || echo 0)
   [ "$ahead" -gt 0 ] || continue
+
+  # A draft plan with OPEN findings is the fix cycle, not a lost write.
+  #
+  # `testing → draft` is a documented route: wf-test's findings path and the
+  # implementer's escalation both send a plan back to be replanned, and both
+  # deliberately keep the feature branch and its worktree for the fix that
+  # follows. "draft, branch ahead of develop" is therefore the NORMAL shape of a
+  # failed human test — and this check called it a disagreement, told the reader
+  # a state write had been lost or the work abandoned, and advised setting the
+  # state deliberately. Following that advice moves the plan out of the cycle
+  # wf-test just routed it into (client-a WFI-145).
+  #
+  # The findings are what tell the two apart, and they are the same signal
+  # wf-findings-route.sh and wf-list-replanning.sh already route on. WFI-010 —
+  # the report this check exists for — was explicit that the plans it found had
+  # *no findings to explain the route back*. That is still reported.
+  if [ "$state" = "draft" ] && \
+     grep -q '^- \[ \]' "plans/${id}-${slug}/findings.md" 2>/dev/null; then
+    open_findings=$(grep -c '^- \[ \]' "plans/${id}-${slug}/findings.md" 2>/dev/null || echo 0)
+    note "REPLANNING    $id is 'draft' with $open_findings open finding(s) and $branch $ahead ahead of develop."
+    detail "              The fix cycle: wf-test or the implementer routed it back and kept the branch. Not a fault."
+    continue
+  fi
+
   report "STALE STATE   $id is '$state' but $branch is $ahead commit(s) ahead of develop — the registry and the branch disagree."
   detail "              Either a state write was lost, or the work was abandoned. Check the branch, then set the state deliberately."
 done <<< "$reg_rows"

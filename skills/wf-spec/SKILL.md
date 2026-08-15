@@ -134,6 +134,8 @@ This lived inside the unattended section, and the attended menu claimed on one p
 
 The claim is what makes the artifact yours to write. Take it first.
 
+**A claim can be refused, and a refusal is an answer — not an error to work around.** `wf-claim.sh` exits **2** when a live session already holds the artifact, with or without `--if-free`. Stop and tell the user who holds it; pick something else. Until v6.6 the bare form silently overwrote a live claim, so an attended session took PLN-059 out from under an unattended test worker that was mid-run and said nothing (client-a WFI-146). If the holder is genuinely finished or wedged, take it deliberately — `wf-claim.sh <artifact> --steal` — and never by deleting the claim file by hand.
+
 ---
 
 ## ID Inheritance
@@ -147,12 +149,16 @@ Do not derive the ID by hand and do not call `wf-counter-next.sh` yourself. Ask:
 
 ```bash
 eval "$(scripts/wf-exec.sh wf-plan-id.sh BRF-041)"
-# → PLAN_ID, PLAN_NUM, PLAN_ID_INHERITED, PLAN_ID_COLLISION, PLAN_ID_RESUME
+# → PLAN_ID, PLAN_NUM, PLAN_ID_INHERITED, PLAN_ID_COLLISION, PLAN_ID_RESUME, PLAN_ID_DIR
 ```
 
 `PLAN_ID_INHERITED=true` is the ordinary case: the number was free and the plan keeps it.
 
-**`PLAN_ID_RESUME=true` means the folder already there is yours** — an earlier attempt at this same artifact wrote it and did not finish. `PLAN_ID` is the inherited number and the folder is the work in progress: read what is in it, keep what is still right, and continue. Do **not** create a second folder and do not treat it as a collision.
+**Ask again immediately before you create the folder (step 5).** The answer describes the registry and `plans/` at the instant it was given, and step 3 is minutes of exploration, drafting and user confirmation away from step 5. client-a's WFI-147: two sessions on BUG-075 both got `PLN-075, COLLISION=, RESUME=false` seconds apart — both answers correct — and both drafted a plan under that number with different slugs. The duplicate was written and committed before `wf-registry-add.sh` refused the second row, which is the only backstop there is and it fires last. The second call is cheap, and it has seen the other session's work.
+
+**`PLAN_ID_RESUME=true` means the folder already there is yours** — an earlier attempt at this same artifact wrote it and did not finish. `PLAN_ID` is the inherited number and `PLAN_ID_DIR` is the folder: read what is in it, keep what is still right, and continue. Do **not** create a second folder and do not treat it as a collision.
+
+**Write into `$PLAN_ID_DIR`, not into the folder name you chose in step 2.** The earlier attempt picked its own slug, and it is rarely the one this run would pick — on WFI-147 the surviving folder was `PLN-075-test-poll-loops-fail-loudly` while the run in progress had chosen `PLN-075-enrolment-test-confirm-ordering`. The existing folder owns the REGISTRY row; a folder matching your slug would own nothing.
 
 An unattended run dying mid-spec is ordinary — after writing and reviewing `plan.md` but before the REGISTRY row and the commit is the widest window it has. client-a's WFI-121 hit that window and the collision rule, read literally, would have produced a duplicate PLN-040 for one bug and orphaned the reviewed PLN-039. The check now distinguishes the two: a plan folder whose `plan.md` header names the artifact you are specced on is your own.
 
@@ -196,8 +202,14 @@ If the user picks a bug BUG-NNN:
     scripts/wf-exec.sh wf-defer-criterion.sh --consume DC-001 PLN-NNN
     ```
     Do not delete rows by hand — the consumed row is the record that the criterion was picked up rather than dropped.
+
+    If the user says one of these is **already true** — the deploy ran, the credentials arrived, the soak time passed — that is not a consumption, it is a satisfaction, and it has its own verb:
+    ```bash
+    scripts/wf-exec.sh wf-defer-criterion.sh --satisfy DC-001 --evidence "<what proved it>"
+    ```
+    Recording it as `consumed by` this plan instead would make this plan owe a check it is not going to make (WFI-148).
 2. **Choose a feature name** — a short kebab-case slug describing the work (e.g. `user-auth`, `payment-webhook`, `login-crash`)
-3. **Inherit the plan ID** — `eval "$(scripts/wf-exec.sh wf-plan-id.sh <SRC-ID>)"` and use `$PLAN_ID` (see [ID Inheritance](#id-inheritance)). Do not derive it by hand and do not call `wf-counter-next.sh`.
+3. **Inherit the plan ID** — `eval "$(scripts/wf-exec.sh wf-plan-id.sh <SRC-ID>)"` and use `$PLAN_ID` (see [ID Inheritance](#id-inheritance)). Do not derive it by hand and do not call `wf-counter-next.sh`. This answer is provisional until step 5 re-asks.
 4. **Explore the codebase** — spawn **haiku agents** to find existing patterns, file structures, and signatures you need to reference in the plan. Keep agents focused: one per question, output under 2000 characters.
 4b. **Draft the one-liner goal** — before creating any files, write a single sentence describing what this plan achieves and show it to the user:
     ```
@@ -218,7 +230,15 @@ If the user picks a bug BUG-NNN:
     Suggest from the listed tags — reuse the project's own words rather than inventing a synonym for one it already has. A genuinely new tag is allowed and `wf-set-tags.sh` will take it; it just gets a warning so a typo does not become a second vocabulary.
 
     This list used to be a hardcoded `security, arcade, admin, lessons, ux, infra, e2e, bugfix` — one project's game/admin/lessons vocabulary, shipped to everyone. Elsewhere it named tags that meant nothing and omitted the one tag the project actually gated on, which is the failure that matters: an allowlist that looks authoritative, isn't, and sits directly in front of a gating decision.
-5. **Create the plan folder** — `plans/PLN-NNN-<slug>/` with three files following `plans/TEMPLATE.md`:
+5. **Re-ask for the ID, then create the plan folder.** The ID from step 3 is stale by now — ask again, in the same call that creates the folder:
+   ```bash
+   eval "$(scripts/wf-exec.sh wf-plan-id.sh <SRC-ID>)"
+   ```
+   - `PLAN_ID_RESUME=true` — another session (or an earlier attempt of yours) created the folder while you were drafting. **Continue in `$PLAN_ID_DIR`**, whatever slug it carries; fold anything you drafted into what is there. Do not create a second folder.
+   - `PLAN_ID_INHERITED=false` — the number was taken while you were drafting. Use the reallocated `$PLAN_ID` and record `$PLAN_ID_COLLISION` in the Context line.
+   - Otherwise nothing moved: create `plans/$PLAN_ID-<slug>/` as planned.
+
+   Then write three files following `plans/TEMPLATE.md`:
    - Folder is always `plans/PLN-NNN-<slug>/` (e.g. `plans/PLN-041-user-auth/`)
    - In `plan.md`, fill in `> **ID:** PLN-NNN` and `> **schema_version:** 6`
    - **Goal** — use the confirmed one-liner from step 4b as the first line under `## Goal`. Follow with an optional context paragraph.

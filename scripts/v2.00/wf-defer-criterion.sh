@@ -3,7 +3,26 @@
 #
 #   wf-defer-criterion.sh <plan-id> <tag> "<criterion>" [--prereq <text>] [--note <text>] [--no-commit]
 #   wf-defer-criterion.sh --list [prereq-filter]
-#   wf-defer-criterion.sh --consume <DC-NNN> <plan-id>
+#   wf-defer-criterion.sh --consume <DC-NNN> <plan-id> [--no-commit]
+#   wf-defer-criterion.sh --satisfy <DC-NNN> [--evidence <text>] [--no-commit]
+#
+# TWO WAYS A DEFERRED CRITERION ENDS, AND ONLY ONE HAD A VERB
+#
+# `--consume` means another plan adopted the criterion into its acceptance
+# criteria — it is now that plan's problem, and it will be checked there.
+#
+# That is not how an `external` criterion usually ends. An external criterion is
+# defined as one satisfiable only at first real use, so the ordinary ending is
+# that the real use happens and the criterion turns out to be true, with no plan
+# involved at all. client-a's DC-040 ("Deploy to Production Run tests
+# completes green on ubuntu-latest") was satisfied outright by a green run, and
+# there was no way to say so: recording it as "consumed by PLN-075" would name a
+# completed plan as owing future work it will never do. So all 40 DC rows in
+# that project sat at `open`, including ones long since true, and the file
+# stopped meaning anything (WFI-148).
+#
+# `--satisfy` is that ending. The evidence goes in the row, because a criterion
+# marked satisfied with nothing behind it is worth less than one left open.
 #
 # The add path COMMITS what it wrote — the DC row and the plan.md checkoff
 # together, in one commit. They are two sides of one state change and a caller's
@@ -61,6 +80,12 @@ ensure_file() {
 > Written by `wf-defer-criterion.sh` (from `/wf-test`). Read by `/wf-spec`
 > step 1a, which offers matching rows when a new plan is drafted.
 > Do not hand-edit — use the script so IDs stay unique.
+>
+> Status is `open` until one of two things ends it:
+> `--consume <DC-NNN> <plan-id>` — a later plan adopted it as an acceptance
+> criterion, and will check it there.
+> `--satisfy <DC-NNN> --evidence "<what proved it>"` — the real use happened
+> and the criterion is true. No plan involved.
 
 | ID | Criterion | Tag | From | Prereq | Note | Added | Status |
 |-|-|-|-|-|-|-|-|
@@ -87,19 +112,64 @@ case "${1:-}" in
     ' "$FILE"
     exit 0
     ;;
-  --consume)
-    dc="${2:?--consume requires a DC-NNN}"
-    into="${3:?--consume requires the consuming plan id}"
+  --consume|--satisfy)
+    mode="$1"
+    dc="${2:?$1 requires a DC-NNN}"
+    shift 2
+    into=""
+    evidence=""
+    do_commit=true
+    if [ "$mode" = "--consume" ]; then
+      into="${1:?--consume requires the consuming plan id}"; shift
+    fi
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --evidence)  evidence="${2:?--evidence requires a value}"; shift 2 ;;
+        --no-commit) do_commit=false; shift ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+      esac
+    done
+
     [ -f "$FILE" ] || { echo "Error: $FILE not found" >&2; exit 1; }
+    # A DC id that is not in the file is a caller mistake, and the awk below
+    # would rewrite nothing and report success — the shape that let rows go
+    # unrecorded silently. Say it instead.
+    grep -q "^| $dc |" "$FILE" || { echo "Error: $dc has no row in $FILE" >&2; exit 1; }
+
+    was=$(awk -F'|' -v dc="$dc" '{ id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id)
+      if ($0 ~ /^\| DC-/ && id == dc) { s = $9; gsub(/^[ \t]+|[ \t]+$/, "", s); print s; exit } }' "$FILE")
+    [ "$was" = "open" ] || echo "Note: $dc was already '$was' — overwriting" >&2
+
+    if [ "$mode" = "--consume" ]; then
+      status="consumed by $into"
+      msg="spec($into): $dc consumed"
+    else
+      # Free text into a markdown table: a pipe would silently add a column.
+      evidence=$(printf '%s' "$evidence" | tr '|' '/' | tr -d '\n')
+      status="satisfied $(date +%Y-%m-%d)${evidence:+ — $evidence}"
+      msg="test($dc): satisfied${evidence:+ — $evidence}"
+    fi
+
     wf_lock_acquire deferred-criteria
-    awk -F'|' -v dc="$dc" -v into="$into" 'BEGIN { OFS="|" }
+    WF_DC_STATUS="$status" awk -F'|' -v dc="$dc" 'BEGIN { OFS="|"; st = ENVIRON["WF_DC_STATUS"] }
       {
         id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id)
-        if ($0 ~ /^\| DC-/ && id == dc) { $9 = " consumed by " into " " }
+        if ($0 ~ /^\| DC-/ && id == dc) { $9 = " " st " " }
         print
       }
     ' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
-    echo "Deferred criterion $dc → consumed by $into"
+    echo "Deferred criterion $dc → $status"
+
+    # Committed here, for the same reason the add path is (WFI-144): this is
+    # the only path that writes the file, the caller's exit pathspec may not
+    # name it, and a row left dirty on the shared develop checkout is carried
+    # off by whichever concurrent worker commits next (WFI-140).
+    if $do_commit; then
+      if ! (cd "$ROOT" && "$SELF_DIR/wf-commit.sh" "$msg" --add "plans/deferred-criteria.md"); then
+        echo "  wf-defer-criterion: $dc is updated but could not be committed —" >&2
+        echo "  commit plans/deferred-criteria.md before another worker does" >&2
+      fi
+    fi
     exit 0
     ;;
 esac

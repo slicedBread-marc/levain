@@ -53,7 +53,7 @@ You receive a plan ID (e.g. `PLN-003`) as context. From this:
    ```
    The failure is worth recognising on sight (WFI-071): it looks like a corrupt repository and is nothing of the kind.
 1. **Look up the plan** — `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"` → sets PLAN_SLUG, PLAN_STATE, PLAN_BRANCH, PLAN_DIR, PLAN_NAME
-2. **Claim the plan** — `scripts/wf-exec.sh wf-claim.sh PLN-NNN`
+2. **Claim the plan** — `scripts/wf-exec.sh wf-claim.sh PLN-NNN`. Exit 2 means another live session holds it: stop there and report it, rather than verifying a plan someone else is writing (WFI-146).
 
 > **`$PLAN_*` are placeholders, not live shell variables.** Every Bash call is a
 > fresh shell, so nothing the `eval` set survives to the next one. Read the

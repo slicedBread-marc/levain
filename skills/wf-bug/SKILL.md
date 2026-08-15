@@ -78,6 +78,20 @@ scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --duplicate-of <BRF-NNN|BUG-NNN|PLN-N
 
 It writes `Status: Closed`, the date, and `Closed as duplicate of: <ID> — closed by decision, not fixed` into `bug.md`, then commits the move naming **both** sides of the rename. Do not do this by hand: a rename is two paths, only the caller's pathspec decides which of them land, and a hand-close that names one leaves the bug tracked at `open/` **and** `closed/` in the same HEAD (WFI-136, WFI-139). Confirm with the user before closing — deciding two artifacts are the same issue is their call, not yours.
 
+## Closing a bug that was fixed without a plan
+
+Not every fix is worth a plan. A one-commit fix on develop — a typo, a wrong flag, a dozen lines in a script — has no plan to complete, so `/wf-deploy`'s close-by-plan path never reaches it and the bug stays `Open` forever while the code is fixed. client-a's BUG-076 sat exactly there: fixed in `b5fc375`, closeable only by inventing a plan ID that does not exist (WFI-149).
+
+Close it against the commit instead:
+
+```bash
+scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --fixed-in <sha> [--note "<what and why>"]
+```
+
+The commit is the evidence in place of the plan. The script resolves the sha and writes `Fixed directly in: <short-sha> <subject> — no plan` into `bug.md`, then commits the move naming both sides of the rename. A sha this repo cannot resolve is still recorded, with a warning that it was not verified.
+
+**Ask before using this.** "This did not need a plan" is a judgement about scope, and it is the user's to make: if the fix wants acceptance criteria, a test, or a verify pass, it wants a plan. Never pass a plan name that does not exist to fake a close.
+
 ## bug.md format
 
 This is what `wf-bug-new.sh` writes. You do not write it by hand — it is here so

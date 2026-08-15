@@ -1,10 +1,25 @@
 #!/usr/bin/env bash
 # wf-bug-close.sh <bug-id> <plan-name> [--no-commit]
 # wf-bug-close.sh <bug-id> --duplicate-of <ID> [--no-commit]
+# wf-bug-close.sh <bug-id> --fixed-in <sha> [--note <text>] [--no-commit]
 #
 # Moves a bug to closed and marks it as resolved.
-# Updates bug.md Status to Closed with date and either the fixing plan or the
-# artifact it duplicates.
+# Updates bug.md Status to Closed with date and the reason: the fixing plan,
+# the artifact it duplicates, or the commit that fixed it directly.
+#
+# NOT EVERY FIX IS WORTH A PLAN, AND THE ONES THAT ARE NOT WERE UNCLOSEABLE
+#
+# The two close reasons above assume a bug either gets a plan or turns out to
+# be a duplicate. A third case is common and had no path at all: a bug fixed
+# directly on develop in one small commit, no plan, nothing to spec. /wf-deploy
+# closes bugs by plan and never reaches it, and this script's own usage line
+# demanded a plan name — so client-a's BUG-076, fixed by a 12-line script
+# change in b5fc375, could only be closed by inventing a plan ID that does not
+# exist. It was left Open instead, fixed and stuck, invisible to the board
+# forever (WFI-149).
+#
+# `--fixed-in <sha>` is that path. The commit is the evidence, in place of the
+# plan that would otherwise carry it.
 #
 # CLOSING IS IDEMPOTENT, AND IT ACCEPTS A BUG WHEREVER IT ACTUALLY IS
 #
@@ -44,25 +59,36 @@ SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 bug_id=""
 plan_name=""
 duplicate_of=""
+fixed_in=""
+close_note_extra=""
 do_commit=true
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-commit)    do_commit=false; shift ;;
     --duplicate-of) duplicate_of="${2:?--duplicate-of requires an artifact ID}"; shift 2 ;;
+    --fixed-in)     fixed_in="${2:?--fixed-in requires a commit sha}"; shift 2 ;;
+    --note)         close_note_extra="${2:?--note requires a value}"; shift 2 ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *)  if [ -z "$bug_id" ]; then bug_id="$1"; else plan_name="$1"; fi; shift ;;
   esac
 done
 
-if [ -n "$duplicate_of" ] && [ -n "$plan_name" ]; then
-  echo "Error: a bug is closed by a plan or as a duplicate, not both." >&2
+# Exactly one reason. Two would leave bug.md claiming two different resolutions.
+reasons=0
+[ -n "$plan_name" ]    && reasons=$((reasons + 1))
+[ -n "$duplicate_of" ] && reasons=$((reasons + 1))
+[ -n "$fixed_in" ]     && reasons=$((reasons + 1))
+
+if [ "$reasons" -gt 1 ]; then
+  echo "Error: a bug is closed by a plan, as a duplicate, or by a commit — pick one." >&2
   exit 1
 fi
 
-if [ -z "$bug_id" ] || { [ -z "$plan_name" ] && [ -z "$duplicate_of" ]; }; then
+if [ -z "$bug_id" ] || [ "$reasons" -eq 0 ]; then
   echo "Usage: $0 <bug-id> <plan-name> [--no-commit]" >&2
   echo "       $0 <bug-id> --duplicate-of <ID> [--no-commit]" >&2
+  echo "       $0 <bug-id> --fixed-in <sha> [--note <text>] [--no-commit]" >&2
   exit 1
 fi
 
@@ -81,7 +107,7 @@ done
 if [ -z "$bug_dir" ]; then
   for d in bugs/closed/${bug_id}*/; do
     if [ -d "$d" ]; then
-      why=$(grep -m1 -E '^(Fixed by plan|Closed as duplicate of):' "$d/bug.md" 2>/dev/null || true)
+      why=$(grep -m1 -E '^(Fixed by plan|Fixed directly in|Closed as duplicate of):' "$d/bug.md" 2>/dev/null || true)
       echo "$bug_id already closed${why:+ — $why} — nothing to do"
       exit 0
     fi
@@ -100,6 +126,22 @@ today=$(date +%Y-%m-%d)
 if [ -n "$duplicate_of" ]; then
   close_note="Closed as duplicate of: $duplicate_of — closed by decision, not fixed"
   close_line="duplicate of $duplicate_of"
+elif [ -n "$fixed_in" ]; then
+  # The commit is the whole record here, so resolve it and carry its subject:
+  # a bare sha in bug.md is unreadable a month later, and an unresolvable one
+  # is a record of nothing. A sha this repo cannot see is still recorded — the
+  # fix may live in another repo — but the caller is told it was not verified.
+  subject=$(git log -1 --format='%h %s' "$fixed_in" 2>/dev/null || true)
+  if [ -n "$subject" ]; then
+    close_note="Fixed directly in: $subject — no plan"
+    close_line="fixed in $subject"
+  else
+    echo "Note: $fixed_in does not resolve to a commit in this repository — recording it unverified" >&2
+    close_note="Fixed directly in: $fixed_in — no plan (commit not found in this repository)"
+    close_line="fixed in $fixed_in"
+  fi
+  [ -n "$close_note_extra" ] && close_note="$close_note
+$close_note_extra"
 else
   close_note="Fixed by plan: $plan_name"
   close_line="fixed by $plan_name"
@@ -114,8 +156,12 @@ fi
 # `Triaged` for the normal path.
 if [ -f "$bug_dir/bug.md" ]; then
   # awk into a tempfile — `sed -i ''` is macOS-only
-  awk -v today="$today" -v note="$close_note" '
-    BEGIN { saw_status = 0; saw_closed = 0; saw_notes = 0; body_started = 0; last_quote = 0 }
+  # ENVIRON for the note, not -v: awk expands escape sequences in a -v
+  # assignment, and the note now carries a commit subject written by a human —
+  # a backslash in it would be eaten (same reasoning as wf-defer-criterion.sh).
+  WF_CLOSE_NOTE="$close_note" awk -v today="$today" '
+    BEGIN { saw_status = 0; saw_closed = 0; saw_notes = 0; body_started = 0; last_quote = 0
+            note = ENVIRON["WF_CLOSE_NOTE"] }
     {
       if ($0 ~ /Status:\*\*/) { sub(/Status:\*\*.*/, "Status:** Closed"); saw_status = 1 }
       if ($0 ~ /Closed:\*\*/) { sub(/Closed:\*\*.*/, "Closed:** " today);  saw_closed = 1 }

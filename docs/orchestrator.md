@@ -143,6 +143,17 @@ means, and only means, somebody else. An attended session's claim names that
 session, which is never an ancestor of a different one, so a human mid-test is
 still protected.
 
+**Both forms respect a live claim, as of v6.6.** `--if-free` used to be the flag
+that stood down and the bare form the one that ignored a claim — and the skills
+present the bare form as the *attended* default, which is backwards: the
+attended caller is the one whose sessions the unattended workers are meant to
+stay out of. An attended `/wf-spec` overwrote the dispatcher's claim for a live
+`wf-test` worker mid-run and printed "Claimed PLN-059" (WFI-146). Now both forms
+exit 2 against another live session, and taking a claim on purpose is
+`--steal` — which says whose it was and writes a `claim-steal` event. Prefer it
+over `wf-unclaim.sh` + `wf-claim.sh`: unclaiming is also a *trigger*, and flushes
+any spawn the daemon deferred behind that claim.
+
 ### Which PID a claim records
 
 A claim is only worth what its PID outlives. `wf_session_pid` records, in order:

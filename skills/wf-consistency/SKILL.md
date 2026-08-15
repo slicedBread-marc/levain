@@ -47,6 +47,8 @@ rejected plan name (WFI-107). Either keep the `eval` and every use of its
 variables **inside one Bash call**, or substitute the literal — `wf-claim.sh`
 keys on the number, so the bare `PLN-NNN` above is always enough.
 
+`wf-claim.sh` exits **2** when a live session already holds the plan. That is a stand-down, not a failure to route around: report it and stop (WFI-146).
+
 Read `$PLAN_DIR/plan.md`, then `plan.md` for **every plan `wf-list-closure.sh` names** — the plans in `Deps`, the plans in *their* `Deps`, transitively. Read them all before concluding anything; a contradiction is by definition not visible in one file.
 
 **Then read the documents.** `wf-list-cited-docs.sh` lists the reference docs those plans cite, most-cited first, with the plans that cite each. **A document cited by two or more plans in the closure is read as carefully as the plans themselves**, and read *against the other documents*, not just against the plan.

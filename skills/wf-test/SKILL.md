@@ -120,7 +120,7 @@ Tell the user: "Run `/model sonnet`, then pick a number."
 After user picks:
 1. `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"` to get plan details
 2. If `$PLAN_GOAL_MISSING` is `true`: under `WF_UNATTENDED=1` this is a **[GATE]** — open gate `goal-missing` and exit 0. Otherwise ask the user: "This plan has no goal summary. Please provide a one-line goal." Then write their answer as the first line under `## Goal` in `$PLAN_DIR/plan.md`, commit it scoped: `scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): add missing goal" --add plans/PLN-NNN-<slug>/plan.md` — a bare `git commit` takes the whole shared index (WFI-048/049). Re-run the eval to pick up the goal.
-3. `scripts/wf-exec.sh wf-claim.sh PLN-NNN`
+3. `scripts/wf-exec.sh wf-claim.sh PLN-NNN` — **exit 2 means a live session already holds it.** Stop, say who holds it, and offer another plan. Take it only if the user says the holder is finished or wedged: `wf-claim.sh PLN-NNN --steal` (WFI-146).
 4. `cd feature-branches/<plan-name>/` — note the **absolute** path it prints; you need it on every later call
 5. Continue to testing
 
@@ -614,6 +614,19 @@ Never write `plans/deferred-criteria.md` by hand — one script owns it, so IDs 
 `external` and `soak` criteria are deferred **automatically at exit** (see [Manual criterion dispositions](#manual-criterion-dispositions)) — you do not walk a human through them. The `unbuilt` path is the one that needs the user's confirmation first.
 
 **The script commits what it wrote, both sides — do not name either path in a commit of your own.** A deferral is one state change with two halves: the DC row, and the `[x] … — deferred as DC-NNN` checkoff in `plan.md`. It used to write both and commit neither, and the exit pathspec below names `deferred-criteria.md` and never the plan's own `plan.md`, so across one 16-plan sweep six checkoffs stayed uncommitted on plans that had already reached `complete` — read from git those plans show the criterion as `[ ]`, which is the "silently dropped" reading the checkoff exists to remove (WFI-144).
+
+### Closing a deferred criterion out
+
+A DC row is `open` until one of two things ends it. Both are one call, and both commit the file themselves:
+
+```bash
+../../scripts/wf-exec.sh wf-defer-criterion.sh --consume DC-NNN PLN-NNN            # a later plan adopted it
+../../scripts/wf-exec.sh wf-defer-criterion.sh --satisfy DC-NNN --evidence "<proof>"  # the real use happened
+```
+
+**`--satisfy` is the ordinary ending for an `external` criterion.** External means *satisfiable only at first real use*, so most of them come true when that use happens, with no plan involved — a deploy runs green, the third-party account is finally provisioned, someone plugs the device in. Say so, with the evidence: a run URL, a date, a commit, what was observed.
+
+Do not reach for `--consume` to clear a row that was simply satisfied. `consumed by PLN-NNN` means that plan owes the check, so pointing it at a completed plan records future work nobody will do. client-a's DC-040 was satisfied by a green production run and had no verb for it, which is how all 40 of that project's DC rows stayed `open` including the ones long since true (WFI-148).
 
 ### Manual criterion dispositions
 

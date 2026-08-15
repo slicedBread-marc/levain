@@ -147,9 +147,9 @@ If the user types `u <N>` for an already-urgent plan: run `scripts/wf-exec.sh wf
 
 If the user types `force <plan-id>`:
 ```bash
-scripts/wf-exec.sh wf-unclaim.sh <plan-id>
-scripts/wf-exec.sh wf-claim.sh <plan-id>
+scripts/wf-exec.sh wf-claim.sh <plan-id> --steal
 ```
+One call, not `wf-unclaim.sh` followed by `wf-claim.sh`: releasing a claim is also a **trigger** — `wf-unclaim.sh` flushes any spawn the orchestrator deferred behind that claim, so unclaiming to take a plan for yourself can dispatch a worker onto it in the same breath. `--steal` takes the claim without releasing it, and records the takeover in the event log.
 Then treat the plan as a `fix` entry (has unchecked findings) or `resume` entry, and proceed to Phase 2.
 
 **If on a feature branch:**

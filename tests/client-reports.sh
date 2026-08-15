@@ -3157,6 +3157,201 @@ assert_eq "a PLN-NNN-slug argument is read as the slug" "folder-form" \
   "$(grep '^| PLN-947 |' plans/REGISTRY.md | awk -F'|' '{print $3}' | xargs)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A bug fixed without a plan can be closed (client-a WFI-149)"
+
+# BUG-076 was fixed on develop in one 12-line commit. No plan exists, so
+# /wf-deploy's close-by-plan path never reaches it and wf-bug-close.sh demanded
+# a plan name — the bug was fixed and stuck at Open, invisible to the board,
+# with "invent a plan ID that does not exist" as the only scripted way out.
+mkdir -p bugs/open/BUG-948-small-fix
+printf '# BUG-948 — a one-commit fix\n\n> **Status:** Open\n\n## Description\nx\n' \
+  > bugs/open/BUG-948-small-fix/bug.md
+"$SCRIPT_DIR/wf-commit.sh" "seed BUG-948" --add bugs/open/BUG-948-small-fix >/dev/null 2>&1
+fix_sha=$(git rev-parse --short HEAD)
+
+out=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-948 --fixed-in "$fix_sha" --note "no acceptance criteria to check" 2>&1)
+assert_eq "a bug closes against a commit, with no plan" "true" \
+  "$([ -f bugs/closed/BUG-948-small-fix/bug.md ] && echo true || echo false)"
+assert_eq "its status is Closed" "true" \
+  "$(grep -q 'Status:\*\* Closed' bugs/closed/BUG-948-small-fix/bug.md && echo true || echo false)"
+assert_eq "the commit is the record, resolved to its subject" "true" \
+  "$(grep -q "Fixed directly in: .*seed BUG-948 — no plan" bugs/closed/BUG-948-small-fix/bug.md && echo true || echo false)"
+assert_eq "the note the caller passed is kept" "true" \
+  "$(grep -q 'no acceptance criteria to check' bugs/closed/BUG-948-small-fix/bug.md && echo true || echo false)"
+assert_eq "and the open/ side of the rename is gone from HEAD" "false" \
+  "$(git ls-tree -r --name-only HEAD | grep -q 'bugs/open/BUG-948-small-fix' && echo true || echo false)"
+reclose=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-948 --fixed-in "$fix_sha" 2>&1 || true)
+assert_eq "a second close says so rather than erroring" "true" \
+  "$(printf '%s' "$reclose" | grep -q 'already closed' && echo true || echo false)"
+assert_fails "a commit and a plan are mutually exclusive" \
+  "$SCRIPT_DIR/wf-bug-close.sh" BUG-948 PLN-948-nope --fixed-in "$fix_sha"
+
+# An unresolvable sha is still recorded — the fix may live in another repo —
+# but the caller is told it was not verified, rather than being handed a record
+# that reads as evidence and is not.
+mkdir -p bugs/open/BUG-949-elsewhere
+printf '# BUG-949 — fixed in another repo\n\n> **Status:** Open\n\n## Description\nx\n' \
+  > bugs/open/BUG-949-elsewhere/bug.md
+"$SCRIPT_DIR/wf-commit.sh" "seed BUG-949" --add bugs/open/BUG-949-elsewhere >/dev/null 2>&1
+out=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-949 --fixed-in deadbee 2>&1)
+assert_eq "an unknown sha does not block the close" "true" \
+  "$([ -f bugs/closed/BUG-949-elsewhere/bug.md ] && echo true || echo false)"
+assert_eq "and it says the commit was not verified" "true" \
+  "$(printf '%s' "$out" | grep -q 'does not resolve to a commit' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A deferred criterion can be recorded as satisfied (client-a WFI-148)"
+
+# --consume was the only verb, and it means "another plan adopted this". An
+# external criterion's ordinary ending is that the real use happens and the
+# criterion turns out true, with no plan involved: DC-040 was satisfied by a
+# green production run and could only be recorded as consumed by a completed
+# plan — which reads as pending work nobody will do. All 40 rows stayed open.
+dc=$(grep -oE '^\| DC-[0-9]+' plans/deferred-criteria.md | tail -1 | tr -d '| ')
+assert_eq "the fixture left a DC row to work with" "true" \
+  "$([ -n "$dc" ] && echo true || echo false)"
+
+out=$("$SCRIPT_DIR/wf-defer-criterion.sh" --satisfy "$dc" --evidence "run 31898065270 green on 2026-08-15" 2>&1)
+assert_eq "the row records satisfaction, not consumption" "true" \
+  "$(grep "^| $dc " plans/deferred-criteria.md | grep -q 'satisfied .* — run 31898065270 green' && echo true || echo false)"
+assert_eq "no plan is named as owing it" "false" \
+  "$(grep "^| $dc " plans/deferred-criteria.md | grep -q 'consumed by' && echo true || echo false)"
+open_list=$("$SCRIPT_DIR/wf-defer-criterion.sh" --list || true)
+assert_eq "it drops out of the open list /wf-spec reads" "false" \
+  "$(printf '%s' "$open_list" | grep -q "^$dc" && echo true || echo false)"
+assert_eq "the row is committed, not left dirty on develop" "" \
+  "$(git status --porcelain -- plans/deferred-criteria.md)"
+assert_eq "and the commit names the file" "true" \
+  "$(git show --name-only --format= HEAD 2>/dev/null | grep -q 'plans/deferred-criteria.md' && echo true || echo false)"
+# Captured first, then grepped: under `pipefail` a `grep -q` that exits on the
+# first match SIGPIPEs a script still writing, and the pipeline reports 141.
+again=$("$SCRIPT_DIR/wf-defer-criterion.sh" --satisfy "$dc" --evidence "again" 2>&1 || true)
+assert_eq "satisfying it twice warns rather than lying about the old status" "true" \
+  "$(printf '%s' "$again" | grep -q "was already 'satisfied" && echo true || echo false)"
+# A DC id with no row rewrote nothing and reported success — the shape that
+# lets a row go unrecorded silently.
+assert_fails "a DC id that has no row is an error, not a no-op" \
+  "$SCRIPT_DIR/wf-defer-criterion.sh" --satisfy DC-999 --evidence x
+# --consume keeps working, and now commits its own write for the same reason
+# the add path does (WFI-144/WFI-140).
+"$SCRIPT_DIR/wf-defer-criterion.sh" PLN-941 soak "(soak) leave it running for a week" >/dev/null 2>&1
+dc2=$(grep -oE '^\| DC-[0-9]+' plans/deferred-criteria.md | tail -1 | tr -d '| ')
+"$SCRIPT_DIR/wf-defer-criterion.sh" --consume "$dc2" PLN-945 >/dev/null 2>&1
+assert_eq "a consumed row names the plan that took it on" "true" \
+  "$(grep "^| $dc2 " plans/deferred-criteria.md | grep -q 'consumed by PLN-945' && echo true || echo false)"
+assert_eq "and that write is committed too" "" \
+  "$(git status --porcelain -- plans/deferred-criteria.md)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A live claim is never taken silently (client-a WFI-146)"
+
+# --if-free respected a live claim and the bare form ignored one — and the
+# skills present the bare form as the attended default. An attended session
+# claiming PLN-059 overwrote the dispatcher's claim for a test worker that was
+# alive and mid-run, printed "Claimed PLN-059" and exited 0.
+registry_add_row PLN-950 contended active
+claim_950=".claude/orchestrator/claims/950/.wf-claim"
+sleep 30 & other_session=$!
+mkdir -p "$(dirname "$claim_950")"
+printf '%s\n%s\n' "$(date +%s)" "$other_session" > "$claim_950"
+
+assert_fails "the bare form refuses a claim held by another live session" \
+  "$SCRIPT_DIR/wf-claim.sh" PLN-950-contended
+assert_eq "and it leaves the incumbent's PID in place" "$other_session" \
+  "$(sed -n '2p' "$claim_950")"
+out=$("$SCRIPT_DIR/wf-claim.sh" PLN-950-contended 2>&1 || true)
+assert_eq "the refusal names who holds it" "true" \
+  "$(printf '%s' "$out" | grep -q "PID $other_session" && echo true || echo false)"
+assert_eq "and points at the deliberate way through" "true" \
+  "$(printf '%s' "$out" | grep -q -- '--steal' && echo true || echo false)"
+assert_eq "the exit code is 2 — stood down, not broken" "2" \
+  "$("$SCRIPT_DIR/wf-claim.sh" PLN-950-contended >/dev/null 2>&1; echo $?)"
+
+assert_ok "--steal takes it on purpose" \
+  "$SCRIPT_DIR/wf-claim.sh" PLN-950-contended --steal
+assert_eq "and the claim is now this session's" "false" \
+  "$([ "$(sed -n '2p' "$claim_950")" = "$other_session" ] && echo true || echo false)"
+assert_eq "the takeover is in the event log" "true" \
+  "$(grep -q 'claim-steal' .claude/orchestrator/events.log 2>/dev/null && echo true || echo false)"
+assert_fails "--steal and --if-free contradict each other" \
+  "$SCRIPT_DIR/wf-claim.sh" PLN-950-contended --if-free --steal
+{ kill "$other_session"; wait "$other_session"; } 2>/dev/null
+"$SCRIPT_DIR/wf-unclaim.sh" PLN-950-contended >/dev/null 2>&1
+
+# A free artifact still claims in one call, and a session's own claim is not
+# somebody else's — the refusal must not fire against the caller itself.
+assert_ok "a free artifact claims without ceremony" \
+  "$SCRIPT_DIR/wf-claim.sh" PLN-950-contended
+assert_ok "and re-claiming your own is a refresh, not a refusal" \
+  "$SCRIPT_DIR/wf-claim.sh" PLN-950-contended
+"$SCRIPT_DIR/wf-unclaim.sh" PLN-950-contended >/dev/null 2>&1
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A resume names the folder to continue in (client-a WFI-147)"
+
+# Two sessions on BUG-075 both got PLN-075/RESUME=false seconds apart, both
+# correct at the time they asked, and both drafted a plan under that number
+# with different slugs. The answer is only true at the instant it is given.
+mkdir -p plans/PLN-951-earlier-attempt
+printf '# PLN-951\n\n> **Bug:** BUG-951 — the earlier attempt\n\n## Goal\nx\n' \
+  > plans/PLN-951-earlier-attempt/plan.md
+eval "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-951 2>/dev/null)"
+assert_eq "the artifact's own folder is a resume, not a collision" "true" "$PLAN_ID_RESUME"
+assert_eq "and the caller is told WHERE to continue" "plans/PLN-951-earlier-attempt" "$PLAN_ID_DIR"
+assert_eq "the number is kept" "PLN-951" "$PLAN_ID"
+# The slug the earlier attempt chose is rarely the one this run would choose,
+# so a caller that writes to its own slug orphans the folder holding the row.
+assert_eq "PLAN_ID_DIR is empty when there is nothing to resume" "" \
+  "$(eval "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-952 2>/dev/null)"; printf '%s' "$PLAN_ID_DIR")"
+rm -rf plans/PLN-951-earlier-attempt
+
+# The instruction is the other half of the fix: step 3's answer is provisional
+# and step 5 asks again, in the call that actually creates the folder.
+spec_skill="$LIB_ROOT/skills/wf-spec/SKILL.md"
+assert_eq "wf-spec re-asks for the ID at folder creation" "true" \
+  "$(grep -q 'Re-ask for the ID, then create the plan folder' "$spec_skill" && echo true || echo false)"
+assert_eq "and says to continue in \$PLAN_ID_DIR, not in its own slug" "true" \
+  "$(grep -q 'Write into `\$PLAN_ID_DIR`' "$spec_skill" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A fix cycle is not a lost state write (client-a WFI-145)"
+
+# testing → draft is a documented route: wf-test's findings path keeps the
+# feature branch for the fix that follows. The audit called that shape a
+# disagreement — "a state write was lost, or the work was abandoned. Check the
+# branch, then set the state deliberately" — and following that advice moves
+# the plan out of the cycle wf-test just routed it into.
+FIXCYCLE="$TEST_DIR/fixcycle"
+mkdir -p "$FIXCYCLE/plans/PLN-953-replanning" && (
+  cd "$FIXCYCLE" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-953 | replanning | draft | — | — | 2026-08-15 | 2.00 | — | — |\n\n<!-- Counter: 999 -->\n' \
+    > plans/REGISTRY.md
+  printf '# x\n' > plans/PLN-953-replanning/plan.md
+  printf -- '- [ ] **Behavior**: the nav bar hides the last route ← from human test\n' \
+    > plans/PLN-953-replanning/findings.md
+  git add -A && git commit -qm seed
+  git checkout -qb feature/PLN-953-replanning
+  echo work > src.txt && git add src.txt && git commit -qm "implement(PLN-953): step 1"
+  git checkout -q develop
+) >/dev/null 2>&1
+
+fix_audit=$(cd "$FIXCYCLE" && "$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+assert_eq "a draft plan with open findings is not called stale" "false" \
+  "$(printf '%s' "$fix_audit" | grep -q 'STALE STATE' && echo true || echo false)"
+assert_eq "it is named for what it is" "true" \
+  "$(printf '%s' "$fix_audit" | grep -q 'REPLANNING.*PLN-953' && echo true || echo false)"
+assert_eq "and it does not count as a problem" "registry audit: clean" \
+  "$(printf '%s' "$fix_audit" | grep 'registry audit:')"
+
+# WFI-010 — the report this check exists for — was explicit that those plans
+# had NO findings to explain the route back. Close the findings and it is a
+# lost write again.
+( cd "$FIXCYCLE" && printf -- '- [x] **Behavior**: fixed\n' > plans/PLN-953-replanning/findings.md )
+closed_audit=$(cd "$FIXCYCLE" && "$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+assert_eq "a draft plan with nothing open on it is still reported" "true" \
+  "$(printf '%s' "$closed_audit" | grep -q 'STALE STATE.*PLN-953' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

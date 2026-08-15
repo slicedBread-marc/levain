@@ -34,6 +34,24 @@
 # plan.md naming that artifact in its header: `> **Bug:** BUG-039` or
 # `> **Brief:** ... BRF-041`. Nobody else's plan says that.
 #
+# THE ANSWER IS ONLY TRUE AT THE MOMENT IT IS GIVEN
+#
+# Every branch below reads the registry and the plans/ directory as they are
+# right now. A spec run asks this question early, then explores the codebase,
+# drafts a goal and waits on the user — minutes in which another session can
+# create the very folder that would have changed the answer.
+#
+# client-a watched exactly that on BUG-075: two sessions both got
+# `PLAN_ID=PLN-075, COLLISION=, RESUME=false`, seconds apart and both correct,
+# and both drafted a plan under that number with different slugs. The duplicate
+# reached HEAD, and wf-registry-add.sh's refusal — the last backstop, after the
+# folder is written and committed — was the only thing that caught it (WFI-147).
+#
+# So the answer is not durable and callers must not treat it as one: ask again
+# immediately before creating the folder, which is the moment the ID is actually
+# taken. The call is cheap and idempotent, and the second answer is the one that
+# has seen the other session's work. `/wf-spec` step 5 does this.
+#
 # Output (eval-friendly):
 #   PLAN_ID='PLN-091'          the ID to use
 #   PLAN_NUM='091'
@@ -41,6 +59,10 @@
 #   PLAN_ID_COLLISION='...'    what held the inherited number (empty if free)
 #   PLAN_ID_RESUME=true        the folder is this same artifact's own, from an
 #                              earlier attempt — keep the number, keep the work
+#   PLAN_ID_DIR='plans/...'    on resume, the folder to continue in. Its slug is
+#                              the earlier attempt's, which is rarely the one
+#                              this run would have chosen — write there anyway,
+#                              it owns the REGISTRY row (empty when not a resume)
 #
 # Exit 0 on success, 1 on bad usage or an unusable registry.
 
@@ -69,6 +91,7 @@ if [ "$prefix" = "PLN" ]; then
   wf_emit PLAN_ID_INHERITED "true"
   wf_emit PLAN_ID_COLLISION ""
   wf_emit PLAN_ID_RESUME    "false"
+  wf_emit PLAN_ID_DIR       ""
   exit 0
 fi
 
@@ -90,6 +113,7 @@ if [ -z "$collision" ]; then
   wf_emit PLAN_ID_INHERITED "true"
   wf_emit PLAN_ID_COLLISION ""
   wf_emit PLAN_ID_RESUME    "false"
+  wf_emit PLAN_ID_DIR       ""
   exit 0
 fi
 
@@ -108,6 +132,7 @@ if [ -n "$existing_dir" ] && [ -f "$existing_dir/plan.md" ]; then
     wf_emit PLAN_ID_INHERITED "true"
     wf_emit PLAN_ID_COLLISION ""
     wf_emit PLAN_ID_RESUME    "true"
+    wf_emit PLAN_ID_DIR       "$existing_dir"
     exit 0
   fi
 fi
@@ -125,3 +150,4 @@ wf_emit PLAN_NUM          "$new_num"
 wf_emit PLAN_ID_INHERITED "false"
 wf_emit PLAN_ID_COLLISION "$collision"
 wf_emit PLAN_ID_RESUME    "false"
+wf_emit PLAN_ID_DIR       ""
