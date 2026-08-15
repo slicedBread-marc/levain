@@ -243,7 +243,11 @@ if ! command -v python3 >/dev/null 2>&1; then
 else
   TEST_DIR=$(mktemp -d)
   S="$TEST_DIR/settings.json"
-  merge() { SETTINGS_PATH="$S" REHYDRATE_CMD="$CMD" python3 "$MERGE" 2>&1; }
+  GCMD='"$CLAUDE_PROJECT_DIR"/scripts/wf-exec.sh wf-guard-write.sh'
+  merge() { SETTINGS_PATH="$S" REHYDRATE_CMD="$CMD" GUARD_CMD="$GCMD" python3 "$MERGE" 2>&1; }
+  # An older install.sh passes no GUARD_CMD — it must not install a half-wired
+  # blocking hook.
+  merge_noguard() { SETTINGS_PATH="$S" REHYDRATE_CMD="$CMD" python3 "$MERGE" 2>&1; }
   field() { python3 -c "import json,sys;print($1)" < "$S"; }
 
   R=$(merge);  [ "$R" = "created" ]   && ok "absent file → created"   || bad "absent file → created" "got: $R"
@@ -254,6 +258,28 @@ else
   # suffix that is a dispatcher error on every session start until deploy runs.
   assert_contains "hook tolerates a missing harness" "|| true" \
     "$(field 'json.load(sys.stdin)["hooks"]["SessionStart"][0]["hooks"][0]["command"]')"
+
+  # ── the write guard ────────────────────────────────────────────────────
+  #
+  # PreToolUse blocks by EXITING 2. The rehydration hooks' `|| true` tolerance
+  # suffix rewrites every exit to 0, so wearing it here would install a guard
+  # that reports the collision and permits the write anyway — worse than none,
+  # because it reads as protection. Absence is tested up front instead.
+  GUARD_ENTRY=$(field 'json.load(sys.stdin)["hooks"]["PreToolUse"][0]')
+  assert_contains "the guard is wired to PreToolUse" "wf-guard-write.sh" "$GUARD_ENTRY"
+  assert_contains "on the three in-place writers" "Edit|Write|NotebookEdit" "$GUARD_ENTRY"
+  assert_contains "and still tolerates a missing harness" "|| exit 0;" "$GUARD_ENTRY"
+  case "$GUARD_ENTRY" in
+    *"|| true"*) bad "the guard does not swallow its own exit 2" "found '|| true' in: $GUARD_ENTRY" ;;
+    *)           ok  "the guard does not swallow its own exit 2" ;;
+  esac
+
+  # A deploy from an install.sh that knows nothing of the guard must leave the
+  # event alone rather than write a hook naming an empty command.
+  rm -f "$S"; merge_noguard >/dev/null
+  N=$(field 'len(json.load(sys.stdin)["hooks"].get("PreToolUse", []))')
+  [ "$N" = "0" ] && ok "no GUARD_CMD installs no guard" || bad "no GUARD_CMD installs no guard" "entries=$N"
+  rm -f "$S"; merge >/dev/null
 
   # A project's own settings must come through untouched.
   cat > "$S" << 'J'

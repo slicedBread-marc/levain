@@ -500,18 +500,22 @@ fi
 # what gets written.
 SETTINGS="$TARGET_DIR/.claude/settings.json"
 REHYDRATE_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-rehydrate.sh --hook"
+GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-guard-write.sh"
+GUARD_LINE="    PreToolUse    matcher Edit|Write|NotebookEdit  → $GUARD_CMD"
 if command -v python3 >/dev/null 2>&1; then
     SETTINGS_RESULT=$(SETTINGS_PATH="$SETTINGS" REHYDRATE_CMD="$REHYDRATE_CMD" \
+        GUARD_CMD="$GUARD_CMD" \
         python3 "$SCRIPT_DIR/templates/hooks/settings-merge.py")
     case "$SETTINGS_RESULT" in
-        created)      echo -e "${GREEN}  Created .claude/settings.json with the rehydration hooks${NC}" ;;
-        updated)      echo -e "${GREEN}  Updated .claude/settings.json rehydration hooks${NC}" ;;
+        created)      echo -e "${GREEN}  Created .claude/settings.json with the rehydration and write-guard hooks${NC}" ;;
+        updated)      echo -e "${GREEN}  Updated .claude/settings.json rehydration and write-guard hooks${NC}" ;;
         unchanged)    echo -e "${YELLOW}  .claude/settings.json hooks already up to date — skipping${NC}" ;;
         unparseable:*)
             echo -e "${YELLOW}  .claude/settings.json is not valid JSON (${SETTINGS_RESULT#unparseable:})${NC}"
             echo -e "${YELLOW}  Left untouched. Fix it and re-run, or add the hooks by hand:${NC}"
             echo "    SessionStart  matcher compact|clear|resume  → $REHYDRATE_CMD session-start 2>/dev/null || true"
-            echo "    PostCompact   matcher manual|auto           → $REHYDRATE_CMD post-compact 2>/dev/null || true" ;;
+            echo "    PostCompact   matcher manual|auto           → $REHYDRATE_CMD post-compact 2>/dev/null || true"
+            echo "$GUARD_LINE" ;;
         *)            echo -e "${YELLOW}  .claude/settings.json: unexpected result '$SETTINGS_RESULT'${NC}" ;;
     esac
 else
@@ -519,6 +523,7 @@ else
     echo -e "${YELLOW}  Add them by hand (see docs/rehydration.md):${NC}"
     echo "    SessionStart  matcher compact|clear|resume  → $REHYDRATE_CMD session-start 2>/dev/null || true"
     echo "    PostCompact   matcher manual|auto           → $REHYDRATE_CMD post-compact 2>/dev/null || true"
+    echo "$GUARD_LINE"
 fi
 
 # .claude/settings.json stays TRACKED, deliberately.

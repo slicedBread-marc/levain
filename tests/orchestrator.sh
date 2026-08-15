@@ -1478,6 +1478,75 @@ eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-904)"
 assert_eq "a real consistency amendment still goes stale" "true" "$REVIEW_STALE"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "The write guard refuses a write into a claimed artifact"
+
+# The claim was only ever read at DISPATCH, so it answered "should I launch a
+# worker onto this?" and never "may I write this file?". A session already
+# running — attended, or one that never claimed — walked straight into a plan
+# another session was driving. wf-guard-write.sh is the PreToolUse answer.
+#
+# Fail-open is the whole safety property: this runs before EVERY Edit and
+# Write in the repo, so anything short of a positively identified foreign live
+# claim must exit 0.
+registry_add_row PLN-906 guarded ready
+guard() {
+  printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$1" \
+    | "$SCRIPT_DIR/wf-guard-write.sh" 2>&1
+  printf 'rc=%s' "$?"
+}
+guard_rc() { guard "$1" | sed -n 's/.*rc=\([0-9]*\)$/\1/p'; }
+
+assert_eq "an unclaimed plan is writable" "0" "$(guard_rc "plans/PLN-906-guarded/plan.md")"
+
+# Another live session: a sibling process, which is neither this caller nor any
+# ancestor of it — the two things wf_claim_mine recognises as its own.
+sleep 30 & other=$!
+claim_dir=$(cd "$TEST_DIR" && "$SCRIPT_DIR/wf-claim.sh" PLN-906 --pid "$other" >/dev/null 2>&1; \
+            printf '%s' ".claude/orchestrator/claims/906")
+printf '%s\n%s\n' "$(date +%s)" "$other" > "$claim_dir/.wf-claim"
+
+out=$(guard "plans/PLN-906-guarded/plan.md")
+assert_eq "a foreign live claim blocks the write" "2" "$(printf '%s' "$out" | sed -n 's/.*rc=\([0-9]*\)$/\1/p')"
+case "$out" in
+  *"PLN-906"*)  ok_guard=1 ;; *) ok_guard=0 ;;
+esac
+assert_eq "and the message names the artifact" "1" "$ok_guard"
+case "$out" in *"--steal"*) ok_guard=1 ;; *) ok_guard=0 ;; esac
+assert_eq "and the one command that resolves it" "1" "$ok_guard"
+
+# Everything the guard must wave through while that same claim is live.
+assert_eq "a path naming no artifact is untouched" "0" "$(guard_rc "src/Program.cs")"
+assert_eq "REGISTRY.md is not any one artifact's" "0" "$(guard_rc "plans/REGISTRY.md")"
+assert_eq "a different artifact is unaffected" "0" "$(guard_rc "plans/PLN-905-other/plan.md")"
+
+# The feature worktree is that plan's territory too — a second writer in there
+# is the same collision as one in plans/.
+assert_eq "the plan's worktree is guarded as well" "2" \
+  "$(guard_rc "feature-branches/PLN-906-guarded/src/Thing.cs")"
+
+# Ours, by the same test wf-claim.sh and wf-spawn.sh use. Reading a claim
+# written on our own behalf as somebody else's is what parked every plan that
+# reached testing (WFI-073, WFI-075) — here it would block our own edits.
+printf '%s\n%s\n' "$(date +%s)" "$$" > "$claim_dir/.wf-claim"
+assert_eq "our own claim does not block us" "0" "$(guard_rc "plans/PLN-906-guarded/plan.md")"
+
+# A claim whose owner is gone is not a claim.
+{ kill "$other"; wait "$other"; } 2>/dev/null
+printf '%s\n%s\n' "$(date +%s)" "$other" > "$claim_dir/.wf-claim"
+assert_eq "a dead holder's claim does not block" "0" "$(guard_rc "plans/PLN-906-guarded/plan.md")"
+
+# Fail open on anything it cannot read: a guard that blocks on its own bugs
+# bricks the editor for the whole project.
+assert_eq "malformed payload allows" "0" \
+  "$(printf 'not json at all' | "$SCRIPT_DIR/wf-guard-write.sh" >/dev/null 2>&1; echo $?)"
+assert_eq "empty payload allows" "0" \
+  "$(printf '' | "$SCRIPT_DIR/wf-guard-write.sh" >/dev/null 2>&1; echo $?)"
+assert_eq "a payload carrying no path allows" "0" \
+  "$(printf '{"tool_name":"Bash","tool_input":{"command":"ls"}}' \
+     | "$SCRIPT_DIR/wf-guard-write.sh" >/dev/null 2>&1; echo $?)"
+rm -f "$claim_dir/.wf-claim"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "A plan ID collision has a procedure (WFI-011)"
 
 # client-e: BRF-091 would inherit PLN-091, already held by an unrelated

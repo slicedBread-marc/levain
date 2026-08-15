@@ -20,7 +20,7 @@ second entry running the same script twice on every compaction.
 Writes nothing when the result is byte-identical to what is already there — a
 deploy that dirties a clean tree is a deploy nobody can verify afterwards.
 
-Usage: SETTINGS_PATH=... REHYDRATE_CMD=... settings-merge.py
+Usage: SETTINGS_PATH=... REHYDRATE_CMD=... GUARD_CMD=... settings-merge.py
 """
 
 import json
@@ -33,9 +33,13 @@ import sys
 #
 # Deliberately NOT "startup": a fresh session reaches the registry through its
 # skill's entry grep anyway, so the block would be pure cost on every launch.
+#
+# PreToolUse matches on the TOOL. The three that write a file in place are the
+# three that can land a second writer on a claimed artifact.
 MATCHERS = {
     "SessionStart": "compact|clear|resume",
     "PostCompact": "manual|auto",
+    "PreToolUse": "Edit|Write|NotebookEdit",
 }
 
 # The argument each event passes to wf-rehydrate.sh. SessionStart gets the
@@ -58,11 +62,28 @@ ARGS = {
 #   scripts/wf-exec.sh wf-rehydrate.sh
 TOLERATE_MISSING = " 2>/dev/null || true"
 
+# The write guard tolerates a missing harness the same way, but it CANNOT use
+# the suffix above: `|| true` rewrites every exit to 0, and exit 2 is the whole
+# mechanism — it is how PreToolUse blocks. A guard installed with TOLERATE_MISSING
+# is a guard that reports the collision and permits the write anyway. So absence
+# is tested up front instead, leaving the exit status untouched.
+GUARD_EVENT = "PreToolUse"
+
+
+def guard_command(cmd):
+    exe = cmd.split()[0]
+    return f"[ -x {exe} ] || exit 0; {cmd}"
+
+
+# Every script this file installs. Entries are matched by script NAME so a
+# matcher or wrapper change updates in place rather than stacking a duplicate.
+OURS = ("wf-rehydrate.sh", "wf-guard-write.sh")
+
 
 def is_ours(entry):
     hooks = entry.get("hooks", []) if isinstance(entry, dict) else []
     return any(
-        isinstance(h, dict) and "wf-rehydrate.sh" in h.get("command", "")
+        isinstance(h, dict) and any(s in h.get("command", "") for s in OURS)
         for h in hooks
     )
 
@@ -70,6 +91,7 @@ def is_ours(entry):
 def main():
     path = os.environ["SETTINGS_PATH"]
     cmd = os.environ["REHYDRATE_CMD"]
+    guard = os.environ.get("GUARD_CMD", "")
 
     try:
         with open(path) as fh:
@@ -99,16 +121,20 @@ def main():
             print(f"unparseable:'hooks.{event}' is not an array")
             return
         entries = [e for e in existing if not is_ours(e)]
+        if event == GUARD_EVENT:
+            # No GUARD_CMD — leave the event as the project had it. An older
+            # install.sh must not install a half-configured blocking hook.
+            if not guard:
+                if entries or event in hooks:
+                    hooks[event] = entries
+                continue
+            command, timeout = guard_command(guard), 10
+        else:
+            command, timeout = f"{cmd} {ARGS[event]}{TOLERATE_MISSING}", 10
         entries.append(
             {
                 "matcher": matcher,
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": f"{cmd} {ARGS[event]}{TOLERATE_MISSING}",
-                        "timeout": 10,
-                    }
-                ],
+                "hooks": [{"type": "command", "command": command, "timeout": timeout}],
             }
         )
         hooks[event] = entries

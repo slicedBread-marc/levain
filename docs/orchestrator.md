@@ -191,6 +191,50 @@ A pre-v5.6 claim left in a plan folder is still honoured (`wf_claim_held`) and
 adopted into the new location on the next `wf-claim.sh`, so an upgrade mid-flight
 does not read a live worker's claim as absent.
 
+### A claim is enforced at the write, not only at the dispatch
+
+`wf-guard-write.sh` runs as a `PreToolUse` hook on `Edit|Write|NotebookEdit`. It
+maps the target path to an artifact — any `PLN-NNN` / `BUG-NNN` / `BRF-NNN` in
+the path, which covers `plans/`, `bugs/`, `briefs/` and `feature-branches/`
+alike — and exits **2** when a *different* live session holds that artifact's
+claim, naming `wf-claim.sh <id> --steal` as the one way through.
+
+Until v6.9 the claim was read only at dispatch, by `wf-spawn.sh` and three list
+scripts. That answers "should I launch a worker onto this?" and never "may I
+write this file?", so it stopped a second worker being *started* and guarded
+nothing already *running*. The two sessions that collide most are the daemon's
+worker and an attended session that never claimed at all — and no amount of
+skill instruction reaches the second one, because the session that most needs
+the rule is the one that did not read it. The machine about to write the file is
+the only thing positioned to check.
+
+**It is not a lock, and `wf-lock.sh` cannot be one here.** That library is a real
+mutex, but its lifetime is one process: it ends with `trap wf_lock_release_all
+EXIT`, and its re-entrancy rides on an exported `WF_LOCK_HELD_<NAME>`. Every
+agent Bash call is a fresh shell, so a session cannot hold one across two tool
+calls. It protects a script's critical section — a REGISTRY row rewrite — and
+nothing longer. The claim is the only primitive with a session's lifetime, which
+is why enforcement was built on it rather than beside it.
+
+**The guard fails open, deliberately.** It runs before every `Edit` and `Write`
+in the repo, and one that failed closed on its own bugs would brick the editor
+for the whole project — a far worse outcome than the collision it prevents. Only
+a positively identified foreign live claim exits 2. No artifact in the path
+(`plans/REGISTRY.md` among them, which is shared by design and has the
+`registry` lock instead), no claim, an expired or dead-owner claim, an
+unreadable payload, no `python3`, not a repo: every one of those allows the
+write silently. Ownership uses `wf_claim_mine`, the same test `wf-claim.sh` and
+`wf-spawn.sh` use — reading a claim taken out on the worker's own behalf as
+somebody else's is what parked every plan that reached testing (WFI-073/075),
+and in the guard it would block a session's own edits.
+
+The installed hook deliberately does **not** carry the `2>/dev/null || true`
+suffix the rehydration hooks wear. `|| true` rewrites every exit to 0, and exit
+2 is the entire mechanism; a guard wearing it would report the collision and
+permit the write anyway, which is worse than no guard because it reads as
+protection. A missing harness is tolerated by testing for `wf-exec.sh` up front
+instead, which leaves the exit status alone.
+
 The attempt budget is the loop breaker. A plan bouncing `active ⇄ verify`
 forever burns tokens silently; after N implement spawns it parks as a `stuck`
 gate instead of retrying.

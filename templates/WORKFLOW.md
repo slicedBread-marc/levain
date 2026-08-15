@@ -185,6 +185,26 @@ window dispatches a worker at work that is already done or already moved on.
 `wf-spawn.sh` re-reads the registry immediately before launching and stands down on a state
 its role cannot act on, which narrows that window but does not close it.
 
+**Claim before you write — whoever you are.** The rule is not orchestrator-specific and not
+skill-specific: a session driving an artifact takes its claim first, by whatever ID it was
+handed, whether or not a plan folder exists yet.
+
+```bash
+scripts/wf-exec.sh wf-claim.sh PLN-NNN     # or BUG-NNN / BRF-NNN — one claim per number
+scripts/wf-exec.sh wf-unclaim.sh PLN-NNN   # on the way out, after the commit and the gate
+```
+
+A `PreToolUse` hook (`wf-guard-write.sh`) enforces this: an `Edit` or `Write` under
+`plans/PLN-NNN-*/`, `bugs/`, `briefs/` or `feature-branches/PLN-NNN-*/` is **refused** while
+another live session holds that number's claim. The refusal names the holder and the one way
+through — `wf-claim.sh <id> --steal`, which records the takeover. Never resolve it by deleting
+the claim file: unclaiming is also a *trigger*, and `wf-unclaim.sh` flushes any spawn the
+daemon deferred behind that claim.
+
+A claim is a lease, not a lock — it expires after two hours and when its owning process dies,
+so a crashed session never parks an artifact forever. Long attended work refreshes it by
+claiming again; `wf-implement` does this on every step commit.
+
 Manual acceptance criteria carry a tag saying why a machine cannot check them —
 `(eyes:blocking)`, `(eyes:cosmetic)`, `(external)`, `(soak)`, `(unbuilt)`. Only unresolved
 `eyes:*` criteria can open a gate, and a cosmetic failure files a bug rather than
