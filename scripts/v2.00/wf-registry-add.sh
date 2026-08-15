@@ -41,10 +41,10 @@ source "$(dirname "$0")/wf-states.sh"
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Registry work is develop-root work — a spec worker may be standing anywhere.
-_wf_root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //') || true
-[ -n "$_wf_root" ] || _wf_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
-cd "$_wf_root"
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
+
+cd "$(wf_develop_root)"   # plans/* is develop-root work — see wf-orch-lib.sh
 
 REGISTRY="plans/REGISTRY.md"
 

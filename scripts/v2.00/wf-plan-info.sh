@@ -28,15 +28,10 @@
 
 set -euo pipefail
 
-# Registry work is develop-root work. Sourced/derived paths below are relative
-# ("plans/REGISTRY.md", "plans/PLN-NNN-slug/..."), and verify and implement
-# workers run with their CWD inside a feature worktree — where those resolve to
-# that worktree's own stale copy. The write then "succeeds", the verification
-# grep passes against the copy it just wrote, and the real registry never moves.
-# The main worktree is always the first one git lists.
-_wf_root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //') || true
-[ -n "$_wf_root" ] || _wf_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
-cd "$_wf_root"
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
+
+cd "$(wf_develop_root)"   # plans/* is develop-root work — see wf-orch-lib.sh
 
 REGISTRY="plans/REGISTRY.md"
 input="${1:-}"
@@ -62,16 +57,21 @@ if [ -z "$row" ]; then
   exit 1
 fi
 
-# Parse columns (see header for layout)
-id=$(echo "$row" | awk -F'|' '{print $2}' | xargs)
-slug=$(echo "$row" | awk -F'|' '{print $3}' | xargs)
-state=$(echo "$row" | awk -F'|' '{print $4}' | xargs)
-priority=$(echo "$row" | awk -F'|' '{print $5}' | xargs)
-branch=$(echo "$row" | awk -F'|' '{print $6}' | xargs)
-updated=$(echo "$row" | awk -F'|' '{print $7}' | xargs)
-wf=$(echo "$row" | awk -F'|' '{print $8}' | xargs)
-tags=$(echo "$row" | awk -F'|' '{print $9}' | xargs)
-deps=$(echo "$row" | awk -F'|' '{print $10}' | xargs)
+# Parse columns (see header for layout). One pass over the row, not nine:
+# `echo | awk | xargs` per column is 27 subprocesses to read one line, and most
+# skills call this script several times.
+# 0x1f, not tab: tab is IFS whitespace, so a run of them collapses and an
+# empty column shifts every field after it (a legacy 7-column row does exactly
+# that — PLAN_WF came back holding the Tags value).
+IFS=$'\037' read -r id slug state priority branch updated wf tags deps <<< "$(
+  printf '%s\n' "$row" | awk -F'|' '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    BEGIN { US = sprintf("%c", 31) }
+    { printf "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
+        trim($2), US, trim($3), US, trim($4), US, trim($5), US, trim($6), US,
+        trim($7), US, trim($8), US, trim($9), US, trim($10) }
+  '
+)"
 [ -z "$tags" ] && tags="—"
 [ -z "$deps" ] && deps="—"
 
@@ -89,7 +89,7 @@ plan_name="${id}-${slug}"
 # goal-missing gate on it, handing a human a question with no real answer.
 goal=""
 if [ -f "$plan_dir/plan.md" ]; then
-  goal=$(awk '/^## Goal([ \t]|$)/{g=1;next} g&&/^#/{exit} g&&NF{sub(/^[[:space:]]+/,"");print;exit}' "$plan_dir/plan.md" 2>/dev/null || true)
+  goal=$(wf_goal_text "$plan_dir/plan.md")
 fi
 
 # Check if any dep is not complete.

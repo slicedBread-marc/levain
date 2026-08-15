@@ -59,6 +59,8 @@ set -uo pipefail
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=wf-states.sh
 source "$SELF_DIR/wf-states.sh"
+# shellcheck source=wf-orch-lib.sh
+source "$SELF_DIR/wf-orch-lib.sh"
 
 MODE=""
 SOURCE=""
@@ -118,16 +120,6 @@ registry_row() {
 
 field() { printf '%s' "$1" | cut -d'|' -f"$2" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
 
-# The Goal one-liner: first non-blank line under `## Goal`, before the next heading.
-goal_of() {
-  [ -f "$1" ] || return 0
-  awk '
-    /^## Goal([ \t]|$)/ { g = 1; next }
-    g && /^#/  { exit }
-    g && NF    { print; exit }
-  ' "$1" 2>/dev/null
-}
-
 # ── The state block ───────────────────────────────────────────────────────
 
 emit_plan_detail() {
@@ -151,7 +143,7 @@ emit_plan_detail() {
   [ -n "$tags" ]     && [ "$tags" != "—" ] && echo "TAGS:     $tags"
   [ -n "$deps" ]     && [ "$deps" != "—" ] && echo "DEPS:     $deps"
 
-  goal=$(goal_of "$plan_md")
+  goal=$(wf_goal_text "$plan_md")
   [ -n "$goal" ] && echo "GOAL:     $goal"
 
   # ── Where this plan's commands actually run ──────────────────────────────
@@ -244,15 +236,12 @@ emit_pipeline() {
     plan_dir="$ROOT/plans/${id}-${slug}"
     prog=""
     if [ -f "$plan_dir/progress.md" ]; then
-      # `grep -c || echo 0` is wrong here and looks right: on no match grep
-      # PRINTS 0 and EXITS 1, so the fallback appends a second 0 and the count
-      # becomes a two-line string. A plan with no ticked steps then renders as
-      # "step 0\n0/3" — every plan not yet started, which is most of them.
-      total=$(grep -cE '^- \[[ x]\]' "$plan_dir/progress.md" 2>/dev/null) || total=0
-      done_count=$(grep -cE '^- \[x\]' "$plan_dir/progress.md" 2>/dev/null) || done_count=0
-      [ "$total" -gt 0 ] && prog="step ${done_count}/${total}"
+      # One definition of the count, shared with the board and the
+      # orchestrator's progress check — the `## Steps` list only (wf_step_counts).
+      counts=$(wf_step_counts "$plan_dir/progress.md")
+      [ "${counts#*/}" != "0" ] && prog="step $counts"
     fi
-    goal=$(goal_of "$plan_dir/plan.md")
+    goal=$(wf_goal_text "$plan_dir/plan.md")
     # The registry writes an em dash for "unset". It is three bytes wide and one
     # column wide, so printf's %-Ns padding is off by two wherever it appears.
     [ "$priority" = "—" ] && priority=""

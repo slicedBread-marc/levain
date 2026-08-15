@@ -35,9 +35,10 @@ SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Bug work is develop-root work: the paths below are relative, and a verify or
 # implement worker's CWD is inside a feature worktree, where bugs/ is excluded.
-_wf_root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //') || true
-[ -n "$_wf_root" ] || _wf_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
-cd "$_wf_root"
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
+
+cd "$(wf_develop_root)"   # plans/* is develop-root work — see wf-orch-lib.sh
 
 title=""
 severity="Medium"

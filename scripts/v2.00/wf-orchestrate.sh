@@ -91,13 +91,21 @@ if $dry_run; then
   wf_event() { :; }
 fi
 
+# Read with the rest of the config, once, rather than re-parsing
+# claude-workflow.yml per role on every sweep of a daemon that never exits.
+cfg_cap_spec=$(wf_cfg orchestrator.max_concurrent.spec 1)
+cfg_cap_implement=$(wf_cfg orchestrator.max_concurrent.implement 2)
+cfg_cap_verify=$(wf_cfg orchestrator.max_concurrent.verify 2)
+cfg_cap_test=$(wf_cfg orchestrator.max_concurrent.test 1)
+cfg_cap_consistency=$(wf_cfg orchestrator.max_concurrent.consistency 1)
+
 max_concurrent() {
   case "$1" in
-    spec)        wf_cfg orchestrator.max_concurrent.spec 1 ;;
-    implement)   wf_cfg orchestrator.max_concurrent.implement 2 ;;
-    verify)      wf_cfg orchestrator.max_concurrent.verify 2 ;;
-    test)        wf_cfg orchestrator.max_concurrent.test 1 ;;
-    consistency) wf_cfg orchestrator.max_concurrent.consistency 1 ;;
+    spec)        printf '%s' "$cfg_cap_spec" ;;
+    implement)   printf '%s' "$cfg_cap_implement" ;;
+    verify)      printf '%s' "$cfg_cap_verify" ;;
+    test)        printf '%s' "$cfg_cap_test" ;;
+    consistency) printf '%s' "$cfg_cap_consistency" ;;
   esac
 }
 
@@ -317,7 +325,10 @@ dispatch() {
   local attempts; attempts=$(attempts_get "$id" "$role")
   if [ "$attempts" -ge "$cfg_max_attempts" ]; then
     # Opening the gate is a real mutation — a preview must not do it either.
-    if ! $dry_run && ! gate_open "$id"; then
+    # No second `gate_open` test here: the check at the top of dispatch()
+    # already returned for every artifact that has one, and asking again costs
+    # another full wf-list-gates.sh run per parked plan per tick.
+    if ! $dry_run; then
       "$SELF_DIR/wf-gate-open.sh" "$artifact" stuck \
         "$role has run $attempts times with no forward progress — neither the registry state nor the progress.md step checklist moved. Needs a human look." \
         --skill "wf-$role" >/dev/null 2>&1 || true

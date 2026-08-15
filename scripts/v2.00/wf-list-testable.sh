@@ -14,28 +14,24 @@ set -euo pipefail
 # shellcheck source=wf-orch-lib.sh
 source "$(dirname "$0")/wf-orch-lib.sh"
 
-# Registry work is develop-root work. Sourced/derived paths below are relative
-# ("plans/REGISTRY.md", "plans/PLN-NNN-slug/..."), and verify and implement
-# workers run with their CWD inside a feature worktree — where those resolve to
-# that worktree's own stale copy. The write then "succeeds", the verification
-# grep passes against the copy it just wrote, and the real registry never moves.
-# The main worktree is always the first one git lists.
-_wf_root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //') || true
-[ -n "$_wf_root" ] || _wf_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
-cd "$_wf_root"
+cd "$(wf_develop_root)"   # plans/* is develop-root work — see wf-orch-lib.sh
 
 REGISTRY="plans/REGISTRY.md"
+
+# Read once; look dep states up out of it. See wf-list-implementable.sh.
+rows=$(wf_registry_rows "$REGISTRY")
+state_map=" $(printf '%s\n' "$rows" | awk -F'\037' 'NF { printf "%s=%s ", $1, $3 }')"
+state_of() {
+  local rest="${state_map##* $1=}"
+  [ "$rest" = "$state_map" ] && return 0
+  printf '%s' "${rest%% *}"
+}
+
 testable=0
 total=0
 claimed_plans=()
 
-while IFS='|' read -r _ id slug state priority branch _rest; do
-  id=$(echo "$id" | xargs)
-  slug=$(echo "$slug" | xargs)
-  state=$(echo "$state" | xargs)
-  priority=$(echo "$priority" | xargs)
-  branch=$(echo "$branch" | xargs)
-
+while IFS=$'\037' read -r id slug state priority branch _updated _wf _tags deps; do
   [ "$state" = "testing" ] || continue
   total=$((total + 1))
 
@@ -49,20 +45,19 @@ while IFS='|' read -r _ id slug state priority branch _rest; do
   fi
 
   plan_name="${id}-${slug}"
-  goal=$(awk '/^## Goal([ \t]|$)/{g=1;next} g&&/^#/{exit} g&&NF{sub(/^[[:space:]]+/,"");print;exit}' "$plan_dir/plan.md" 2>/dev/null || true)
+  goal=$(wf_goal_text "$plan_dir/plan.md")
 
   worktree="feature-branches/${plan_name}"
   [ -d "$worktree" ] || worktree=""
 
-  # Check deps (field 10)
-  row_full=$(grep "^| $id |" "$REGISTRY" | head -1)
-  deps_raw=$(echo "$row_full" | awk -F'|' '{print $10}' | xargs)
+  # Deps came off this row's own Deps column, above.
   blocking=""
-  if [ -n "$deps_raw" ] && [ "$deps_raw" != "—" ]; then
-    IFS=',' read -ra dep_list <<< "$deps_raw"
+  if [ -n "$deps" ] && [ "$deps" != "—" ]; then
+    IFS=',' read -ra dep_list <<< "$deps"
     for dep_id in "${dep_list[@]}"; do
-      dep_id=$(echo "$dep_id" | xargs)
-      dep_state=$(grep "^| $dep_id |" "$REGISTRY" 2>/dev/null | awk -F'|' '{print $4}' | xargs || true)
+      dep_id="${dep_id#"${dep_id%%[![:space:]]*}"}"
+      dep_id="${dep_id%"${dep_id##*[![:space:]]}"}"
+      dep_state=$(state_of "$dep_id")
       if [ "$dep_state" != "complete" ]; then
         # See wf-list-implementable.sh: abandoned reads differently to late.
         [ "$dep_state" = "abandoned" ] && dep_id="$dep_id (abandoned)"
@@ -77,7 +72,7 @@ while IFS='|' read -r _ id slug state priority branch _rest; do
     printf "%s\t%s\t%s\t%s\t%s\n" "$plan_name" "$worktree" "$branch" "$goal" "$priority"
   fi
   testable=$((testable + 1))
-done < <(grep "^|" "$REGISTRY" | tail -n +3)
+done <<< "$rows"
 
 cat >&2 <<EOF
 TESTABLE: $testable

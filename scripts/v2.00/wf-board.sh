@@ -130,14 +130,18 @@ render() {
     # a dim row and are shown even at zero: an abandoned plan appearing in no
     # column at all is how a project ends up with plan folders nobody can
     # account for (WFI-009).
+    # The histogram comes back as `state=n` pairs and is read with parameter
+    # expansion — the row loop used to re-fork `printf | awk` per state, so the
+    # one-pass count was followed by fourteen subprocesses to read it, on a
+    # render that repeats every second under --watch.
     local st n counts
-    counts=$(awk -F'|' '
+    counts=" $(awk -F'|' '
       function trim(x) { gsub(/^[ \t]+|[ \t]+$/, "", x); return x }
       /^\| PLN-/ { c[trim($4)]++ }
-      END { for (s in c) print s, c[s] }' "$REGISTRY")
+      END { for (s in c) printf "%s=%s ", s, c[s] }' "$REGISTRY")"
     for st in draft ready active verify testing complete abandoned; do
-      n=$(printf '%s\n' "$counts" | awk -v s="$st" '$1 == s { print $2 }')
-      n="${n:-0}"
+      n="${counts##* $st=}"
+      if [ "$n" = "$counts" ]; then n=0; else n="${n%% *}"; fi
       case "$st" in
         complete|abandoned) printf '  %s%-9s %s%s\n' "$DIM" "$st" "$n" "$R" ;;
         *)                  printf '  %-9s %s\n' "$st" "$n" ;;

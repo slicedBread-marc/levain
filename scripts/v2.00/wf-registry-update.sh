@@ -34,20 +34,14 @@
 
 set -euo pipefail
 
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
 # shellcheck source=wf-lock.sh
 source "$(dirname "$0")/wf-lock.sh"
 # shellcheck source=wf-states.sh
 source "$(dirname "$0")/wf-states.sh"
 
-# Registry work is develop-root work. Sourced/derived paths below are relative
-# ("plans/REGISTRY.md", "plans/PLN-NNN-slug/..."), and verify and implement
-# workers run with their CWD inside a feature worktree — where those resolve to
-# that worktree's own stale copy. The write then "succeeds", the verification
-# grep passes against the copy it just wrote, and the real registry never moves.
-# The main worktree is always the first one git lists.
-_wf_root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //') || true
-[ -n "$_wf_root" ] || _wf_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
-cd "$_wf_root"
+cd "$(wf_develop_root)"   # plans/* is develop-root work — see wf-orch-lib.sh
 
 REGISTRY="plans/REGISTRY.md"
 
@@ -183,8 +177,6 @@ if [ "$to_state" = "active" ]; then
   slug=$(grep "^| $plan_id |" "$REGISTRY" | head -1 | awk -F'|' '{print $3}' | xargs)
   claim_dir="plans/${plan_id}-${slug}"
   if [ -d "$claim_dir" ]; then
-    # shellcheck source=wf-orch-lib.sh
-    source "$(dirname "$0")/wf-orch-lib.sh"
     wf_claim_write "$claim_dir"
   fi
 fi

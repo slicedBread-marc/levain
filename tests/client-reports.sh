@@ -983,7 +983,8 @@ section "MTP projects get a real filter (client-a WFI-045/038/035)"
 # full suite. The MTP syntax has since been confirmed against real runs.
 SCOPE2="$TEST_DIR/mtp"
 mkdir -p "$SCOPE2/scripts" "$SCOPE2/plans/PLN-160-mtp"
-cp "$SCRIPT_DIR/wf-test-scope.sh" "$SCRIPT_DIR/wf-plan-info.sh" "$SCOPE2/scripts/"
+cp "$SCRIPT_DIR/wf-test-scope.sh" "$SCRIPT_DIR/wf-plan-info.sh" \
+   "$SCRIPT_DIR/wf-orch-lib.sh" "$SCOPE2/scripts/"
 printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-160 | mtp | verify | — | — | 2026-08-04 | %s | — | — |\n' \
   "${SCRIPT_FOLDER#v}" > "$SCOPE2/plans/REGISTRY.md"
 printf '## Goal\nx\n\n## Test Scope\n- unit\n' > "$SCOPE2/plans/PLN-160-mtp/plan.md"
@@ -1915,7 +1916,8 @@ section "Dated amendments are counted (client-a WFI-051)"
 # caller standing in front of the always-on scope-reduction gate.
 DELTA="$TEST_DIR/goaldelta"
 mkdir -p "$DELTA/scripts" "$DELTA/plans/PLN-004-tool-cli"
-cp "$SCRIPT_DIR/wf-goal-delta.sh" "$SCRIPT_DIR/wf-plan-info.sh" "$DELTA/scripts/" 2>/dev/null || true
+cp "$SCRIPT_DIR/wf-goal-delta.sh" "$SCRIPT_DIR/wf-plan-info.sh" \
+   "$SCRIPT_DIR/wf-orch-lib.sh" "$DELTA/scripts/" 2>/dev/null || true
 printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-004 | tool-cli | draft | — | — | 2026-08-04 | %s | — | — |\n' \
   "${SCRIPT_FOLDER#v}" > "$DELTA/plans/REGISTRY.md"
 printf '## Goal\nBuild the CLI.\n\n## Amendments\n' > "$DELTA/plans/PLN-004-tool-cli/plan.md"

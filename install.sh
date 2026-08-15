@@ -171,15 +171,16 @@ echo "  Source dirs: $SOURCE_DIRS"
 echo ""
 
 # Create folder structure
+#
+# plans/briefs/ and the bug folders, and nothing else. The state folders this
+# used to create — drafts/ ready/ active/ verify/ replanning/ complete/
+# rolled-back/ — are from the pre-registry model, where a plan's state was its
+# location. Since v3.2.0 a plan lives at plans/PLN-NNN-<slug>/ forever and its
+# state is a column in REGISTRY.md (Design Principle 1: immovable plans).
+# Nothing reads these paths; creating them in every client puts the old model
+# back on screen for anyone browsing the repo.
 echo "Creating folder structure..."
 mkdir -p "$TARGET_DIR/plans/briefs"
-mkdir -p "$TARGET_DIR/plans/drafts"
-mkdir -p "$TARGET_DIR/plans/ready"
-mkdir -p "$TARGET_DIR/plans/active"
-mkdir -p "$TARGET_DIR/plans/verify"
-mkdir -p "$TARGET_DIR/plans/replanning"
-mkdir -p "$TARGET_DIR/plans/complete"
-mkdir -p "$TARGET_DIR/plans/rolled-back"
 echo -e "${GREEN}  plans/ folder structure created${NC}"
 
 # Seed REGISTRY.md if it doesn't exist — never overwrite live state
@@ -574,13 +575,16 @@ for version_dir in "$SCRIPT_DIR/scripts"/v*/; do
     mkdir -p "$DEST_VDIR"
     for script in "$version_dir"/wf-*.sh; do
         [ -f "$script" ] || continue
-        DEST="$DEST_VDIR/$(basename "$script")"
+        # ${script##*/} rather than basename, and one chmod for the folder
+        # rather than one per file: this loop runs ~80 times per client and
+        # deploy-all.sh runs it for every client.
+        DEST="$DEST_VDIR/${script##*/}"
         sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
             -e "s|{{production_logs_url}}|$PRODUCTION_LOGS_URL|g" \
             -e "s|{{production_url}}|$PRODUCTION_URL|g" \
             "$script" > "$DEST"
-        chmod +x "$DEST"
     done
+    chmod +x "$DEST_VDIR"/*.sh 2>/dev/null || true
     echo -e "${GREEN}  Installed scripts/$folder_name/ ($(ls "$DEST_VDIR" | wc -l | tr -d ' ') scripts)${NC}"
 done
 

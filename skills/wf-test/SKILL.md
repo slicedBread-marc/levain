@@ -560,21 +560,19 @@ Last failure: #3 on build Apr 08 14:32 (f4e5d6c)
 **On findings (failure exit):** write test-progress.md with current state. Include in the findings commit:
 ```bash
 git add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md
-# If any criteria were deferred this session:
-git add plans/deferred-criteria.md
 # If the auto-test agent logged any outcomes this session:
 git add plans/auto-test-log.md
 ```
+Do **not** add `plans/deferred-criteria.md` here: `wf-defer-criterion.sh` commits that file itself, together with the `plan.md` checkoff that belongs with it, and a pathspec of yours can only pick up one of the two halves (WFI-144).
 
 **On complete (all pass on current build):** delete the progress file as part of cleanup:
 ```bash
 rm -f plans/PLN-NNN-<slug>/test-progress.md
 git add plans/PLN-NNN-<slug>/test-progress.md
-# If any criteria were deferred this session:
-git add plans/deferred-criteria.md
 # If the auto-test agent logged any outcomes this session:
 git add plans/auto-test-log.md
 ```
+Again, no `plans/deferred-criteria.md` — its writer commits it.
 (Include in the final completion commit.)
 
 **On early abort** (user quits mid-test): save progress like findings exit so the next session can resume. If no criteria were tested this session, do not overwrite the file.
@@ -920,7 +918,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing draft \
      --commit "<message from above>" \
      --add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md \
-           plans/auto-test-log.md plans/deferred-criteria.md
+           plans/auto-test-log.md
    scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "manual test found N issue(s)"
    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    ```

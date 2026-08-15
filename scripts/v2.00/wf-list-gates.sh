@@ -61,15 +61,29 @@ flatten() {
 
 # state_of <id> → the artifact's REGISTRY state, or `—` when it has no row yet
 # (a bug or brief on its way to a first spec, which is a legitimate gate target).
+# The registry read once into `<id>=<state>` pairs, rather than a
+# grep|head|awk|xargs per gate per lookup — this script runs on every board
+# render and twice more per candidate inside the dispatcher.
+_state_map=""
+if [ -f "$REGISTRY" ]; then
+  _state_map=" $(awk -F'|' '
+    function trim(x) { gsub(/^[ \t]+|[ \t]+$/, "", x); return x }
+    { id = trim($2); if (id ~ /^(PLN|BUG|BRF)-[0-9]+$/) printf "%s=%s ", id, trim($4) }
+  ' "$REGISTRY")"
+fi
+_map_get() {
+  local rest="${_state_map##* $1=}"
+  [ "$rest" = "$_state_map" ] && return 0
+  printf '%s' "${rest%% *}"
+}
+
 state_of() {
   local id="$1" s=""
-  [ -f "$REGISTRY" ] || { printf '—'; return 0; }
-  s=$(grep "^| $id |" "$REGISTRY" 2>/dev/null | head -1 | awk -F'|' '{print $4}' | xargs || true)
+  [ -n "$_state_map" ] || { printf '—'; return 0; }
+  s=$(_map_get "$id")
   # A bug or brief keeps its number when it becomes a plan (BUG-022 → PLN-022),
   # and the gate may have been opened under the earlier name.
-  if [ -z "$s" ]; then
-    s=$(grep "^| PLN-${id#*-} |" "$REGISTRY" 2>/dev/null | head -1 | awk -F'|' '{print $4}' | xargs || true)
-  fi
+  [ -n "$s" ] || s=$(_map_get "PLN-${id#*-}")
   printf '%s' "${s:-—}"
 }
 

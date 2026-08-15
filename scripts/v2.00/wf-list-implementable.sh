@@ -30,18 +30,25 @@ SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=wf-orch-lib.sh
 source "$SELF_DIR/wf-orch-lib.sh"
 
-# Registry work is develop-root work. Sourced/derived paths below are relative
-# ("plans/REGISTRY.md", "plans/PLN-NNN-slug/..."), and verify and implement
-# workers run with their CWD inside a feature worktree — where those resolve to
-# that worktree's own stale copy. The write then "succeeds", the verification
-# grep passes against the copy it just wrote, and the real registry never moves.
-# The main worktree is always the first one git lists.
-_wf_root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //') || true
-[ -n "$_wf_root" ] || _wf_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
-cd "$_wf_root"
+cd "$(wf_develop_root)"   # plans/* is develop-root work — see wf-orch-lib.sh
 
 REGISTRY="plans/REGISTRY.md"
 found=0
+
+# The registry, read ONCE. Everything below that used to re-grep it per row or
+# per dependency reads these instead: on a 70-plan project the old shape cost a
+# full file scan per plan plus one per declared dep, on a script that runs on
+# every /wf-status, every board render and every daemon tick.
+rows=$(wf_registry_rows "$REGISTRY")
+# "<id>=<state>" pairs, space-delimited and space-terminated, so a lookup is
+# parameter expansion rather than a grep. bash 3.2 (what macOS ships) has no
+# associative arrays.
+state_map=" $(printf '%s\n' "$rows" | awk -F'\037' 'NF { printf "%s=%s ", $1, $3 }')"
+state_of() {
+  local rest="${state_map##* $1=}"
+  [ "$rest" = "$state_map" ] && return 0
+  printf '%s' "${rest%% *}"
+}
 
 # Branches that already have a worktree checked out. Read once — `git worktree
 # list` is cheap but this loop runs per plan.
@@ -72,9 +79,10 @@ check_deps_blocked() {
   local blocking=""
   local IFS=','
   for dep_id in $deps_raw; do
-    dep_id=$(echo "$dep_id" | xargs)
+    dep_id="${dep_id#"${dep_id%%[![:space:]]*}"}"   # trim, without a subprocess
+    dep_id="${dep_id%"${dep_id##*[![:space:]]}"}"
     local dep_state
-    dep_state=$(grep "^| $dep_id |" "$REGISTRY" 2>/dev/null | awk -F'|' '{print $4}' | xargs || true)
+    dep_state=$(state_of "$dep_id")
     if [ "$dep_state" != "complete" ]; then
       # Mark an abandoned dep in the label itself: it is not late, it is gone,
       # and the plan needs replanning rather than patience (WFI-008).
@@ -87,13 +95,7 @@ check_deps_blocked() {
   return 0
 }
 
-while IFS='|' read -r _ id slug state priority branch _rest; do
-  id=$(echo "$id" | xargs)
-  slug=$(echo "$slug" | xargs)
-  state=$(echo "$state" | xargs)
-  priority=$(echo "$priority" | xargs)
-  branch=$(echo "$branch" | xargs)
-
+while IFS=$'\037' read -r id slug state priority branch _updated _wf _tags deps; do
   # Skip malformed or blank lines
   [ -n "$id" ] && [ -n "$state" ] || continue
   plan_dir="plans/${id}-${slug}"
@@ -101,7 +103,7 @@ while IFS='|' read -r _ id slug state priority branch _rest; do
   [ "$state" = "ready" ] || [ "$state" = "active" ] || continue
   [ -d "$plan_dir" ] || continue
 
-  goal=$(awk '/^## Goal([ \t]|$)/{g=1;next} g&&/^#/{exit} g&&NF{sub(/^[[:space:]]+/,"");print;exit}' "$plan_dir/plan.md" 2>/dev/null || true)
+  goal=$(wf_goal_text "$plan_dir/plan.md")
   plan_name="${id}-${slug}"
 
   # A gate outranks every other reason: nothing about this plan is settled
@@ -113,10 +115,8 @@ while IFS='|' read -r _ id slug state priority branch _rest; do
     continue
   fi
 
-  # Check deps (field 10 in the original row)
-  row_full=$(grep "^| $id |" "$REGISTRY" | head -1)
-  deps_raw=$(echo "$row_full" | awk -F'|' '{print $10}' | xargs)
-  blocking=$(check_deps_blocked "$deps_raw" 2>/dev/null) && {
+  # Deps came off this row's own Deps column, above.
+  blocking=$(check_deps_blocked "$deps" 2>/dev/null) && {
     blocked_lines+=("$(printf "blocked\t%s\t%s\t%s\t%s" "$plan_name" "$goal" "$priority" "$blocking")")
     found=1
     continue
@@ -156,7 +156,7 @@ while IFS='|' read -r _ id slug state priority branch _rest; do
     if [ "$priority" = "urgent" ]; then urgent_lines+=("$line"); else normal_lines+=("$line"); fi
     found=1
   fi
-done < <(grep "^|" "$REGISTRY" | tail -n +3)
+done <<< "$rows"
 
 # Output urgent items first, then normal, then processing, then blocked
 for line in "${urgent_lines[@]+"${urgent_lines[@]}"}"; do printf "%s\n" "$line"; done

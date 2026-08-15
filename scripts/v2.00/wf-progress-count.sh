@@ -46,11 +46,4 @@ if [ -z "$progress" ] || [ ! -f "$progress" ]; then
 fi
 
 # Count only inside `## Steps` — the Log section also contains bracketed text.
-awk '
-  /^## Steps/       { in_steps = 1; next }
-  /^## /            { in_steps = 0 }
-  !in_steps         { next }
-  /^[[:space:]]*-[[:space:]]*\[[xX]\]/ { checked++; total++; next }
-  /^[[:space:]]*-[[:space:]]*\[[[:space:]]*\]/ { total++ }
-  END { printf "%d/%d\n", checked, total }
-' "$progress"
+echo "$(wf_step_counts "$progress")"

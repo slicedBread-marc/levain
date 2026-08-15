@@ -11,6 +11,8 @@
 # Provides:
 #   wf_develop_root                  → absolute path of the first worktree
 #   wf_orch_dir                      → <develop-root>/.claude/orchestrator (created)
+#   wf_registry_rows [path]          → one trimmed plan row per line (0x1f-separated)
+#   wf_goal_text <plan.md>           → that plan's one-line goal
 #   wf_cfg <dotted.path> [default]   → value from claude-workflow.yml
 #   wf_emit <KEY> <value>            → eval-safe KEY='value' line
 #   wf_plan_fingerprint <PLN-NNN>    → hash of that plan's plan.md (may be empty)
@@ -25,23 +27,106 @@
 
 # ── Paths ─────────────────────────────────────────────────────────────────
 
+#
+# Answered once per process. Three forks each time is nothing on its own, and
+# this is called from wf_orch_dir, wf_cfg and wf_claim_* — so a single list
+# render pays it per plan, per claim check, per config read. The root cannot
+# change inside one process (a script that cd's is still in the same repo), so
+# the second answer is always the first one. Deliberately NOT exported: a child
+# may be running against a different repository.
+_WF_DEVELOP_ROOT=""
 wf_develop_root() {
+  if [ -n "$_WF_DEVELOP_ROOT" ]; then printf '%s' "$_WF_DEVELOP_ROOT"; return 0; fi
   # The first worktree git reports is always the main one (where develop lives).
   local root
   root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
-  if [ -n "$root" ]; then printf '%s' "$root"; return 0; fi
   # Not a worktree setup — fall back to the repo toplevel, then CWD.
-  root=$(git rev-parse --show-toplevel 2>/dev/null) && [ -n "$root" ] && { printf '%s' "$root"; return 0; }
-  printf '%s' "$PWD"
+  [ -n "$root" ] || root=$(git rev-parse --show-toplevel 2>/dev/null) || true
+  [ -n "$root" ] || root="$PWD"
+  _WF_DEVELOP_ROOT="$root"
+  printf '%s' "$root"
 }
 
+_WF_ORCH_DIR_MADE=""
 wf_orch_dir() {
   local d="$(wf_develop_root)/.claude/orchestrator"
   # pending/: spawns deferred behind the requester's own claim, served by
   # wf-unclaim.sh when it comes down (WFI-086, WFI-091).
   # claims/:  one directory per artifact NUMBER, holding its .wf-claim (WFI-004).
-  mkdir -p "$d/gates" "$d/logs" "$d/pending" "$d/claims"
+  # Made once per process for the same reason the root is resolved once.
+  if [ "$_WF_ORCH_DIR_MADE" != "$d" ]; then
+    mkdir -p "$d/gates" "$d/logs" "$d/pending" "$d/claims"
+    _WF_ORCH_DIR_MADE="$d"
+  fi
   printf '%s' "$d"
+}
+
+# ── Registry ──────────────────────────────────────────────────────────────
+
+# wf_registry_rows [registry-path]
+# One plan per line, already trimmed, fields separated by US (0x1f):
+#   <id> <slug> <state> <priority> <branch> <updated> <wf> <tags> <deps>
+#
+# NOT tab-separated, and that is not cosmetic. Tab is IFS *whitespace*, so
+# `IFS=$'\t' read` collapses a run of tabs into one delimiter — an empty column
+# silently shifts every field after it into the wrong variable. Legacy 7-column
+# rows have exactly that shape, and they read fine until the day a plan's Tags
+# are empty. 0x1f is not whitespace, so each separator delimits one field and
+# empty stays empty.
+#
+# Every list script used to walk the table itself: `grep "^|" | tail -n +3`
+# piped into `IFS='|' read`, then three to five `$(echo "$x" | xargs)` calls to
+# trim the fields — two forks each, paid on EVERY row before the state filter
+# rejects it. On a 70-row registry that is ~0.9s per script, and /wf-status
+# runs eight of them. One awk pass is 0.006s.
+#
+# It also fixes the fragility that came with positional reads: `IFS='|' read -r
+# _ id slug state priority branch _rest` names its columns by position in
+# twelve places, so a new registry column silently shifts all twelve. Here it
+# shifts one function.
+wf_registry_rows() {
+  local reg="${1:-$(wf_develop_root)/plans/REGISTRY.md}"
+  [ -f "$reg" ] || return 0
+  awk -F'|' '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    BEGIN { US = sprintf("%c", 31) }
+    {
+      id = trim($2)
+      if (id !~ /^PLN-[0-9]+$/) next          # header, separator, counter comment
+      printf "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
+        id, US, trim($3), US, trim($4), US, trim($5), US, trim($6), US,
+        trim($7), US, trim($8), US, trim($9), US, trim($10)
+    }
+  ' "$reg"
+}
+
+# wf_goal_text <plan.md> — the plan's one-line goal, empty if it has none.
+#
+# The same awk one-liner was pasted into ten scripts, and had already drifted in
+# an eleventh. It is the line every menu, board and PR description shows.
+wf_goal_text() {
+  [ -f "$1" ] || return 0
+  awk '/^## Goal([ \t]|$)/{g=1;next} g&&/^#/{exit} g&&NF{sub(/^[[:space:]]+/,"");print;exit}' "$1" 2>/dev/null || true
+}
+
+# wf_step_counts <progress.md> — "<checked>/<total>" for the `## Steps` list.
+#
+# ONE definition of "how far along is this plan", because there were three and
+# they disagreed. wf-progress-count.sh counts only inside `## Steps`; the board
+# (wf-list-active.sh) and wf-rehydrate.sh each open-coded a whole-file
+# `grep -cE '^- \[[ x]\]'`, so every bracketed line in the Log section inflated
+# the total. The same plan therefore read as "Step 3/11" to the orchestrator's
+# progress check and "Step 3/17" on the board.
+wf_step_counts() {
+  [ -f "$1" ] || { printf '0/0'; return 0; }
+  awk '
+    /^## Steps/ { in_steps = 1; next }
+    /^## /      { in_steps = 0 }
+    !in_steps   { next }
+    /^[[:space:]]*-[[:space:]]*\[[xX]\]/         { checked++; total++; next }
+    /^[[:space:]]*-[[:space:]]*\[[[:space:]]*\]/ { total++ }
+    END { printf "%d/%d", checked + 0, total + 0 }
+  ' "$1"
 }
 
 wf_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }

@@ -1495,6 +1495,46 @@ assert_eq "the skill no longer heredocs it into the worktree" "" \
   "$(grep -c "cat > feature-branches.*settings.local.json" "$LIB_ROOT/skills/wf-implement/SKILL.md" | grep -v '^0$' || true)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "An empty registry column does not shift the ones after it"
+
+# wf_registry_rows feeds every wf-list-* script, and the obvious separator is a
+# tab — which is IFS *whitespace*, so `IFS=$'\t' read` collapses a run of them
+# and an empty column silently hands the next field's value to the wrong
+# variable. Legacy 7-column rows (no WF, no Tags, no Deps) are exactly that
+# shape: wf-plan-info.sh reported PLAN_WF='—', the Tags value, on every pre-v5
+# plan in client-e. Caught by diffing real output, not by a fixture — every
+# fixture in this suite writes '—' rather than a blank.
+EMPTYCOL="$TEST_DIR/emptycol"
+mkdir -p "$EMPTYCOL/plans/PLN-801-legacy" && (
+  cd "$EMPTYCOL" && git init -qb develop . && git config user.email t@t && git config user.name t
+  { printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n'
+    printf '| PLN-801 | legacy | ready |  |  | 2026-07-01 |  |  |  |\n'
+    printf '| PLN-802 | modern | ready | urgent | feature/PLN-802-modern | 2026-08-01 | 6.6.0 | infra | PLN-801 |\n'
+    printf '\n<!-- Counter: 810 -->\n'
+  } > plans/REGISTRY.md
+  printf '## Goal\nthe legacy plan goal\n' > plans/PLN-801-legacy/plan.md
+) >/dev/null 2>&1
+
+row=$(cd "$EMPTYCOL" && bash -c "source '$SCRIPT_DIR/wf-orch-lib.sh'; wf_registry_rows plans/REGISTRY.md | head -1")
+assert_eq "nine fields survive, empties included" "9" \
+  "$(printf '%s' "$row" | awk -F'\037' '{print NF}')"
+assert_eq "the state is still in field 3" "ready" \
+  "$(printf '%s' "$row" | awk -F'\037' '{print $3}')"
+assert_eq "an empty WF column reads as empty, not as the Tags value" "" \
+  "$(printf '%s' "$row" | awk -F'\037' '{print $7}')"
+
+eval "$(cd "$EMPTYCOL" && "$SCRIPT_DIR/wf-plan-info.sh" PLN-801 2>/dev/null)"
+assert_eq "and wf-plan-info reports the empty WF column as empty" "" "$PLAN_WF"
+assert_eq "with the columns before it intact" "ready" "$PLAN_STATE"
+assert_eq "the goal still comes off plan.md" "the legacy plan goal" "$PLAN_GOAL"
+
+# A fully populated row must still land field-for-field.
+eval "$(cd "$EMPTYCOL" && "$SCRIPT_DIR/wf-plan-info.sh" PLN-802 2>/dev/null)"
+assert_eq "a full row keeps its WF stamp" "6.6.0" "$PLAN_WF"
+assert_eq "its tags" "infra" "$PLAN_TAGS"
+assert_eq "and its deps" "PLN-801" "$PLAN_DEPS"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n══════════════════════════════════════════════════════════════\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[32mResults: %d/%d passed\033[0m\n' "$PASS" "$((PASS + FAIL))"
