@@ -391,6 +391,29 @@ one. `(external)` and `(soak)` criteria never gate under any condition: they
 cannot be satisfied at gate time either, so gating on them buys a stop and
 nothing else.
 
+### Standing authorization for the promotions after `complete` (v6.18)
+
+The pipeline ends at `complete`. `/wf-release`, `/wf-deploy` and the production
+push sit outside it — the orchestrator never dispatches them, and until v6.18
+there was nowhere to record that a person had authorized them anyway. A user who
+said "go ahead and release overnight" was heard by one agent and forgotten at the
+next session boundary (client-a WFI-159).
+
+`wf-autonomy.sh` is that home. It reads `orchestrator.autonomy` from
+`claude-workflow.yml` and answers one question — *is this action authorized right
+now?* — for exactly three actions: `release`, `deploy`, `production-push`. It
+performs none of them; `/wf-release` and `/wf-deploy` call it at the point where
+they would otherwise prompt, and park a `release-approval` / `deploy-approval`
+gate on a no.
+
+Ships **off**: absent config is `mode: attended`, which is the pre-v6.18
+behaviour exactly. The vocabulary is closed, `--show` names any `standing_for`
+entry that nothing reads, and every grant must carry an author, a date and an
+expiry. Judgment gates are untouched — `spec-approval` has `specApproval.mode`
+and `manual-test` has `manualTestGate`, and neither is reachable from here.
+
+Read [`autonomy.md`](autonomy.md) before writing a grant.
+
 ## Concurrency
 
 Running workers in parallel makes every read-modify-write of `REGISTRY.md` a

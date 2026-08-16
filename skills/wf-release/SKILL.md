@@ -30,6 +30,18 @@ release branch    → staging environment for E2E validation
 3. **If no new commits on release vs main**: inform the user ("Release is up to date with main — nothing to release.") and exit. Next step: work on a plan with `/wf-implement`, test it with `/wf-test`, then return here.
 4. **Show commits to user** — display the commit list from step 2. Tell the user: "Run `/model haiku` if not already on it, then confirm to proceed." Then prompt: "These commits are staged for E2E. Proceed? (y/n)"
    Wait for explicit confirmation before continuing.
+
+   **Under `WF_UNATTENDED=1` there is nobody to prompt.** Ask whether the project has recorded standing authorization instead:
+   ```bash
+   scripts/wf-exec.sh wf-autonomy.sh release
+   ```
+   | Exit | What it means | What you do |
+   |-|-|-|
+   | `0` | A dated, unexpired, human-authored grant covers `release` | Say which grant authorized it, quoting the script's line, and continue at step 5 |
+   | `1` | No grant, or it does not cover `release`, or it has expired or hit its daily ceiling | **[GATE]** `release-approval` with the commit list as the question, then exit 0 |
+   | `2` | The grant is malformed — it is not a refusal, it is a broken config | **[GATE]** `release-approval`, and put the script's stderr in the question verbatim so the next human fixes the file |
+
+   Never treat exit 2 as "proceed". A grant nobody can parse authorized nothing.
 5. **Merge `develop` into `release`** to bring plan files and REGISTRY state:
    ```bash
    git pull origin release

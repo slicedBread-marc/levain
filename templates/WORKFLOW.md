@@ -108,8 +108,22 @@ scripts/wf-exec.sh wf-orchestrate.sh PLN-097 --json     # machine-readable
   "state": "draft",
   "result": "blocked-on-human",
   "gate": { "name": "spec-approval", "question": "…", "context": "plans/PLN-094-…/plan.md" },
+  "autonomy": { "mode": "attended", "covers": "", "expires": "" },
   "steps": ["spec:rc=0"]
 }
+```
+
+`autonomy` reports how far this project has authorized the harness to go **after**
+`complete` — the `/wf-release`, `/wf-deploy` and production-push promotions the
+orchestrator never dispatches. `"mode": "attended"` (the default, and what you get with no
+config at all) means every one of them stops for a person.
+
+It is a **ceiling report, not a permission**. Exit 20 is still a hard stop whatever it
+says: the field exists so a caller can tell "nobody has authorized anything here" from
+"releases are authorized until the 16th", which call for different behaviour.
+
+```bash
+scripts/wf-exec.sh wf-autonomy.sh --show    # what this project has granted, and to whom
 ```
 
 **Exit 20 is a normal, successful outcome.** It means the pipeline did all the

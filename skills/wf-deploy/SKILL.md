@@ -33,6 +33,18 @@ Before starting, confirm E2E passed on release:
 4. **Prompt user**: "These commits will be promoted to main. Proceed? (y/n)"
    Wait for explicit confirmation before continuing.
 
+   **Under `WF_UNATTENDED=1`, ask the config instead of the human:**
+   ```bash
+   scripts/wf-exec.sh wf-autonomy.sh deploy
+   ```
+   Exit `0` — a dated, unexpired grant covers `deploy`; name the grant and continue at step 5.
+   Exit `1` or `2` — **[GATE]** `deploy-approval`, question = the commit list (exit 2: plus the
+   script's stderr verbatim, because a malformed grant is a broken file, not a refusal), then exit 0.
+
+   This authorizes promoting `release` to `main` **locally**. It does not authorize step 13's push
+   to the production remote — that is a separate action with a separate grant, deliberately, because
+   an unpushed `main` is still recoverable and a pushed one is somebody else's deployment.
+
 ## What you do
 
 5. **Switch to `main` branch**:
@@ -125,6 +137,17 @@ Before starting, confirm E2E passed on release:
     git push origin main
     (This triggers the production deploy in GitHub Actions)
     ```
+
+    This holds **even when `deploy` was authorized in step 4**. The local promotion and the
+    production push are two grants because they are two different bets: a wrong `main` that
+    never left this machine is fixed with `git reset`, and a pushed one is already running for
+    users. A project that genuinely wants the push unattended says so, separately:
+    ```bash
+    scripts/wf-exec.sh wf-autonomy.sh production-push
+    ```
+    Exit `0` — run `git push origin main` and say, in the completion message, that a standing
+    grant did it and which one. Anything else — print the manual instruction above and stop.
+    Attended runs never call this: a human who is present is asked, not looked up.
 
 14. **Display success**:
     ```

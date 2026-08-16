@@ -3520,6 +3520,102 @@ assert_eq "naming the same session that holds the source" "true" \
       = "$(sed -n 2p .claude/orchestrator/claims/973/.wf-claim 2>/dev/null)" ] && echo true || echo false)"
 "$SCRIPT_DIR/wf-unclaim.sh" BUG-973 >/dev/null 2>&1
 
+section "Standing authorization is recorded, scoped and expiring (client-a WFI-159)"
+
+# WFI-159: a person granted standing merge/deploy authorization in conversation
+# and there was nowhere to record it, so it died at the session boundary. The
+# report also named the failure mode to avoid — "an unread key would look
+# load-bearing and be honoured by no script" — which is why the vocabulary is
+# closed and an unread entry is a reported problem rather than a silent no-op.
+AUTONOMY_CFG_BACKUP=""
+[ -f claude-workflow.yml ] && AUTONOMY_CFG_BACKUP=$(cat claude-workflow.yml)
+
+# Absent config is the pre-v6.18 behaviour exactly: everything stops for a human.
+rm -f claude-workflow.yml
+assert_fails "with no config at all, nothing is authorized" \
+  "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+assert_eq "and --show says so without calling it a fault" "0" \
+  "$("$SCRIPT_DIR/wf-autonomy.sh" --show >/dev/null 2>&1; echo $?)"
+
+write_grant() {
+  cat > claude-workflow.yml <<YML
+orchestrator:
+  autonomy:
+    mode: $1
+    granted_by: "$2"
+    granted_on: 2026-08-16
+    expires_on: $3
+    max_per_day: $4
+    standing_for:
+$(for a in $5; do printf '      - %s\n' "$a"; done)
+YML
+}
+
+write_grant standing "A Tester" 2026-09-16 4 "release"
+assert_ok "a coherent grant authorizes the action it names" \
+  env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+assert_fails "and refuses one it does not name" \
+  env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" deploy --quiet
+assert_eq "the refusal is exit 1 — a decision, not a config fault" "1" \
+  "$(env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" deploy --quiet; echo $?)"
+
+# "I authorize deployments" must not silently cover the production push.
+write_grant standing "A Tester" 2026-09-16 4 "deploy"
+assert_fails "granting deploy does not grant the production push" \
+  env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" production-push --quiet
+
+# An authorization with no end date is a permission, not a record of a decision.
+write_grant standing "A Tester" 2026-08-15 4 "release"
+assert_fails "an expired grant authorizes nothing" \
+  env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+
+# The report's own failure mode: a key nothing reads must be NAMED, not ignored.
+write_grant standing "A Tester" 2026-09-16 4 "release everything"
+assert_eq "an unread standing_for entry is exit 2, not a silent pass" "2" \
+  "$(env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" --show >/dev/null 2>&1; echo $?)"
+# Captured, not piped into `grep -q`: this file runs under `pipefail`, and a
+# -q grep exits on the first match, so the writer takes SIGPIPE and the whole
+# pipeline reports 141 however good the output was.
+AUTONOMY_SHOW=$(env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" --show 2>&1 || true)
+assert_eq "and --show names the entry nothing reads" "true" \
+  "$(if [[ "$AUTONOMY_SHOW" == *"honoured by nothing"* ]]; then echo true; else echo false; fi)"
+assert_eq "a malformed grant blocks the action too — 2 is never 'proceed'" "2" \
+  "$(env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" release --quiet; echo $?)"
+
+# Judgment gates have their own surfaces; two surfaces for one decision is how
+# they end up disagreeing.
+write_grant standing "A Tester" 2026-09-16 4 "spec-approval"
+assert_eq "spec-approval is never grantable here" "2" \
+  "$(env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" --show >/dev/null 2>&1; echo $?)"
+
+# WFI-159 lists merges among the blocked decisions, and that part is wrong:
+# wf-test already pushes, opens the PR and merges it unattended.
+AUTONOMY_MERGE=$("$SCRIPT_DIR/wf-autonomy.sh" merge 2>&1 || true)
+assert_eq "merge reports that it is already unattended, not that it is refused" "true" \
+  "$(if [[ "$AUTONOMY_MERGE" == *"already runs unattended"* ]]; then echo true; else echo false; fi)"
+
+# A typo must not read as a deliberate refusal, or it gets worked around.
+assert_eq "an unknown action is exit 2, never exit 1" "2" \
+  "$("$SCRIPT_DIR/wf-autonomy.sh" relase --quiet; echo $?)"
+
+# The ceiling bounds the blast radius of a grant when the pipeline goes wrong.
+rm -f .claude/orchestrator/events.log
+write_grant standing "A Tester" 2026-09-16 1 "release"
+TODAY_UTC=$(date -u +%Y-%m-%d)
+assert_ok "the first action inside the ceiling is authorized" \
+  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+assert_fails "the one past it is not" \
+  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+assert_eq "every question asked is on the event log, refusals included" "true" \
+  "$(grep -q 'autonomy-use' .claude/orchestrator/events.log \
+     && grep -q 'autonomy-refuse' .claude/orchestrator/events.log && echo true || echo false)"
+assert_eq "and an authorization carries the grant's identity, not just 'ok'" "true" \
+  "$(grep 'autonomy-use' .claude/orchestrator/events.log \
+     | grep -q 'A Tester' && echo true || echo false)"
+
+[ -n "$AUTONOMY_CFG_BACKUP" ] && printf '%s\n' "$AUTONOMY_CFG_BACKUP" > claude-workflow.yml
+rm -f .claude/orchestrator/events.log
+
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then

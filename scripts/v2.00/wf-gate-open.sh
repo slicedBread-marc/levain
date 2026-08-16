@@ -19,6 +19,10 @@
 #   migration       plan has pending MIGRATION-NOTES actions
 #   merge-failed    PR could not be merged (conflicts, checks, protection)
 #   stuck           plan exceeded its attempt budget
+#   release-approval  an unattended /wf-release found no standing grant for the
+#                     develop -> release promotion (wf-autonomy.sh release)
+#   deploy-approval   an unattended /wf-deploy found no standing grant for the
+#                     release -> main promotion (wf-autonomy.sh deploy)
 #
 # Re-opening an existing gate is a no-op (keeps the original timestamp), so a
 # retried worker doesn't reset the queue position.

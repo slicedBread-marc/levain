@@ -172,6 +172,43 @@ The plan burned its attempt budget without changing state — a retry will not h
    - **escalate** — write an ESCALATED finding describing the loop, set state to `draft`, then close the gate.
    - **stop** — leave the gate open and say so. It stays parked.
 
+### `release-approval` / `deploy-approval`
+
+An unattended `/wf-release` or `/wf-deploy` reached its promotion prompt with nobody to prompt, asked `wf-autonomy.sh`, and was told no. The question holds the commit list; read it out.
+
+1. Show the commits and ask the plain question — "promote these to `release`?" / "…to `main`?"
+2. **You do not promote anything here.** Close the gate with the answer as the resolution and tell the user to run `/wf-release` or `/wf-deploy` themselves. This skill drains queues; it does not run releases.
+3. If the gate's question carries `wf-autonomy.sh` stderr, the project's grant is **malformed** — that is a broken config, not a refusal. Show the problems verbatim and offer to fix `claude-workflow.yml`.
+
+**If the user says "stop asking me — you're authorized from now on", that is a real answer and it has a home.** Do not accept it as conversation; it dies at the session boundary, which is the whole of WFI-159. Write it down:
+
+```yaml
+orchestrator:
+  autonomy:
+    # <one line: who decided this, and on what basis>
+    mode: standing
+    granted_by: "<their name, as they give it>"
+    granted_on: <today, YYYY-MM-DD>
+    expires_on: <a date they choose — required, and short by default>
+    max_per_day: 4
+    standing_for:
+      - release        # only the actions they actually named
+```
+
+Then confirm it parses, and show them what it now covers:
+
+```bash
+scripts/wf-exec.sh wf-autonomy.sh --show
+```
+
+Three rules on writing one, all of them the difference between a record and a rubber stamp:
+
+- **Only the actions they named.** "I authorize deployments" is `deploy`. It is not `production-push`; ask separately, because that one is already live for users when it lands.
+- **`expires_on` is theirs to pick and is not optional.** Offer a default of a month and say you are doing so. A grant that cannot expire outlives the situation that justified it.
+- **The comment line is the point.** Every other autonomy setting in that file carries a dated justification; this one is the most consequential and gets the same. Write what they were trying to achieve, not "user approved".
+
+Never write a grant the user did not ask for, never widen one to save a future round trip, and never set `mode: standing` with an empty `standing_for` — `wf-autonomy.sh` rejects it, correctly, as a grant that authorizes nothing.
+
 ### `needs-input` (or any gate name not listed above)
 
 Display the question verbatim, get the answer, apply it, close the gate with the answer as the resolution. If applying it means writing code, route to `/wf-implement` — never edit source here.

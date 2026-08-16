@@ -85,8 +85,15 @@ The four-terminal layout above is the **manual** mode. With the orchestrator ena
 | `wf-orchestrate.sh <ID>` | Drive one bug/brief/plan end to end — the hook for an external project |
 | `/wf-board` | What's in flight: workers, gates, pipeline, events |
 | `/wf-attend` | Drain the queue of decisions the orchestrator refused to make |
+| `wf-autonomy.sh --show` | What this project has authorized the harness to do unattended |
 
 Routing is deterministic bash — the orchestrator never calls a model. Ships **disabled**; see `docs/orchestrator.md`.
+
+The promotions *after* `complete` — `/wf-release`, `/wf-deploy`, the production push — are the
+one place a human's standing authorization can be recorded rather than re-asked each session.
+`wf-autonomy.sh` answers whether an action is authorized and never performs one; the vocabulary
+is closed, and a grant carries an author, a date and a required expiry. Also ships **off**. Read
+[`docs/autonomy.md`](docs/autonomy.md) before adding a key.
 
 Each client also gets a generated `WORKFLOW.md` at its project root (from `templates/WORKFLOW.md`) — the entry-point contract for any agent or script that lands in that repo cold: pipeline shape, hooks that fire automatically, and the `wf-orchestrate.sh` exit codes.
 

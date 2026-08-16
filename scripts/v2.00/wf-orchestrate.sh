@@ -790,6 +790,18 @@ case "$mode" in
           "$(printf '%s' "$gate_info" | cut -f4 | sed 's/"/\\"/g')" \
           "$(printf '%s' "$gate_info" | cut -f5)"
       fi
+      # What a caller may do NEXT without a person, and until when.
+      #
+      # An external driver reading exit 20 knows only "a human owns this". It
+      # cannot tell "nobody has authorized anything here" from "the promotions
+      # after complete are authorized until the 16th" — and those call for
+      # opposite behaviour: one waits for a person, the other carries on into
+      # /wf-release. Reporting the posture is what lets exit 20 stay a hard
+      # stop while still telling the caller where the ceiling actually is.
+      printf '  "autonomy": { "mode": "%s", "covers": "%s", "expires": "%s" },\n' \
+        "$(wf_cfg orchestrator.autonomy.mode attended)" \
+        "$(wf_cfg_list orchestrator.autonomy.standing_for | tr '\n' ' ' | sed 's/ $//')" \
+        "$(wf_cfg orchestrator.autonomy.expires_on '')"
       printf '  "steps": ['
       first=true
       for s in "${steps[@]+"${steps[@]}"}"; do
