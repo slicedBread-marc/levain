@@ -345,6 +345,32 @@ wf_goal_line() {
   ' "$1"
 }
 
+# wf_goal_span <plan.md> → "<start> <end>": the line numbers the goal one-liner
+# actually occupies. Normally start == end. Empty when there is no goal.
+#
+# `## Goal` holds ONE line, and every writer here replaces exactly one — which
+# is why a goal that arrived as two lines could never be fully replaced again.
+# client-a's WFI-154: a sub-goal containing the two characters `\n` was
+# expanded to a real newline on the way in, so `## Goal` became two lines; the
+# pop that followed rewrote the first and left the second orphaned in the file.
+# The orphan began with `## `, so it parsed as a heading inside the plan.
+#
+# The span is the run of non-blank lines starting at wf_goal_line — blank line
+# or EOF ends it. It deliberately does NOT stop at a `#` line: an orphan that
+# looks like a heading is precisely what has to be inside the span for a caller
+# to see it. Callers decide what to do with a span wider than one line;
+# wf-goal-pop.sh replaces it when it is plain text and refuses when it is not,
+# because silently deleting something shaped like a heading is the worse error.
+wf_goal_span() {
+  local start
+  start=$(wf_goal_line "$1")
+  [ -n "$start" ] || return 0
+  awk -v s="$start" '
+    NR >= s { if (!NF) { print s, NR - 1; found = 1; exit } }
+    END { if (!found) print s, NR }
+  ' "$1"
+}
+
 # ── Claims ────────────────────────────────────────────────────────────────
 #
 # A claim says "a live session is working this artifact". It is only worth

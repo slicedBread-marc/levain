@@ -83,6 +83,47 @@ if [ "${#previous_goal}" -lt 10 ] || ! printf '%s' "$previous_goal" | grep -q '[
   exit 1
 fi
 
+# Locate what is being replaced BEFORE anything is written.
+#
+# The history row used to be stamped Resolved first, so the refusal below —
+# which says "nothing was written" — would already have written half the pop:
+# a resolved row and an unrestored goal, which is the one state no later run
+# can recover from, because the row it would pop is no longer unresolved.
+# Every check that can refuse now runs while plan.md is still untouched.
+#
+# Replace the current goal with the restored one — the WHOLE goal, not its
+# first line.
+#
+# This replaced exactly one line, on the reasoning that `## Goal` holds exactly
+# one. When that reasoning was false the pop still exited 0 and still printed
+# "Goal restored", leaving the rest of the old goal orphaned in the file
+# underneath the new one (client-a's WFI-154, where the orphan began `## `
+# and became a heading). wf-goal-push.sh now refuses to create a multi-line
+# goal, so this handles the ones already written.
+span=$(wf_goal_span "$plan_file")
+if [ -z "$span" ]; then
+  echo "Error: no goal one-liner under '## Goal' in $plan_file" >&2
+  exit 1
+fi
+span_start=${span% *}
+span_end=${span#* }
+
+# A wider span is a repair, and a repair must not delete something structural.
+# Plain continuation lines are absorbed; anything shaped like a heading is
+# reported and left alone, because a pop that silently removes a section is a
+# worse outcome than one that stops and says what it found.
+if [ "$span_end" -gt "$span_start" ]; then
+  if sed -n "$((span_start + 1)),${span_end}p" "$plan_file" | grep -q '^#'; then
+    echo "Error: '## Goal' in $plan_file spans lines $span_start-$span_end and one of the" >&2
+    echo "       extra lines starts with '#', so it may be a real section heading:" >&2
+    sed -n "$((span_start + 1)),${span_end}p" "$plan_file" | sed 's/^/         /' >&2
+    echo "       Nothing was written. Make '## Goal' a single line by hand, then re-run." >&2
+    echo "       (A multi-line goal is WFI-154; push refuses to create one as of v6.12.)" >&2
+    exit 1
+  fi
+  echo "Note: '## Goal' spanned lines $span_start-$span_end — collapsing it back to one." >&2
+fi
+
 today=$(date +%Y-%m-%d)
 
 # Mark the history row as resolved (awk into a tempfile — `sed -i ''` is macOS-only)
@@ -91,14 +132,10 @@ awk -v n="$line_num" -v today="$today" '
   { print }
 ' "$plan_file" > "$plan_file.tmp" && mv "$plan_file.tmp" "$plan_file"
 
-# Replace the current goal line with the restored goal
-content_line=$(wf_goal_line "$plan_file")
-if [ -z "$content_line" ]; then
-  echo "Error: no goal one-liner under '## Goal' in $plan_file" >&2
-  exit 1
-fi
-awk -v n="$content_line" -v goal="$previous_goal" '
-  NR == n { print goal; next }
+WF_GOAL="$previous_goal" awk -v s="$span_start" -v e="$span_end" '
+  BEGIN { goal = ENVIRON["WF_GOAL"] }   # not -v: -v expands \n and \t (WFI-154)
+  NR == s { print goal; next }
+  NR > s && NR <= e { next }
   { print }
 ' "$plan_file" > "$plan_file.tmp" && mv "$plan_file.tmp" "$plan_file"
 

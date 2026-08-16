@@ -28,6 +28,32 @@ if [ -z "$plan_id" ] || [ -z "$new_goal" ] || [ -z "$trigger" ]; then
   exit 1
 fi
 
+# A goal is ONE line, and so is a trigger — `## Goal` is read a line at a time
+# (wf_goal_text) and the trigger is one cell of a four-column table. Anything
+# that would end up spanning lines is refused here, at the only point where
+# refusing costs nothing.
+#
+# client-a's WFI-154: the goal text contained the two literal characters
+# `\n`, inside the phrase "no forged '\n## ' sequence". It reached awk through
+# `-v goal=…`, which expands escape sequences in its assignment, so a real
+# newline was written into plan.md and `## Goal` became two lines. The pop that
+# followed replaced only the first, leaving `## ' sequence) rather than …` in
+# the file as what markdown reads as a heading.
+#
+# Two independent fixes, because either alone leaves a hole: every value below
+# now reaches awk through ENVIRON (which does no expansion at all), and a value
+# that already contains a newline is rejected outright.
+for _field in "new_goal:$new_goal" "trigger:$trigger"; do
+  _name="${_field%%:*}"; _val="${_field#*:}"
+  case "$_val" in
+    *$'\n'*)
+      echo "Error: <$_name> contains a newline. It must be a single line." >&2
+      echo "       ## Goal and the Goal History table are both read one line at a time." >&2
+      exit 1 ;;
+  esac
+done
+unset _field _name _val
+
 REGISTRY="plans/REGISTRY.md"
 [ -f "$REGISTRY" ] || { echo "Error: $REGISTRY not found" >&2; exit 1; }
 
@@ -74,7 +100,8 @@ fi
 #
 # So: find the section, and only then find its separator. If the header is
 # still commented out, uncomment it rather than writing a second one.
-awk -v row="| $today | $current_goal | $trigger | — |" '
+WF_ROW="| $today | $current_goal | $trigger | — |" awk '
+  BEGIN { row = ENVIRON["WF_ROW"] }   # not -v: -v expands \n, \t, \\ (WFI-154)
   /^### Goal History/ { in_hist = 1; print; next }
 
   # Any other heading closes the section. If we got here without writing the
@@ -111,10 +138,18 @@ if ! grep -q "^| $today | " "$plan_file"; then
   exit 1
 fi
 
-# Replace the current goal line with the new goal
-goal_line_num=$(grep -n "^## Goal" "$plan_file" | head -1 | cut -d: -f1)
-content_line=$((goal_line_num + 1))
-awk -v n="$content_line" -v goal="$new_goal" '
+# Replace the current goal line with the new goal.
+#
+# wf_goal_line, not `## Goal` + 1: a plan whose heading is followed by a blank
+# line would otherwise have the new goal written into the blank and the old one
+# left standing underneath — two goals, to everything that reads this file.
+content_line=$(wf_goal_line "$plan_file")
+if [ -z "$content_line" ]; then
+  echo "Error: no goal one-liner under '## Goal' in $plan_file" >&2
+  exit 1
+fi
+WF_GOAL="$new_goal" awk -v n="$content_line" '
+  BEGIN { goal = ENVIRON["WF_GOAL"] }   # not -v: see WFI-154 above
   NR == n { print goal; next }
   { print }
 ' "$plan_file" > "$plan_file.tmp" && mv "$plan_file.tmp" "$plan_file"
