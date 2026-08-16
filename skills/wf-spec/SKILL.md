@@ -164,7 +164,11 @@ eval "$(scripts/wf-exec.sh wf-plan-id.sh BRF-041)"
 
 **Ask again immediately before you create the folder (step 5).** The answer describes the registry and `plans/` at the instant it was given, and step 3 is minutes of exploration, drafting and user confirmation away from step 5. client-a's WFI-147: two sessions on BUG-075 both got `PLN-075, COLLISION=, RESUME=false` seconds apart — both answers correct — and both drafted a plan under that number with different slugs. The duplicate was written and committed before `wf-registry-add.sh` refused the second row, which is the only backstop there is and it fires last. The second call is cheap, and it has seen the other session's work.
 
-**`PLAN_ID_RESUME=true` means the folder already there is yours** — an earlier attempt at this same artifact wrote it and did not finish. `PLAN_ID` is the inherited number and `PLAN_ID_DIR` is the folder: read what is in it, keep what is still right, and continue. Do **not** create a second folder and do not treat it as a collision.
+**`PLAN_ID_RESUME=true` means the folder already there is yours** — an earlier attempt at this same artifact wrote it and did not finish. `PLAN_ID_DIR` is the folder: read what is in it, keep what is still right, and continue. Do **not** create a second folder and do not treat it as a collision.
+
+**A resume does not always carry the inherited number.** `PLAN_ID_RESUME=true` together with `PLAN_ID_INHERITED=false` means the earlier attempt had itself collided and wrote under a *reallocated* number. **Use `$PLAN_ID`** — never the source artifact's own number — for the folder, the row, the branch and every commit message. client-a's WFI-162: BRF-081's first attempt wrote `plans/PLN-101-headless-support-bundle/`, and the resume check only ever looked under `plans/PLN-081-*`, so the next dispatch found nothing, allocated PLN-102, and burned a counter increment on a plan that must never exist. Every re-dispatch would have burned another, and a run driven by the brief ID alone would have created the duplicate.
+
+If `PLAN_ID_COLLISION` says `DUPLICATE PLANS FOR <id>`, **two folders both name this artifact** — the script picked the lowest-numbered one so as not to make a third. That is a real duplicate and not yours to merge silently: continue in `$PLAN_ID_DIR`, and open a **[GATE]** `needs-input` naming both folders.
 
 **Write into `$PLAN_ID_DIR`, not into the folder name you chose in step 2.** The earlier attempt picked its own slug, and it is rarely the one this run would pick — on WFI-147 the surviving folder was `PLN-075-test-poll-loops-fail-loudly` while the run in progress had chosen `PLN-075-enrolment-test-confirm-ordering`. The existing folder owns the REGISTRY row; a folder matching your slug would own nothing.
 
@@ -247,7 +251,7 @@ If the user picks a bug BUG-NNN:
    ```bash
    eval "$(scripts/wf-exec.sh wf-plan-id.sh <SRC-ID>)"
    ```
-   - `PLAN_ID_RESUME=true` — another session (or an earlier attempt of yours) created the folder while you were drafting. **Continue in `$PLAN_ID_DIR`**, whatever slug it carries; fold anything you drafted into what is there. Do not create a second folder.
+   - `PLAN_ID_RESUME=true` — another session (or an earlier attempt of yours) created the folder while you were drafting. **Continue in `$PLAN_ID_DIR`**, whatever slug it carries, and under whatever number `$PLAN_ID` names — a resume folder may sit under a reallocated number (WFI-162). Fold anything you drafted into what is there. Do not create a second folder.
    - `PLAN_ID_INHERITED=false` — the number was taken while you were drafting. Use the reallocated `$PLAN_ID` and record `$PLAN_ID_COLLISION` in the Context line.
    - Otherwise nothing moved: create `plans/$PLAN_ID-<slug>/` as planned.
 

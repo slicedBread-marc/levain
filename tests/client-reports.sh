@@ -3469,6 +3469,58 @@ assert_eq "a bug-named file in a plan's worktree answers to the plan" "2" \
 { kill "$guard_holder"; wait "$guard_holder"; } 2>/dev/null
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A resume is found under a reallocated number (client-a WFI-161, WFI-162)"
+
+# The resume probe only ever globbed plans/PLN-<inherited-num>-*. But the
+# attempt it looks for has already run this script, and if that attempt hit the
+# collision branch it wrote under a REALLOCATED number — where nothing looked.
+# So a resume was undetectable for exactly the plans that had collided, and
+# every re-dispatch allocated another number and burned another counter tick.
+registry_add_row PLN-970 unrelated-and-complete complete
+printf '# PLN-970\n\n> **Bug:** BUG-955 — something else entirely\n\n## Goal\nx\n' \
+  > plans/PLN-970-unrelated-and-complete/plan.md
+
+registry_add_row PLN-971 the-real-resume draft
+printf '# PLN-971\n\n> **Brief:** briefs/BRF-970-headless-snapshot.md\n\n## Goal\nx\n' \
+  > plans/PLN-971-the-real-resume/plan.md
+
+counter_before=$(grep -oE 'Counter: [0-9]+' plans/REGISTRY.md | head -1)
+eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-970)"
+assert_eq "the resume is found under its reallocated number" "PLN-971" "$PLAN_ID"
+assert_eq "and it is reported as a resume" "true" "$PLAN_ID_RESUME"
+assert_eq "inherited is false — the number is not the source's" "false" "$PLAN_ID_INHERITED"
+assert_eq "the folder to continue in is named" "plans/PLN-971-the-real-resume" "$PLAN_ID_DIR"
+assert_eq "and no counter tick was burned" "$counter_before" \
+  "$(grep -oE 'Counter: [0-9]+' plans/REGISTRY.md | head -1)"
+
+# Two folders naming one source is a real duplicate. Picking the lowest is
+# better than making a third, but it must be said where the skill reports it.
+registry_add_row PLN-972 the-duplicate draft
+printf '# PLN-972\n\n> **Brief:** briefs/BRF-970-headless-snapshot.md\n\n## Goal\nx\n' \
+  > plans/PLN-972-the-duplicate/plan.md
+eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-970)"
+assert_eq "a duplicate resumes into the lowest-numbered folder" "PLN-971" "$PLAN_ID"
+assert_eq "and the duplicate is named in the collision note" "true" \
+  "$(printf '%s' "$PLAN_ID_COLLISION" | grep -q 'DUPLICATE PLANS FOR BRF-970' && echo true || echo false)"
+rm -rf plans/PLN-972-the-duplicate
+
+# WFI-161: a reallocation leaves the session's claim on the SOURCE number, so
+# the plan it is writing is unclaimed — and the daemon dispatched a second spec
+# worker onto it the moment wf-registry-add.sh committed the draft row.
+registry_add_row PLN-973 holds-the-number complete
+printf '# PLN-973\n\n> **Bug:** BUG-956 — unrelated\n\n## Goal\nx\n' \
+  > plans/PLN-973-holds-the-number/plan.md
+"$SCRIPT_DIR/wf-claim.sh" BUG-973 >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-973)"
+assert_eq "a taken number is still reallocated" "false" "$PLAN_ID_INHERITED"
+assert_eq "and the claim follows it to the new number" "true" \
+  "$([ -f ".claude/orchestrator/claims/${PLAN_ID#PLN-}/.wf-claim" ] && echo true || echo false)"
+assert_eq "naming the same session that holds the source" "true" \
+  "$([ "$(sed -n 2p ".claude/orchestrator/claims/${PLAN_ID#PLN-}/.wf-claim" 2>/dev/null)" \
+      = "$(sed -n 2p .claude/orchestrator/claims/973/.wf-claim 2>/dev/null)" ] && echo true || echo false)"
+"$SCRIPT_DIR/wf-unclaim.sh" BUG-973 >/dev/null 2>&1
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

@@ -64,6 +64,12 @@
 #                              this run would have chosen — write there anyway,
 #                              it owns the REGISTRY row (empty when not a resume)
 #
+# A RESUME MAY CARRY A DIFFERENT NUMBER. `PLAN_ID_RESUME=true` with
+# `PLAN_ID_INHERITED=false` means the earlier attempt had itself collided and
+# wrote under a reallocated number — the folder is still this artifact's, and
+# PLAN_ID names the number to keep using. Read PLAN_ID, never the source's own
+# number, when creating or committing anything.
+#
 # Exit 0 on success, 1 on bad usage or an unusable registry.
 
 set -euo pipefail
@@ -83,6 +89,40 @@ REGISTRY="plans/REGISTRY.md"
 
 num="${id#*-}"
 prefix="${id%%-*}"
+
+# ── The claim has to follow the number ────────────────────────────────────
+#
+# "Claims key on the artifact number, so BRF-002 and the PLN-002 it becomes are
+# one claim" is the contract, and it holds right up until this script hands back
+# a DIFFERENT number. Then the session's claim on 081 covers nothing that
+# matters, and the plan it is writing under 101 is unclaimed.
+#
+# client-a's WFI-161: the moment wf-registry-add.sh committed the PLN-101
+# draft row — deliberately early, per WFI-140 — the daemon saw a dispatchable
+# draft with no claim and spawned a SECOND spec worker onto the plan the first
+# session was still writing. It was caught by wf-guard-write.sh refusing the
+# first session's next edit, which is the last line of defence, not the
+# intended one. On a 60s sweep, any plan taking over a minute to write hits
+# this window.
+#
+# So the claim is extended here, at the point the number changes, to the same
+# session that holds the source. Not moved: the source claim is still this
+# session's and still true. Silent and best-effort — an unclaimed caller (an
+# attended session that never claimed, a preview) gets no claim invented for it.
+wf_claim_follow() {
+  local new_id="$1" src_dir new_dir holder
+  src_dir=$(wf_claim_dir "$id" 2>/dev/null) || return 0
+  wf_claim_live "$src_dir" 2>/dev/null || return 0
+  wf_claim_mine "$src_dir" 2>/dev/null || return 0
+  new_dir=$(wf_claim_dir "$new_id" 2>/dev/null) || return 0
+  # Somebody already holds the new number — that is a real conflict and not
+  # this script's to resolve. Leave it; the caller's next write is refused by
+  # wf-guard-write.sh with a message naming the holder.
+  ! wf_claim_live "$new_dir" 2>/dev/null || return 0
+  holder=$(sed -n '2p' "$src_dir/.wf-claim" 2>/dev/null | tr -cd '0-9')
+  wf_claim_write "$new_dir" "${holder:-}" 2>/dev/null || return 0
+  wf_event claim-follow "$id" "claim extended to $new_id — the number was reallocated (WFI-161)"
+}
 
 # Already a plan: nothing to decide.
 if [ "$prefix" = "PLN" ]; then
@@ -123,18 +163,79 @@ fi
 # and `> **Brief:** …` for a brief, so the source ID appears in the first few
 # quoted lines and nowhere else by accident. Searched in the block before the
 # first `##` heading, so a passing mention of the bug in a Step cannot claim it.
-if [ -n "$existing_dir" ] && [ -f "$existing_dir/plan.md" ]; then
-  header=$(sed -n '1,/^## /p' "$existing_dir/plan.md")
-  if printf '%s' "$header" | grep -qE "(^|[^A-Za-z0-9-])${id}([^0-9]|$)"; then
-    wf_event id-resume "$id" "PLN-${num} folder $existing_dir is this artifact's own — resuming, not reallocating"
-    wf_emit PLAN_ID           "PLN-${num}"
-    wf_emit PLAN_NUM          "$num"
-    wf_emit PLAN_ID_INHERITED "true"
-    wf_emit PLAN_ID_COLLISION ""
-    wf_emit PLAN_ID_RESUME    "true"
-    wf_emit PLAN_ID_DIR       "$existing_dir"
-    exit 0
+#
+# claims_this <plan-dir> — 0 if that plan's header names the artifact being
+# specced. The one test, used for both searches below.
+claims_this() {
+  [ -f "$1/plan.md" ] || return 1
+  sed -n '1,/^## /p' "$1/plan.md" 2>/dev/null \
+    | grep -qE "(^|[^A-Za-z0-9-])${id}([^0-9]|$)"
+}
+
+if [ -n "$existing_dir" ] && claims_this "$existing_dir"; then
+  wf_event id-resume "$id" "PLN-${num} folder $existing_dir is this artifact's own — resuming, not reallocating"
+  wf_emit PLAN_ID           "PLN-${num}"
+  wf_emit PLAN_NUM          "$num"
+  wf_emit PLAN_ID_INHERITED "true"
+  wf_emit PLAN_ID_COLLISION ""
+  wf_emit PLAN_ID_RESUME    "true"
+  wf_emit PLAN_ID_DIR       "$existing_dir"
+  exit 0
+fi
+
+# ── The resume whose number is not the inherited one ──────────────────────
+#
+# The search above only ever looked under the INHERITED number. But the attempt
+# it is looking for is, by definition, one that already ran this script — and if
+# that attempt hit the collision branch, it wrote its plan under a REALLOCATED
+# number. Nothing looked there, so a resume was undetectable for exactly the
+# plans that had collided, and the collision branch ran again.
+#
+# client-a's WFI-162: BRF-081's inherited PLN-081 was taken, so the first
+# attempt wrote plans/PLN-101-headless-support-bundle/. The next dispatch of
+# BRF-081 found PLN-081 taken, looked no further, and allocated PLN-102 —
+# burning a counter increment and, but for the orchestrator naming PLN-101 in
+# the dispatch, about to create a second plan for one brief. Every re-dispatch
+# would have burned another.
+#
+# The header evidence does not depend on the number matching. So: before
+# allocating, ask every plan folder whether it is this artifact's.
+#
+# Sorted, so "the first match" is the lowest number — deterministic, and the
+# earliest attempt is the one that owns any REGISTRY row.
+resume_dir=""
+resume_extra=""
+while IFS= read -r d; do
+  [ -n "$d" ] || continue
+  claims_this "$d" || continue
+  if [ -z "$resume_dir" ]; then
+    resume_dir="$d"
+  else
+    resume_extra="${resume_extra:+$resume_extra, }$d"
   fi
+done < <(ls -d plans/PLN-[0-9]*/ 2>/dev/null | sed 's:/$::' | sort || true)
+
+if [ -n "$resume_dir" ]; then
+  resume_id=$(basename "$resume_dir" | grep -oE '^PLN-[0-9]+')
+  resume_num="${resume_id#*-}"
+
+  # More than one folder naming this source is a real duplicate, and picking
+  # one is better than making a third. Say so where the skill will report it.
+  note=""
+  if [ -n "$resume_extra" ]; then
+    note="also claimed by $resume_extra — DUPLICATE PLANS FOR $id, needs a human"
+    wf_event id-duplicate "$id" "$resume_dir and $resume_extra all name $id in their header"
+  fi
+
+  wf_event id-resume "$id" "$resume_dir names $id in its header — resuming there under $resume_id, not allocating"
+  wf_claim_follow "$resume_id"
+  wf_emit PLAN_ID           "$resume_id"
+  wf_emit PLAN_NUM          "$resume_num"
+  wf_emit PLAN_ID_INHERITED "false"
+  wf_emit PLAN_ID_COLLISION "$note"
+  wf_emit PLAN_ID_RESUME    "true"
+  wf_emit PLAN_ID_DIR       "$resume_dir"
+  exit 0
 fi
 
 # Taken. Allocate a fresh number — wf-counter-next.sh advances past anything
@@ -144,6 +245,7 @@ new_id=$("$SELF_DIR/wf-counter-next.sh" PLN)
 new_num="${new_id#*-}"
 
 wf_event id-collision "$id" "PLN-${num} taken ($collision) — allocated $new_id"
+wf_claim_follow "$new_id"
 
 wf_emit PLAN_ID           "$new_id"
 wf_emit PLAN_NUM          "$new_num"
