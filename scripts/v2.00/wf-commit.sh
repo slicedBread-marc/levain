@@ -64,6 +64,15 @@
 #
 #   --branch <name>   require exactly this branch. For callers that know.
 #
+# WF_REQUIRE_BRANCH does the same thing from the environment, for a caller that
+# is a SKILL rather than a script — a sequence of steps that all have to land on
+# one branch, several of which commit through helpers this caller does not pass
+# arguments to. `wf-deploy` step 9 is seven `wf-bug-close.sh` calls, each of
+# which commits its own rename; when the shared checkout moved from main to
+# develop underneath them, all seven committed to develop and nothing said so
+# (client-a's WFI-157). Exporting the branch once covers every commit made in
+# that window, whoever makes it. An explicit --branch wins.
+#
 # Exit 0 on success or when there was nothing to do; 1 on a real git failure
 # or a commit refused because the branch is wrong.
 
@@ -96,6 +105,9 @@ if [ -z "$message" ]; then
   exit 1
 fi
 
+# Env fallback — an explicit --branch always wins.
+[ -n "$want_branch" ] || want_branch="${WF_REQUIRE_BRANCH:-}"
+
 # assert_branch <path>... — refuse the commit if this branch may not carry it.
 #
 # Called at the LAST moment, not at entry: the whole point is that the branch
@@ -110,6 +122,7 @@ assert_branch() {
   if [ -n "$want_branch" ] && [ "$current" != "$want_branch" ]; then
     echo "wf-commit: refusing to commit on '$current' — caller requires '$want_branch'." >&2
     echo "           Another session moved this checkout mid-run (WFI-120). Nothing committed." >&2
+    echo "           Get back onto '$want_branch' and re-run this step." >&2
     return 1
   fi
 

@@ -72,12 +72,20 @@ What that mode costs, stated plainly: some Criticals are found by *cross-plan* r
    scripts/wf-exec.sh wf-branch-check.sh develop true
    ```
 
-   **Exit 2 means the check refused to switch.** Another session has this shared
-   checkout parked on a branch the pipeline does not own; switching it would move
-   a ref out from under them, which is how four commits for one plan landed on a
-   human's topic branch (WFI-123). Stop — do not `git checkout` past it. Under
-   `WF_UNATTENDED=1` exit 0 without claiming anything; the dispatcher offers the
-   work again once the checkout is back on a pipeline branch.
+   **Exit 2 means the check refused to switch.** Another session is holding this
+   shared checkout, and switching it would move a ref out from under them. Two
+   cases, both refused:
+
+   - parked on a branch the pipeline does not own — how four commits for one
+     plan landed on a human's topic branch (WFI-123);
+   - parked on `release` or `main` — a `/wf-release` or `/wf-deploy` is running.
+     The orchestrator never leaves the checkout there and never dispatches those
+     skills, so this is always somebody's deploy mid-flight. Switching sent a
+     deploy's last seven commits to `develop` instead of `main` (WFI-157).
+
+   Stop — do not `git checkout` past it. Under `WF_UNATTENDED=1` exit 0 without
+   claiming anything; the dispatcher offers the work again once the checkout is
+   back on develop.
 
 2. Spawn a **haiku subagent** to fetch and format the worklist:
 

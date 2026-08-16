@@ -37,9 +37,14 @@
 # no protection against this, because the branch was never the thing being
 # guarded; the worktree was.
 #
-# So: an auto-switch away from a branch that is not one of the pipeline's own
-# (develop / release / main / feature/*) is refused unattended, and warned
-# about interactively — where the human whose branch it is can see it.
+# So: an auto-switch of the SHARED checkout is refused unattended, and warned
+# about interactively — where the human whose branch it is can see it — away
+# from any branch the orchestrator would not have left it on:
+#
+#   · a branch this pipeline never creates (WFI-123 — a human's session)
+#   · `release` or `main` (WFI-157 — a /wf-release or /wf-deploy is holding it)
+#
+# Only `develop` and `feature/*` are switched away from without comment.
 
 set -euo pipefail
 
@@ -70,9 +75,59 @@ if [ "$current" = "$expected" ]; then
 fi
 
 if [ "$auto_switch" = "true" ]; then
-  # A branch this pipeline did not create is somebody's working session.
+  # Is this the shared main worktree, or a worktree of the caller's own?
+  # The refusals below guard the shared one; a linked worktree belongs to
+  # whoever created it and switching its branch races nobody.
+  toplevel=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  main_root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+  shared=false
+  [ -n "$toplevel" ] && [ "$toplevel" = "$main_root" ] && shared=true
+
   case "$current" in
-    develop|release|main|feature/*) ;;
+    # `release` and `main` are pipeline branches, and for a long time that was
+    # the whole test — so an unattended worker would move the shared checkout
+    # off either of them without comment.
+    #
+    # It is never right. The orchestrator dispatches nothing unless the shared
+    # checkout is on develop (checkout_available, WFI-135), and it never
+    # dispatches wf-release or wf-deploy at all. So an unattended worker that
+    # finds the checkout on release or main has found a deploy in progress:
+    # the dispatch happened while develop was checked out, and a human's
+    # skill parked it here afterwards.
+    #
+    # client-a's WFI-157 is what switching anyway costs. A wf-deploy had
+    # main checked out and was three and a half minutes into the full suite;
+    # a spec worker dispatched moments earlier called this script, moved the
+    # shared checkout to develop, and the deploy's next seven `wf-bug-close.sh`
+    # calls committed to develop instead of main. wf-deploy's own final
+    # `git checkout develop` then printed "Already on develop". Nothing in its
+    # output said the branch had moved.
+    #
+    # WFI-156 is the same event from the other side: wf-commit.sh refused
+    # outright ("another session moved this checkout mid-run") while this
+    # script, run seconds later, silently undid the move and exited 0. Two
+    # scripts, one condition, opposite answers. Now both refuse.
+    release|main|master)
+      if $shared && [ "${WF_UNATTENDED:-0}" = "1" ]; then
+        echo "Error: refusing to switch '$current' → '$expected'." >&2
+        echo "       This is the shared checkout and it is on '$current', which the" >&2
+        echo "       orchestrator never leaves it on — a release or a deploy is holding" >&2
+        echo "       it. Switching would move the branch out from under that run and" >&2
+        echo "       send its remaining commits to the wrong branch (WFI-157)." >&2
+        echo "       Stand down; the next sweep after it finishes dispatches normally." >&2
+        echo "CURRENT_BRANCH=$current"
+        echo "REFUSED_SWITCH=$expected"
+        exit 2
+      fi
+      # No warning on the attended path, deliberately. The attended caller of
+      # exactly this transition is `/wf-release` step 8 and `/wf-deploy` step 11
+      # handing the checkout back — the correct, expected end of the very run
+      # this rule protects. A warning printed there is a false alarm on the
+      # common case, and a false alarm on the common case is how a real one
+      # gets ignored.
+      ;;
+    develop|feature/*) ;;
+    # A branch this pipeline did not create is somebody's working session.
     *)
       if [ "${WF_UNATTENDED:-0}" = "1" ]; then
         echo "Error: refusing to switch '$current' → '$expected'." >&2

@@ -60,13 +60,38 @@ Before starting, confirm E2E passed on release:
    {{test_command}}
    ```
    If tests fail, abort the deploy — do NOT proceed to registry updates. Inform user of failures and suggest fixing on the release branch, then re-running `/wf-release`.
+
+7a. **Re-assert the branch before anything else commits.** The suite above takes
+    minutes, and this is the shared main worktree — the longest window in the
+    whole pipeline during which somebody else can move it:
+    ```bash
+    git branch --show-current    # must print: main
+    ```
+    If it prints anything else, **stop and do not continue the deploy.** Something
+    moved the checkout while the suite ran; go back to step 5 once it is quiet.
+    client-a's WFI-157: a spec worker dispatched moments before step 5 switched
+    the checkout from `main` to `develop` three minutes into the suite, and steps
+    9 and 10 committed to `develop` — then step 11's `git checkout develop`
+    printed "Already on develop" and the deploy reported success. As of v6.12
+    `wf-branch-check.sh` refuses that switch unattended, so this check is the
+    second line, not the first.
+
+    **Then hold the branch for steps 8–10** by naming it on every call:
+    ```bash
+    export WF_REQUIRE_BRANCH=main
+    ```
+    `wf-commit.sh` reads it and refuses any commit made on another branch —
+    including the ones `wf-registry-update.sh` and `wf-bug-close.sh` make on
+    their own. Each Bash call is a fresh shell, so prefix it per command
+    (`WF_REQUIRE_BRANCH=main scripts/wf-exec.sh …`) rather than relying on the
+    export surviving. Unset it at step 11, which legitimately leaves `main`.
 8. **Update REGISTRY.md** — for each plan that was on the release branch, verify state is `complete`. If not:
    ```bash
-   scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete -
+   WF_REQUIRE_BRANCH=main scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete -
    ```
 9. **Close linked bugs** — for each completed plan, check `plan.md` Goal for `**Bug:**` line:
    ```bash
-   scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
+   WF_REQUIRE_BRANCH=main scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
    ```
    Each call commits its own rename, both sides — leave the bug folders out of step 10's pathspec (WFI-136).
 
@@ -77,9 +102,11 @@ Before starting, confirm E2E passed on release:
     WFI-110):
     ```bash
     scripts/wf-exec.sh wf-commit.sh "release: complete <plan-names>" \
-      --add plans/PLN-NNN-<slug>/plan.md
+      --branch main --add plans/PLN-NNN-<slug>/plan.md
     ```
-11. **Back-merge `main` → `develop`** (auto-resolve in favor of main):
+11. **Back-merge `main` → `develop`** (auto-resolve in favor of main). This step
+    leaves `main` on purpose, so drop the step 7a guard first — `unset
+    WF_REQUIRE_BRANCH`, or simply stop prefixing it:
     ```bash
     git checkout develop
     git pull origin develop
