@@ -5,6 +5,25 @@
 #   wf-defer-criterion.sh --list [prereq-filter]
 #   wf-defer-criterion.sh --consume <DC-NNN> <plan-id> [--no-commit]
 #   wf-defer-criterion.sh --satisfy <DC-NNN> [--evidence <text>] [--no-commit]
+#   wf-defer-criterion.sh --amend <DC-NNN> [--criterion <text>] [--prereq <text>] [--note <text>] [--no-commit]
+#
+# A CRITERION'S TEXT IS NOT FINAL WHEN IT IS WRITTEN
+#
+# --consume and --satisfy record how a row ENDED. Neither can fix what it SAYS,
+# and this file tells its reader not to hand-edit it — so a criterion later
+# found incomplete had no correct way to be corrected at all.
+#
+# client-a's DC-048: an operator established that the criterion is only
+# observable with nothing intercepting traffic, and asked for that precondition
+# to be stated in the criterion, so that a future failure to reproduce reads as
+# "check for a proxy" rather than as a regression. The only options were to
+# hand-edit a file that forbids it, or to satisfy and re-defer under a new ID,
+# breaking every reference to the old one. It went into --satisfy --evidence
+# instead — which preserves the words but files them under the outcome, where
+# someone who has not yet run the criterion does not see them (WFI-158).
+#
+# --amend rewrites the text fields in place and keeps the ID, which is the
+# whole point: the ID is what other plans and issues already cite.
 #
 # TWO WAYS A DEFERRED CRITERION ENDS, AND ONLY ONE HAD A VERB
 #
@@ -99,6 +118,11 @@ wf_dc_header() {
 > criterion, and will check it there.
 > `--satisfy <DC-NNN> --evidence "<what proved it>"` — the real use happened
 > and the criterion is true. No plan involved.
+>
+> To correct or qualify what a row SAYS without ending it — a precondition
+> discovered later, a criterion found incomplete — use
+> `--amend <DC-NNN> --criterion "<new text>"` (also `--prereq`, `--note`).
+> It keeps the ID, because the ID is what other plans already cite.
 
 | ID | Criterion | Tag | From | Prereq | Note | Added | Status |
 |-|-|-|-|-|-|-|-|
@@ -148,6 +172,12 @@ Usage:
       The real use happened and the criterion is true. No plan involved.
       This is the ordinary ending for an (external) criterion — do not reach
       for --consume, which records future work on a plan that will not do it.
+
+  wf-defer-criterion.sh --amend <DC-NNN> [--criterion "<text>"] [--prereq "<text>"]
+                                         [--note "<text>"] [--no-commit]
+      Correct or qualify what the row SAYS, keeping its ID and status. For a
+      precondition found later, or a criterion found incomplete. At least one
+      of --criterion / --prereq / --note is required.
 USAGE
 }
 
@@ -171,6 +201,77 @@ case "${1:-}" in
         printf "%s\t%s\t%s\t%s\t%s\t%s\n", id, crit, tag, from, prereq, note
       }
     ' "$FILE"
+    exit 0
+    ;;
+  --amend)
+    dc="${2:?--amend requires a DC-NNN}"
+    shift 2
+    new_criterion=""; new_prereq=""; new_note=""; do_commit=true
+    set_criterion=false; set_prereq=false; set_note=false
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --criterion) new_criterion="${2:?--criterion requires a value}"; set_criterion=true; shift 2 ;;
+        --prereq)    new_prereq="${2:?--prereq requires a value}";       set_prereq=true;    shift 2 ;;
+        --note)      new_note="${2:?--note requires a value}";           set_note=true;      shift 2 ;;
+        --no-commit) do_commit=false; shift ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+      esac
+    done
+
+    if ! $set_criterion && ! $set_prereq && ! $set_note; then
+      echo "Error: --amend needs at least one of --criterion, --prereq, --note" >&2
+      usage
+      exit 1
+    fi
+
+    [ -f "$FILE" ] || { echo "Error: $FILE not found" >&2; exit 1; }
+    grep -q "^| $dc |" "$FILE" || { echo "Error: $dc has no row in $FILE" >&2; exit 1; }
+
+    # Same sanitising as the add path: this is free text going into a markdown
+    # table, and a pipe would silently add a column.
+    new_criterion=$(printf '%s' "$new_criterion" | tr '|' '/' | tr -d '\n')
+    new_prereq=$(printf '%s'    "$new_prereq"    | tr '|' '/' | tr -d '\n')
+    new_note=$(printf '%s'      "$new_note"      | tr '|' '/' | tr -d '\n')
+
+    wf_lock_acquire deferred-criteria
+    sync_header
+
+    # Amending a row that has already ended is legal but worth saying out loud
+    # — the reader of a consumed row is the plan that adopted it, and its words
+    # changing under them is exactly the kind of thing to be told about.
+    was_status=$(awk -F'|' -v dc="$dc" '{ id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id)
+      if ($0 ~ /^\| DC-/ && id == dc) { s = $9; gsub(/^[ \t]+|[ \t]+$/, "", s); print s; exit } }' "$FILE")
+    [ "$was_status" = "open" ] || echo "Note: $dc is '$was_status', not open — amending its text anyway" >&2
+
+    before=$(grep "^| $dc |" "$FILE" | head -1)
+    WF_C="$new_criterion" WF_P="$new_prereq" WF_N="$new_note" \
+    awk -F'|' -v dc="$dc" -v sc="$set_criterion" -v sp="$set_prereq" -v sn="$set_note" '
+      BEGIN { OFS = "|" }   # ENVIRON, not -v: -v expands \n and \\ in the value
+      {
+        id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id)
+        if ($0 ~ /^\| DC-/ && id == dc) {
+          if (sc == "true") $3 = " " ENVIRON["WF_C"] " "
+          if (sp == "true") $6 = " " ENVIRON["WF_P"] " "
+          if (sn == "true") $7 = " " ENVIRON["WF_N"] " "
+        }
+        print
+      }
+    ' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
+
+    echo "Amended $dc"
+    echo "  was: $before"
+    echo "  now: $(grep "^| $dc |" "$FILE" | head -1)"
+
+    # Committed here for the same reason every other write path is (WFI-144):
+    # the caller's exit pathspec cannot name a file this script chose, and a
+    # row left dirty on the shared develop checkout is carried off by whichever
+    # concurrent worker commits next (WFI-140).
+    if $do_commit; then
+      if ! (cd "$ROOT" && "$SELF_DIR/wf-commit.sh" "docs($dc): criterion amended" --add "plans/deferred-criteria.md"); then
+        echo "  wf-defer-criterion: $dc is amended but could not be committed —" >&2
+        echo "  commit plans/deferred-criteria.md before another worker does" >&2
+      fi
+    fi
     exit 0
     ;;
   --consume|--satisfy)
@@ -277,14 +378,60 @@ wf_lock_acquire deferred-criteria
 ensure_file
 sync_header
 
-# Next DC id. `10#` forces base 10 — a zero-padded "008" is not octal here.
-last=$(grep -oE '^\| DC-[0-9]+' "$FILE" 2>/dev/null | grep -oE '[0-9]+' | sort -n | tail -1 || true)
-next=$(printf 'DC-%03d' "$(( 10#${last:-0} + 1 ))")
+# ── Already deferred? ─────────────────────────────────────────────────────
+#
+# This file is a work list handed to a person, and two rows saying the same
+# thing are two items that are one. client-a's DC-051 and DC-053 are
+# byte-identical criterion text deferred twice from the same plan (PLN-090);
+# the script took the second without a word (WFI-158).
+#
+# The answer is not to refuse. A duplicate means the criterion is ALREADY
+# deferred, and refusing would leave the caller's plan.md box unticked — an
+# unticked box reads as "silently dropped", the exact thing the checkoff below
+# exists to prevent. So the existing ID is reused: no new row, the checkoff
+# still happens, and the caller is told which ID it landed under.
+#
+# Matched on a normalised copy — emphasis markers stripped, whitespace
+# collapsed, case folded — for the same reason the checkoff matcher normalises
+# (WFI-137): the text arriving here is usually the plan's line retyped without
+# its backticks. Only `open` rows count. A criterion that was satisfied or
+# consumed and comes back is genuinely new work, and gets a new ID.
+dup=$(WF_CRIT="$criterion" awk -F'|' '
+  function norm(s) {
+    gsub(/[`*_]/, "", s); gsub(/[[:space:]]+/, " ", s); gsub(/^ | $/, "", s)
+    return tolower(s)
+  }
+  BEGIN { want = norm(ENVIRON["WF_CRIT"]) }
+  /^\| DC-/ {
+    status = $9; gsub(/^[ \t]+|[ \t]+$/, "", status)
+    if (status != "open") next
+    if (norm($3) == want) {
+      id = $2; from = $5
+      gsub(/^[ \t]+|[ \t]+$/, "", id); gsub(/^[ \t]+|[ \t]+$/, "", from)
+      print id "\t" from
+      exit
+    }
+  }
+' "$FILE")
 
-printf '| %s | %s | %s | %s | %s | %s | %s | open |\n' \
-  "$next" "$criterion" "$tag" "$plan_id" "$prereq" "$note" "$(date +%Y-%m-%d)" >> "$FILE"
+if [ -n "$dup" ]; then
+  next="${dup%%$'\t'*}"
+  dup_from="${dup#*$'\t'}"
+  echo "Already deferred as $next (from $dup_from) — reusing that row, no new ID." >&2
+  echo "  If this is genuinely a second, different criterion, reword it so the two" >&2
+  echo "  can be told apart on the work list. To correct the existing wording:" >&2
+  echo "    wf-defer-criterion.sh --amend $next --criterion \"<text>\"" >&2
+  echo "Deferred: $next ($tag, prereq $prereq) from $plan_id — existing row"
+else
+  # Next DC id. `10#` forces base 10 — a zero-padded "008" is not octal here.
+  last=$(grep -oE '^\| DC-[0-9]+' "$FILE" 2>/dev/null | grep -oE '[0-9]+' | sort -n | tail -1 || true)
+  next=$(printf 'DC-%03d' "$(( 10#${last:-0} + 1 ))")
 
-echo "Deferred: $next ($tag, prereq $prereq) from $plan_id"
+  printf '| %s | %s | %s | %s | %s | %s | %s | open |\n' \
+    "$next" "$criterion" "$tag" "$plan_id" "$prereq" "$note" "$(date +%Y-%m-%d)" >> "$FILE"
+
+  echo "Deferred: $next ($tag, prereq $prereq) from $plan_id"
+fi
 
 # ── Close the loop in the plan itself ─────────────────────────────────────
 #
@@ -302,7 +449,13 @@ eval "$("$(dirname "$0")/wf-plan-info.sh" "$plan_id" 2>/dev/null)" || true
 plan_file="$ROOT/${PLAN_DIR:-}/plan.md"
 ticked=false
 
-if [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
+# Already ticked against this same DC — the reuse path above found the row, so
+# the plan very likely already carries the checkoff from the first deferral.
+# Running the matcher anyway would find no UNCHECKED line and print ACTION
+# REQUIRED at a plan that is already correct.
+if [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ] && grep -q "deferred as $next\b" "$plan_file"; then
+  echo "  already ticked in $PLAN_DIR/plan.md as $next — nothing to do"
+elif [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
   # ENVIRON, not -v: awk expands escape sequences in a -v assignment, so a
   # criterion naming a Windows path (`D:\git\...`) loses its backslashes and
   # then matches nothing. ENVIRON hands the bytes over untouched.

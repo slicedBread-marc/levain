@@ -622,6 +622,19 @@ A DC row is `open` until one of two things ends it. Both are one call, and both 
 ../../scripts/wf-exec.sh wf-defer-criterion.sh --satisfy DC-NNN --evidence "<proof>"  # the real use happened
 ```
 
+**A criterion's wording is not final either.** When you learn something the row
+should have said — a precondition, a qualification, a criterion that turns out
+to be incomplete — amend it. Do not fold it into `--evidence`, which files the
+words under the outcome where someone who has not yet run the criterion never
+sees them, and do not satisfy-and-re-defer, which breaks every reference to the
+old ID (WFI-158):
+
+```bash
+../../scripts/wf-exec.sh wf-defer-criterion.sh --amend DC-NNN --criterion "<corrected text>"
+```
+
+`--prereq` and `--note` amend the same way. The ID and the status are kept.
+
 **`--satisfy` is the ordinary ending for an `external` criterion.** External means *satisfiable only at first real use*, so most of them come true when that use happens, with no plan involved — a deploy runs green, the third-party account is finally provisioned, someone plugs the device in. Say so, with the evidence: a run URL, a date, a commit, what was observed.
 
 Do not reach for `--consume` to clear a row that was simply satisfied. `consumed by PLN-NNN` means that plan owes the check, so pointing it at a completed plan records future work nobody will do. client-a's DC-040 was satisfied by a green production run and had no verb for it, which is how all 40 of that project's DC rows stayed `open` including the ones long since true (WFI-148).
