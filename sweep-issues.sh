@@ -128,11 +128,16 @@ while IFS= read -r client; do
       # never move a client's checkout (WFI-157). If WORKFLOW-ISSUES.md is the
       # only path named, whatever branch the client is standing on is where the
       # record lands, which is correct on every branch.
+      #
+      # Subject, then the note as the BODY. A resolution note is a paragraph —
+      # the whole point is that it explains the fix — and putting it after -m
+      # as one string makes it all one subject line, which `git log --oneline`
+      # then renders as a wall.
       crc=0
       cout=$( cd "$client" \
         && git add WORKFLOW-ISSUES.md \
-        && git commit -q -m "chore(workflow): $resolve_id resolved — $resolve_note" \
-             -- WORKFLOW-ISSUES.md 2>&1 ) || crc=$?
+        && git commit -q -m "chore(workflow): $resolve_id resolved upstream" \
+             -m "$resolve_note" -- WORKFLOW-ISSUES.md 2>&1 ) || crc=$?
       if [ "$crc" -eq 0 ]; then
         echo -e "${GREEN}  $name: $resolve_id resolved and committed${NC}"
       else
