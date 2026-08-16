@@ -33,7 +33,7 @@ You receive a plan ID. From it:
 
 ```bash
 eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"     # PLAN_SLUG, PLAN_STATE, PLAN_DIR, PLAN_NAME
-scripts/wf-exec.sh wf-claim.sh PLN-NNN
+scripts/wf-exec.sh wf-claim.sh PLN-NNN --state ready
 scripts/wf-exec.sh wf-check-deps.sh PLN-NNN              # the declared Deps and their states
 scripts/wf-exec.sh wf-list-closure.sh PLN-NNN            # the TRANSITIVE closure — id, slug, state
 scripts/wf-exec.sh wf-list-cited-docs.sh PLN-NNN         # the reference docs those plans cite
@@ -48,6 +48,8 @@ variables **inside one Bash call**, or substitute the literal — `wf-claim.sh`
 keys on the number, so the bare `PLN-NNN` above is always enough.
 
 `wf-claim.sh` exits **2** when a live session already holds the plan. That is a stand-down, not a failure to route around: report it and stop (WFI-146).
+
+It exits **3** when the plan is no longer `ready` — a builder picked it up, or it was replanned, between the dispatch and you. Exit 0 without doing anything; nothing was claimed. A consistency pass is worth running while both plans are still documents and worth nothing once one is being built (WFI-153).
 
 Read `$PLAN_DIR/plan.md`, then `plan.md` for **every plan `wf-list-closure.sh` names** — the plans in `Deps`, the plans in *their* `Deps`, transitively. Read them all before concluding anything; a contradiction is by definition not visible in one file.
 

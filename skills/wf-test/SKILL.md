@@ -21,9 +21,11 @@ Order of work:
 
 0. **Stand down if a human is already in here.** Before anything else:
    ```bash
-   scripts/wf-exec.sh wf-claim.sh <plan-name> --if-free
+   scripts/wf-exec.sh wf-claim.sh <plan-name> --if-free --state testing
    ```
    Exit 2 means **another** live session holds the claim — an attended `/wf-test` is walking this plan right now. Print the message and exit 0 immediately. Do not read the plan, do not start a container, and above all do not run the exit path: the container you would tear down and the `test-progress.md` you would overwrite are theirs (WFI-070).
+
+   Exit 3 means the plan is no longer in `testing` — it moved between the dispatch and you, so the work you were sent for is already done. Exit 0 without doing anything; nothing was claimed and there is nothing to release (WFI-153).
 
    Exit 0 is the normal case and includes `already held on your behalf by the dispatcher` — the orchestrator claims a plan before launching you, and that claim names *your* PID. Standing down there is standing down against yourself: it ended ~15s runs reporting a human who did not exist, and parked every plan that reached testing after three no-op dispatches (WFI-073, WFI-075). Only exit 2 means someone else.
 1. If your instructions name a plan, skip the selection menu and work that plan.

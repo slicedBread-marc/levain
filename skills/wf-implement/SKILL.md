@@ -261,9 +261,11 @@ and must be discarded, not reported.
 
 8. **Claim the plan — on its own, before anything with a `cd` in it:**
    ```bash
-   scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug>
+   scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug> --state ready,active
    ```
    Its own call on purpose. Bundled into step 9 it went down with that block when the permission classifier refused the compound (client-e WFI-015), and the run continued unclaimed — which is what lets a second worker start on the same plan. If this one call is refused, that is worth a `wf-issue.sh`, not a shrug.
+
+   `--state ready,active` are the only two states this skill has anything to do. **Exit 3** means the plan left them between the dispatch and now — verified, tested, replanned, abandoned. Exit 0 without doing anything; nothing was claimed, and building against a plan that has moved on is worse than not building (WFI-153).
 9. **Set develop root, change to worktree, confirm branch, and merge develop — all in a single bash call:**
    Workflow files may appear modified after a deploy — they belong to develop and **must NOT be committed as plan work**. The pathspec exclusions below keep them out of your commit; `wf-merge-develop.sh` then commits them separately as `chore: sync workflow infra from develop` so the tree is clean enough to merge.
    ```bash

@@ -53,7 +53,10 @@ You receive a plan ID (e.g. `PLN-003`) as context. From this:
    ```
    The failure is worth recognising on sight (WFI-071): it looks like a corrupt repository and is nothing of the kind.
 1. **Look up the plan** — `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"` → sets PLAN_SLUG, PLAN_STATE, PLAN_BRANCH, PLAN_DIR, PLAN_NAME
-2. **Claim the plan** — `scripts/wf-exec.sh wf-claim.sh PLN-NNN`. Exit 2 means another live session holds it: stop there and report it, rather than verifying a plan someone else is writing (WFI-146).
+2. **Claim the plan, and only in `verify`** — `scripts/wf-exec.sh wf-claim.sh PLN-NNN --state verify`.
+
+   - **Exit 2** — another live session holds it. Stop there and report it, rather than verifying a plan someone else is writing (WFI-146).
+   - **Exit 3** — the plan is no longer in `verify`. The dispatch was a statement about the registry when it was read, and it has moved since. Exit 0 without doing anything: you were sent at PLN-078 after its verify, its human test, its PR merge and its bug close had all been committed (WFI-153), and a verify that runs to completion routes on its findings — which would send a `complete` plan back to `testing`. Nothing was claimed, so there is nothing to release.
 
 > **`$PLAN_*` are placeholders, not live shell variables.** Every Bash call is a
 > fresh shell, so nothing the `eval` set survives to the next one. Read the

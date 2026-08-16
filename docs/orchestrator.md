@@ -154,6 +154,18 @@ exit 2 against another live session, and taking a claim on purpose is
 over `wf-unclaim.sh` + `wf-claim.sh`: unclaiming is also a *trigger*, and flushes
 any spawn the daemon deferred behind that claim.
 
+**The claim also carries the state precondition, as of v6.15.** A dispatch is a
+statement about the registry at the moment it was read, and the worker acts on
+it some time later; nothing re-checked in between. A `wf-verify` worker was
+handed PLN-078 whose verify, human test, PR merge and bug close were all already
+committed — it stood down by judgement, but a verify that runs to completion
+routes on its findings, and routing a `complete` plan sends it back to `testing`
+(WFI-153). So every dispatched role now claims with the states it can actually
+work — `--state verify`, `--state testing`, `--state ready,active`, `--state
+ready` — and `wf-claim.sh` exits **3**, claiming nothing, when the plan has moved
+on. The check is skipped when no `PLN` row exists for that number, so a spec
+worker claiming `BUG-096` before the plan exists is unaffected.
+
 ### Which PID a claim records
 
 A claim is only worth what its PID outlives. `wf_session_pid` records, in order:

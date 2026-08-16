@@ -55,6 +55,8 @@ Exit 0 claimed. **Exit 2 means another live session already holds it** — that 
 
 Exit 0 also covers `already held on your behalf by the dispatcher`: that claim names your own PID and means carry on.
 
+**`--state <s>[,<s>...]`** adds a precondition: claim only if the plan is in one of those registry states, **exit 3** otherwise with nothing claimed. Every dispatched role passes the states it can actually work — a dispatch describes the registry when it was read, and a worker acts on it later. A verify worker was handed PLN-078 whose verify, human test, PR merge and bug close were already committed; had it not noticed, it would have routed a `complete` plan back to `testing` (WFI-153). Exit 3 is a stand-down: exit 0, do nothing, release nothing.
+
 **release** — on the way out:
 
 ```bash
