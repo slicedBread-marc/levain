@@ -41,6 +41,10 @@ source "$(dirname "$0")/wf-lock.sh"
 # shellcheck source=wf-states.sh
 source "$(dirname "$0")/wf-states.sh"
 
+# Resolved BEFORE the cd: `$0` may be relative, and `dirname "$0"` after moving
+# to the develop root then names a directory that does not exist.
+SELF_DIR=$(cd "$(dirname "$0")" && pwd)
+
 cd "$(wf_develop_root)"   # plans/* is develop-root work — see wf-orch-lib.sh
 
 REGISTRY="plans/REGISTRY.md"
@@ -148,6 +152,104 @@ if ! grep -q "^| $plan_id |.*| $from_state |" "$REGISTRY"; then
   exit 1
 fi
 
+# --- Guard: a plan may only be advertised as `ready` if the review says so ---
+#
+# `ready` is a promise to a builder: a human or an unattended reviewer read this
+# plan and approved it. Every draft→ready caller is wf-spec's review gate, so
+# the promise is only ever as good as the review LANDING — and it does not
+# always land.
+#
+# client-a's WFI-164: wf-spec wrote both review rounds into plan.md, stamped
+# them, and called this script with `--add plans/PLN-107-…/`. It reported
+# "committed 1 path(s)" and committed only REGISTRY.md, because by then the
+# review was not in the working tree at all — a concurrent wf-test run's
+# `wf-stash.sh push` had swept the whole shared develop checkout seconds
+# earlier, plan.md included. The row said `ready`; the committed plan.md said
+# "> Filled by the planner's review gate". A plan advertised as reviewed whose
+# text records no review is the exact state WFI-122 and WFI-140 exist to
+# prevent, reached that time through the transition commit rather than around
+# it.
+#
+# So the row is not written on trust. wf-review-status.sh already answers this
+# mechanically, and it knows the difference between a verdict and the
+# template's own menu of verdicts. It reads the WORKING TREE, which is what a
+# `--commit` here will carry (`git commit -- <paths>` records working-tree
+# content), so this refuses precisely when the commit would publish a lie.
+#
+# A missing plan folder lands here too, and refusing is right: WFI-053 left a
+# registry reading `ready` for a plan git had never seen, and a builder moved
+# it to `active` against a folder that did not exist.
+#
+# WF_ALLOW_UNREVIEWED=1 is the escape hatch — a migration, a client importing
+# plans that predate the review gate, or the test suite's registry-only
+# fixtures. It is never the answer to a plan the reviewer has not seen.
+if [ "$from_state" = "draft" ] && [ "$to_state" = "ready" ] && [ "${WF_ALLOW_UNREVIEWED:-}" != "1" ]; then
+  REVIEW_LOCATION=none
+  REVIEW_STALE=false
+  eval "$("$SELF_DIR/wf-review-status.sh" "$plan_id" 2>/dev/null || true)"
+  if [ "${REVIEW_LOCATION:-none}" = "none" ]; then
+    echo "Error: $plan_id has no review of record — refusing to mark it 'ready'." >&2
+    echo "       'ready' tells a builder this plan was reviewed and approved. Its" >&2
+    echo "       plan.md carries no verdict, only the template placeholder (WFI-164)." >&2
+    echo "       If you just wrote one, it is not on disk where this can see it:" >&2
+    echo "       re-write the '## Review' section, re-run wf-review-stamp.sh, and" >&2
+    echo "       verify with: wf-review-status.sh $plan_id" >&2
+    echo "       Nothing was changed. WF_ALLOW_UNREVIEWED=1 overrides (migrations only)." >&2
+    exit 1
+  fi
+  if [ "${REVIEW_STALE:-false}" = "true" ]; then
+    echo "wf-registry-update: warning — $plan_id's review is STALE (the plan changed after the verdict)." >&2
+    echo "                    Marking it ready anyway; re-review before a builder acts on it." >&2
+  fi
+fi
+
+# --- Guard: `complete` means the work is actually on an integration branch ---
+#
+# client-a's WFI-165: PLN-103 reached `complete` and its bug was closed with
+# feature/PLN-103-… merged nowhere. develop, release and main all lacked the
+# fix outright; a full release/deploy cycle ran green on 1490 tests and shipped
+# to production without the change the plan and the closed bug both claimed.
+# It surfaced only because a human spot-checked main against the outbound
+# message.
+#
+# Two routes reach it. wf-test's PR step compared `release..$BRANCH` against a
+# ref that did not resolve, read the empty output as "already merged", and
+# skipped the PR (fixed there too). wf-deploy step 8 then says "for each plan
+# that was on the release branch, verify state is complete. If not: …" and a
+# plan that was never on it takes the same line.
+#
+# The registry is where both routes meet, so the check lives here: a plan whose
+# branch still exists and is an ancestor of nothing does not become `complete`.
+# A branch that is GONE is accepted — `git branch -d` refuses to delete an
+# unmerged branch, so its absence is evidence, and wf-deploy legitimately runs
+# long after wf-test removed it.
+#
+# WF_ALLOW_UNMERGED=1 for the genuine exceptions: work that landed under
+# another branch name, or a plan completed by hand. To drop a plan whose work
+# will never land, use wf-abandon.sh — that is what `abandoned` is for.
+if [ "$to_state" = "complete" ] && [ "${WF_ALLOW_UNMERGED:-}" != "1" ]; then
+  row_branch=$(grep "^| $plan_id |" "$REGISTRY" | head -1 | awk -F'|' '{print $6}' | xargs || true)
+  case "$row_branch" in ""|"—"|"-"|"–") row_branch="" ;; esac
+  if [ -n "$row_branch" ] && git rev-parse --verify --quiet "$row_branch" >/dev/null 2>&1; then
+    merged=false
+    checked=""
+    for _t in release origin/release main origin/main develop origin/develop; do
+      git rev-parse --verify --quiet "$_t" >/dev/null 2>&1 || continue
+      checked="$checked $_t"
+      if git merge-base --is-ancestor "$row_branch" "$_t" 2>/dev/null; then merged=true; break; fi
+    done
+    if [ -n "$checked" ] && [ "$merged" = false ]; then
+      echo "Error: $plan_id's branch '$row_branch' is merged into none of:$checked" >&2
+      echo "       Refusing to mark it 'complete' — that would close the plan, close its" >&2
+      echo "       bug, and ship a release claiming work no branch carries (WFI-165)." >&2
+      echo "       Merge it first (wf-test's PR to release, or the develop merge), then" >&2
+      echo "       re-run this transition. Nothing was changed." >&2
+      echo "       WF_ALLOW_UNMERGED=1 overrides; wf-abandon.sh is for work that never lands." >&2
+      exit 1
+    fi
+  fi
+fi
+
 # Rewrite the row by column index rather than by regex surgery.
 #   | ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |
 #     $2    $3     $4       $5        $6       $7      $8    $9    $10
@@ -207,13 +309,13 @@ git add "$REGISTRY" 2>/dev/null || true
 # Pathspec-scoped via wf-commit.sh: this commit carries the transition and the
 # findings that justify it, and nothing a concurrent worker left staged.
 if [ -n "$commit_msg" ]; then
-  "$(dirname "$0")/wf-commit.sh" "$commit_msg" --allow-empty \
+  "$SELF_DIR/wf-commit.sh" "$commit_msg" --allow-empty \
     --add "$REGISTRY" "${add_files[@]+"${add_files[@]}"}"
 elif ! $no_commit; then
   # No message from the caller: commit the row on its own anyway. A failure
   # here is worth saying out loud but is not the caller's fault — the write it
   # asked for landed, and it is staged for whatever commits next.
-  if ! "$(dirname "$0")/wf-commit.sh" "registry($plan_id): $from_state → $to_state" \
+  if ! "$SELF_DIR/wf-commit.sh" "registry($plan_id): $from_state → $to_state" \
         --add "$REGISTRY"; then
     echo "wf-registry-update: the transition is staged but could not be committed — commit plans/REGISTRY.md before another worker does" >&2
   fi

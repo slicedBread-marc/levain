@@ -726,10 +726,21 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    ```bash
    git push -u origin "$CURRENT_BRANCH"
    ```
-   Then check if there's a diff from release before creating PR:
+   Then check whether this branch is **already on release**, before creating a PR:
    ```bash
-   if git log release.."$CURRENT_BRANCH" --oneline | head -1 | grep -q .; then
+   RELEASE_REF=origin/release
+   git rev-parse --verify --quiet "$RELEASE_REF" >/dev/null || RELEASE_REF=release
+   if ! git rev-parse --verify --quiet "$RELEASE_REF" >/dev/null; then
+     echo "ERROR: neither origin/release nor release resolves — cannot tell whether $CURRENT_BRANCH is merged."
+     echo "Stopping. Do NOT continue: the steps below would complete a plan whose work is nowhere."
+     exit 1
+   fi
+   if ! git merge-base --is-ancestor "$CURRENT_BRANCH" "$RELEASE_REF"; then
    ```
+
+   **Ask "is it merged?", never "is the log empty?".** This was `git log release.."$CURRENT_BRANCH"`, and in a project whose checkout has never had a local `release` branch that ref does not resolve: `git log` fails, prints nothing to stdout, and the emptiness reads identically to "no new commits". client-a's WFI-165 took the `else` below — *"branch already merged or fast-forward"* — for `feature/PLN-103-…`, which was merged nowhere at all. No PR was opened, the plan reached `complete`, its bug was closed, and a full release/deploy cycle shipped to production green on 1490 tests without the fix the plan and the bug both claimed. It surfaced only because a human spot-checked `main` by hand.
+
+   `merge-base --is-ancestor` cannot fail that way: a broken ref makes it exit non-zero, which routes to the PR — the safe direction. `wf-registry-update.sh` refuses `testing → complete` for an unmerged branch as the backstop, so this now stops at a refused transition rather than a green deploy.
    Create PR (skip if one already exists for this branch):
    ```bash
      EXISTING_PR=$(gh pr view "$CURRENT_BRANCH" --json url -q .url 2>/dev/null || echo "")
@@ -774,7 +785,7 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    ```bash
      fi
    else
-     echo "No new commits vs release — skipping PR (branch already merged or fast-forward)"
+     echo "$CURRENT_BRANCH is already an ancestor of $RELEASE_REF — skipping PR"
    fi
    ```
 2. Destroy container:

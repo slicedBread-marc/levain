@@ -92,7 +92,20 @@ registry_add_row() {
     { print }
   ' plans/REGISTRY.md > plans/REGISTRY.tmp && mv plans/REGISTRY.tmp plans/REGISTRY.md
   mkdir -p "plans/$id-$slug"
-  printf '# %s-%s\n\n## Goal\nTest goal for %s\n' "$id" "$slug" "$id" > "plans/$id-$slug/plan.md"
+  # The `## Review` section is part of the default fixture because `ready` now
+  # requires one: wf-registry-update.sh refuses draft→ready for a plan whose
+  # plan.md records no verdict (WFI-164). A fixture without it is not a plan
+  # any pipeline would advance, so it would test the guard rather than the
+  # thing under test. registry_add_row_unreviewed is the one that omits it.
+  printf '# %s-%s\n\n## Goal\nTest goal for %s\n\n## Review\n> **2026-04-07 — Plan Review**\n> **Result:** Approved\n' \
+    "$id" "$slug" "$id" > "plans/$id-$slug/plan.md"
+}
+
+# Same, minus the review — for the guard's own tests.
+registry_add_row_unreviewed() {
+  registry_add_row "$@"
+  printf '# %s-%s\n\n## Goal\nTest goal for %s\n\n## Review\n> Filled by the planner'"'"'s review gate before status is set to Ready.\n>\n> **[date] — Plan Review / Code Review**\n> **Result:** Approved | Approved with notes | Blocked\n' \
+    "$1" "$2" "$1" > "plans/$1-$2/plan.md"
 }
 
 # Read column n of a registry row, whitespace-trimmed.
@@ -190,6 +203,116 @@ assert_eq "branch cleared to em-dash" "—" "$(registry_col PLN-010 6)"
 # Prefix-collision guard: PLN-01 must not match PLN-010 / PLN-011.
 assert_fails "prefix ID does not match a longer row" \
   "$SCRIPT_DIR/wf-registry-update.sh" PLN-01 verify testing
+
+section "A plan does not become 'ready' without a review of record (WFI-164)"
+
+# The failure this closes: wf-spec wrote both review rounds, a concurrent
+# worker's stash swept the shared checkout before the transition committed, and
+# the row went to `ready` over a plan.md holding the bare template placeholder.
+registry_add_row_unreviewed PLN-012 unreviewed draft
+assert_fails "draft→ready refused with only the template placeholder" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-012 draft ready
+assert_eq "row left in draft" "draft" "$(registry_col PLN-012 4)"
+
+assert_ok "WF_ALLOW_UNREVIEWED=1 overrides for migrations" \
+  env WF_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-012 draft ready
+assert_eq "override wrote the state" "ready" "$(registry_col PLN-012 4)"
+
+# A row with no plan folder at all is the WFI-053 shape: registry says ready,
+# git has never seen the plan.
+awk '/<!-- Counter:/ && !d { print "| PLN-013 | ghost | draft | — | — | 2026-04-07 | 2.00 | — | — |"; d=1 } { print }' \
+  plans/REGISTRY.md > plans/REGISTRY.tmp && mv plans/REGISTRY.tmp plans/REGISTRY.md
+assert_fails "draft→ready refused when the plan folder does not exist" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-013 draft ready
+
+# Every other transition is untouched by the guard.
+registry_add_row PLN-014 elsewhere verify
+assert_ok "verify→testing unaffected" "$SCRIPT_DIR/wf-registry-update.sh" PLN-014 verify testing
+
+section "A plan does not become 'complete' with its branch merged nowhere (WFI-165)"
+
+# Branch refs are built with plumbing and never checked out: this suite's
+# working tree is shared by every section, and a checkout mid-run would move
+# files out from under the tests that follow.
+git branch develop HEAD >/dev/null 2>&1
+# `git mktree` rejects an entry whose name contains a slash, so the blob is
+# always `work.txt` — the branch name goes on the ref, not on the file.
+_orphan_branch() {
+  local name="$1" blob tree commit
+  blob=$(printf 'work on %s\n' "$name" | git hash-object -w --stdin)
+  tree=$(printf '100644 blob %s\twork.txt\n' "$blob" | git mktree)
+  commit=$(git commit-tree "$tree" -p HEAD -m "impl: $name")
+  [ -n "$commit" ] || { echo "  _orphan_branch: could not build a commit for $name" >&2; return 1; }
+  git branch "$name" "$commit" >/dev/null 2>&1
+}
+
+registry_add_row PLN-015 unmerged testing
+_orphan_branch feature/PLN-015-unmerged
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-015 testing testing feature/PLN-015-unmerged >/dev/null 2>&1
+
+assert_fails "testing→complete refused for a branch merged into nothing" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-015 testing complete -
+assert_eq "row left in testing" "testing" "$(registry_col PLN-015 4)"
+assert_eq "branch NOT cleared by the refused call" "feature/PLN-015-unmerged" "$(registry_col PLN-015 6)"
+
+assert_ok "WF_ALLOW_UNMERGED=1 overrides" \
+  env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-015 testing complete -
+
+# Merged: the same transition is allowed. The branch points at develop itself,
+# which is the state a feature branch is left in once its merge has landed.
+registry_add_row PLN-016 merged testing
+git branch feature/PLN-016-merged develop >/dev/null 2>&1
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-016 testing testing feature/PLN-016-merged >/dev/null 2>&1
+assert_ok "testing→complete allowed once the branch is an ancestor of develop" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-016 testing complete -
+
+# A branch that is GONE is accepted: `git branch -d` refuses an unmerged
+# branch, so its absence is evidence, and wf-deploy runs long after wf-test
+# removed it.
+registry_add_row PLN-018 deleted testing
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-018 testing testing feature/PLN-018-deleted >/dev/null 2>&1
+assert_ok "testing→complete allowed when the branch no longer exists" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-018 testing complete -
+
+# No branch on the row: nothing to check, nothing to refuse.
+registry_add_row PLN-017 branchless testing
+assert_ok "testing→complete allowed for a plan with no branch" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-017 testing complete -
+
+git branch -D develop feature/PLN-015-unmerged feature/PLN-016-merged >/dev/null 2>&1 || true
+
+section "Code that reached develop outside the pipeline is reported (WFI-155)"
+
+registry_add_row PLN-019 prior ready
+printf '## Goal\nCopy the minted token.\n\n**Bug:** BUG-019\n' > plans/PLN-019-prior/plan.md
+git branch develop HEAD >/dev/null 2>&1
+
+assert_fails "a clean base reports no prior work" \
+  "$SCRIPT_DIR/wf-prior-work.sh" PLN-019
+
+# A spec commit naming the plan is bookkeeping, not a build.
+git add plans/PLN-019-prior/plan.md >/dev/null 2>&1
+git commit -q -m "spec(PLN-019-prior): plan drafted" -- plans/PLN-019-prior/plan.md >/dev/null 2>&1
+git branch -f develop HEAD >/dev/null 2>&1
+assert_fails "a plans/-only commit naming the plan is not prior work" \
+  "$SCRIPT_DIR/wf-prior-work.sh" PLN-019
+
+# A code commit naming the bug, straight onto develop, is.
+mkdir -p src
+echo "the prototype that bypassed wf-implement" > src/clipboard.js
+git add src/clipboard.js >/dev/null 2>&1
+git commit -q -m "fix(BUG-019): copy button writes the minted token" -- src/clipboard.js >/dev/null 2>&1
+git branch -f develop HEAD >/dev/null 2>&1
+
+assert_ok "a code commit naming the bug IS prior work" \
+  "$SCRIPT_DIR/wf-prior-work.sh" PLN-019
+prior_out=$("$SCRIPT_DIR/wf-prior-work.sh" PLN-019 2>&1 || true)
+assert_eq "it names the commit subject" "true" \
+  "$(printf '%s' "$prior_out" | grep -q 'copy button writes the minted token' && echo true || echo false)"
+assert_eq "it says a human decides" "true" \
+  "$(printf '%s' "$prior_out" | grep -q 'A human decides' && echo true || echo false)"
+
+git branch -D develop >/dev/null 2>&1 || true
 
 section "Prefix-safe column writes"
 

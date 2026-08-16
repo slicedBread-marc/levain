@@ -324,10 +324,17 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    ```bash
    git push -u origin "$CURRENT_BRANCH"
    ```
-   Then check if there's a diff from release before creating PR:
+   Then check whether this branch is **already on release**, before creating a PR:
    ```bash
-   if git log release.."$CURRENT_BRANCH" --oneline | head -1 | grep -q .; then
+   RELEASE_REF=origin/release
+   git rev-parse --verify --quiet "$RELEASE_REF" >/dev/null || RELEASE_REF=release
+   if ! git rev-parse --verify --quiet "$RELEASE_REF" >/dev/null; then
+     echo "ERROR: neither origin/release nor release resolves — cannot tell whether $CURRENT_BRANCH is merged. Stopping."
+     exit 1
+   fi
+   if ! git merge-base --is-ancestor "$CURRENT_BRANCH" "$RELEASE_REF"; then
    ```
+   **Ask "is it merged?", never "is the log empty?".** `git log release..$CURRENT_BRANCH` prints nothing when `release` does not resolve locally, and that emptiness is indistinguishable from "no new commits" — client-a's WFI-165 skipped the PR for a branch merged nowhere, and the plan still reached `complete`. `merge-base --is-ancestor` exits non-zero on a broken ref, routing to the PR, which is the safe direction.
    Create PR (skip if one already exists for this branch):
    ```bash
      EXISTING_PR=$(gh pr view "$CURRENT_BRANCH" --json url -q .url 2>/dev/null || echo "")
@@ -372,7 +379,7 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    ```bash
      fi
    else
-     echo "No new commits vs release — skipping PR (branch already merged or fast-forward)"
+     echo "$CURRENT_BRANCH is already an ancestor of $RELEASE_REF — skipping PR"
    fi
    ```
 2. Destroy container:

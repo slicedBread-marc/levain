@@ -148,6 +148,17 @@ A dependency that is abandoned **will never be satisfied**. `wf-check-deps.sh` r
 
 **States are validated on write.** `wf-registry-update.sh` rejects any value outside the set above. It used to accept anything, so a typo — or a state someone invented under deadline — became a live value in the pipeline's single source of truth, unroutable by the orchestrator and permanently blocking to dependents. Use `wf-abandon.sh <ID> --reason "..."`, which records why in the plan's `progress.md`; the reason is the part that would otherwise be lost.
 
+**Two transitions carry a precondition, checked on write.** The registry is what every other skill trusts, so the two states that make a *claim about work someone else did* verify it rather than take the caller's word:
+
+| Transition | Refused when | Override |
+|-|-|-|
+| `draft → ready` | `plan.md` records no review verdict — `wf-review-status.sh` reports `REVIEW_LOCATION=none`, or the plan folder does not exist | `WF_ALLOW_UNREVIEWED=1` |
+| `* → complete` | the Branch column names a branch that still exists and is an ancestor of none of `release`, `main`, `develop` (or their `origin/` counterparts) | `WF_ALLOW_UNMERGED=1` |
+
+`ready` tells a builder the plan was reviewed and approved, and a review that never reached disk turns that into a lie the pipeline cannot detect downstream — client-a's WFI-164 published a `ready` row over a `plan.md` holding the bare template placeholder, because a concurrent worker's stash had swept the review out of the shared checkout seconds before the transition committed. `complete` closes the plan, closes its bug, and licenses a release; WFI-165 reached it with the feature branch merged nowhere at all, and a full deploy shipped green without the fix the plan and the bug both claimed.
+
+A *missing* branch is accepted for `complete`: `git branch -d` refuses to delete an unmerged branch, so its absence is evidence, and `wf-deploy` runs long after `wf-test` removed it. For work that will never land, `wf-abandon.sh` is the answer — not the override.
+
 `wf-registry-audit.sh` checks the registry against `plans/` from the other direction — folders with no row, rows with no folder, duplicate IDs, a counter that would collide, unroutable states, and pre-implementation states sitting on branches that are ahead of develop.
 
 ## Findings Format (v4)

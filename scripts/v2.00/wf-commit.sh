@@ -277,6 +277,25 @@ assert_branch "${changed[@]+"${changed[@]}"}" || exit 1
 if [ "${#changed[@]}" -gt 0 ]; then
   git commit -q -m "$message" -- "${changed[@]}"
   echo "committed ${#changed[@]} path(s): $message"
+  # NAME them. A count is not a receipt: client-a's WFI-164 read "committed
+  # 1 path(s)" as success for a call that asked for a REGISTRY transition AND
+  # the reviewed plan folder, and carried only the registry — the plan.md the
+  # caller believed it had just published was gone from the working tree before
+  # the add ran, so there was nothing to stage and nothing said so. A caller
+  # that can see `plans/REGISTRY.md` alone on this list catches it in the same
+  # breath; one that only sees "1" cannot.
+  #
+  # No `| head`: `head` closing the pipe early kills printf with SIGPIPE, and
+  # under `set -o pipefail` that fails the script AFTER the commit landed.
+  shown=0
+  for p in "${changed[@]}"; do
+    if [ "$shown" -ge 30 ]; then
+      echo "  … and $(( ${#changed[@]} - 30 )) more"
+      break
+    fi
+    echo "  $p"
+    shown=$((shown + 1))
+  done
   exit 0
 fi
 

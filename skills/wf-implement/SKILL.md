@@ -206,6 +206,19 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
    A gate can open after you were dispatched: `wf-consistency` runs against `ready` plans and opens one the moment it finds a cross-plan contradiction. client-a's WFI-063 had an implementer land on a plan carrying an unanswered `consistency-migration` gate, with the worklist showing it as ordinary `new` work; it implemented three steps before discovering the gate by reading `.claude/orchestrator/gates/` by hand. The worklist names this now (`gated` rows in `wf-list-implementable.sh`), and this check is the second line of defence for a gate that opened between the dispatch and you.
 2. **Read the plan** — `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"` then read `$PLAN_DIR/plan.md`
 3. **Goal check** — if `$PLAN_GOAL_MISSING` is `true`: under `WF_UNATTENDED=1` this is a **[GATE]** — open gate `goal-missing` and exit 0. Otherwise ask the user: "This plan has no goal summary. Please provide a one-line goal describing what this achieves." Write their answer as the first line under `## Goal` in `$PLAN_DIR/plan.md`, then commit it scoped: `$DEVELOP_ROOT/scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): add missing goal" --add plans/PLN-NNN-<slug>/plan.md` — a bare `git commit` takes the whole shared index (WFI-048/049). Re-run `eval "$(scripts/wf-exec.sh wf-plan-info.sh $PLAN_NAME)"` to pick up the goal.
+3b. **Check whether someone already built this** — before you take the plan, and before you cut a branch off develop:
+   ```bash
+   scripts/wf-exec.sh wf-prior-work.sh PLN-NNN
+   ```
+   Exit 0 means it found commits on `develop` naming this plan or its bug that touch code, not just `plans/`. **Stop.** Under `WF_UNATTENDED=1` this is a **[GATE]**:
+   ```bash
+   scripts/wf-exec.sh wf-gate-open.sh PLN-NNN prior-work \
+     "<sha> '<subject>' is already on develop and touches this plan's files. It came in outside the pipeline — no feature branch, no verify. Accept it as this plan's work (straight to verify), or revert it on the feature branch and implement per plan.md?" \
+     --context plans/PLN-NNN-<slug>/plan.md --skill wf-implement
+   ```
+   Then exit 0 without transitioning the registry or creating a branch. Attended, put the same question to the user.
+
+   client-a's WFI-155: PLN-092's plan.md told the builder that the BUG-092 prototype was untracked scratch that "won't follow a git worktree add". By dispatch time `fix(BUG-092): …` was a real commit on develop touching all five files the plan's steps target, with no branch, no `.plan-ref` and no MUTATION marker — so the worktree inherited it and the note was wrong through no fault of the planner. Neither answer is the builder's to pick: implementing per plan.md fights code that is already there, and calling it done accepts unreviewed work as the deliverable. **A plan's description of what is on develop is a claim about the past, and this is how you check it.** Exit 1 means clean — say nothing and carry on.
 4. **Update REGISTRY.md** — lock the plan:
    ```bash
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN ready active feature/PLN-NNN-<slug>

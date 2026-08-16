@@ -510,11 +510,17 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
    > |-|-|-|-|-|
    ```
 
-   Then stamp it, so the record says which text was judged rather than only when:
+   Then stamp it, so the record says which text was judged rather than only when, and **commit the review before you do anything else**:
    ```bash
    scripts/wf-exec.sh wf-review-stamp.sh PLN-NNN --no-commit
+   scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): reviewed — <verdict>, round N" \
+     --add plans/PLN-NNN-<slug>/
    ```
-   Run this after the **last** write to `plan.md`. Anything you change afterwards makes the verdict stale — correctly, and now detectably. `--no-commit` leaves the stamp staged, because step 6 commits on every route it takes and a stamp that commits itself first steals that message (WFI-085).
+   Stamp after the **last** write to `plan.md`. Anything you change afterwards makes the verdict stale — correctly, and now detectably. `--no-commit` on the stamp is still right: it must not commit itself, because the commit that carries it should name the verdict, not the stamp (WFI-085). What changed is who commits it — this step, immediately, not step 6.
+
+   **A review left staged does not survive the turn.** It used to sit in the index until step 6 committed it, and the develop checkout is shared: client-a's WFI-164 had a concurrent `/wf-test` run `wf-stash.sh push` the whole working tree — plan.md included — in the seconds between. Step 6's transition then found nothing to stage, reported `committed 1 path(s)`, and published a row reading `ready` over a plan.md carrying the bare template placeholder. Two rounds of review existed nowhere in history. Committing here closes the window; `wf-registry-update.sh` refuses `draft → ready` without a review of record, so a lost one now stops the transition instead of decorating it.
+
+   Step 6 still lists the plan folder in its own pathspec. With the review already committed that add is a no-op, which is the intended outcome — and if it is *not* a no-op, something wrote to the plan after the verdict and the stamp is telling you so.
 
 6. **Route the approved plan.** Read the mode and the gating tags — don't assume either:
    ```bash
@@ -621,13 +627,17 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
     scripts/wf-exec.sh wf-review-stamp.sh PLN-NNN --no-commit
     eval "$(scripts/wf-exec.sh wf-review-status.sh PLN-NNN)"
     # REVIEW_LOCATION must be `plan`, and REVIEW_STALE must be false.
+    scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): amendment reviewed — <verdict>" \
+      --add plans/PLN-NNN-<slug>/
     ```
+
+    **Commit it here, once the check passes** — do not leave the amendment and its verdict staged for step 8. Steps 7 and 8 are separate turns on a shared develop checkout, and a concurrent `/wf-test` merge stashes the whole working tree: client-a's WFI-164 lost two rounds of review in exactly that window, and the transition that followed reported success over a plan.md holding the template placeholder. Step 8 keeps its pathspec; with this committed it carries only what step 7 changed.
 
     **Stamp last, then check.** Without the stamp, staleness is decided by comparing two dates, and a replan that reviews and amends on the same day — every replan that finishes in one session — is unorderable: the script correctly answers `REVIEW_STALE=unknown`, and the condition above can then never be satisfied by any amount of re-reviewing (client-a WFI-069). The stamp records a hash of the plan body inside `## Review`, so the answer becomes true or false and stays right no matter how many rounds run in a day.
 
     **It used to sit at step 6, and the ordering guaranteed the failure it exists to detect.** `wf-goal-pop.sh` rewrites the `## Goal` one-liner — inside the hashed body — so stamping before the pop made `REVIEW_STALE` flip from false to true with no content amendment in between, on every replan that pushed a sub-goal. Two clients hit it and both papered over it by re-stamping and explaining themselves in prose (client-a WFI-092, WFI-093). The rule is now literal: **nothing writes to `plan.md` after the stamp.**
 
-    `--no-commit` stages the stamp instead of committing it, so step 8's commit carries the amendment under a message that describes it (WFI-085). Callers with no commit of their own — `/wf-attend`, a review agent's exit — omit the flag and let the stamp commit itself.
+    `--no-commit` keeps the stamp from committing itself under a message about stamping (WFI-085); the `wf-commit.sh` line above then carries it under one that names the verdict. Callers with no commit of their own — `/wf-attend`, a review agent's exit — omit the flag and let the stamp commit itself.
 
 7. **Update REGISTRY.md — the target state depends on whether a worktree exists:**
    ```bash

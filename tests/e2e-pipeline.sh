@@ -239,6 +239,10 @@ Add a data-version attribute to the HTML tag for build identification.
 **Verification:** Build passes again
 PLAN
 
+# `ready` requires a review of record (WFI-164) — this stands in for the
+# verdict wf-spec's review gate writes.
+printf '\n## Review\n> **2026-04-07 — Plan Review**\n> **Result:** Approved\n' >> "$PLAN_DIR/plan.md"
+
 cat > "$PLAN_DIR/findings.md" << 'FINDINGS'
 FINDINGS
 
@@ -427,6 +431,10 @@ cat > "$PLAN2_DIR/plan.md" << 'P2'
 ## Goal
 Test the fix cycle path through the pipeline.
 P2
+
+# `ready` requires a review of record (WFI-164) — this stands in for the
+# verdict wf-spec's review gate writes.
+printf '\n## Review\n> **2026-04-07 — Plan Review**\n> **Result:** Approved\n' >> "$PLAN2_DIR/plan.md"
 touch "$PLAN2_DIR/findings.md"
 cat > "$PLAN2_DIR/progress.md" << 'PR2'
 ## Steps
@@ -493,6 +501,10 @@ cat > "$PLAN3_DIR/plan.md" << 'P3'
 ## Goal
 Test the escalation path through the pipeline.
 P3
+
+# `ready` requires a review of record (WFI-164) — this stands in for the
+# verdict wf-spec's review gate writes.
+printf '\n## Review\n> **2026-04-07 — Plan Review**\n> **Result:** Approved\n' >> "$PLAN3_DIR/plan.md"
 touch "$PLAN3_DIR/findings.md"
 touch "$PLAN3_DIR/progress.md"
 
