@@ -346,7 +346,23 @@ dispatch() {
   # next time one does, it is news again.
   skip_clear "$role" "$id"
 
+  # A preview that skips half the guards is not a preview.
+  #
+  # This printed "would spawn" and returned, so the checks that live inside
+  # wf-spawn.sh — already-running, and the last-moment re-read of the registry
+  # row — were never consulted. `--sweep --dry-run` said "would spawn: spec
+  # BRF-081" while every real sweep refused it, and the human comparing the two
+  # concluded the dispatcher was fine and looked elsewhere (client-a's
+  # WFI-160). wf-spawn.sh has had its own --dry-run since it was written;
+  # delegating to it makes the preview run the same code the sweep does, and
+  # anything it declines is reported as declined.
   if $dry_run; then
+    local drc=0
+    "$SELF_DIR/wf-spawn.sh" "$role" "$artifact" --dry-run >/dev/null 2>&1 || drc=$?
+    if [ "$drc" -ne 0 ]; then
+      echo "  would SKIP: $role $artifact — wf-spawn declined (rc=$drc); re-run it directly to see why"
+      return 1
+    fi
     echo "  would spawn: $role $artifact"
     return 0
   fi

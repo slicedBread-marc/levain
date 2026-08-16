@@ -132,7 +132,11 @@ if [ -f "$pidfile" ]; then
     echo "wf-spawn: $role already running for $id (PID $old_pid)" >&2
     exit 2
   fi
-  rm -f "$pidfile"
+  # `--dry-run` says it changes nothing, and reaping a dead worker's pidfile is
+  # a change. Everything below is guarded the same way, so the dispatcher's own
+  # preview can delegate here and get the real answer without side effects
+  # (WFI-160).
+  $dry_run || rm -f "$pidfile"
 fi
 
 # ── Claim before the worker starts, not after ─────────────────────────────
@@ -170,11 +174,13 @@ if wf_claim_held "$artifact"; then
   # here; wf-unclaim.sh flushes the queue the moment the claim comes down, by
   # which point every guard can answer honestly.
   if wf_claim_mine "$WF_CLAIM_HELD_DIR"; then
-    mkdir -p "$ORCH/pending"
-    printf '%s\t%s\t%s\n' "$role" "$artifact" "$model_override" \
-      > "$ORCH/pending/${num}-${role}.spawn"
+    if ! $dry_run; then
+      mkdir -p "$ORCH/pending"
+      printf '%s\t%s\t%s\n' "$role" "$artifact" "$model_override" \
+        > "$ORCH/pending/${num}-${role}.spawn"
+      wf_event queue "$id" "$role deferred until the claim is released"
+    fi
     echo "wf-spawn: $artifact still holds this session's own claim — $role queued until it is released" >&2
-    wf_event queue "$id" "$role deferred until the claim is released"
     exit 2
   fi
 
@@ -184,7 +190,7 @@ fi
 
 # A queued spawn for this exact role is being served right now; drop the marker
 # so the release path does not launch a second one.
-rm -f "$ORCH/pending/${num}-${role}.spawn" 2>/dev/null || true
+$dry_run || rm -f "$ORCH/pending/${num}-${role}.spawn" 2>/dev/null || true
 
 # ── Re-read the state, here, at the last possible moment ──────────────────
 #
@@ -210,9 +216,29 @@ rm -f "$ORCH/pending/${num}-${role}.spawn" 2>/dev/null || true
 # Exit 2, not 1: nothing is wrong. The work moved on, and both callers already
 # read 2 as "not mine to do" (the dispatcher skips, drive-one re-reads and
 # routes to the role the new state actually calls for).
+#
+# ONLY FOR A PLN. The lookup used to be `grep "^| PLN-$num |"` for any artifact
+# — it took the numeric part of whatever it was given and read it as a plan.
+#
+# That is not what a number means here. A number identifies one artifact across
+# the types it passes through (BUG-096 → PLN-096), but wf-plan-id.sh reallocates
+# when the inherited number is already taken (WFI-011), so `PLN-081` and
+# `BRF-081` are routinely two unrelated things.
+#
+# client-a's WFI-160: BRF-081, a brand-new brief with no registry row at all,
+# was looked up as PLN-081 — an unrelated plan completed the day before. The
+# guard read `complete`, refused the spawn, and logged `spec: state moved to
+# 'complete' before launch`, a transition that never happened. The brief was
+# permanently undispatchable: every sweep re-ran the same lookup and got the
+# same answer. BUG-098 and BUG-099 dispatched on that same sweep only because
+# PLN-098 and PLN-099 happened to be sitting at `draft`.
+#
+# So the guard now asks about the artifact it was actually given. For a bug or
+# a brief there is no plan row to be stale, and the comment below has always
+# said abstaining is the right answer — it just never got the chance.
 registry="$ROOT/plans/REGISTRY.md"
 cur_state=""
-if [ -f "$registry" ]; then
+if [ -f "$registry" ] && [ "${id%%-*}" = "PLN" ]; then
   cur_state=$(grep "^| PLN-$num |" "$registry" 2>/dev/null | head -1 | awk -F'|' '{print $4}' | xargs || true)
 fi
 

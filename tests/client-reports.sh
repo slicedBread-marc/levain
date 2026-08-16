@@ -2468,6 +2468,14 @@ out=$("$SCRIPT_DIR/wf-spawn.sh" verify PLN-909-deferred-spawn --dry-run 2>&1); r
 assert_eq "a spawn behind our own claim is queued, not declined outright" "true" \
   "$(printf '%s' "$out" | grep -q 'queued until it is released' && echo true || echo false)"
 assert_eq "and says so with 'nothing to do' rather than an error" "2" "$rc"
+
+# --dry-run reports the deferral and writes nothing, which is what lets the
+# dispatcher's own `--sweep --dry-run` delegate here for the real answer instead
+# of printing "would spawn" past guards it never ran (WFI-160).
+assert_eq "a dry run does not write the marker" "false" \
+  "$([ -f .claude/orchestrator/pending/909-verify.spawn ] && echo true || echo false)"
+
+"$SCRIPT_DIR/wf-spawn.sh" verify PLN-909-deferred-spawn >/dev/null 2>&1 || true
 assert_eq "the marker is keyed on the artifact number" "true" \
   "$([ -f .claude/orchestrator/pending/909-verify.spawn ] && echo true || echo false)"
 
@@ -3400,6 +3408,65 @@ assert_eq "a pre-v6 plan is still skipped, not failed" "0" \
   "$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-955 >/dev/null 2>&1; echo $?)"
 assert_eq "and it names the actual reason" "true" \
   "$(printf '%s' "$old_out" | grep -q 'no schema_version line' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A brief is not looked up as a plan (client-a WFI-160)"
+
+# wf-spawn's last-moment state re-read took the NUMERIC part of any artifact and
+# grepped it as a plan row. BRF-081, a brand-new brief with no registry row at
+# all, resolved to PLN-081 — an unrelated plan completed the day before — so the
+# guard refused, logged "state moved to 'complete' before launch" for a
+# transition that never happened, and the brief became permanently
+# undispatchable: every sweep re-ran the same lookup and got the same answer.
+registry_add_row PLN-960 unrelated-and-done complete
+out=$("$SCRIPT_DIR/wf-spawn.sh" spec BRF-960 --dry-run 2>&1); rc=$?
+assert_eq "a brief whose number collides with a complete plan still spawns" "0" "$rc"
+assert_eq "and the refusal message is not about that plan" "false" \
+  "$(printf '%s' "$out" | grep -q "PLN-960 is 'complete'" && echo true || echo false)"
+
+# The guard itself is untouched for the artifact it was actually given.
+assert_eq "a PLN in the wrong state is still refused" "2" \
+  "$("$SCRIPT_DIR/wf-spawn.sh" spec PLN-960-unrelated-and-done --dry-run >/dev/null 2>&1; echo $?)"
+
+registry_add_row PLN-961 specable draft
+assert_eq "and a PLN in the right state is not" "0" \
+  "$("$SCRIPT_DIR/wf-spawn.sh" spec PLN-961-specable --dry-run >/dev/null 2>&1; echo $?)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "The write guard covers a plan's files, not a plan's name (client-a WFI-163)"
+
+# It matched the ID anywhere in the path string, so a scratchpad note named
+# after the plan it concerns — outside the repository, invisible to every other
+# session — was refused. The workaround is to rename the file, which teaches
+# people to route around the guard rather than respect it.
+registry_add_row PLN-962 guarded active
+claim_962=".claude/orchestrator/claims/962/.wf-claim"
+sleep 30 & guard_holder=$!
+mkdir -p "$(dirname "$claim_962")"
+printf '%s\n%s\n' "$(date +%s)" "$guard_holder" > "$claim_962"
+
+guard_write() {
+  printf '{"tool_input":{"file_path":"%s"}}' "$1" \
+    | "$SCRIPT_DIR/wf-guard-write.sh" >/dev/null 2>&1
+  echo $?
+}
+
+assert_eq "a claimed plan's own file is still blocked" "2" \
+  "$(guard_write "plans/PLN-962-guarded/findings.md")"
+assert_eq "so is a file in its worktree" "2" \
+  "$(guard_write "feature-branches/PLN-962-guarded/src/App.cs")"
+assert_eq "a scratchpad note merely named after it is not" "0" \
+  "$(guard_write "/private/tmp/claude-501/x/scratchpad/PLN-962-spec-correction.md")"
+assert_eq "nor is a source file that mentions it" "0" \
+  "$(guard_write "src/PLN-962-notes.md")"
+assert_eq "the shared registry is never an artifact" "0" \
+  "$(guard_write "plans/REGISTRY.md")"
+
+# A file inside one plan's worktree belongs to that plan whatever it is named —
+# a greedy match over intervening segments hands it to the wrong claim.
+assert_eq "a bug-named file in a plan's worktree answers to the plan" "2" \
+  "$(guard_write "feature-branches/PLN-962-guarded/src/BUG-013-fix.cs")"
+{ kill "$guard_holder"; wait "$guard_holder"; } 2>/dev/null
 
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n'

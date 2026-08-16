@@ -74,13 +74,47 @@ print(p if isinstance(p, str) else "")
 ' 2>/dev/null) || exit 0
 [ -n "$target" ] || exit 0
 
-# The artifact whose territory this path is in. One rule, by ID in the path,
-# which covers every layout the pipeline uses without enumerating them:
+# The artifact whose territory this path is in.
+#
+# "Territory" is a LOCATION, not a spelling. This used to be a bare
+# `grep -oE '(PLN|BUG|BRF)-[0-9]+'` over the whole path string, so any path
+# whose name mentioned an artifact was treated as that artifact's file —
+# wherever it pointed. client-a's WFI-163: a planner recording a spec
+# correction for later was blocked from writing
+# `/private/tmp/…/scratchpad/PLN-101-spec-correction.md`, a note in the
+# session's own temp directory, outside the repository, that no other session
+# can see (the guard's refusal on that plan's `findings.md`, moments earlier,
+# was correct and is untouched).
+#
+# The cost of that is not one annoyed session: the workaround is to rename the
+# file, so the guard teaches people to route around it rather than respect it.
+#
+# So the ID must both START a path segment and sit under a directory the
+# pipeline owns, which is what every real layout looks like:
 #   plans/PLN-042-slug/plan.md          feature-branches/PLN-042-slug/src/…
 #   bugs/open/BUG-013-slug.md           briefs/BRF-007-slug.md
-# A path with no artifact ID belongs to no artifact — plans/REGISTRY.md among
-# them, which is shared by design and has wf-lock.sh's `registry` lock instead.
-artifact=$(printf '%s' "$target" | grep -oE '(PLN|BUG|BRF)-[0-9]+' | head -1) || exit 0
+#
+# A path with no artifact ID in an owned location belongs to no artifact —
+# plans/REGISTRY.md among them, which is shared by design and has wf-lock.sh's
+# `registry` lock instead. Failing open here is the whole posture of this
+# script: a missed block costs a collision the other guards still catch, a
+# wrong block costs the editor.
+# The owning artifact is the one named in the segment DIRECTLY under the owned
+# directory — so a source file inside a plan's worktree belongs to that plan,
+# whatever the file is called. `feature-branches/PLN-042-slug/src/BUG-013-fix.cs`
+# is PLN-042's, not BUG-013's; a greedy match over intervening segments gets
+# that backwards and would hand the file to the wrong claim.
+#
+# `bugs/` is the one layout with a segment in between — `bugs/open/BUG-013…`,
+# `bugs/triaged/…`, `bugs/closed/…` — so it is asked second and only for itself.
+artifact=$(printf '%s' "$target" \
+  | grep -oE '(^|/)(plans|briefs|feature-branches)/(PLN|BUG|BRF)-[0-9]+' \
+  | head -1 | grep -oE '(PLN|BUG|BRF)-[0-9]+$')
+if [ -z "$artifact" ]; then
+  artifact=$(printf '%s' "$target" \
+    | grep -oE '(^|/)bugs/([^/]+/)?(PLN|BUG|BRF)-[0-9]+' \
+    | head -1 | grep -oE '(PLN|BUG|BRF)-[0-9]+$')
+fi
 [ -n "$artifact" ] || exit 0
 
 lib="$(dirname "$0")/wf-orch-lib.sh"
