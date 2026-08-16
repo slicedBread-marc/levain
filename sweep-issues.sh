@@ -107,9 +107,38 @@ while IFS= read -r client; do
       # of its IDs were already on the record rather than a uniform "resolved".
       out=$( cd "$client" && ./scripts/wf-exec.sh wf-issue.sh --resolve "$resolve_id" "$resolve_note" 2>&1 )
       case "$out" in
-        *"not overwriting"*) echo -e "${YELLOW}  $name: $out${NC}" ;;
-        *)                   echo -e "${GREEN}  $name: $resolve_id resolved${NC}" ;;
+        *"not overwriting"*) echo -e "${YELLOW}  $name: $out${NC}"; continue ;;
       esac
+
+      # Commit it, here, now. wf-issue.sh deliberately never touches git — the
+      # session that FILES an issue is inside that project and commits the file
+      # with the rest of its work. A resolve has no such session: this loop is
+      # the only thing that ran, it leaves a tracked file dirty in a repo it
+      # does not otherwise touch, and then walks away.
+      #
+      # That is not a cosmetic gap. A resolve written on 2026-08-16 was still
+      # sitting unstaged in client-a when that project's own workers merged
+      # develop -> release -> main; the merge swept the working tree and nine
+      # resolutions vanished with no error anywhere. The library reported them
+      # resolved, the client reported them open, and the next sweep re-fixed
+      # bugs that were already fixed. Exactly the loss WFI-164 describes, one
+      # level up.
+      #
+      # An explicit pathspec and no branch handling on purpose: a sweep must
+      # never move a client's checkout (WFI-157). If WORKFLOW-ISSUES.md is the
+      # only path named, whatever branch the client is standing on is where the
+      # record lands, which is correct on every branch.
+      crc=0
+      cout=$( cd "$client" \
+        && git add WORKFLOW-ISSUES.md \
+        && git commit -q -m "chore(workflow): $resolve_id resolved — $resolve_note" \
+             -- WORKFLOW-ISSUES.md 2>&1 ) || crc=$?
+      if [ "$crc" -eq 0 ]; then
+        echo -e "${GREEN}  $name: $resolve_id resolved and committed${NC}"
+      else
+        echo -e "${YELLOW}  $name: $resolve_id resolved but NOT committed — it will be lost${NC}"
+        printf '%s\n' "$cout" | sed 's/^/      /'
+      fi
       ;;
 
     list)
