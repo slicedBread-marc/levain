@@ -700,7 +700,9 @@ When the plan being created is a fix for a tracked bug:
    could commit it — once by an unrelated plan's test commit, once by a merge,
    which sweeps the entire index and which no pathspec discipline here can
    defend against (WFI-112, WFI-106).
-2. **Link back in `plan.md`** — add to the Goal section: `> **Bug:** BUG-NNN — <title>`
+
+   **Exit 2 means the number no longer names the bug you specced.** The script refuses when the plan's own `> **Bug:**` field names a different bug, or when the bug was filed after the plan folder was written — the signature of a renumber that happened underneath you. client-a's WFI-167: commit 671983e renumbered BUG-137 → BUG-136 mid-run, a different bug took the number, and the consume triaged that unrelated bug — one about image parsing — into a plan about API versions, exit 0 and no warning. `wf-claim.sh` reported the claim as held throughout, because claims key on the number too. **Do not `--force` past it.** Read the bug the number names now, and if it is not the one you drafted from, open a **[GATE]** `needs-input` naming both.
+2. **Link back in `plan.md`** — add to the Goal section: `> **Bug:** BUG-NNN — <title>`. Write it as a header field on its own line: `wf-plan-id.sh` reads these fields to recognise a resumed plan, and it reads nothing else (WFI-168).
 
 ## Rules
 

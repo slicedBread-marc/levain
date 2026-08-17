@@ -1,7 +1,39 @@
 #!/usr/bin/env bash
-# wf-bug-consume.sh <bug-id> <plan-id> [--no-commit]
+# wf-bug-consume.sh <bug-id> <plan-id> [--no-commit] [--force]
 # Moves a bug from open → triaged and links it to a plan.
 # Updates bug.md Status to Triaged and sets Plan field.
+#
+# THE NUMBER IS NOT THE IDENTITY, AND FOR ONE RUN IT WAS NOT EVEN STABLE
+#
+# This used to find its bug by globbing `bugs/open/<id>*/` and nothing else. An
+# artifact ID handed to an unattended worker was assumed to keep naming the same
+# artifact for the life of the run, and on client-a it did not: commit
+# 671983e renumbered BUG-137 → BUG-136 while a wf-spec worker dispatched on
+# BUG-137 was drafting from that bug's content, and a different bug took the
+# BUG-137 number. wf-claim.sh kept reporting the claim as held throughout,
+# because claims key on the number too, so nothing signalled the change.
+#
+# The consume then matched by number alone and triaged the UNRELATED new
+# BUG-137 — a bug about image parsing — into a plan about API versions, writing
+# `Plan: PLN-137-devops-per-resource-api-version` into it and moving it out of
+# bugs/open/ where its own planner would have found it. Exit 0, no warning
+# (WFI-167).
+#
+# So two things are checked before the move, and either one refuses (exit 2):
+#
+#   1. The plan's own `> **Bug:**` field, when it has one, must name this bug.
+#      A plan that says it is for a different bug is not evidence of a rename;
+#      it is a contradiction, and consuming on top of it makes the plan wrong
+#      in two places instead of one (WFI-169).
+#
+#   2. A bug added to the repository AFTER the plan folder's first commit
+#      cannot be the bug the plan was drafted from. That is the renumber
+#      signature exactly, and it needs no guess about titles.
+#
+# --force performs the move anyway, for an operator repairing one of these by
+# hand. Neither check fires when the evidence is missing — an uncommitted plan
+# folder, a plan with no Bug field — because a refusal on absent evidence would
+# block the ordinary first consume of every new bug.
 #
 # The rename is COMMITTED here, not left staged for the caller.
 #
@@ -28,17 +60,19 @@ SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 bug_id=""
 plan_id=""
 do_commit=true
+force=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-commit) do_commit=false; shift ;;
+    --force)     force=true; shift ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *)  if [ -z "$bug_id" ]; then bug_id="$1"; else plan_id="$1"; fi; shift ;;
   esac
 done
 
 if [ -z "$bug_id" ] || [ -z "$plan_id" ]; then
-  echo "Usage: $0 <bug-id> <plan-id> [--no-commit]" >&2
+  echo "Usage: $0 <bug-id> <plan-id> [--no-commit] [--force]" >&2
   exit 1
 fi
 
@@ -57,6 +91,39 @@ if [ -z "$bug_dir" ]; then
 fi
 
 bug_slug=$(basename "$bug_dir")
+plan_dir="plans/$plan_id"
+
+# ── Is this the bug the plan was drafted from? ────────────────────────────
+#
+# Both checks below are silent when there is nothing to check against. See the
+# header for why they exist and what they refuse.
+refuse() {
+  echo "Error: $bug_id is not the bug $plan_id was drafted from." >&2
+  echo "  $1" >&2
+  echo "  Nothing was moved. A number that changed mid-run is the usual cause (WFI-167):" >&2
+  echo "  check what \$bug_id names NOW before consuming it. --force overrides." >&2
+  exit 2
+}
+
+if ! $force; then
+  # 1. The plan says which bug it is for.
+  if [ -f "$plan_dir/plan.md" ]; then
+    declared=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Bug:\*\*' "$plan_dir/plan.md" 2>/dev/null \
+               | grep -oE 'BUG-[0-9]+' | head -1 || true)
+    if [ -n "$declared" ] && [ "$declared" != "$bug_id" ]; then
+      refuse "$plan_dir/plan.md names $declared in its Bug field, not $bug_id."
+    fi
+  fi
+
+  # 2. A bug that did not exist when the plan was written cannot be its source.
+  #    --follow, so a bug already renamed once is dated from when it was filed
+  #    rather than from the rename.
+  bug_added=$(git log --diff-filter=A --follow --format=%ct -- "$bug_dir/bug.md" 2>/dev/null | tail -1 || true)
+  plan_added=$(git log --diff-filter=A --format=%ct -- "$plan_dir" 2>/dev/null | tail -1 || true)
+  if [ -n "$bug_added" ] && [ -n "$plan_added" ] && [ "$bug_added" -gt "$plan_added" ] 2>/dev/null; then
+    refuse "$bug_dir was filed after $plan_dir was written ($(date -r "$bug_added" '+%Y-%m-%d %H:%M') vs $(date -r "$plan_added" '+%Y-%m-%d %H:%M'))."
+  fi
+fi
 
 # Update bug.md
 #

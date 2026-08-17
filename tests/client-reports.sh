@@ -3852,6 +3852,51 @@ assert_eq "and it is committed, not left dirty for a merge to take" "" \
   "$(git status --porcelain -- plans/PLN-260-answered-once/findings.md)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A consume checks which bug it is taking (client-a WFI-167)"
+
+# Commit 671983e renumbered BUG-137 -> BUG-136 while an unattended wf-spec
+# worker dispatched on BUG-137 was drafting from that bug's content, and a
+# different bug took the number. wf-claim.sh kept reporting the claim as held,
+# because claims key on the number too. The consume matched by number alone and
+# triaged the unrelated new BUG-137 — a bug about image parsing — into a plan
+# about API versions. Exit 0, no warning.
+mkdir -p bugs/open/BUG-270-devops-api-version
+printf '# devops per-resource apiVersion\n\n> **Status:** Open\n> **ID:** BUG-270\n> **Severity:** High\n> **Plan:** _(none)_\n' \
+  > bugs/open/BUG-270-devops-api-version/bug.md
+git add -A >/dev/null 2>&1; git commit -qm "the bug is filed" >/dev/null 2>&1
+registry_add_row PLN-270 devops-api-version draft
+printf '# devops\n\n> **ID:** PLN-270\n> **Bug:** BUG-270 — devops per-resource apiVersion\n\n## Goal\nx\n' \
+  > plans/PLN-270-devops-api-version/plan.md
+git add -A >/dev/null 2>&1; git commit -qm "the plan is drafted from it" >/dev/null 2>&1
+
+# The ordinary consume is untouched.
+assert_ok "the bug the plan was drafted from is consumed normally" \
+  "$SCRIPT_DIR/wf-bug-consume.sh" BUG-270 PLN-270-devops-api-version
+assert_eq "and it landed in triaged" "true" \
+  "$([ -f bugs/triaged/BUG-270-devops-api-version/bug.md ] && echo true || echo false)"
+
+# The renumber: a different bug takes the freed number.
+mkdir -p bugs/open/BUG-270-onprem-rendered-text
+printf '# on-prem renderedText uses a third src shape\n\n> **Status:** Open\n> **ID:** BUG-270\n> **Severity:** Medium\n> **Plan:** _(none)_\n' \
+  > bugs/open/BUG-270-onprem-rendered-text/bug.md
+git add -A >/dev/null 2>&1; git commit -qm "an unrelated bug takes the freed number" >/dev/null 2>&1
+assert_eq "a bug filed after the plan is refused, with exit 2" "2" \
+  "$("$SCRIPT_DIR/wf-bug-consume.sh" BUG-270 PLN-270-devops-api-version >/dev/null 2>&1; echo $?)"
+assert_eq "and it is left where its own planner will find it" "true" \
+  "$([ -f bugs/open/BUG-270-onprem-rendered-text/bug.md ] && echo true || echo false)"
+
+# The other half: a plan that says it is for a different bug is a
+# contradiction, and consuming on top of it makes the plan wrong twice.
+registry_add_row PLN-271 says-another-bug draft
+printf '# other\n\n> **ID:** PLN-271\n> **Bug:** BUG-999 — something else entirely\n\n## Goal\nx\n' \
+  > plans/PLN-271-says-another-bug/plan.md
+assert_eq "a plan naming another bug in its Bug field refuses too" "2" \
+  "$("$SCRIPT_DIR/wf-bug-consume.sh" BUG-270 PLN-271-says-another-bug >/dev/null 2>&1; echo $?)"
+assert_ok "--force is there for an operator repairing one by hand" \
+  "$SCRIPT_DIR/wf-bug-consume.sh" BUG-270 PLN-271-says-another-bug --force
+rm -rf bugs/triaged/BUG-270-onprem-rendered-text
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"
