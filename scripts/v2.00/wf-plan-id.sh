@@ -31,8 +31,9 @@
 #
 # A crashed unattended run is routine, so a plan folder derived from the very
 # artifact being specced is a RESUME, not a collision. It is recognised by
-# plan.md naming that artifact in its header: `> **Bug:** BUG-039` or
-# `> **Brief:** ... BRF-041`. Nobody else's plan says that.
+# plan.md's header FIELD naming that artifact: `> **Bug:** BUG-039` or
+# `> **Brief:** ... BRF-041`. Nobody else's plan says that in a field — though
+# plenty say it in prose, which is why prose does not count (WFI-168).
 #
 # THE ANSWER IS ONLY TRUE AT THE MOMENT IT IS GIVEN
 #
@@ -51,6 +52,16 @@
 # immediately before creating the folder, which is the moment the ID is actually
 # taken. The call is cheap and idempotent, and the second answer is the one that
 # has seen the other session's work. `/wf-spec` step 5 does this.
+#
+# Idempotent is a promise this script had to be made to keep. The collision
+# branch used to allocate on EVERY call, so the documented double-call burned a
+# number each time and the two answers disagreed (WFI-177). A reallocation is
+# now reserved against the source artifact and re-used — see the bottom of this
+# file.
+#
+# --peek answers without taking anything: no allocation, no reservation, no
+# claim follow. For a human or a diagnostic asking "what would this say?", which
+# before had no read-only form and cost an artifact number to ask (WFI-175).
 #
 # Output (eval-friendly):
 #   PLAN_ID='PLN-091'          the ID to use
@@ -78,7 +89,18 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=wf-orch-lib.sh
 source "$SELF_DIR/wf-orch-lib.sh"
 
-src="${1:?Usage: $0 <BRF-NNN|BUG-NNN|PLN-NNN>}"
+src=""
+peek=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --peek|--dry-run) peek=true; shift ;;
+    -*) echo "Error: unknown option '$1'" >&2
+        echo "Usage: $0 <BRF-NNN|BUG-NNN|PLN-NNN> [--peek]" >&2; exit 1 ;;
+    *)  [ -z "$src" ] || { echo "Usage: $0 <BRF-NNN|BUG-NNN|PLN-NNN> [--peek]" >&2; exit 1; }
+        src="$1"; shift ;;
+  esac
+done
+[ -n "$src" ] || { echo "Usage: $0 <BRF-NNN|BUG-NNN|PLN-NNN> [--peek]" >&2; exit 1; }
 
 id=$(printf '%s' "$src" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
 [ -n "$id" ] || { echo "Error: '$src' is not a PLN/BUG/BRF id" >&2; exit 1; }
@@ -159,16 +181,32 @@ fi
 
 # Held by this same artifact's own earlier attempt? Then it is not a collision.
 #
-# The header line is the evidence: TEMPLATE.md writes `> **Bug:** BUG-NNN — …`
-# and `> **Brief:** …` for a brief, so the source ID appears in the first few
-# quoted lines and nowhere else by accident. Searched in the block before the
-# first `##` heading, so a passing mention of the bug in a Step cannot claim it.
+# The evidence is a header FIELD, not header prose. TEMPLATE.md writes
+# `> **Bug:** BUG-NNN — …` and `> **Brief:** briefs/BRF-NNN-….md`; those lines
+# state what the plan is FOR, and nothing else in the document does.
 #
-# claims_this <plan-dir> — 0 if that plan's header names the artifact being
+# The old test read every line before the first `##` heading, which is the same
+# block but is not the same thing — the block also holds whatever a previous
+# session wrote there in prose. client-a's WFI-168: PLN-137 carried
+# `> **Duplicate risk:** this plan was drafted under a dispatch naming
+# **BUG-137**. Commit 671983e renumbered that artifact to **BUG-136**…` — a note
+# whose entire purpose was to record that the plan is NOT BUG-137's. It matched
+# on the bare number, so BUG-137 was answered RESUME=true onto a parked,
+# gated duplicate; obeying that would have written BUG-137's fix plan over a
+# document awaiting a human decision and reused its REGISTRY row and tags.
+#
+# A note explaining a renumber is exactly the text a renumbered-away plan
+# carries, so the false match is not an edge case — it is the documented one.
+#
+# Fields are matched wherever they sit: TEMPLATE.md puts them in the header
+# block, and wf-spec's bug link-back step has been observed writing them under
+# `## Goal`. Both are the field; neither is prose.
+#
+# claims_this <plan-dir> — 0 if that plan's fields name the artifact being
 # specced. The one test, used for both searches below.
 claims_this() {
   [ -f "$1/plan.md" ] || return 1
-  sed -n '1,/^## /p' "$1/plan.md" 2>/dev/null \
+  { grep -E '^[ \t]*>?[ \t]*\*\*(Bug|Brief|Source|From):\*\*' "$1/plan.md" 2>/dev/null || true; } \
     | grep -qE "(^|[^A-Za-z0-9-])${id}([^0-9]|$)"
 }
 
@@ -228,7 +266,7 @@ if [ -n "$resume_dir" ]; then
   fi
 
   wf_event id-resume "$id" "$resume_dir names $id in its header — resuming there under $resume_id, not allocating"
-  wf_claim_follow "$resume_id"
+  $peek || wf_claim_follow "$resume_id"
   wf_emit PLAN_ID           "$resume_id"
   wf_emit PLAN_NUM          "$resume_num"
   wf_emit PLAN_ID_INHERITED "false"
@@ -238,14 +276,82 @@ if [ -n "$resume_dir" ]; then
   exit 0
 fi
 
-# Taken. Allocate a fresh number — wf-counter-next.sh advances past anything
-# already in use, so this cannot land on a second collision — and record that
-# the link between source number and plan number was broken deliberately.
-new_id=$("$SELF_DIR/wf-counter-next.sh" PLN)
+# ── The reallocation is remembered, because the question is asked twice ───
+#
+# This script is documented as a query — "decides the plan ID and says why" —
+# and wf-spec is told to call it TWICE for exactly the right reason: the answer
+# is only true at the moment it is given, and step 3 is minutes of exploration
+# and drafting away from step 5 (WFI-147). Every other branch above is a pure
+# read and answers the same thing twice. This one allocated.
+#
+# So the documented double-call burned a number every time the first call hit a
+# collision, and the two calls DISAGREED. client-a's BUG-137: step 3 answered
+# PLN-144, step 5 answered PLN-145 with the identical collision string and
+# nothing changed in between. PLN-144 exists nowhere — no row, no folder — and
+# the counter is permanently one higher (WFI-177). A single diagnostic call did
+# the same thing (WFI-175), and an abandoned reallocation is how client-a
+# ended up with an empty, untracked plans/PLN-136-…/ that the next run then
+# treated as somebody else's number (WFI-169).
+#
+# A reallocation is therefore reserved against the SOURCE artifact and re-used.
+# The reservation is advisory, never authoritative: it is honoured only while
+# the number is still free or still holds this artifact's own unfinished folder,
+# and a number somebody else has since taken drops it and allocates afresh.
+#
+# It lives beside the claims rather than in the registry: it records what a
+# session was told, not a state of the pipeline, and nothing outside the machine
+# that gave the answer has any use for it.
+reserve_dir="$(wf_orch_dir)/id-reservations"
+reserve_file="$reserve_dir/$id"
+new_id=""
+
+if [ -f "$reserve_file" ]; then
+  reserved=$(grep -oE '^PLN-[0-9]+' "$reserve_file" 2>/dev/null | head -1 || true)
+  if [ -n "$reserved" ]; then
+    reserved_dir=$(ls -d "plans/${reserved}-"* 2>/dev/null | head -1 || true)
+    if [ -z "$reserved_dir" ]; then
+      # Still free — the same answer as last time is the honest one.
+      new_id="$reserved"
+      wf_event id-reserved "$id" "re-using the reservation $reserved rather than allocating again (WFI-177)"
+    elif claims_this "$reserved_dir" || [ ! -f "$reserved_dir/plan.md" ]; then
+      # This artifact's own earlier attempt, possibly one that got no further
+      # than mkdir. Continue in it rather than leaving it orphaned (WFI-169).
+      resume_num="${reserved#*-}"
+      wf_event id-resume "$id" "$reserved_dir is this artifact's reserved folder — resuming there"
+      $peek || wf_claim_follow "$reserved"
+      wf_emit PLAN_ID           "$reserved"
+      wf_emit PLAN_NUM          "$resume_num"
+      wf_emit PLAN_ID_INHERITED "false"
+      wf_emit PLAN_ID_COLLISION "$collision"
+      wf_emit PLAN_ID_RESUME    "true"
+      wf_emit PLAN_ID_DIR       "$reserved_dir"
+      exit 0
+    else
+      wf_event id-reservation-lost "$id" "$reserved was reserved for $id but $reserved_dir now belongs to another artifact — allocating again"
+      $peek || rm -f "$reserve_file"
+    fi
+  fi
+fi
+
+# Nothing reserved, or the reservation was lost. Allocate a fresh number —
+# wf-counter-next.sh advances past anything already in use, so this cannot land
+# on a second collision — and record that the link between source number and
+# plan number was broken deliberately.
+if [ -z "$new_id" ]; then
+  if $peek; then
+    # A peek never takes. The number reported is the one the next real call
+    # would take and reserve, which is all a diagnostic caller wants to know.
+    new_id=$("$SELF_DIR/wf-counter-next.sh" PLN --peek)
+  else
+    new_id=$("$SELF_DIR/wf-counter-next.sh" PLN)
+    mkdir -p "$reserve_dir"
+    printf '%s\n' "$new_id" > "$reserve_file"
+  fi
+fi
 new_num="${new_id#*-}"
 
 wf_event id-collision "$id" "PLN-${num} taken ($collision) — allocated $new_id"
-wf_claim_follow "$new_id"
+$peek || wf_claim_follow "$new_id"
 
 wf_emit PLAN_ID           "$new_id"
 wf_emit PLAN_NUM          "$new_num"

@@ -3708,6 +3708,85 @@ assert_eq "the allocating call still allocates" "$(printf 'PLN-%03d' "$COUNTER_B
 assert_eq "and only that one moved the counter" "$((COUNTER_BEFORE + 1))" "$(counter_now)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "Asking twice for a plan ID gets one answer (client-a WFI-177, WFI-175)"
+
+# wf-spec is told to call wf-plan-id.sh twice, because the answer is only true
+# at the moment it is given (WFI-147). Every branch but one was a pure read.
+# The collision branch allocated on every call, so BUG-137's step 3 answered
+# PLN-144 and step 5 answered PLN-145 with the identical collision string and
+# nothing changed in between — PLN-144 exists nowhere and the counter is
+# permanently one higher.
+registry_add_row PLN-250 held-by-someone-else draft
+printf '# held\n\n> **Bug:** BUG-999 — an unrelated bug\n\n## Goal\nx\n' > plans/PLN-250-held-by-someone-else/plan.md
+COUNTER_BEFORE=$(counter_now)
+ID_CALL1=$("$SCRIPT_DIR/wf-plan-id.sh" BUG-250 | grep '^PLAN_ID=' | cut -d"'" -f2)
+ID_CALL2=$("$SCRIPT_DIR/wf-plan-id.sh" BUG-250 | grep '^PLAN_ID=' | cut -d"'" -f2)
+assert_eq "the second call answers what the first one did" "$ID_CALL1" "$ID_CALL2"
+assert_eq "and it cost exactly one number, not two" "$((COUNTER_BEFORE + 1))" "$(counter_now)"
+assert_eq "the reallocated number is not the inherited one" "false" \
+  "$(if [ "$ID_CALL1" = "PLN-250" ]; then echo true; else echo false; fi)"
+
+# A diagnostic must not spend an artifact number to ask a question (WFI-175).
+COUNTER_BEFORE=$(counter_now)
+assert_eq "--peek answers the same thing" "$ID_CALL1" \
+  "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-250 --peek | grep '^PLAN_ID=' | cut -d"'" -f2)"
+assert_eq "and takes nothing" "$COUNTER_BEFORE" "$(counter_now)"
+
+# An attempt that got as far as mkdir and no further is this artifact's own —
+# client-a was left with an empty, untracked plans/PLN-136-…/ that the next
+# run read as somebody else's number (WFI-169).
+mkdir -p "plans/$ID_CALL1-abandoned-slug"
+ID_RESUME=$("$SCRIPT_DIR/wf-plan-id.sh" BUG-250)
+assert_eq "an empty reserved folder is resumed, not orphaned" "true" \
+  "$(printf '%s' "$ID_RESUME" | grep -q "PLAN_ID_RESUME='true'" && echo true || echo false)"
+assert_eq "and the run is pointed at it" "plans/$ID_CALL1-abandoned-slug" \
+  "$(printf '%s' "$ID_RESUME" | grep '^PLAN_ID_DIR=' | cut -d"'" -f2)"
+
+# A reservation is advisory. A number somebody else has since taken is theirs.
+rm -rf "plans/$ID_CALL1-abandoned-slug"
+mkdir -p "plans/$ID_CALL1-someone-else"
+printf '# other\n\n> **Bug:** BUG-998 — unrelated\n\n## Goal\nx\n' > "plans/$ID_CALL1-someone-else/plan.md"
+assert_eq "a reservation somebody else took is dropped, not honoured" "false" \
+  "$(if [ "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-250 | grep '^PLAN_ID=' | cut -d"'" -f2)" = "$ID_CALL1" ]; then echo true; else echo false; fi)"
+rm -rf "plans/$ID_CALL1-someone-else"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A resume is claimed by a field, not by prose (client-a WFI-168)"
+
+# PLN-137 was renumbered away from BUG-137 mid-run and carried a note saying so:
+# "> **Duplicate risk:** this plan was drafted under a dispatch naming
+# **BUG-137**. Commit 671983e renumbered that artifact to **BUG-136**…". The old
+# test read every line before the first `##`, so the note that recorded the plan
+# is NOT BUG-137's made it claim BUG-137 — RESUME=true onto a parked, gated
+# duplicate awaiting a human decision.
+registry_add_row PLN-251 renumbered-away draft
+cat > plans/PLN-251-renumbered-away/plan.md <<'EOF'
+# renumbered away
+
+> **ID:** PLN-251
+> **Bug:** BUG-252 — the bug this plan is actually for
+> **Duplicate risk:** this plan was drafted under a dispatch naming **BUG-251**.
+> Commit 671983e renumbered that artifact to **BUG-252**.
+
+## Goal
+x
+EOF
+ID_PROSE=$("$SCRIPT_DIR/wf-plan-id.sh" BUG-251 --peek)
+assert_eq "prose naming a renumbered artifact does not claim it" "false" \
+  "$(printf '%s' "$ID_PROSE" | grep '^PLAN_ID_RESUME=' | cut -d"'" -f2)"
+
+# The other half: the field DOES claim it, including from under a reallocated
+# number (WFI-162). PLN-252 is taken by a stranger, so the collision branch runs
+# and has to find BUG-252's own plan sitting under 251.
+registry_add_row PLN-252 taken-by-a-stranger draft
+printf '# stranger\n\n> **Bug:** BUG-997 — not this one\n\n## Goal\nx\n' > plans/PLN-252-taken-by-a-stranger/plan.md
+ID_FIELD=$("$SCRIPT_DIR/wf-plan-id.sh" BUG-252 --peek)
+assert_eq "the Bug field claims the plan across a reallocated number" "true" \
+  "$(printf '%s' "$ID_FIELD" | grep '^PLAN_ID_RESUME=' | cut -d"'" -f2)"
+assert_eq "and it is the field's plan, not a fresh number" "PLN-251" \
+  "$(printf '%s' "$ID_FIELD" | grep '^PLAN_ID=' | cut -d"'" -f2)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"
