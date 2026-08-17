@@ -3687,6 +3687,27 @@ assert_eq "and a stale one is named as stale" "review stale (Approved with notes
   "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | awk -F'\t' '$1 == "PLN-244-detail-column" {print $2}')"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A guessed flag must not spend a number (client-a WFI-166, WFI-175)"
+
+counter_now() { grep -oE 'Counter: [0-9]+' plans/REGISTRY.md | grep -oE '[0-9]+'; }
+COUNTER_BEFORE=$(counter_now)
+
+# `wf-counter-next.sh --peek` printed "--peek-136", advanced the counter and
+# committed the advance — so `git status` came back clean and the burn was
+# invisible until the next real allocation returned the wrong number.
+assert_fails "an unknown flag is refused" "$SCRIPT_DIR/wf-counter-next.sh" --peekk
+assert_fails "and so is a prefix that is not an artifact type" "$SCRIPT_DIR/wf-counter-next.sh" FOO
+assert_eq "neither one spent a number" "$COUNTER_BEFORE" "$(counter_now)"
+
+# The read-only question the mistyped flag was reaching for.
+PEEKED=$("$SCRIPT_DIR/wf-counter-next.sh" PLN --peek)
+assert_eq "--peek answers with the number a real call would take" "$(printf 'PLN-%03d' "$COUNTER_BEFORE")" "$PEEKED"
+assert_eq "and takes nothing" "$COUNTER_BEFORE" "$(counter_now)"
+assert_eq "the allocating call still allocates" "$(printf 'PLN-%03d' "$COUNTER_BEFORE")" \
+  "$("$SCRIPT_DIR/wf-counter-next.sh" PLN)"
+assert_eq "and only that one moved the counter" "$((COUNTER_BEFORE + 1))" "$(counter_now)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"
