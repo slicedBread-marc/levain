@@ -3865,6 +3865,25 @@ assert_eq "the resolved record carries the question as asked" \
 assert_eq "and findings.md records what was asked alongside the answer" "true" \
   "$(grep -q '\*\*Asked:\*\* 00d3d23 touches ExemptFromRule3' plans/PLN-263-question-replay/findings.md && echo true || echo false)"
 
+# Answering a gate is forward progress (WFI-185). PLN-135 accrued three
+# implement attempts from workers that each correctly parked on the prior-work
+# gate; when it was finally answered at 11:36 the dispatcher read the stale
+# counter and opened a `stuck` gate at 11:37, so answering a gate produced
+# another gate and a human had to delete the counter file by hand.
+mkdir -p .claude/orchestrator/attempts
+echo 3 > .claude/orchestrator/attempts/PLN-263.implement
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-263 manual-test "does it look right?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-263 "looks right" >/dev/null 2>&1
+assert_eq "closing a gate clears the plan's attempt budget" "false" \
+  "$([ -f .claude/orchestrator/attempts/PLN-263.implement ] && echo true || echo false)"
+assert_eq "and says so on the event log" "true" \
+  "$(grep -q 'attempts-reset' .claude/orchestrator/events.log && echo true || echo false)"
+assert_eq "another plan's budget is untouched" "true" \
+  "$(echo 2 > .claude/orchestrator/attempts/PLN-264.implement
+     "$SCRIPT_DIR/wf-gate-close.sh" PLN-263 "again" >/dev/null 2>&1
+     [ -f .claude/orchestrator/attempts/PLN-264.implement ] && echo true || echo false)"
+rm -f .claude/orchestrator/attempts/PLN-264.implement
+
 # ═══════════════════════════════════════════════════════════════════════
 section "A consume checks which bug it is taking (client-a WFI-167)"
 

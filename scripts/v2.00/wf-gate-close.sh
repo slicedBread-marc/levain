@@ -9,6 +9,10 @@
 # decision JUST MADE. Restating an earlier cycle's outcome writes a record of a
 # run that did not happen (WFI-100).
 #
+# Closing a gate also clears that plan's orchestrator attempt budget: a worker
+# that parked on a gate did not stall, and the answer is what unblocks it
+# (WFI-185).
+#
 # Three things are written: `gates/resolved/<id>.<gate>` (the slot readers look
 # up, always the latest), `gates/resolved/<id>.<gate>.log` (append-only, one
 # tab-separated line per close: when, gate, registry state, resolution), and a
@@ -196,6 +200,31 @@ transcribe_resolution() {
     || echo "wf-gate-close: the resolution is written to $findings but could not be committed" >&2
 }
 transcribe_resolution || true
+
+# ── Answering a gate is forward progress ──────────────────────────────────
+#
+# The orchestrator's attempt budget counts worker LAUNCHES that produced no
+# forward progress, and parks the plan as `stuck` at the cap. A worker that
+# opens a mandatory gate and stops has done exactly what its skill prescribes —
+# but it moves neither the registry state nor the step checklist, so it looks
+# identical to a stall.
+#
+# client-a's PLN-135 (WFI-185) accrued three implement attempts that way,
+# every one of them a worker correctly parking on the prior-work gate and
+# saying so in its log. When the gate was finally answered at 11:36, the
+# dispatcher read the stale counter and opened a `stuck` gate at 11:37 —
+# answering a gate produced another gate instead of forward progress, and a
+# human had to delete the counter file by hand. It compounded with the
+# re-gating loop: each re-opening cost another attempt.
+#
+# The answer resets it, because an answer is precisely the event that
+# invalidates every no-progress run before it: those workers were waiting for
+# this, and now they are not.
+attempts_dir="$(wf_orch_dir)/attempts"
+if ls "$attempts_dir/$id".* >/dev/null 2>&1; then
+  rm -f "$attempts_dir/$id".*
+  wf_event attempts-reset "$id" "gate '$gate_name' answered — attempt budget cleared (WFI-185)"
+fi
 
 wf_event gate-close "$id" "$gate_name: $resolution"
 if [ -n "$forced_gate" ] && [ ! -f "$gate_file" ]; then
