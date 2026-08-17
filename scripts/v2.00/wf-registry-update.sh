@@ -131,6 +131,38 @@ if [ "$from_state" = "abandoned" ] && [ "$to_state" != "draft" ]; then
   exit 1
 fi
 
+# ── A finished plan does not walk backwards ───────────────────────────────
+#
+# `complete`, `rolled-back` and `abandoned` are terminal: the work shipped, was
+# reverted, or was dropped. No worker acts on them and no wf-list-* offers them
+# — but nothing stopped a worker that had reached one anyway from writing a
+# live state over it.
+#
+# client-a's PLN-111 (WFI-172): complete, its PR merged, its worktree
+# removed. An unattended tester ran against it regardless; the runner could not
+# write its TOOL file into a deleted working directory, the single writer failure
+# was reported as "29 errors", and the tester wrote a finding and moved the plan
+# complete -> active. Re-running the suite on develop gave 871 total, 0 failed.
+# A shipped plan spent the next hours advertising itself as unfinished work.
+#
+# Terminal -> terminal is still allowed: /wf-rollback moves a completed plan to
+# `rolled-back`, which is a record of what happened to it, not a resumption.
+# `abandoned` has its own rule directly above — explicit revival to `draft`, and
+# nowhere else (docs/abandoned-plans.md) — so it is not re-judged here.
+# WF_ALLOW_REOPEN=1 covers a deliberate revival, and being an environment
+# variable it cannot be reached by a worker following its own skill's steps.
+if [ "$from_state" != "abandoned" ] \
+   && wf_state_is_terminal "$from_state" && ! wf_state_is_terminal "$to_state" \
+   && [ "${WF_ALLOW_REOPEN:-}" != "1" ]; then
+  echo "Error: $plan_id is '$from_state', which is terminal — refusing to move it to '$to_state'." >&2
+  echo "       That plan is finished. If a worker was dispatched at it, the dispatch is the" >&2
+  echo "       fault, not the state (WFI-172): check the claim's --state guard rather than" >&2
+  echo "       reopening the row. A failure found in shipped work is a new bug, filed with" >&2
+  echo "       /wf-bug — not a regression of the plan that shipped it." >&2
+  echo "       Nothing was changed. WF_ALLOW_REOPEN=1 overrides a deliberate revival." >&2
+  exit 1
+fi
+
 today=$(date +%Y-%m-%d)
 
 # --- Everything below mutates the registry: take the lock first ---

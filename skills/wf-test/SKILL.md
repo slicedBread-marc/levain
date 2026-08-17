@@ -248,6 +248,17 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    **So check the count, not just the exit code.** If `$E2E_SCOPE` named a handful of tests and the agent reports hundreds, the filter did not apply: fix the command form and re-run before reading anything into the result.
 
    Report results to user before or during human testing. If e2e tests fail, inform the user but continue — human testing may still proceed.
+
+   **A runner that could not run is not a suite that failed.** Before you read a single number, decide which of the two you are looking at:
+
+   | What you see | What it is |
+   |-|-|
+   | assertion failures, named tests, expected-vs-actual | a **test result** — classify it as normal |
+   | the runner could not start, could not restore, could not write its results file, `DirectoryNotFoundException`, `No such file or directory`, a path that does not exist | an **infrastructure error** — there is no test result here at all |
+
+   An infrastructure error is **never** a finding and **never** a state transition. Fix the environment and re-run, or file it with `wf-issue.sh` and stop. client-a's PLN-111 (WFI-172): the plan was already `complete`, its worktree removed, so the runner resolved its relative `TestResults/` directory against a deleted working directory and could not write the TOOL. That single writer failure was reported as "29 errors", written up as a finding, and used to move the plan `complete → active`. Re-running the suite on develop gave 871 total, 0 failed. **A count of "errors" with no named test behind it is the signature** — read the message before you believe the number.
+
+   `wf-registry-update.sh` now refuses to move a plan out of a terminal state, so this particular regression stops at a refused transition. That is the backstop. The fault it is catching is that you were dispatched at a finished plan at all: re-check step 0's `--state testing` claim before doing anything else.
 5. **Classify state and display criteria:**
 
    Compare the current `$BUILD` against the build column in test-progress.md (if it exists) to determine which of three states applies:

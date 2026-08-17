@@ -3934,6 +3934,25 @@ assert_eq "and it is still draft, not dispatchable" "draft" "$(registry_state PL
 assert_ok "a re-approved plan promotes normally" "$SCRIPT_DIR/wf-replan-target.sh" PLN-280 --apply
 assert_eq "and lands where the replan target says" "ready" "$(registry_state PLN-280)"
 
+# A finished plan does not walk backwards (client-a WFI-172).
+#
+# PLN-111 was complete, its PR merged, its worktree removed. An unattended
+# tester ran against it anyway; the runner could not write its TOOL into a
+# deleted working directory, that one writer failure was reported as "29
+# errors", and the tester wrote a finding and moved the plan complete -> active.
+# Re-running the suite on develop gave 871 total, 0 failed.
+registry_add_row PLN-282 already-shipped complete
+assert_fails "a complete plan cannot be moved back to active" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-282 complete active
+assert_eq "and the row did not move" "complete" "$(registry_state PLN-282)"
+assert_ok "terminal to terminal is still allowed — /wf-rollback needs it" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-282 complete rolled-back
+assert_ok "and a deliberate revival has an override" \
+  env WF_ALLOW_REOPEN=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-282 rolled-back active
+registry_add_row PLN-283 dropped-on-purpose abandoned
+assert_ok "abandoned keeps its own revival path to draft" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-283 abandoned draft
+
 # An untagged plan is not touched by any of this.
 registry_add_row PLN-281 untagged-replan draft
 printf '\n## Review\n> **Result:** Approved\n' >> plans/PLN-281-untagged-replan/plan.md
