@@ -12,6 +12,7 @@
 #   wf_develop_root                  → absolute path of the first worktree
 #   wf_orch_dir                      → <develop-root>/.claude/orchestrator (created)
 #   wf_registry_rows [path]          → one trimmed plan row per line (0x1f-separated)
+#   wf_bug_id <bug.md>               → the bug that file declares itself to be
 #   wf_goal_text <plan.md>           → that plan's one-line goal
 #   wf_cfg <dotted.path> [default]   → value from claude-workflow.yml
 #   wf_emit <KEY> <value>            → eval-safe KEY='value' line
@@ -98,6 +99,47 @@ wf_registry_rows() {
         trim($7), US, trim($8), US, trim($9), US, trim($10)
     }
   ' "$reg"
+}
+
+# ── Artifacts ─────────────────────────────────────────────────────────────
+
+# wf_bug_id <path/to/bug.md> — which bug that file IS. Empty when undecidable.
+#
+# A bug declares its identity in one place: the `> **ID:** BUG-NNN` header field
+# wf-bug-new.sh writes. Every other BUG-NNN token in the file is a bug it TALKS
+# ABOUT — a title, a Links line, a Description citing the report it follows on
+# from.
+#
+# wf-list-specable.sh and wf-list-bugs.sh both used to take the first BUG-NNN
+# token anywhere in the file (`grep -oE 'BUG-[0-9]+' | head -1`), and the title
+# is three lines above the ID field. client-a's BUG-141 is titled "BUG-131's
+# console encoding fix lives in the wrapper script…", so it was listed, claimed
+# and dispatched as BUG-131 — a bug closed the day before, with no REGISTRY row.
+# The orchestrator drew its spec candidates from that list and spawned a worker
+# at the closed bug on every sweep (WFI-170, WFI-171), while BUG-141 itself —
+# open, unplanned, real — appeared in no list and could never be specced
+# (WFI-173, corrected by WFI-176). Any bug that cites another before declaring
+# its own number hits this, and citing one is the normal way to file a
+# follow-up.
+#
+# The folder name is the fallback, not the source: WFI-173 first blamed it, and
+# renaming the folder changed nothing, which is what disproved the theory. It is
+# still the better guess than a body token when the field is missing, because
+# wf-bug-new.sh creates `bugs/<stage>/BUG-NNN-<slug>/` and nothing else does.
+#
+# A disagreement between the two is reported and the declared field wins: the
+# field is what wf-bug-consume.sh and wf-bug-close.sh rewrite, so a folder that
+# has drifted from it is a rename nobody finished.
+wf_bug_id() {
+  local bug_md="$1" declared folder
+  [ -f "$bug_md" ] || return 0
+  declared=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*ID:\*\*' "$bug_md" 2>/dev/null \
+             | grep -oE 'BUG-[0-9]+' | head -1 || true)
+  folder=$(basename "$(dirname "$bug_md")" | grep -oE '^BUG-[0-9]+' || true)
+  if [ -n "$declared" ] && [ -n "$folder" ] && [ "$declared" != "$folder" ]; then
+    echo "wf_bug_id: $bug_md declares $declared but sits in $folder/ — using $declared" >&2
+  fi
+  printf '%s' "${declared:-$folder}"
 }
 
 # wf_goal_text <plan.md> — the plan's one-line goal, empty if it has none.

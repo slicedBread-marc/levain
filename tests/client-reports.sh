@@ -3617,6 +3617,47 @@ assert_eq "and an authorization carries the grant's identity, not just 'ok'" "tr
 rm -f .claude/orchestrator/events.log
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A bug's id is the one it declares (client-a WFI-176, WFI-173)"
+
+# BUG-141 is titled "BUG-131's console encoding fix lives in the wrapper
+# script…". The listers took the first BUG-NNN token in the file, three lines
+# above the ID field, so it was listed, claimed and dispatched as BUG-131 — a
+# bug closed the day before — while BUG-141 appeared in no list at all.
+mkdir -p bugs/open/BUG-241-console-encoding bugs/open/BUG-242-plain
+cat > bugs/open/BUG-241-console-encoding/bug.md <<'EOF'
+# BUG-231's console encoding fix lives in the wrapper script, not the app
+
+> **Status:** Open
+> **ID:** BUG-241
+> **Severity:** Medium
+> **Links:** BUG-231
+EOF
+cat > bugs/open/BUG-242-plain/bug.md <<'EOF'
+# An ordinary report
+
+> **Status:** Open
+> **ID:** BUG-242
+> **Severity:** Low
+EOF
+SPECABLE=$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null || true)
+assert_eq "the citing bug is listed under its own number" "1" \
+  "$(printf '%s\n' "$SPECABLE" | grep -c '^BUG-241' | xargs)"
+assert_eq "and never under the one its title cites" "0" \
+  "$(printf '%s\n' "$SPECABLE" | grep -c '^BUG-231' | xargs)"
+BUGLIST=$("$SCRIPT_DIR/wf-list-bugs.sh" 2>/dev/null || true)
+assert_eq "wf-list-bugs reads the same field" "1" \
+  "$(printf '%s\n' "$BUGLIST" | grep -c '^BUG-241' | xargs)"
+
+# The folder name is the fallback, not the source — WFI-173 blamed it, and
+# renaming the folder changed nothing, which is what disproved that theory.
+mkdir -p bugs/open/BUG-243-no-id-field
+printf '# A bug filed without an ID field\n\n> **Status:** Open\n> **Severity:** Low\n' \
+  > bugs/open/BUG-243-no-id-field/bug.md
+assert_eq "a bug with no ID field falls back to its folder" "1" \
+  "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | grep -c '^BUG-243' | xargs)"
+rm -rf bugs/open/BUG-241-console-encoding bugs/open/BUG-242-plain bugs/open/BUG-243-no-id-field
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

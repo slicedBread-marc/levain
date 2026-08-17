@@ -8,6 +8,9 @@
 
 set -euo pipefail
 
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
+
 found=0
 
 for stage in open triaged; do
@@ -15,7 +18,9 @@ for stage in open triaged; do
   for bug_md in "bugs/$stage"/*/bug.md; do
     [ -f "$bug_md" ] || continue
 
-    bug_id=$(grep -oE 'BUG-[0-9]+' "$bug_md" 2>/dev/null | head -1 || true)
+    # Declared id, not the first token in the file (WFI-176) — a bug whose
+    # title cites another bug was listed under that other bug's number.
+    bug_id=$(wf_bug_id "$bug_md")
     severity=$(grep -E '^\*\*Severity:\*\*|^> \*\*Severity:\*\*' "$bug_md" 2>/dev/null | head -1 | sed 's/.*Severity:\*\*[[:space:]]*//' | sed 's/^> //' || true)
     title=$(head -1 "$bug_md" | sed 's/^# //')
     linked_plan=$(grep -E '^\*\*Plan:\*\*|^> \*\*Plan:\*\*' "$bug_md" 2>/dev/null | head -1 | sed 's/.*Plan:\*\*[[:space:]]*//' | sed 's/^> //' || true)

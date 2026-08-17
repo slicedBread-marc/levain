@@ -102,7 +102,10 @@ fi
 bugs_found=0
 for bug_md in bugs/open/*/bug.md; do
   [ -f "$bug_md" ] || continue
-  bug_id=$(grep -oE 'BUG-[0-9]+' "$bug_md" 2>/dev/null | head -1)
+  # The DECLARED id, not the first BUG-NNN token in the file — see wf_bug_id.
+  # This list is where the orchestrator's spec candidates come from, so a
+  # misread id here is a worker dispatched at another bug entirely (WFI-176).
+  bug_id=$(wf_bug_id "$bug_md")
   severity=$(grep -E "Severity:" "$bug_md" 2>/dev/null | head -1 | sed 's/.*Severity:\*\*[[:space:]]*//' | sed 's/^> //')
   title=$(head -1 "$bug_md" | sed 's/^# //')
   [ -n "$bug_id" ] || continue
