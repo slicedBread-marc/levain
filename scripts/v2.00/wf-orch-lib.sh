@@ -593,6 +593,46 @@ wf_claim_live() {
   return 1
 }
 
+# ── Gates ─────────────────────────────────────────────────────────────────
+
+# wf_gate_revision_scoped <gate-name> — 0 when one answer covers this gate for
+# as long as the plan's specification stands.
+#
+# Two kinds of gate share one mechanism, and telling them apart is the whole
+# question of whether a closed gate may be opened again.
+#
+#   REVISION-SCOPED. "Approve this plan." "Someone already built this — accept
+#   it or revert it." The question is about the document, the answer is about
+#   the document, and it stays answered until the document changes. Asking it
+#   twice is asking a human the same question twice.
+#
+#   CYCLE-SCOPED. "Do these criteria pass?" "The PR would not merge." "The
+#   attempt budget is spent." Each occurrence is its own question about its own
+#   run. A manual-test gate is opened and answered once per test cycle by
+#   design (WFI-100), and blocking the second one would stop the pipeline.
+#
+# Only the first kind is listed. The default is cycle-scoped, so a gate name
+# nobody has classified keeps today's behaviour rather than silently jamming.
+#
+# client-a's PLN-135 is why this exists: a `prior-work` gate answered and
+# closed at 11:43, re-opened at 12:01 with identical wording while
+# wf-gate-status.sh still reported GATE_ANSWERED=true, GATE_STALE=false
+# (WFI-180). Transcribing the resolution into findings.md did not stop it
+# (WFI-181), and it re-opened a fourth time thirty minutes after the decision
+# was committed (WFI-182) — by then having RE-DERIVED the question, offering an
+# option the human never authorized and describing a data structure that had
+# changed two merges earlier. A re-asked question does not come back the same,
+# which is what makes the loop worse than merely wasteful.
+WF_GATE_REVISION_SCOPED="${WF_GATE_REVISION_SCOPED:-spec-approval prior-work scope-reduction goal-missing migration consistency-migration branch-exists spec-stuck}"
+wf_gate_revision_scoped() {
+  local name="${1:-}" g
+  [ -n "$name" ] || return 1
+  for g in $WF_GATE_REVISION_SCOPED; do
+    [ "$g" = "$name" ] && return 0
+  done
+  return 1
+}
+
 # ── Events ────────────────────────────────────────────────────────────────
 
 # wf_event <type> <artifact> <message>

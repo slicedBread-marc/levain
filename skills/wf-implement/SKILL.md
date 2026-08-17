@@ -210,13 +210,25 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
    ```bash
    scripts/wf-exec.sh wf-prior-work.sh PLN-NNN
    ```
-   Exit 0 means it found commits on `develop` naming this plan or its bug that touch code, not just `plans/`. **Stop.** Under `WF_UNATTENDED=1` this is a **[GATE]**:
+   Exit 0 means it found commits on `develop` naming this plan or its bug that touch code, not just `plans/`. **Stop.**
+
+   **First ask whether this was already decided** — a commit on develop is a durable fact, so this check reports it on every dispatch, and the gate below would be opened afresh every time:
+   ```bash
+   eval "$(scripts/wf-exec.sh wf-gate-status.sh PLN-NNN prior-work)"
+   ```
+   `GATE_ANSWERED=true` with `GATE_STALE=false` means **a human has already answered this**. `$GATE_RESOLUTION` is the decision of record: act on it — build per plan.md over the accepted commit, or revert it on the feature branch, whichever it says — and carry on to step 4. Do not re-ask, and do not re-derive the question from what you can see now.
+
+   client-a's PLN-135 re-opened this gate **four times** (WFI-180, WFI-181, WFI-182). The fourth was thirty minutes after the decision had been committed to `findings.md`, and by then the question had drifted: it offered an option the human never authorized and described a `HashSet` that had been a `Dictionary` since a merge two plans earlier. **A re-asked question does not come back the same** — it comes back re-derived from whatever the next worker happens to read, and a human answering it is answering something else. `wf-gate-open.sh` now refuses this gate outright when it is answered (exit **3**), but arriving there means you have already skipped this step.
+
+   Otherwise, under `WF_UNATTENDED=1` this is a **[GATE]**:
    ```bash
    scripts/wf-exec.sh wf-gate-open.sh PLN-NNN prior-work \
      "<sha> '<subject>' is already on develop and touches this plan's files. It came in outside the pipeline — no feature branch, no verify. Accept it as this plan's work (straight to verify), or revert it on the feature branch and implement per plan.md?" \
      --context plans/PLN-NNN-<slug>/plan.md --skill wf-implement
    ```
    Then exit 0 without transitioning the registry or creating a branch. Attended, put the same question to the user.
+
+   **Exit 3 from `wf-gate-open.sh` is not a failure.** It means the gate was refused because an answer of record already covers this revision of the plan; the resolution is printed. Act on it and continue — never work around it by re-opening under another name.
 
    client-a's WFI-155: PLN-092's plan.md told the builder that the BUG-092 prototype was untracked scratch that "won't follow a git worktree add". By dispatch time `fix(BUG-092): …` was a real commit on develop touching all five files the plan's steps target, with no branch, no `.plan-ref` and no MUTATION marker — so the worktree inherited it and the note was wrong through no fault of the planner. Neither answer is the builder's to pick: implementing per plan.md fights code that is already there, and calling it done accepts unreviewed work as the deliverable. **A plan's description of what is on develop is a claim about the past, and this is how you check it.** Exit 1 means clean — say nothing and carry on.
 4. **Update REGISTRY.md** — lock the plan:

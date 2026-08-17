@@ -3787,6 +3787,71 @@ assert_eq "and it is the field's plan, not a fresh number" "PLN-251" \
   "$(printf '%s' "$ID_FIELD" | grep '^PLAN_ID=' | cut -d"'" -f2)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "An answered gate is not asked again (client-a WFI-180/181/182)"
+
+# PLN-135's prior-work gate was answered and closed at 11:43:42Z and re-opened
+# at 12:01:45Z with identical wording, while wf-gate-status.sh still reported
+# GATE_ANSWERED=true, GATE_STALE=false. Then a third time, a minute after a
+# close returned 0. Then a fourth, thirty minutes after the decision was
+# committed to findings.md — by which point the worker had RE-DERIVED the
+# question, offering an option the human never authorized and describing a
+# HashSet that had been a Dictionary since a merge two plans earlier.
+registry_add_row PLN-260 answered-once ready
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-260 prior-work "accept it or revert it?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-260 "Do not revert 00d3d23, all 5 steps run" >/dev/null 2>&1
+GATE_REOPEN_OUT=$("$SCRIPT_DIR/wf-gate-open.sh" PLN-260 prior-work "accept it or revert it?" 2>&1 || true)
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-260 prior-work "accept it or revert it?" >/dev/null 2>&1
+assert_eq "re-opening an answered revision-scoped gate is refused with 3" "3" \
+  "$("$SCRIPT_DIR/wf-gate-open.sh" PLN-260 prior-work "again?" >/dev/null 2>&1; echo $?)"
+assert_eq "and the refusal hands back the answer of record" "true" \
+  "$(if [[ "$GATE_REOPEN_OUT" == *"Do not revert 00d3d23"* ]]; then echo true; else echo false; fi)"
+assert_fails "so nothing is parked" "$SCRIPT_DIR/wf-list-gates.sh" PLN-260
+
+# The answer is for a revision, not for the plan forever.
+printf '\n## Amendments\n2026-08-18 — scope widened to ten documents.\n' >> plans/PLN-260-answered-once/plan.md
+assert_ok "a plan that moved since re-opens normally" \
+  "$SCRIPT_DIR/wf-gate-open.sh" PLN-260 prior-work "the plan moved — accept or revert?"
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-260 "revert it" >/dev/null 2>&1
+
+# manual-test is asked once per test CYCLE by design (WFI-100). Blocking the
+# second one would stop the pipeline dead.
+registry_add_row PLN-261 cycle-scoped testing
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-261 manual-test "cycle one?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-261 "criteria 1-8 pass" >/dev/null 2>&1
+assert_ok "a cycle-scoped gate still opens every cycle" \
+  "$SCRIPT_DIR/wf-gate-open.sh" PLN-261 manual-test "cycle two?"
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-261 "criteria pass again" >/dev/null 2>&1
+
+# Refusing to ask a human on the strength of a file that is not there is how a
+# real question goes unasked.
+mkdir -p plans/PLN-262-no-registry-row
+printf '# rowless\n\n## Goal\nx\n' > plans/PLN-262-no-registry-row/plan.md
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-262 spec-approval "approve?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-262 "approved" >/dev/null 2>&1
+assert_eq "an answer nothing could fingerprint is 'assumed', not 'revision'" "assumed" \
+  "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-262 spec-approval | grep '^GATE_ANSWERED_BASIS=' | cut -d"'" -f2)"
+assert_ok "and it never refuses on that basis" \
+  "$SCRIPT_DIR/wf-gate-open.sh" PLN-262 spec-approval "approve?"
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-262 "approved again" >/dev/null 2>&1
+
+# An operator who means it can still re-open one.
+assert_ok "--force re-opens deliberately" \
+  "$SCRIPT_DIR/wf-gate-open.sh" PLN-260 prior-work "asking again on purpose" --force
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-260 "done" >/dev/null 2>&1
+
+# The other half: the worker reads plan artifacts, so the answer has to be in
+# them. Nothing wrote it there, and each dispatched worker correctly re-derived
+# the gate from evidence it could see (WFI-181).
+assert_eq "the resolution is transcribed into findings.md" "true" \
+  "$(grep -q 'Do not revert 00d3d23' plans/PLN-260-answered-once/findings.md && echo true || echo false)"
+assert_eq "under a Decisions heading" "true" \
+  "$(grep -q '^## Decisions' plans/PLN-260-answered-once/findings.md && echo true || echo false)"
+assert_eq "with no unchecked box — that would read as 'needs replanning'" "0" \
+  "$(grep -c '^- \[ \]' plans/PLN-260-answered-once/findings.md | xargs)"
+assert_eq "and it is committed, not left dirty for a merge to take" "" \
+  "$(git status --porcelain -- plans/PLN-260-answered-once/findings.md)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

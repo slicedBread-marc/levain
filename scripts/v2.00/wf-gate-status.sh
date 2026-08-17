@@ -26,6 +26,15 @@
 # Output (eval-friendly):
 #   GATE_OPEN=true|false         a gate of this name is open right now
 #   GATE_ANSWERED=true|false     it was closed, and for THIS revision of plan.md
+#   GATE_ANSWERED_BASIS=revision|assumed|none
+#                                how ANSWERED was decided — `revision` means two
+#                                fingerprints were compared and matched;
+#                                `assumed` means one side had none to compare
+#                                (an old record, a plan with no REGISTRY row, a
+#                                missing file) and the answer is being taken on
+#                                trust. A caller that merely reports may treat
+#                                them alike; one that REFUSES to ask a human
+#                                must not.
 #   GATE_RESOLUTION='approved'   the recorded resolution (empty if never closed)
 #   GATE_RESOLVED_AT=<iso8601>   when (empty if never closed)
 #   GATE_STALE=true|false        closed, but plan.md has changed since
@@ -61,6 +70,7 @@ fi
 
 answered=false
 stale=false
+basis=none
 resolution=""
 resolved_at=""
 
@@ -84,12 +94,20 @@ if [ -f "$resolved_file" ]; then
 
   if [ -z "$was_fp" ] || [ -z "$now_fp" ]; then
     # No fingerprint on either side — an older record, or a plan whose file is
-    # gone. Treat the answer as still standing: re-gating a plan a human has
-    # already approved is the failure this exists to stop, and the operator can
-    # always re-open one deliberately.
+    # gone, or one with no REGISTRY row to find it by. Treat the answer as still
+    # standing: re-gating a plan a human has already approved is the failure
+    # this exists to stop, and the operator can always re-open one deliberately.
+    #
+    # But say that it is an ASSUMPTION. `answered` here means "nothing shows it
+    # changed", which is weaker than "it demonstrably has not" — and a caller
+    # about to REFUSE a gate on the strength of it (wf-gate-open.sh) needs the
+    # difference. Refusing to ask a human on the basis of a missing file is how
+    # a real question goes unasked.
     answered=true
+    basis=assumed
   elif [ "$was_fp" = "$now_fp" ]; then
     answered=true
+    basis=revision
   else
     stale=true
   fi
@@ -97,6 +115,7 @@ fi
 
 wf_emit GATE_OPEN        "$open"
 wf_emit GATE_ANSWERED    "$answered"
+wf_emit GATE_ANSWERED_BASIS "$basis"
 wf_emit GATE_RESOLUTION  "$resolution"
 wf_emit GATE_RESOLVED_AT "$resolved_at"
 wf_emit GATE_STALE       "$stale"

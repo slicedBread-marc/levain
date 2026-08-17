@@ -271,6 +271,7 @@ Follow the Unattended mode rules exactly:
 - Skip any work-selection menu; ${id} is your assigned artifact.
 - Resolve [AUTO] prompts to their documented defaults.
 - For anything marked [GATE], or anything you would otherwise ask a human, run scripts/wf-exec.sh wf-gate-open.sh with a clear question and then exit cleanly. Never guess.
+- wf-gate-open.sh exiting 3 means that question already has an answer of record, printed with it, and the plan has not changed since. That is not a failure and not a reason to ask it differently: act on the resolution and carry on. A gate re-opened after it was answered comes back re-derived, and the human answers something they were never asked (WFI-180/181/182).
 PROMPT
 
 if $dry_run; then

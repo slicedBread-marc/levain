@@ -9,9 +9,11 @@
 # decision JUST MADE. Restating an earlier cycle's outcome writes a record of a
 # run that did not happen (WFI-100).
 #
-# Two things are written: `gates/resolved/<id>.<gate>` (the slot readers look
-# up, always the latest) and `gates/resolved/<id>.<gate>.log` (append-only, one
-# tab-separated line per close: when, gate, registry state, resolution).
+# Three things are written: `gates/resolved/<id>.<gate>` (the slot readers look
+# up, always the latest), `gates/resolved/<id>.<gate>.log` (append-only, one
+# tab-separated line per close: when, gate, registry state, resolution), and a
+# `## Decisions` entry in the plan's own findings.md — the ledger is the record,
+# but findings.md is where a dispatched worker actually looks (WFI-181).
 #
 # --gate <name>  Record the resolution under this gate name even when no gate
 #                file is open. This is the backfill path: a decision a human
@@ -28,8 +30,9 @@
 
 set -euo pipefail
 
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=wf-orch-lib.sh
-source "$(dirname "$0")/wf-orch-lib.sh"
+source "$SELF_DIR/wf-orch-lib.sh"
 
 artifact=""
 resolution=""
@@ -136,6 +139,49 @@ printf '%s\n' "$record" > "$resolved_dir/${id}.${gate_name}"
 printf '%s\t%s\t%s\t%s\n' "$(wf_now)" "$gate_name" "${gate_state:-—}" \
   "$(printf '%s' "$resolution" | tr '\n\t' '  ')" \
   >> "$resolved_dir/${id}.${gate_name}.log"
+
+# ── The decision goes where the next worker will read it ──────────────────
+#
+# The ledger above is the record; it is not the place anybody looks. A
+# dispatched worker reads the plan artifacts — plan.md, findings.md — and
+# nothing in them said a decision had been made. So a `prior-work` gate on
+# client-a's PLN-135 was answered, closed, and re-opened by the next worker
+# on the same durable evidence, three times, each worker correctly concluding
+# from what it could see that an unexplained commit sat on develop (WFI-181).
+#
+# wf-gate-open.sh now REFUSES that re-opening, which is what stops the loop.
+# This is the other half and the reason it is still worth writing: a worker told
+# "already answered" needs to know WHAT was answered in the same place it reads
+# everything else about the plan, or it is merely blocked rather than informed.
+#
+# findings.md, not plan.md: this is a record of something that happened, and the
+# plan is a specification. Deliberately no `- [ ]` items — an unchecked box in
+# findings.md is what wf-list-specable.sh reads as "this plan needs replanning".
+transcribe_resolution() {
+  local root plan_dir findings
+  root="$(wf_develop_root)"
+  plan_dir=$(ls -d "$root"/plans/"${id}"-* 2>/dev/null | head -1 || true)
+  [ -n "$plan_dir" ] && [ -d "$plan_dir" ] || return 0
+  findings="$plan_dir/findings.md"
+
+  [ -f "$findings" ] || printf '# Findings — %s\n' "$id" > "$findings"
+  grep -q '^## Decisions' "$findings" 2>/dev/null || printf '\n## Decisions\n' >> "$findings"
+
+  {
+    printf '\n### %s — %s\n' "$gate_name" "$(wf_now)"
+    printf '> **Resolution:** %s\n' "$(printf '%s' "$resolution" | tr '\n' ' ')"
+    printf '> **State at close:** %s\n' "${gate_state:-—}"
+    printf '> Recorded by wf-gate-close.sh. This is the decision of record — act on it rather than re-deriving the question (WFI-181).\n'
+  } >> "$findings"
+
+  # Committed here for the same reason wf_registry_commit commits: a decision
+  # left dirty on the shared develop root belongs to whoever commits next.
+  ( cd "$root" && "$SELF_DIR/wf-commit.sh" \
+      "gate($id): $gate_name resolved — recorded in findings" \
+      --add "plans/$(basename "$plan_dir")/findings.md" >/dev/null 2>&1 ) \
+    || echo "wf-gate-close: the resolution is written to $findings but could not be committed" >&2
+}
+transcribe_resolution || true
 
 wf_event gate-close "$id" "$gate_name: $resolution"
 if [ -n "$forced_gate" ] && [ ! -f "$gate_file" ]; then
