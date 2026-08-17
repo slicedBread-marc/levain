@@ -736,10 +736,13 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    fi
    ```
 
-   Push to remote. If push fails, display the error and **stop** — ask the user to resolve manually. Under `WF_UNATTENDED=1` this is a **[GATE]** — open gate `merge-failed` with the error verbatim as the question, then exit 0.
+   Push to remote. **Wrap every call that talks to GitHub in `wf-retry.sh`** — it retries only transient failures (timeouts, 5xx, resets, rate limits) and returns a real refusal immediately:
    ```bash
-   git push -u origin "$CURRENT_BRANCH"
+   ../../scripts/wf-exec.sh wf-retry.sh --label "git push" -- git push -u origin "$CURRENT_BRANCH"
    ```
+   If it still fails, display the error and **stop** — ask the user to resolve manually. Under `WF_UNATTENDED=1` this is a **[GATE]** — open gate `merge-failed` with the error verbatim as the question, then exit 0.
+
+   client-a's PLN-157 (WFI-186) finished 1734 of 1734 tests green and then lost its exit path to GitHub: `git push` timed out after 2m, `gh` answered HTTP 503, the release fetch timed out. Each of those parked the plan on a gate whose only correct answer was "try again" — a person doing a computer's retry. **A weather report about github.com is not a fact about the plan.** What must NOT be retried is the other half: a protected branch, a rejected non-fast-forward, a permission denial. Those are answers, and `wf-retry.sh` passes them straight back so the gate question still describes what actually happened.
    Then check whether this branch is **already on release**, before creating a PR:
    ```bash
    RELEASE_REF=origin/release
@@ -759,7 +762,7 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    ```bash
      EXISTING_PR=$(gh pr view "$CURRENT_BRANCH" --json url -q .url 2>/dev/null || echo "")
      if [ -z "$EXISTING_PR" ]; then
-       gh pr create \
+       ../../scripts/wf-exec.sh wf-retry.sh --label "gh pr create" -- gh pr create \
          --base release \
          --head "$CURRENT_BRANCH" \
          --title "feat: $PLAN_NAME" \
@@ -776,7 +779,7 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    ```
    **Merge the PR.** If merge fails (conflicts, branch protection, required checks), **stop and route to builder:**
    ```bash
-     if ! gh pr merge --merge 2>/tmp/wf-pr-merge-err; then
+     if ! ../../scripts/wf-exec.sh wf-retry.sh --label "gh pr merge" -- gh pr merge --merge 2>/tmp/wf-pr-merge-err; then
        PR_URL=$(gh pr view --json url -q .url)
        echo "MERGE FAILED: PR $PR_URL — see error above."
        echo "Routing back to builder."

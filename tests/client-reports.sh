@@ -3885,6 +3885,50 @@ assert_eq "another plan's budget is untouched" "true" \
 rm -f .claude/orchestrator/attempts/PLN-264.implement
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A GitHub outage is not a decision for a human (client-a WFI-186)"
+
+# PLN-157 finished 1734 of 1734 tests green and then lost its exit path: git
+# push timed out after 2m, gh answered HTTP 503, the release fetch timed out.
+# Each parked the plan on a gate whose only correct answer was "try again".
+mkdir -p retry-fixtures
+cat > retry-fixtures/flaky.sh <<'EOF'
+#!/usr/bin/env bash
+c="$(dirname "$0")/count"
+n=$(cat "$c" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$c"
+[ "$n" -lt 2 ] && { echo "fatal: the remote end hung up unexpectedly" >&2; exit 1; }
+echo pushed
+EOF
+cat > retry-fixtures/denied.sh <<'EOF'
+#!/usr/bin/env bash
+echo "remote: Permission to org/repo.git denied to bot." >&2
+exit 128
+EOF
+chmod +x retry-fixtures/flaky.sh retry-fixtures/denied.sh
+rm -f retry-fixtures/count
+
+assert_ok "a transient failure is retried, not surfaced" \
+  "$SCRIPT_DIR/wf-retry.sh" --attempts 3 --label "git push" -- ./retry-fixtures/flaky.sh
+assert_eq "and it really did take two goes" "2" "$(cat retry-fixtures/count)"
+
+# The important half. A retry loop that cannot tell a wobbly network from "you
+# may not push to this branch" turns an instant, accurate refusal into the same
+# refusal three minutes later — in front of a human waiting on a stale question.
+RETRY_START=$(date +%s)
+assert_eq "a permission denial keeps its own exit status" "128" \
+  "$("$SCRIPT_DIR/wf-retry.sh" --attempts 3 --label "git push" -- ./retry-fixtures/denied.sh >/dev/null 2>&1; echo $?)"
+assert_eq "and is not retried — no backoff was paid" "true" \
+  "$([ $(( $(date +%s) - RETRY_START )) -lt 5 ] && echo true || echo false)"
+rm -rf retry-fixtures
+
+# The two callers that lost PLN-157's exit path.
+assert_ok "wf-merge-release retries its fetch" \
+  grep -q 'wf-retry.sh" --label "git fetch origin release"' "$SCRIPT_DIR/wf-merge-release.sh"
+assert_ok "wf-test wraps the push" \
+  grep -q 'wf-retry.sh --label "git push"' "$LIB_ROOT/skills/wf-test/SKILL.md"
+assert_ok "and the PR merge" \
+  grep -q 'wf-retry.sh --label "gh pr merge"' "$LIB_ROOT/skills/wf-test/SKILL.md"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "A gate belongs to the number, not the name (client-a WFI-187)"
 
 # wf-spec opened spec-approval on the plan it had just written, producing

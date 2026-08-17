@@ -14,7 +14,11 @@ set -euo pipefail
 branch=$(git branch --show-current)
 [[ "$branch" == feature/* ]] || { echo "Error: not on a feature branch (on $branch)" >&2; exit 1; }
 
-git fetch origin release
+# Retried, because this is the one step here that depends on github.com being
+# reachable and everything after it is local. client-a's PLN-157 (WFI-186)
+# had this time out on a clean 1734/1734 run, which routed a plan to a human to
+# be told "try again". Only transient failures retry — see wf-retry.sh.
+"$(dirname "$0")/wf-retry.sh" --label "git fetch origin release" -- git fetch origin release
 
 # ── Reset release-owned plan content for non-sparse worktrees ───────────────
 # The generated harness is gitignored as of v5.0.0 — invisible to git, so it
