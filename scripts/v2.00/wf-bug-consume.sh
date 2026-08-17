@@ -116,12 +116,21 @@ if ! $force; then
   fi
 
   # 2. A bug that did not exist when the plan was written cannot be its source.
-  #    --follow, so a bug already renamed once is dated from when it was filed
-  #    rather than from the rename.
-  bug_added=$(git log --diff-filter=A --follow --format=%ct -- "$bug_dir/bug.md" 2>/dev/null | tail -1 || true)
-  plan_added=$(git log --diff-filter=A --format=%ct -- "$plan_dir" 2>/dev/null | tail -1 || true)
-  if [ -n "$bug_added" ] && [ -n "$plan_added" ] && [ "$bug_added" -gt "$plan_added" ] 2>/dev/null; then
-    refuse "$bug_dir was filed after $plan_dir was written ($(date -r "$bug_added" '+%Y-%m-%d %H:%M') vs $(date -r "$plan_added" '+%Y-%m-%d %H:%M'))."
+  #
+  #    Asked as ancestry, not as timestamps: a bug filed and a plan drafted in
+  #    the same second are the ordinary case in a fast unattended run, and
+  #    `%ct > %ct` cannot order them. "Is the commit that introduced this bug an
+  #    ancestor of the one that introduced the plan?" is exact and needs no
+  #    clock. A commit is its own ancestor, so a bug and plan landing together
+  #    pass.
+  #
+  #    --follow, so a bug already renamed once is traced to when it was filed
+  #    rather than to the rename.
+  bug_added=$(git log --diff-filter=A --follow --format=%H -- "$bug_dir/bug.md" 2>/dev/null | tail -1 || true)
+  plan_added=$(git log --diff-filter=A --format=%H -- "$plan_dir" 2>/dev/null | tail -1 || true)
+  if [ -n "$bug_added" ] && [ -n "$plan_added" ] \
+     && ! git merge-base --is-ancestor "$bug_added" "$plan_added" 2>/dev/null; then
+    refuse "$bug_dir was filed after $plan_dir was written — $(git log -1 --format=%h\ %s "$bug_added" 2>/dev/null) is not an ancestor of $(git log -1 --format=%h\ %s "$plan_added" 2>/dev/null)."
   fi
 fi
 
