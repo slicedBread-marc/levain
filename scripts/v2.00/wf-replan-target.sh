@@ -111,5 +111,55 @@ if $apply; then
     echo "$plan_id is already $target — nothing to do" >&2
     exit 0
   fi
+
+  # ── A gate-tagged plan does not leave draft on a stale approval ─────────
+  #
+  # wf-spec's new-plan exit states the rule plainly: "GATE_STALE=true -> the
+  # plan changed after the approval. Gate again." The Replanning path had no
+  # such check anywhere — its only gate is wf-goal-delta.sh, which asks whether
+  # scope SHRANK — and this script is what it calls to move the plan.
+  #
+  # client-a's PLN-110 (WFI-178): tagged `contract`, the project's sole
+  # gateTag. A replan widened Step 10 from 2 documents to 10 and added a test,
+  # then reached here and was transitioned draft -> ready and committed.
+  # Immediately afterwards wf-gate-status.sh reported GATE_ANSWERED=false,
+  # GATE_STALE=true — so a plan whose approved scope had materially widened sat
+  # `ready` and dispatchable, and the correction meant reverting a transition a
+  # script had already committed, which is exactly the judgement call the
+  # unattended rules exist to avoid.
+  #
+  # wf-registry-update.sh's own guard could not catch it: it refuses
+  # draft -> ready without a review OF RECORD, and a fresh review of record
+  # existed. The review says the plan is sound. The gate asks whether a human
+  # accepts what it now promises. They are different questions.
+  #
+  # Refusal rather than silent gating: this script does not know the question
+  # text, and a gate opened with a machine-written one is how a human ends up
+  # answering something they were never asked (WFI-182). The caller opens it.
+  # Self-clearing — once the human's answer is recorded the check passes.
+  if [ "$target" = "ready" ] || [ "$target" = "active" ]; then
+    tags=$(printf '%s' "$row" | awk -F'|' '{print $9}' | xargs || true)
+    gating=$("$SELF_DIR/wf-list-tags.sh" --gating 2>/dev/null || true)
+    hit=""
+    if [ -n "$gating" ] && [ -n "$tags" ] && [ "$tags" != "—" ]; then
+      for t in $(printf '%s' "$tags" | tr ',' ' '); do
+        printf '%s\n' "$gating" | grep -qx "$t" && { hit="$t"; break; }
+      done
+    fi
+    if [ -n "$hit" ]; then
+      eval "$("$SELF_DIR/wf-gate-status.sh" "$plan_id" spec-approval 2>/dev/null || true)"
+      if [ "${GATE_ANSWERED:-false}" != "true" ] || [ "${GATE_STALE:-false}" = "true" ]; then
+        why="unanswered"
+        [ "${GATE_STALE:-false}" = "true" ] && why="stale — the plan changed after it"
+        echo "Error: $plan_id carries the gating tag '$hit' and its spec-approval is $why." >&2
+        echo "  Not transitioning $state -> $target. The plan changed after the approval, so the" >&2
+        echo "  approval is for a document that no longer says what it said (WFI-178)." >&2
+        echo "  Open spec-approval with the amended scope in the question, then run this again:" >&2
+        echo "    wf-gate-open.sh $plan_id spec-approval \"<what changed> — approve?\" --skill wf-spec" >&2
+        exit 2
+      fi
+    fi
+  fi
+
   "$SELF_DIR/wf-registry-update.sh" "$plan_id" "$state" "$target"
 fi

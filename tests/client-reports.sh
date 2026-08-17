@@ -3897,6 +3897,52 @@ assert_ok "--force is there for an operator repairing one by hand" \
 rm -rf bugs/triaged/BUG-270-onprem-rendered-text
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A replan does not promote on a stale approval (client-a WFI-178)"
+
+# PLN-110 was tagged `contract`, the project's only gating tag. A replan widened
+# Step 10 from 2 documents to 10 and added a test, then reached
+# wf-replan-target.sh --apply, which transitioned draft -> ready and committed
+# it. wf-gate-status.sh reported GATE_ANSWERED=false, GATE_STALE=true seconds
+# later. wf-registry-update.sh's guard could not catch it: it refuses
+# draft -> ready without a review OF RECORD, and a fresh one existed.
+REPLAN_CFG_BACKUP=""
+[ -f claude-workflow.yml ] && REPLAN_CFG_BACKUP=$(cat claude-workflow.yml)
+printf 'specApproval:\n  mode: verdict\n  gateTags:\n    - contract\n' > claude-workflow.yml
+registry_add_row PLN-280 gate-tagged-replan draft "—" "contract"
+cat > plans/PLN-280-gate-tagged-replan/plan.md <<'EOF'
+# gate-tagged
+
+> **ID:** PLN-280
+
+## Goal
+Refresh the drive on a schedule.
+
+## Review
+> **Result:** Approved with notes
+EOF
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-280 spec-approval "approve?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-280 "approved" >/dev/null 2>&1
+printf '\n## Amendments\n2026-08-18 — Step 10 widened from 2 documents to 10.\n' >> plans/PLN-280-gate-tagged-replan/plan.md
+
+assert_eq "a widened gate-tagged plan is refused with exit 2" "2" \
+  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-280 --apply >/dev/null 2>&1; echo $?)"
+assert_eq "and it is still draft, not dispatchable" "draft" "$(registry_state PLN-280)"
+
+# Self-clearing: once the human has answered the new question it goes through.
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-280 spec-approval "wider scope — approve?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-280 "approved at the wider scope" >/dev/null 2>&1
+assert_ok "a re-approved plan promotes normally" "$SCRIPT_DIR/wf-replan-target.sh" PLN-280 --apply
+assert_eq "and lands where the replan target says" "ready" "$(registry_state PLN-280)"
+
+# An untagged plan is not touched by any of this.
+registry_add_row PLN-281 untagged-replan draft
+printf '\n## Review\n> **Result:** Approved\n' >> plans/PLN-281-untagged-replan/plan.md
+assert_ok "a plan carrying no gating tag replans without a gate" \
+  "$SCRIPT_DIR/wf-replan-target.sh" PLN-281 --apply
+assert_eq "and promotes" "ready" "$(registry_state PLN-281)"
+[ -n "$REPLAN_CFG_BACKUP" ] && printf '%s\n' "$REPLAN_CFG_BACKUP" > claude-workflow.yml
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

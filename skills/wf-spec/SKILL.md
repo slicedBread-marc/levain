@@ -639,6 +639,17 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
 
     `--no-commit` keeps the stamp from committing itself under a message about stamping (WFI-085); the `wf-commit.sh` line above then carries it under one that names the verdict. Callers with no commit of their own — `/wf-attend`, a review agent's exit — omit the flag and let the stamp commit itself.
 
+6d. **Does the amended plan still have its approval?** The Replanning path used to have no such check — step 6a gates only on scope *reduction* — so an amendment that widened scope went straight to step 7 and was transitioned and committed:
+    ```bash
+    GATE_TAGS=$(scripts/wf-exec.sh wf-list-tags.sh --gating)
+    eval "$(scripts/wf-exec.sh wf-gate-status.sh PLN-NNN spec-approval)"
+    ```
+    If the plan carries a tag in `GATE_TAGS` **and** `GATE_ANSWERED` is not `true`, or `GATE_STALE=true`, **[GATE]** `spec-approval` with the *amendment* in the question, leave the state at `draft`, and exit. Same rule as the new-plan exit: an approval is given to a document, and the document changed.
+
+    client-a's PLN-110 (WFI-178) was tagged `contract`, the project's only gating tag. A replan widened Step 10 from 2 documents to 10 and added a test; the plan reached `ready` and was dispatchable on an approval that `wf-gate-status.sh` reported stale seconds later. `wf-registry-update.sh`'s guard could not catch it — it refuses `draft → ready` without a review *of record*, and a fresh review of record existed. The review says the plan is sound; the gate asks whether a human accepts what it now promises.
+
+    `wf-replan-target.sh --apply` refuses this itself with **exit 2** rather than transitioning. That refusal is the backstop, not the plan: reaching it means step 6d was skipped.
+
 7. **Update REGISTRY.md — the target state depends on whether a worktree exists:**
    ```bash
    scripts/wf-exec.sh wf-replan-target.sh PLN-NNN --apply
