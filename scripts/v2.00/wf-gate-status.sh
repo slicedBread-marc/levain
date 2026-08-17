@@ -36,6 +36,11 @@
 #                                them alike; one that REFUSES to ask a human
 #                                must not.
 #   GATE_RESOLUTION='approved'   the recorded resolution (empty if never closed)
+#   GATE_QUESTION='…'            the question AS ASKED when it was answered, so
+#                                a caller can replay it instead of writing it
+#                                again from what it happens to see now — five
+#                                regenerations of one question accumulated three
+#                                errors of fact on client-a (WFI-184)
 #   GATE_RESOLVED_AT=<iso8601>   when (empty if never closed)
 #   GATE_STALE=true|false        closed, but plan.md has changed since
 #
@@ -72,10 +77,12 @@ answered=false
 stale=false
 basis=none
 resolution=""
+question=""
 resolved_at=""
 
 if [ -f "$resolved_file" ]; then
   resolution=$(grep -m1 "^GATE_RESOLUTION=" "$resolved_file" | sed "s/^GATE_RESOLUTION='//; s/'$//" || true)
+  question=$(grep -m1 "^GATE_QUESTION=" "$resolved_file" | sed "s/^GATE_QUESTION='//; s/'$//" || true)
   resolved_at=$(grep -m1 "^GATE_RESOLVED=" "$resolved_file" | sed "s/^GATE_RESOLVED='//; s/'$//" || true)
   # The body fingerprint decides when the record carries one: it normalises the
   # regions that move under machine control while the specification stands still
@@ -117,5 +124,6 @@ wf_emit GATE_OPEN        "$open"
 wf_emit GATE_ANSWERED    "$answered"
 wf_emit GATE_ANSWERED_BASIS "$basis"
 wf_emit GATE_RESOLUTION  "$resolution"
+wf_emit GATE_QUESTION    "$question"
 wf_emit GATE_RESOLVED_AT "$resolved_at"
 wf_emit GATE_STALE       "$stale"

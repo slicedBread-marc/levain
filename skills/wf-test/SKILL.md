@@ -167,7 +167,7 @@ cd /abs/path/to/feature-branches/PLN-NNN-<slug> \
   && ../../scripts/wf-exec.sh wf-test-tree.sh PLN-NNN-<slug> \
   && {{test_command}}
 ```
-It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp in `test-progress.md` immediately above the totals it belongs to.** A test result is a measurement of one working tree and nothing in `dotnet test`'s output says which — an unattended tester recorded develop's 1120 tests against a plan whose tree holds 1123, and opened a gate saying the implementation "appears incomplete" while verify's own run of the same plan was 1123 passed / 0 failed (WFI-132). A totals line without a stamp above it is not a result; re-run it.
+It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp in `test-progress.md` immediately above the totals it belongs to — copied verbatim from the tool output, character for character.** Never compose the line yourself and never write a `$(…)` into a document: client-a's PLN-153 carries `TREE … @ feature/PLN-153-projectname-path-guard $(git rev-parse HEAD) ($(date '+%b %d %H:%M'))` as literal text (WFI-183), which records neither the commit nor the time — the two facts the stamp exists to record. A stamp whose sha is unresolved is worth less than no stamp, because it looks like provenance. A test result is a measurement of one working tree and nothing in `dotnet test`'s output says which — an unattended tester recorded develop's 1120 tests against a plan whose tree holds 1123, and opened a gate saying the implementation "appears incomplete" while verify's own run of the same plan was 1123 passed / 0 failed (WFI-132). A totals line without a stamp above it is not a result; re-run it.
 
 **Never transcribe a figure you did not just produce.** Totals, failure counts, durations and failing test names that appear in a bug report, an earlier log, `test-progress.md`, or the plan are records of a *different* run, usually the pre-fix one that motivated the work. The only admissible source for a result is a command you executed in this session, in the stamped tree, and read the output of.
 
@@ -555,6 +555,8 @@ Test progress is saved once at exit, not during testing. The LLM holds in-memory
 ```markdown
 ## Test Progress — PLN-NNN-slug
 
+TREE feature-branches/PLN-NNN-slug @ feature/PLN-NNN-slug a1b2c3d (2026-08-17T15:14:51Z)
+
 | # | Criterion | Build | Result |
 |-|-|-|-|
 | 1 | criterion one text | Apr 07 09:15 (a1b2c3d) | PASS |
@@ -565,6 +567,7 @@ Test progress is saved once at exit, not during testing. The LLM holds in-memory
 Last failure: #3 on build Apr 08 14:32 (f4e5d6c)
 ```
 
+- The `TREE` line is the one `wf-test-tree.sh` printed, pasted. If you are writing this file without one in your tool output, you have no provenance for the results below it — re-run the command in the plan's worktree and paste what it prints.
 - One row per criterion, always present. Result: `PASS`, `FAIL`, `SKIP`, or `—` (untested).
 - Only the most recent result per criterion is stored — overwrite on retest.
 - "Last failure" line records the resume point for the next session.

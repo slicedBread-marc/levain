@@ -41,6 +41,10 @@ Show `Blocking` as a plain count, and `—` when it is 0.
 
 Never route a `mismatch` row to its normal skill. client-a's WFI-082: a `manual-test` gate left over from a fixed bug sat on a plan that had gone back to `draft` with five unaddressed findings, the queue showed it as ordinary work, and the attendant was sent to `/wf-test` — which cannot run on a draft plan. Worse, the unattended tester that had already reached that plan overwrote a human FAIL with PASS on the way past.
 
+**Put the gate's own question to the human. Do not rewrite it, and do not derive a better one from what you can see now.** The question in the gate file is the one the worker asked from inside the evidence; anything you compose in its place is a fresh reading of a codebase that has moved since. client-a's PLN-135 had one `prior-work` question regenerated on each of five re-openings, and the regenerations accumulated errors of fact: three consecutive ones described a `Dictionary` as a `HashSet`, and the fifth asserted a file was untouched by a commit that changes it +22/-8 (WFI-180, WFI-182, WFI-184). The human was being asked to decide on premises no worker had checked. If the question is genuinely stale, that is the `mismatch` path above — reconcile it; do not quietly answer a different one.
+
+A gate that has been answered before carries `GATE_QUESTION` in its resolved record (`wf-gate-status.sh <PLN-ID> <gate>`) — **the text as originally asked**. Replay that rather than writing it again.
+
 Then: "Which one? (number, or `all` to work through them in order)"
 
 If the script exits non-zero, say "No gates open — nothing is waiting on you" and stop. Do not go looking for work; that's `/wf-status`.

@@ -3851,6 +3851,20 @@ assert_eq "with no unchecked box — that would read as 'needs replanning'" "0" 
 assert_eq "and it is committed, not left dirty for a merge to take" "" \
   "$(git status --porcelain -- plans/PLN-260-answered-once/findings.md)"
 
+# The question as asked is kept with the answer (WFI-184). One question
+# regenerated across five re-openings collected three errors of fact — a
+# Dictionary described as a HashSet three times running, and a file called
+# untouched by a commit that changes it +22/-8. A reader who can replay the
+# original does not have to write it again from what they happen to see now.
+registry_add_row PLN-263 question-replay ready
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-263 prior-work "00d3d23 touches ExemptFromRule3 — accept it, or revert it?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-263 "do not revert" >/dev/null 2>&1
+assert_eq "the resolved record carries the question as asked" \
+  "00d3d23 touches ExemptFromRule3 — accept it, or revert it?" \
+  "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-263 prior-work | grep '^GATE_QUESTION=' | cut -d"'" -f2)"
+assert_eq "and findings.md records what was asked alongside the answer" "true" \
+  "$(grep -q '\*\*Asked:\*\* 00d3d23 touches ExemptFromRule3' plans/PLN-263-question-replay/findings.md && echo true || echo false)"
+
 # ═══════════════════════════════════════════════════════════════════════
 section "A consume checks which bug it is taking (client-a WFI-167)"
 

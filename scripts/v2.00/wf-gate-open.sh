@@ -126,6 +126,7 @@ if ! $force && wf_gate_revision_scoped "$gate_name"; then
      && [ "${GATE_ANSWERED_BASIS:-none}" = "revision" ]; then
     wf_event gate-refused "$id" "$gate_name: already answered ${GATE_RESOLVED_AT:-} — $question"
     echo "$id: gate '$gate_name' NOT opened — it was answered${GATE_RESOLVED_AT:+ at $GATE_RESOLVED_AT} and the plan has not changed since." >&2
+    [ -n "${GATE_QUESTION:-}" ] && echo "  asked:      $GATE_QUESTION" >&2
     echo "  resolution: ${GATE_RESOLUTION:-—}" >&2
     echo "  Act on that answer and carry on. It is the decision of record; do not re-derive the question." >&2
     echo "  If the plan really has moved on, amend it — a changed specification re-opens this gate by itself." >&2

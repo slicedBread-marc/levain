@@ -64,8 +64,20 @@ if [ ! -f "$gate_file" ] && [ -z "$forced_gate" ]; then
   exit 0
 fi
 
+gate_question=""
 if [ -f "$gate_file" ]; then
   gate_name=$(grep -m1 "^GATE_NAME=" "$gate_file" | sed "s/^GATE_NAME='//; s/'$//")
+  # The question AS ASKED, kept with the answer.
+  #
+  # A resolution without its question is half a record, and the missing half is
+  # the one that drifts. client-a's PLN-135 had the same gate re-derived five
+  # times, and each regeneration introduced new errors of fact: three
+  # consecutive re-openings described a Dictionary as a HashSet, and the fifth
+  # asserted a file was untouched by a commit that changes it +22/-8 (WFI-184).
+  # The conclusion survived by luck. Keeping the original text means a reader
+  # can replay what was asked instead of writing it again from what they happen
+  # to see now.
+  gate_question=$(grep -m1 "^GATE_QUESTION=" "$gate_file" | sed "s/^GATE_QUESTION='//; s/'$//" || true)
   rm -f "$gate_file"
 else
   gate_name="$forced_gate"
@@ -120,6 +132,7 @@ gate_state=$(grep -m1 "^| $id |" "$(wf_develop_root)/plans/REGISTRY.md" 2>/dev/n
 record=$(
   wf_emit GATE_ID           "$id"
   wf_emit GATE_NAME         "$gate_name"
+  wf_emit GATE_QUESTION     "$gate_question"
   wf_emit GATE_RESOLUTION   "$resolution"
   wf_emit GATE_RESOLVED     "$(wf_now)"
   wf_emit GATE_RESOLVED_STATE "${gate_state:-—}"
@@ -169,6 +182,7 @@ transcribe_resolution() {
 
   {
     printf '\n### %s — %s\n' "$gate_name" "$(wf_now)"
+    [ -n "$gate_question" ] && printf '> **Asked:** %s\n' "$(printf '%s' "$gate_question" | tr '\n' ' ')"
     printf '> **Resolution:** %s\n' "$(printf '%s' "$resolution" | tr '\n' ' ')"
     printf '> **State at close:** %s\n' "${gate_state:-—}"
     printf '> Recorded by wf-gate-close.sh. This is the decision of record — act on it rather than re-deriving the question (WFI-181).\n'
