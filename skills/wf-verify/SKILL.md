@@ -104,6 +104,23 @@ missing or empty, the test check did not run: rerun the command yourself in the
 foreground and read it. **A finding you have not seen in tool output of your own
 is not a finding.**
 
+**A test agent that comes back without counts did not run the tests.** Rule 5
+binds the agents you spawn as much as it binds you, and it has been broken by
+one: client-a's PLN-141 verify (WFI-179) had the haiku test agent return
+after ~133s with *"I'm waiting for the test run to complete. The monitor is
+streaming events from the output log."* — no total, no passed, no failed, and
+the `dotnet test` process still alive and still appending to the log it had been
+told to tee. The same WFI-012 shape, one level down: the agent used a
+background-and-poll pattern, and its own turn ended before the thing it was
+polling.
+
+So check the shape of the reply before you read anything into it. If it does not
+carry `total / passed / failed / skipped`, or if it describes waiting, watching
+or monitoring, **discard it and run the command yourself, in the foreground**.
+Do not re-spawn the agent to "finish" — there is nothing to finish; the run it
+started is unattached to any turn. Kill any stray runner first
+(`pkill -f '<test runner>'`) so two suites are not writing one log.
+
 ```
 # Launch all in parallel:
 Agent(model: haiku, prompt: "Run `{{build_command}}` in feature-branches/PLN-NNN-<slug>/. 
@@ -113,6 +130,12 @@ Agent(model: haiku, prompt: "Run the test command in feature-branches/PLN-NNN-<s
   tee'd to a log: append ` 2>&1 | tee /tmp/wf-tests-PLN-NNN.log` to whichever command you run.
   If TEST_ARGS is non-empty: `eval \"{{test_command}} $TEST_ARGS\"`
   Otherwise (full-suite fallback): `{{test_command}} {{test_exclude_e2e}}`
+  RUN IT IN THE FOREGROUND, in ONE Bash call, with an explicit generous timeout
+  (timeout: 600000). Do not use run_in_background. Do not use Monitor. Do not
+  poll a log file and do not start something you intend to check on later —
+  there is no later, and the runner is killed unread the moment you stop. Do not
+  return until that Bash call has returned. A reply saying you are waiting for
+  the run is a reply reporting nothing, and it is discarded.
   Report: total tests, passed, failed, skipped. Quote the 'scope: ...' line from /tmp/wf-scope.log.
   For each failure, quote the runner's own failure line VERBATIM — copy it from the
   output, do not paraphrase it, do not reconstruct the test name or the expected

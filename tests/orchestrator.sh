@@ -1794,6 +1794,18 @@ assert_ok "wf-verify states what finishing means" \
 assert_ok "an uncompletable check is a finding, not an exit" \
   grep -q 'Routing on incomplete evidence is recoverable' "$LIB_ROOT/skills/wf-verify/SKILL.md"
 
+# The same shape one level down (client-a WFI-179): the haiku TEST AGENT came
+# back after ~133s with "I'm waiting for the test run to complete. The monitor is
+# streaming events from the output log." — no counts, and the dotnet process
+# still alive. Rule 5 binds the agents the worker spawns, so its prompt has to
+# say so and the worker has to check the reply's shape.
+assert_ok "the spawned test agent is told to run in the foreground" \
+  grep -q 'RUN IT IN THE FOREGROUND' "$LIB_ROOT/skills/wf-verify/SKILL.md"
+assert_ok "and told not to monitor or poll" \
+  grep -q 'Do not use Monitor' "$LIB_ROOT/skills/wf-verify/SKILL.md"
+assert_ok "a reply with no counts is discarded, not re-spawned" \
+  grep -q 'did not run the tests' "$LIB_ROOT/skills/wf-verify/SKILL.md"
+
 # The other line in that log: a permission rule matched by nothing. The
 # allow-list now lives in wf-worktree-harness.sh, because a heredoc in the
 # skill is something the permission classifier can refuse and did (WFI-015).
