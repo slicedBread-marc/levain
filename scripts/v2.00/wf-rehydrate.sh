@@ -208,7 +208,9 @@ emit_plan_detail() {
   # An open gate means a human owes an answer. Acting past one is the whole
   # reason gates exist.
   local num gate_file
-  gate_file="$ORCH/gates/${id}.gate"
+  # Resolved by number, like the claim below it — a gate opened on the plan is
+  # this artifact's gate whichever of its names is in hand (WFI-187).
+  gate_file=$(wf_gate_file "$id" || true)
   if [ -f "$gate_file" ]; then
     local gname
     gname=$(grep -m1 "^GATE_NAME=" "$gate_file" 2>/dev/null | sed "s/^GATE_NAME='//; s/'$//") || true

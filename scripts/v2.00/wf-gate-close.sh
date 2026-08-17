@@ -61,7 +61,9 @@ if [ -z "$id" ]; then
   exit 1
 fi
 
-gate_file="$(wf_orch_dir)/gates/${id}.gate"
+# By number, so a gate opened under the plan closes when the brief it came from
+# is the name in hand (WFI-187).
+gate_file=$(wf_gate_file "$id" || true)
 
 if [ ! -f "$gate_file" ] && [ -z "$forced_gate" ]; then
   echo "$id: no open gate"
@@ -71,6 +73,12 @@ fi
 gate_question=""
 if [ -f "$gate_file" ]; then
   gate_name=$(grep -m1 "^GATE_NAME=" "$gate_file" | sed "s/^GATE_NAME='//; s/'$//")
+  # The gate's OWN id, which is the plan when a plan opened it. Everything
+  # below — the fingerprints, the registry state, the findings.md the
+  # resolution is written into — is about that plan, and none of it can be
+  # found under the brief or bug the caller happens to be holding (WFI-187).
+  gate_owner=$(grep -m1 "^GATE_ID=" "$gate_file" | sed "s/^GATE_ID='//; s/'$//" || true)
+  [ -n "$gate_owner" ] && id="$gate_owner"
   # The question AS ASKED, kept with the answer.
   #
   # A resolution without its question is half a record, and the missing half is

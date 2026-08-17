@@ -28,8 +28,9 @@
 
 set -euo pipefail
 
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=wf-orch-lib.sh
-source "$(dirname "$0")/wf-orch-lib.sh"
+source "$SELF_DIR/wf-orch-lib.sh"
 
 role="${1:-}"
 artifact="${2:-}"
@@ -236,10 +237,42 @@ $dry_run || rm -f "$ORCH/pending/${num}-${role}.spawn" 2>/dev/null || true
 # So the guard now asks about the artifact it was actually given. For a bug or
 # a brief there is no plan row to be stale, and the comment below has always
 # said abstaining is the right answer — it just never got the chance.
+#
+# …UNTIL THE BRIEF HAS A PLAN
+#
+# "There is no plan row" stops being true the moment spec writes one, and after
+# that the source artifact has exactly one row that matters — its plan's.
+# Abstaining there is how client-a's BRF-161 (WFI-188) got a fresh spec
+# worker at 16:0x, minutes after commit 20768695 had moved
+# PLN-161-image-tier-wire-budget draft → ready and 4b1d887e had recorded the
+# spec-approval resolution. wf-list-specable.sh was empty, the review was
+# Approved and unstale, the gate was answered: there was no spec work left. The
+# worker read all that, changed nothing and exited — a whole model launch to
+# rediscover that the pipeline had already moved on.
+#
+# The lookup is NOT the WFI-160 mistake repeated. That was arithmetic — take
+# the number, assume PLN-<number> — and it was wrong because a reallocated
+# number makes BRF-081 and PLN-081 unrelated. This asks wf-plan-id.sh, which
+# answers from the plan header naming this artifact, and only acts on
+# PLAN_ID_RESUME=true — a plan that says in a field that it is this brief's.
+# --peek is what makes it safe to ask: the same call without it allocates
+# (WFI-175), so this guard would have burned an artifact number per spawn.
 registry="$ROOT/plans/REGISTRY.md"
+state_id=""
+case "${id%%-*}" in
+  PLN) state_id="PLN-$num" ;;
+  BRF|BUG)
+    if [ -x "$SELF_DIR/wf-plan-id.sh" ]; then
+      peek=$("$SELF_DIR/wf-plan-id.sh" "$id" --peek 2>/dev/null || true)
+      if printf '%s' "$peek" | grep -q "PLAN_ID_RESUME='true'"; then
+        state_id=$(printf '%s' "$peek" | grep '^PLAN_ID=' | cut -d"'" -f2)
+      fi
+    fi ;;
+esac
+
 cur_state=""
-if [ -f "$registry" ] && [ "${id%%-*}" = "PLN" ]; then
-  cur_state=$(grep "^| PLN-$num |" "$registry" 2>/dev/null | head -1 | awk -F'|' '{print $4}' | xargs || true)
+if [ -f "$registry" ] && [ -n "$state_id" ]; then
+  cur_state=$(grep "^| $state_id |" "$registry" 2>/dev/null | head -1 | awk -F'|' '{print $4}' | xargs || true)
 fi
 
 # An empty state means there is no plan row yet — a bug or brief on its way to
@@ -254,8 +287,14 @@ if [ -n "$cur_state" ]; then
     consistency) allowed="ready" ;;
   esac
   if ! printf '%s\n' $allowed | grep -qx "$cur_state"; then
-    echo "wf-spawn: PLN-$num is '$cur_state' — $role does not act on that state; not spawning" >&2
-    wf_event skip "$id" "$role: state moved to '$cur_state' before launch"
+    # Name the plan that answered, which is not always the artifact asked
+    # about: a brief is judged by the state of the plan it became.
+    if [ "$state_id" = "$id" ]; then
+      echo "wf-spawn: $state_id is '$cur_state' — $role does not act on that state; not spawning" >&2
+    else
+      echo "wf-spawn: $id was already specced as $state_id, now '$cur_state' — $role does not act on that state; not spawning" >&2
+    fi
+    wf_event skip "$id" "$role: $state_id state is '$cur_state' before launch"
     exit 2
   fi
 fi

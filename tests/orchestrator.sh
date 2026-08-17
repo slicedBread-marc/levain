@@ -432,10 +432,23 @@ assert_eq "the ledger keeps both cycles" "2" \
 assert_ok "the earlier outcome is still readable" \
   grep -q "criteria 1-8 pass" "$resolved_dir/PLN-019.manual-test.log"
 
-# The ledger sits in the directory wf-gate-status.sh looks up by exact path.
-# A reader that globbed it would eval a tab-separated line as shell.
-assert_ok "gate-status still resolves the slot, not the ledger" \
-  grep -q 'resolved/\${id}\.\${gate_name}"' "$SCRIPT_DIR/wf-gate-status.sh"
+# The ledger sits beside the slot in the same directory, and the slot is a
+# record of KEY='value' lines that every caller evals. A reader that reached the
+# ledger instead would eval a tab-separated line — arbitrary execution of a
+# human's resolution text.
+#
+# Asserted on behaviour rather than on the source string it used to match: the
+# lookup resolves by artifact NUMBER now (WFI-187), so it globs, and what
+# matters is what it will not return.
+GATE_STATUS_OUT=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-019 manual-test 2>&1)
+assert_eq "gate-status reads the slot's resolution" "criterion 8 FAIL, escalated" \
+  "$(printf '%s\n' "$GATE_STATUS_OUT" | grep '^GATE_RESOLUTION=' | cut -d"'" -f2)"
+assert_eq "and emits only assignments — never a ledger line" "0" \
+  "$(printf '%s\n' "$GATE_STATUS_OUT" | grep -cvE "^[A-Z_]+='.*'$" | xargs)"
+assert_eq "the resolver never hands back the .log" "false" \
+  "$(bash -c "source '$SCRIPT_DIR/wf-orch-lib.sh'
+     f=\$(wf_gate_resolved_file PLN-019 manual-test || true)
+     case \"\$f\" in *.log) echo true ;; *) echo false ;; esac")"
 
 section "Events"
 

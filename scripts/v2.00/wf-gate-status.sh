@@ -64,13 +64,19 @@ if [ -z "$id" ]; then
 fi
 
 ORCH="$(wf_orch_dir)"
-gate_file="$ORCH/gates/${id}.gate"
-resolved_file="$ORCH/gates/resolved/${id}.${gate_name}"
+# Both lookups resolve by artifact NUMBER — a gate opened on PLN-161 is the
+# same artifact's gate as one asked about under BRF-161 (WFI-187).
+gate_file=$(wf_gate_file "$id" || true)
+resolved_file=$(wf_gate_resolved_file "$id" "$gate_name" || true)
 
 open=false
 if [ -f "$gate_file" ]; then
   existing=$(grep -m1 "^GATE_NAME=" "$gate_file" | sed "s/^GATE_NAME='//; s/'$//")
   [ "$existing" = "$gate_name" ] && open=true
+  # The plan the gate is actually about — see wf-gate-close.sh. The
+  # fingerprints below are a question about a plan.md, and a brief has none.
+  gate_owner=$(grep -m1 "^GATE_ID=" "$gate_file" | sed "s/^GATE_ID='//; s/'$//" || true)
+  [ -n "$gate_owner" ] && id="$gate_owner"
 fi
 
 answered=false
@@ -83,6 +89,10 @@ resolved_at=""
 if [ -f "$resolved_file" ]; then
   resolution=$(grep -m1 "^GATE_RESOLUTION=" "$resolved_file" | sed "s/^GATE_RESOLUTION='//; s/'$//" || true)
   question=$(grep -m1 "^GATE_QUESTION=" "$resolved_file" | sed "s/^GATE_QUESTION='//; s/'$//" || true)
+  # Same normalisation as the open-gate branch: the record names the plan it
+  # was an answer about, and that is what the fingerprints below are for.
+  record_owner=$(grep -m1 "^GATE_ID=" "$resolved_file" | sed "s/^GATE_ID='//; s/'$//" || true)
+  [ -n "$record_owner" ] && id="$record_owner"
   resolved_at=$(grep -m1 "^GATE_RESOLVED=" "$resolved_file" | sed "s/^GATE_RESOLVED='//; s/'$//" || true)
   # The body fingerprint decides when the record carries one: it normalises the
   # regions that move under machine control while the specification stands still

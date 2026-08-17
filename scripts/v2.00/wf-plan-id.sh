@@ -202,12 +202,34 @@ fi
 # block, and wf-spec's bug link-back step has been observed writing them under
 # `## Goal`. Both are the field; neither is prose.
 #
+# AND IT IS THE FIELD'S VALUE, NOT THE FIELD'S LINE
+#
+# Narrowing from "the header block" to "the header fields" was not enough,
+# because a field line is not all field: TEMPLATE.md writes
+# `> **Bug:** BUG-NNN — <title>`, and the title is free text on the same line.
+# A bug titled after another bug — which is how every follow-up is titled, and
+# the whole substance of WFI-176 one file over — puts a second artifact ID on
+# the line, and matching anywhere in it reads that as a claim.
+#
+# So the value is the FIRST id token after the `:**` marker, and only that is
+# compared. `> **Bug:** BUG-141 — BUG-131's console encoding fix…` claims
+# BUG-141 and says nothing about BUG-131. `> **Brief:** briefs/BRF-041-x.md`
+# claims BRF-041.
+#
 # claims_this <plan-dir> — 0 if that plan's fields name the artifact being
 # specced. The one test, used for both searches below.
 claims_this() {
   [ -f "$1/plan.md" ] || return 1
-  { grep -E '^[ \t]*>?[ \t]*\*\*(Bug|Brief|Source|From):\*\*' "$1/plan.md" 2>/dev/null || true; } \
-    | grep -qE "(^|[^A-Za-z0-9-])${id}([^0-9]|$)"
+  awk -v want="$id" '
+    /^[ \t]*>?[ \t]*\*\*(Bug|Brief|Source|From):\*\*/ {
+      line = $0
+      sub(/^.*:\*\*/, "", line)              # everything after the field marker
+      if (match(line, /(PLN|BUG|BRF)-[0-9]+/)) {
+        if (substr(line, RSTART, RLENGTH) == want) { found = 1; exit }
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$1/plan.md" 2>/dev/null
 }
 
 if [ -n "$existing_dir" ] && claims_this "$existing_dir"; then

@@ -595,6 +595,86 @@ wf_claim_live() {
 
 # ── Gates ─────────────────────────────────────────────────────────────────
 
+# wf_gate_file <artifact> — path of the gate file for that artifact, open or
+# not. Prints the path and returns 0 when one EXISTS; prints the path it would
+# be written to and returns 1 when none does.
+#
+# THE GATE BELONGS TO THE NUMBER, NOT TO THE NAME
+#
+# Claims settled this question already: "the claim now hangs off the artifact
+# NUMBER, which is the identity that work actually has — one piece of work
+# carries two names through spec (BUG-022 → PLN-022, BRF-002 → PLN-002)"
+# (wf_claim_dir). Gates were keyed on the full prefixed ID, so the two lookups
+# disagreed about what one artifact is.
+#
+# client-a's BRF-161 (WFI-187): wf-spec opened `spec-approval` on the plan it
+# had just written, producing `gates/PLN-161.gate`. The dispatcher's skip check
+# asked `wf-list-gates.sh BRF-161` — the name it had dispatched under — found no
+# `BRF-161.gate`, and concluded nothing was parked. It re-dispatched a spec
+# worker onto a brief whose plan was sitting behind an unanswered gate, and
+# would have gone on doing it every sweep until a human answered.
+#
+# Resolution order: the exact name first, so nothing about today's files
+# changes; then any other prefix carrying the same number. `10#` normalises the
+# padding, so BRF-002 and PLN-2 are one artifact here as they are everywhere
+# else.
+wf_gate_file() {
+  local artifact="$1" id num dir exact f fid
+  id=$(printf '%s' "$artifact" | grep -oE '(PLN|BUG|BRF)-[0-9]+' | head -1)
+  [ -n "$id" ] || return 1
+  dir="$(wf_orch_dir)/gates"
+  exact="$dir/${id}.gate"
+  if [ -f "$exact" ]; then printf '%s' "$exact"; return 0; fi
+
+  num=$((10#${id##*-}))
+  for f in "$dir"/*.gate; do
+    [ -f "$f" ] || continue
+    fid=$(basename "$f" .gate)
+    case "$fid" in PLN-*|BUG-*|BRF-*) ;; *) continue ;; esac
+    [ "$((10#${fid##*-}))" = "$num" ] || continue
+    printf '%s' "$f"
+    return 0
+  done
+
+  # None open. The exact name is where a new one belongs.
+  printf '%s' "$exact"
+  return 1
+}
+
+# wf_gate_resolved_file <artifact> <gate-name> — same resolution for the
+# answered-gate slot, which is keyed the same way and drifts the same way: a
+# `spec-approval` answered under PLN-161 is an answer for BRF-161 too.
+#
+# THE SLOT, NEVER THE LEDGER. `resolved/<id>.<gate>` is a record of KEY='value'
+# lines that callers eval; `resolved/<id>.<gate>.log` is the append-only history
+# beside it, one tab-separated line per close. Evaluating a line of that as
+# shell is arbitrary execution of a human's resolution text. The `.log` suffix
+# puts it outside the `*.<gate>` glob already; it is excluded by name as well,
+# because that is an invariant worth stating rather than inferring.
+wf_gate_resolved_file() {
+  local artifact="$1" gate="$2" id num dir exact f base
+  id=$(printf '%s' "$artifact" | grep -oE '(PLN|BUG|BRF)-[0-9]+' | head -1)
+  [ -n "$id" ] || return 1
+  dir="$(wf_orch_dir)/gates/resolved"
+  exact="$dir/${id}.${gate}"
+  if [ -f "$exact" ]; then printf '%s' "$exact"; return 0; fi
+
+  num=$((10#${id##*-}))
+  for f in "$dir"/*."$gate"; do
+    [ -f "$f" ] || continue
+    case "$f" in *.log) continue ;; esac
+    base=$(basename "$f")
+    base="${base%".$gate"}"
+    case "$base" in PLN-*|BUG-*|BRF-*) ;; *) continue ;; esac
+    [ "$((10#${base##*-}))" = "$num" ] || continue
+    printf '%s' "$f"
+    return 0
+  done
+
+  printf '%s' "$exact"
+  return 1
+}
+
 # wf_gate_revision_scoped <gate-name> — 0 when one answer covers this gate for
 # as long as the plan's specification stands.
 #

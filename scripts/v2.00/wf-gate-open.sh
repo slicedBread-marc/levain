@@ -76,7 +76,11 @@ if [ -z "$id" ]; then
   exit 1
 fi
 
-gate_file="$(wf_orch_dir)/gates/${id}.gate"
+# One artifact, one gate — resolved by NUMBER, so opening under BRF-161 finds
+# the gate wf-spec opened under PLN-161 rather than writing a second file for
+# the same piece of work (WFI-187). When none is open this is the exact name,
+# which is where a new one belongs.
+gate_file=$(wf_gate_file "$id" || true)
 
 if [ -f "$gate_file" ]; then
   existing=$(grep -m1 "^GATE_NAME=" "$gate_file" | sed "s/^GATE_NAME='//; s/'$//")

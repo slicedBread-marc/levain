@@ -156,8 +156,9 @@ blocked_by() {
 if [ -n "$query" ]; then
   id=$(printf '%s' "$query" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
   [ -n "$id" ] || { echo "Error: '$query' is not a PLN/BUG/BRF id" >&2; exit 2; }
-  gate_file="$gates_dir/${id}.gate"
-  [ -f "$gate_file" ] || exit 1
+  # By NUMBER, not by name: wf-spec opens `spec-approval` on the plan it just
+  # wrote, and the dispatcher asks under the brief it dispatched (WFI-187).
+  gate_file=$(wf_gate_file "$id") || exit 1
   # shellcheck disable=SC1090
   eval "$(cat "$gate_file")"
   gstate=$(state_of "$GATE_ID")

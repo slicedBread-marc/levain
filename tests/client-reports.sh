@@ -3885,6 +3885,87 @@ assert_eq "another plan's budget is untouched" "true" \
 rm -f .claude/orchestrator/attempts/PLN-264.implement
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A gate belongs to the number, not the name (client-a WFI-187)"
+
+# wf-spec opened spec-approval on the plan it had just written, producing
+# gates/PLN-161.gate. The dispatcher's skip check asked under the name it had
+# dispatched — BRF-161 — found no BRF-161.gate, and concluded nothing was
+# parked. It re-dispatched a spec worker onto a brief whose plan sat behind an
+# unanswered gate, and would have done so every sweep until a human answered.
+# Claims had settled this already: they key on the artifact NUMBER.
+registry_add_row PLN-290 gate-under-the-plan draft
+printf '# under the plan\n\n> **ID:** PLN-290\n> **Brief:** briefs/BRF-290-thing.md\n\n## Goal\nx\n' \
+  > plans/PLN-290-gate-under-the-plan/plan.md
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-290 spec-approval "8 steps — approve?" >/dev/null 2>&1
+
+assert_ok "a gate opened on the plan is visible under the brief" \
+  "$SCRIPT_DIR/wf-list-gates.sh" BRF-290
+assert_eq "and the row names the plan that owns it" "PLN-290" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" BRF-290 2>/dev/null | cut -f1)"
+assert_eq "gate-status under the brief sees it open" "true" \
+  "$("$SCRIPT_DIR/wf-gate-status.sh" BRF-290 spec-approval | grep '^GATE_OPEN=' | cut -d"'" -f2)"
+
+# One artifact, one gate file — not one per name it happens to be called by.
+"$SCRIPT_DIR/wf-gate-open.sh" BRF-290 spec-approval "8 steps — approve?" >/dev/null 2>&1
+assert_eq "opening under the brief does not make a second gate file" "false" \
+  "$([ -f .claude/orchestrator/gates/BRF-290.gate ] && echo true || echo false)"
+
+# Closing under either name closes the one gate, and the answer is an answer
+# under both — with a fingerprint, so the WFI-180 refusal still has its evidence.
+"$SCRIPT_DIR/wf-gate-close.sh" BRF-290 "approved" >/dev/null 2>&1
+assert_fails "closing under the brief closes the plan's gate" \
+  "$SCRIPT_DIR/wf-list-gates.sh" PLN-290
+assert_eq "the answer is visible under the brief" "true" \
+  "$("$SCRIPT_DIR/wf-gate-status.sh" BRF-290 spec-approval | grep '^GATE_ANSWERED=' | cut -d"'" -f2)"
+assert_eq "and under the plan" "true" \
+  "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-290 spec-approval | grep '^GATE_ANSWERED=' | cut -d"'" -f2)"
+assert_eq "asked under the brief, it is still fingerprinted against the plan" "revision" \
+  "$("$SCRIPT_DIR/wf-gate-status.sh" BRF-290 spec-approval | grep '^GATE_ANSWERED_BASIS=' | cut -d"'" -f2)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A brief that already has a plan is not specable (client-a WFI-188)"
+
+# The last-moment state guard abstained for a bug or brief because "there is no
+# plan row to be stale". That stops being true the moment spec writes one:
+# BRF-161 got a fresh spec worker minutes after its plan had gone draft -> ready
+# and its spec-approval had been recorded. wf-list-specable.sh was empty, the
+# review was Approved and unstale — there was no spec work left to do.
+registry_add_row PLN-291 already-specced ready
+printf '# already specced\n\n> **ID:** PLN-291\n> **Brief:** briefs/BRF-291-thing.md\n\n## Goal\nx\n' \
+  > plans/PLN-291-already-specced/plan.md
+COUNTER_BEFORE=$(counter_now)
+assert_eq "a brief whose plan is past draft stands down with exit 2" "2" \
+  "$("$SCRIPT_DIR/wf-spawn.sh" spec BRF-291 --dry-run >/dev/null 2>&1; echo $?)"
+# Captured, not piped into `grep -q`: this file runs under `pipefail` and a -q
+# grep exits on the first match, so the writer takes SIGPIPE and the pipeline
+# reports 141 however good the output was.
+SPAWN_REFUSAL=$("$SCRIPT_DIR/wf-spawn.sh" spec BRF-291 --dry-run 2>&1 || true)
+assert_eq "the refusal names the plan it was already specced as" "true" \
+  "$(if [[ "$SPAWN_REFUSAL" == *"already specced as PLN-291"* ]]; then echo true; else echo false; fi)"
+assert_eq "asking cost no artifact number — the lookup peeks" "$COUNTER_BEFORE" "$(counter_now)"
+
+# The WFI-160 direction still holds: a brief with no plan is legitimate work,
+# and must never be judged by an unrelated plan that happens to share its number.
+#
+# This fixture also carries the trap that WFI-168's first fix left standing: the
+# Bug field's TITLE names BRF-292, so a test that matched anywhere on the field
+# LINE read the line as a claim. A field line is not all field — the title after
+# the value is free text, and titling a bug after another artifact is how every
+# follow-up is written (WFI-176). Only the field's value counts.
+registry_add_row PLN-292 unrelated-same-number complete
+printf '# unrelated\n\n> **ID:** PLN-292\n> **Bug:** BUG-777 — nothing to do with BRF-292\n\n## Goal\nx\n' \
+  > plans/PLN-292-unrelated-same-number/plan.md
+assert_eq "an id in a field's title does not claim the plan" "false" \
+  "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-292 --peek 2>/dev/null | grep '^PLAN_ID_RESUME=' | cut -d"'" -f2)"
+assert_ok "a brief with no plan of its own is still dispatchable" \
+  "$SCRIPT_DIR/wf-spawn.sh" spec BRF-292 --dry-run
+
+# A plan sent back for replanning is spec work again.
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-291 ready draft >/dev/null 2>&1
+assert_ok "and one whose plan returned to draft is dispatchable again" \
+  "$SCRIPT_DIR/wf-spawn.sh" spec BRF-291 --dry-run
+
+# ═══════════════════════════════════════════════════════════════════════
 section "A consume checks which bug it is taking (client-a WFI-167)"
 
 # Commit 671983e renumbered BUG-137 -> BUG-136 while an unattended wf-spec
