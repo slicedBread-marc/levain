@@ -6,8 +6,9 @@
 
 set -euo pipefail
 
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=wf-orch-lib.sh
-source "$(dirname "$0")/wf-orch-lib.sh"
+source "$SELF_DIR/wf-orch-lib.sh"
 
 cd "$(wf_develop_root)"   # plans/* is develop-root work — see wf-orch-lib.sh
 
@@ -21,9 +22,9 @@ found=0
 #   1. REPLANNING — a plan sent back from verify or test, carrying unchecked
 #      findings. The planner reads the findings and writes an Amendment.
 #
-#   2. NEVER REVIEWED — a plan whose plan.md exists but whose review gate has
-#      never run. Its findings.md is empty, because nothing has yet had an
-#      opinion about it.
+#   2. NOTHING TO ACT ON — a plan whose plan.md exists and whose findings.md
+#      carries no unchecked item. Its review may have run or may not have; the
+#      `detail` column says which, from wf-review-status.sh (WFI-174).
 #
 # The old filter required an unchecked `- [ ]` in findings.md, which is shape 1
 # by definition. Shape 2 was therefore emitted by nothing: the state table says
@@ -72,7 +73,33 @@ while IFS=$'\037' read -r id slug state priority _rest; do
   # No findings to act on. If the plan also has no plan.md, there is nothing to
   # review yet and it belongs to whatever created the row — leave it alone.
   [ -f "$plan_dir/plan.md" ] || continue
-  unreviewed+=("${id}-${slug}	never reviewed	$priority")
+
+  # ── What "unreviewed" means is wf-review-status.sh's to say ─────────────
+  #
+  # This column used to read `never reviewed` for every draft with no unchecked
+  # finding, which is a statement about findings.md and not about the review.
+  # client-a had four plans reported that way while wf-review-status.sh
+  # answered REVIEW_LOCATION=plan, 'Approved with notes', STALE=false,
+  # STAMPED=true for all four — the two surfaces flatly contradicting each
+  # other (WFI-174).
+  #
+  # It under-claims rather than over-claims, so nothing unsafe followed from
+  # it. What did follow is waste: wf-spec fans out a review agent for every
+  # plan this column says has none, so four current, stamped reviews were
+  # queued to be run again — exactly the tokens the review-before-gate
+  # ordering exists to save. The verdict of record is one script's answer;
+  # ask it rather than inferring one.
+  eval "$("$SELF_DIR/wf-review-status.sh" "$id" 2>/dev/null || true)"
+  case "${REVIEW_LOCATION:-none}" in
+    none) detail="never reviewed" ;;
+    *)
+      if [ "${REVIEW_STALE:-false}" = "false" ]; then
+        detail="reviewed: ${REVIEW_RESULT:-—}"
+      else
+        detail="review stale (${REVIEW_RESULT:-—})"
+      fi ;;
+  esac
+  unreviewed+=("${id}-${slug}	${detail}	$priority")
   found=1
 done < <(wf_registry_rows "$REGISTRY")
 

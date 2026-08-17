@@ -3658,6 +3658,35 @@ assert_eq "a bug with no ID field falls back to its folder" "1" \
 rm -rf bugs/open/BUG-241-console-encoding bugs/open/BUG-242-plain bugs/open/BUG-243-no-id-field
 
 # ═══════════════════════════════════════════════════════════════════════
+section "The specable detail column agrees with the review (client-a WFI-174)"
+
+# Four client-a drafts were listed `never reviewed` while wf-review-status.sh
+# answered 'Approved with notes', STALE=false, STAMPED=true for every one of
+# them. wf-spec fans out a review agent for each plan reporting none, so four
+# current reviews were queued to run again.
+registry_add_row PLN-244 detail-column draft
+assert_eq "a draft with no review still says so" "never reviewed" \
+  "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | awk -F'\t' '$1 == "PLN-244-detail-column" {print $2}')"
+
+cat >> plans/PLN-244-detail-column/plan.md <<'EOF'
+
+## Review
+> **Result:** Approved with notes
+> **Date:** 2026-08-17
+EOF
+assert_eq "a reviewed draft reports the verdict, not 'never reviewed'" "reviewed: Approved with notes" \
+  "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | awk -F'\t' '$1 == "PLN-244-detail-column" {print $2}')"
+
+# A verdict on a plan that has moved since is not a verdict on this plan.
+cat >> plans/PLN-244-detail-column/plan.md <<'EOF'
+
+## Amendments
+2026-08-18 — scope widened from 2 documents to 10.
+EOF
+assert_eq "and a stale one is named as stale" "review stale (Approved with notes)" \
+  "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | awk -F'\t' '$1 == "PLN-244-detail-column" {print $2}')"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"
