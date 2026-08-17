@@ -147,6 +147,51 @@ for bug_md in bugs/open/*/bug.md; do
 done
 
 # --- Decided briefs ---
+#
+# A BRIEF NEVER LEAVES `## Decided`, SO SOMETHING HAS TO ASK WHETHER IT IS DONE
+#
+# A bug drops off this list by moving: wf-bug-consume.sh renames open/ →
+# triaged/, and the glob above stops finding it. A brief has no such move. It is
+# stamped `> **Status:** Planned` with a `> **Plan:**` field, and its INDEX.md
+# row stays exactly where it was, under `## Decided`, forever.
+#
+# So this section offered client-a's BRF-161 on every sweep after its plan
+# was written, reviewed, approved by a human and moved to `ready`. The daemon
+# spawned a spec worker each time — 19:00, 19:09, 19:11, 20:02, 20:04, 20:06 —
+# and each one correctly worked out that there was nothing to do and exited
+# (WFI-188, WFI-189, WFI-190). Three of them stopped to file a report about it.
+#
+# It took three reports to find because of the claim check below: by the time a
+# human ran this script by hand, the dispatcher held the claim on 161, so the
+# brief was filtered out and the output came back EMPTY. Every report therefore
+# concluded, reasonably, that the dispatch had not come from this list at all.
+#
+# `Status: Planned` alone is not the test. A run that dies between stamping the
+# brief and writing the plan would then hide real work forever. The test is
+# whether the plan EXISTS: a `> **Plan:**` field naming a directory that is
+# there, or — for a brief whose field was never written — wf-plan-id.sh finding
+# a plan whose header names this brief. That second call is why --peek had to
+# exist first (WFI-175); without it, listing would allocate.
+brief_is_planned() {
+  local brief_md="$1" brief_id="$2" planned plan_field
+  [ -f "$brief_md" ] || return 1
+
+  plan_field=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Plan:\*\*' "$brief_md" 2>/dev/null \
+               | sed -E 's/^.*\*\*Plan:\*\*[ \t]*//; s/[ \t]*$//; s#/$##' || true)
+  case "$plan_field" in
+    ""|*"(none"*|*_none_*) ;;
+    *) [ -d "$plan_field" ] && return 0
+       [ -d "plans/$(basename "$plan_field")" ] && return 0 ;;
+  esac
+
+  # No usable field. Only worth a subprocess if the brief claims to be planned.
+  planned=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Status:\*\*' "$brief_md" 2>/dev/null || true)
+  case "$planned" in *[Pp]lanned*) ;; *) return 1 ;; esac
+  [ -n "$brief_id" ] && [ "$brief_id" != "—" ] || return 1
+  "$SELF_DIR/wf-plan-id.sh" "$brief_id" --peek 2>/dev/null \
+    | grep -q "PLAN_ID_RESUME='true'"
+}
+
 briefs_found=0
 if [ -f "plans/briefs/INDEX.md" ]; then
   in_decided=0
@@ -162,6 +207,13 @@ if [ -f "plans/briefs/INDEX.md" ]; then
       link=$(echo "$line" | grep -oE '\([^)]+\)' | head -1 | tr -d '()')
       brief_id=$(echo "$link" | grep -oE 'BRF-[0-9]+' | head -1)
       [ -n "$brief_id" ] || brief_id="—"
+
+      # Already converted? Then it is a record, not a worklist item — see
+      # brief_is_planned above. Checked BEFORE the claim test, so that a
+      # planned brief reads the same whether or not a worker happens to be
+      # holding it at this instant (WFI-188/189/190).
+      brief_is_planned "plans/briefs/$link" "$brief_id" && continue
+
       # Same claim check as bugs: a brief under spec has no plan folder yet.
       if [ "$brief_id" != "—" ] && wf_claim_held "$brief_id"; then continue; fi
       desc=$(echo "$line" | sed 's/^[^—]*— //')

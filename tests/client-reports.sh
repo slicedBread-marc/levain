@@ -3988,6 +3988,56 @@ assert_eq "the refusal names the plan it was already specced as" "true" \
   "$(if [[ "$SPAWN_REFUSAL" == *"already specced as PLN-291"* ]]; then echo true; else echo false; fi)"
 assert_eq "asking cost no artifact number — the lookup peeks" "$COUNTER_BEFORE" "$(counter_now)"
 
+# The candidate should never have been offered either. A bug drops off the
+# specable list by MOVING — open/ to triaged/ — and a brief has no such move: it
+# is stamped `Status: Planned` and its INDEX.md row stays under `## Decided`
+# forever. So BRF-161 was offered on every sweep after its plan was written,
+# reviewed, approved and moved to `ready`, and the daemon spawned a spec worker
+# each time (WFI-188, WFI-189, WFI-190).
+mkdir -p plans/briefs
+cat > plans/briefs/INDEX.md <<'EOF'
+# Briefs
+
+## Decided
+> Approach chosen, ready for a planner session.
+
+- [BRF-291](BRF-291-already-specced.md) — this one became PLN-291
+- [BRF-293](BRF-293-still-to-do.md) — this one has no plan yet
+- [BRF-294](BRF-294-crashed-mid-spec.md) — stamped Planned, but no plan was written
+
+## Exploring
+EOF
+printf '# already specced\n\n> **ID:** BRF-291\n> **Status:** Planned\n> **Plan:** plans/PLN-291-already-specced/\n' \
+  > plans/briefs/BRF-291-already-specced.md
+printf '# still to do\n\n> **ID:** BRF-293\n> **Status:** Decided\n> **Plan:** _(none)_\n' \
+  > plans/briefs/BRF-293-still-to-do.md
+printf '# crashed\n\n> **ID:** BRF-294\n> **Status:** Planned\n> **Plan:** _(none)_\n' \
+  > plans/briefs/BRF-294-crashed-mid-spec.md
+
+SPECABLE_BRIEFS=$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null || true)
+assert_eq "a brief whose plan exists is no longer offered" "0" \
+  "$(printf '%s\n' "$SPECABLE_BRIEFS" | grep -c '^BRF-291' | xargs)"
+assert_eq "one that still needs a plan is" "1" \
+  "$(printf '%s\n' "$SPECABLE_BRIEFS" | grep -c '^BRF-293' | xargs)"
+
+# `Status: Planned` alone must not hide work: a run that died between stamping
+# the brief and writing the plan would otherwise be invisible forever.
+assert_eq "a Planned stamp with no plan behind it is still work" "1" \
+  "$(printf '%s\n' "$SPECABLE_BRIEFS" | grep -c '^BRF-294' | xargs)"
+
+# It took three reports to find this because of the claim filter: with the
+# dispatcher holding the claim, a human running the script by hand got empty
+# output and concluded the dispatch came from somewhere else. The planned check
+# has to answer the same either way.
+CLAIM_DIR=$(bash -c "source '$SCRIPT_DIR/wf-orch-lib.sh'; wf_claim_dir BRF-293")
+printf '%s\n%s\n' "$(date +%s)" "$$" > "$CLAIM_DIR/.wf-claim"
+assert_eq "a claimed brief is hidden, as before" "0" \
+  "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | grep -c '^BRF-293' | xargs)"
+assert_eq "and a planned one reads the same claimed or not" "0" \
+  "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | grep -c '^BRF-291' | xargs)"
+rm -f "$CLAIM_DIR/.wf-claim"
+rm -f plans/briefs/INDEX.md plans/briefs/BRF-29*.md
+
 # The WFI-160 direction still holds: a brief with no plan is legitimate work,
 # and must never be judged by an unrelated plan that happens to share its number.
 #
