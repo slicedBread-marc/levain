@@ -4170,6 +4170,144 @@ assert_eq "and promotes" "ready" "$(registry_state PLN-281)"
 [ -n "$REPLAN_CFG_BACKUP" ] && printf '%s\n' "$REPLAN_CFG_BACKUP" > claude-workflow.yml
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A close is announced after it is committed (client-a WFI-192)"
+
+# The success line was printed BEFORE the commit. /wf-deploy step 9 piped 14
+# closes through `head -1`; head exited after the first line, the next write
+# took SIGPIPE, and the script died between `git mv` and the commit. All 14
+# printed "BUG-NNN → closed" and none committed — and the staged renames then
+# survived a `git checkout release` in the same worktree.
+git checkout -q develop 2>/dev/null || true
+mkdir -p bugs/triaged/BUG-950-ordering
+printf '# BUG-950 — x\n\n> **Status:** Triaged\n\n## Notes\n—\n' \
+  > bugs/triaged/BUG-950-ordering/bug.md
+"$SCRIPT_DIR/wf-commit.sh" "seed BUG-950" --add bugs/triaged/BUG-950-ordering >/dev/null 2>&1
+
+close_out=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-950 PLN-950-fix 2>/dev/null)
+assert_eq "the commit line is printed before the success line" "true" \
+  "$(printf '%s\n' "$close_out" | awk '
+     /^committed / { c = NR }
+     /BUG-950 → closed/ { s = NR }
+     END { print (c > 0 && s > c) ? "true" : "false" }')"
+assert_eq "and nothing is left staged for the next worker" "" \
+  "$(git status --porcelain -- bugs/triaged/BUG-950-ordering bugs/closed/BUG-950-ordering)"
+
+# The line that survives an early-closing pipe must not be the success line:
+# `head -1` is what the caller actually did.
+mkdir -p bugs/triaged/BUG-951-sigpipe
+printf '# BUG-951 — x\n\n> **Status:** Triaged\n\n## Notes\n—\n' \
+  > bugs/triaged/BUG-951-sigpipe/bug.md
+"$SCRIPT_DIR/wf-commit.sh" "seed BUG-951" --add bugs/triaged/BUG-951-sigpipe >/dev/null 2>&1
+first_line=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-951 PLN-951-fix 2>/dev/null | head -1)
+assert_eq "a caller reading only the first line does not read 'closed'" "false" \
+  "$(printf '%s' "$first_line" | grep -q '→ closed' && echo true || echo false)"
+
+# --no-commit still reports, but says what it did NOT do.
+mkdir -p bugs/triaged/BUG-952-staged
+printf '# BUG-952 — x\n\n> **Status:** Triaged\n\n## Notes\n—\n' \
+  > bugs/triaged/BUG-952-staged/bug.md
+"$SCRIPT_DIR/wf-commit.sh" "seed BUG-952" --add bugs/triaged/BUG-952-staged >/dev/null 2>&1
+nc_out=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-952 PLN-952-fix --no-commit 2>/dev/null)
+assert_eq "--no-commit says the close is staged, not committed" "true" \
+  "$(printf '%s' "$nc_out" | grep -q 'NOT committed' && echo true || echo false)"
+# ...and a later run finishes the job rather than calling it already done.
+recover=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-952 PLN-952-fix 2>&1)
+assert_eq "a re-run over an uncommitted close commits it" "" \
+  "$(git status --porcelain -- bugs/triaged/BUG-952-staged bugs/closed/BUG-952-staged)"
+assert_eq "and says it had to" "true" \
+  "$(printf '%s' "$recover" | grep -q 'not committed — committing it now' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "Prior work skips a project's own note paths (client-a WFI-193)"
+
+# drive/exchange/ is client-a's cross-machine message log: every bug filed
+# from the remote machine arrives as a commit naming its bug ID and touching a
+# path outside plans/ bugs/ briefs/ .claude/. Three plans in one session each
+# opened a gate over a note and each cost a human round trip.
+registry_add_row PLN-284 note-not-code ready
+printf '\n## Goal\n**Bug:** BUG-284\n' >> plans/PLN-284-note-not-code/plan.md
+mkdir -p drive/exchange src
+printf 'BUG-284 was filed on machine tb\n' > drive/exchange/msg-284.md
+git add -A >/dev/null 2>&1
+git commit -qm "chore: relay BUG-284 from tb" >/dev/null 2>&1
+
+PW_CFG_BACKUP=""
+[ -f claude-workflow.yml ] && PW_CFG_BACKUP=$(cat claude-workflow.yml)
+assert_ok "a note outside the four built-ins is flagged by default" \
+  "$SCRIPT_DIR/wf-prior-work.sh" PLN-284
+pw_out=$("$SCRIPT_DIR/wf-prior-work.sh" PLN-284 2>/dev/null || true)
+assert_eq "and the report NAMES the file, not just a count" "true" \
+  "$(printf '%s' "$pw_out" | grep -q 'drive/exchange/msg-284.md' && echo true || echo false)"
+
+printf 'priorWork:\n  ignorePaths:\n    - "drive/exchange/"\n' > claude-workflow.yml
+assert_fails "a declared note path is not prior work" \
+  "$SCRIPT_DIR/wf-prior-work.sh" PLN-284
+
+# The gate is not configurable away: real code in the same commit still fires.
+registry_add_row PLN-285 note-and-code ready
+printf '\n## Goal\n**Bug:** BUG-285\n' >> plans/PLN-285-note-and-code/plan.md
+printf 'BUG-285 relayed\n' > drive/exchange/msg-285.md
+printf 'int main(void){return 0;}\n' > src/bug285.c
+git add -A >/dev/null 2>&1
+git commit -qm "fix(BUG-285): patch it directly on develop" >/dev/null 2>&1
+assert_ok "a commit that also touches code still reports" \
+  "$SCRIPT_DIR/wf-prior-work.sh" PLN-285
+pw2=$("$SCRIPT_DIR/wf-prior-work.sh" PLN-285 2>/dev/null || true)
+assert_eq "and names only the non-ignored file" "true" \
+  "$(printf '%s' "$pw2" | grep -q 'src/bug285.c' \
+     && ! printf '%s' "$pw2" | grep -q 'msg-285.md' && echo true || echo false)"
+assert_eq "a built-in path can never be un-ignored by config" "true" \
+  "$(printf 'priorWork:\n  ignorePaths:\n    - "src/"\n' > claude-workflow.yml
+     "$SCRIPT_DIR/wf-prior-work.sh" PLN-284 >/dev/null 2>&1 && echo true || echo false)"
+[ -n "$PW_CFG_BACKUP" ] && printf '%s\n' "$PW_CFG_BACKUP" > claude-workflow.yml || rm -f claude-workflow.yml
+
+# ═══════════════════════════════════════════════════════════════════════
+section "The harness reinstalls into a worktree (client-a WFI-191)"
+
+# Two failures, both because release was checked out in a WORKTREE.
+# (1) .claude/workflow-source is untracked, so it exists only in the main
+# checkout — the documented `lib=$(cat …)` recovery came back empty and its
+# `[ -n "$lib" ] &&` guard made it a silent no-op that exited 0.
+# (2) In a worktree `.git` is a FILE, so `cp … .git/hooks/post-commit` failed
+# with "Not a directory" and install.sh died BEFORE writing wf-exec.sh.
+git checkout -q develop 2>/dev/null || true
+printf '%s\n' "$LIB_ROOT" > .claude/workflow-source
+# A RELEASE worktree, as in the report — not feature/*. A feature worktree is
+# meant to carry wf-exec.sh alone and resolve the rest from the main checkout;
+# a release-verify worktree needs the whole harness.
+git worktree add -q -b release-wfi191 "$TEST_DIR/wt-191" develop 2>/dev/null
+# install.sh stands down without a config, which would mask the failure this
+# section is about. project_slug is the only required key.
+printf 'project_slug: "wfi191"\nbuild_command: ""\ntest_command: ""\n' \
+  > "$TEST_DIR/wt-191/claude-workflow.yml"
+
+assert_eq "workflow-source is absent in the worktree (untracked)" "false" \
+  "$([ -f "$TEST_DIR/wt-191/.claude/workflow-source" ] && echo true || echo false)"
+assert_eq "and .git there is a file, not a directory" "true" \
+  "$([ -f "$TEST_DIR/wt-191/.git" ] && [ ! -d "$TEST_DIR/wt-191/.git" ] && echo true || echo false)"
+
+assert_ok "install.sh completes against a worktree" \
+  env WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$TEST_DIR/wt-191"
+assert_eq "the dispatcher was written, not skipped by an early death" "true" \
+  "$([ -x "$TEST_DIR/wt-191/scripts/wf-exec.sh" ] && echo true || echo false)"
+assert_eq "and so was the version map it resolves through" "true" \
+  "$([ -f "$TEST_DIR/wt-191/scripts/version-map.txt" ] && echo true || echo false)"
+assert_eq "the post-commit hook went to the COMMON git dir" "true" \
+  "$([ -f "$TEST_DIR/main/.git/hooks/post-commit" ] && echo true || echo false)"
+
+# The restore reads the library path out of the main worktree when its own
+# checkout does not have it.
+rm -rf "$TEST_DIR/wt-191/scripts" "$TEST_DIR/wt-191/.claude/workflow-source"
+restore_out=$(env -C "$TEST_DIR/wt-191" "$SCRIPT_DIR/wf-harness-restore.sh" 2>&1 || true)
+assert_eq "wf-harness-restore finds the library via the main worktree" "true" \
+  "$(printf '%s' "$restore_out" | grep -q 'main worktree' && echo true || echo false)"
+assert_eq "and the harness is back" "true" \
+  "$([ -x "$TEST_DIR/wt-191/scripts/wf-exec.sh" ] && echo true || echo false)"
+
+git worktree remove --force "$TEST_DIR/wt-191" >/dev/null 2>&1 || true
+git branch -q -D release-wfi191 2>/dev/null || true
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

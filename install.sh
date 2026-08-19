@@ -89,8 +89,15 @@ if [ -z "$PROJECT_SLUG" ]; then
     exit 1
 fi
 
-# Read source_dirs as comma-separated string
-SOURCE_DIRS=$(grep -A 10 "^source_dirs:" "$CONFIG_FILE" | grep "^  - " | sed 's/^  - //' | sed 's/"//g' | tr '\n' ', ' | sed 's/,$//')
+# Read source_dirs as comma-separated string.
+#
+# `|| true` because this is a PIPELINE under `set -o pipefail`: a config with no
+# `source_dirs:` block makes both greps exit 1, the command substitution takes
+# that status, and `set -e` kills the installer on an assignment — after the
+# banner and before a single word of output. An installer whose failure mode is
+# "prints nothing, exits 1" is the WFI-191 shape; an absent optional key is not
+# an error.
+SOURCE_DIRS=$(grep -A 10 "^source_dirs:" "$CONFIG_FILE" | grep "^  - " | sed 's/^  - //' | sed 's/"//g' | tr '\n' ', ' | sed 's/,$//') || true
 
 # Backfill config blocks for clients installed before they existed. Without
 # this the feature silently runs on hardcoded defaults and there is nothing in
@@ -148,6 +155,15 @@ if ! grep -q "^specApproval:" "$CONFIG_FILE" 2>/dev/null; then
     printf '\n' >> "$CONFIG_FILE"
     extract_block "# ── Spec approval" >> "$CONFIG_FILE"
     echo -e "${GREEN}  Added specApproval: block to $CONFIG_FILE (mode: gate — unchanged behavior)${NC}"
+fi
+
+# v6.29: the paths where THIS project talks about a plan without implementing
+# it. Absent, wf-prior-work.sh uses its four built-ins alone — today's
+# behavior — so nothing changes for an existing client until they list one.
+if ! grep -q "^priorWork:" "$CONFIG_FILE" 2>/dev/null; then
+    printf '\n' >> "$CONFIG_FILE"
+    extract_block "# ── Prior work" >> "$CONFIG_FILE"
+    echo -e "${GREEN}  Added priorWork: block to $CONFIG_FILE (empty — unchanged behavior)${NC}"
 fi
 
 # The orchestrator's consistency keys default to on in the scripts, so an older
@@ -463,25 +479,66 @@ echo -e "${GREEN}  Created .claude/orchestrator/ (gitignored)${NC}"
 # client that happened not to have the hook yet, and silently nowhere else.
 # The hook is generated infrastructure, like the skills, so the library owns it
 # and overwrites it whenever it differs.
-HOOK="$TARGET_DIR/.git/hooks/post-commit"
+# Where the hooks live, which is NOT always "$TARGET_DIR/.git/hooks".
+#
+# In a git WORKTREE, `.git` is a FILE holding a `gitdir:` pointer, so
+# `$TARGET_DIR/.git/hooks/post-commit` is not a path at all and `cp` fails with
+# "Not a directory". client-a's WFI-191: /wf-release step 5a's documented
+# recovery ran install.sh against a dedicated release worktree, died right
+# here, and left the harness HALF INSTALLED — .claude/skills and
+# .claude/orchestrator written, wf-exec.sh and scripts/v*/ never reached. The
+# recheck still said HARNESS MISSING, with no wf-* script on disk to run. A
+# project with a release worktree hits that on every release.
+#
+# Hooks are shared by every worktree, so the right directory is always the
+# COMMON git dir. --path-format is git 2.31+; older git returns a path relative
+# to the worktree, which is resolved by hand.
+GIT_COMMON_DIR=$(git -C "$TARGET_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+if [ -z "$GIT_COMMON_DIR" ]; then
+    GIT_COMMON_DIR=$(git -C "$TARGET_DIR" rev-parse --git-common-dir 2>/dev/null || true)
+    case "$GIT_COMMON_DIR" in
+        "")  ;;
+        /*)  ;;
+        *)   GIT_COMMON_DIR="$TARGET_DIR/$GIT_COMMON_DIR" ;;
+    esac
+fi
+[ -n "$GIT_COMMON_DIR" ] || GIT_COMMON_DIR="$TARGET_DIR/.git"
 HOOK_SRC="$SCRIPT_DIR/templates/hooks/post-commit"
-if [ ! -f "$HOOK" ]; then
-    cp "$HOOK_SRC" "$HOOK"
-    chmod +x "$HOOK"
-    echo -e "${GREEN}  Installed .git/hooks/post-commit${NC}"
-elif ! grep -q "claude-workflow" "$HOOK"; then
-    # Not ours. Keep it — clobbering a project's own hook is not our call.
-    cp "$HOOK" "$HOOK.pre-workflow"
-    cp "$HOOK_SRC" "$HOOK"
-    chmod +x "$HOOK"
-    echo -e "${YELLOW}  Replaced a non-workflow post-commit hook${NC}"
-    echo -e "${YELLOW}  The original is at .git/hooks/post-commit.pre-workflow — merge it back if you need it${NC}"
-elif cmp -s "$HOOK_SRC" "$HOOK"; then
-    echo -e "${YELLOW}  post-commit hook already up to date — skipping${NC}"
-else
-    cp "$HOOK_SRC" "$HOOK"
-    chmod +x "$HOOK"
-    echo -e "${GREEN}  Updated .git/hooks/post-commit${NC}"
+HOOK="$GIT_COMMON_DIR/hooks/post-commit"
+
+# And it is a WARNING when it fails, not the end of the install.
+#
+# The other half of WFI-191: the hook is a convenience — it triggers the verify
+# agent — and `scripts/wf-exec.sh` is the harness itself. Under `set -e` this
+# block aborted before the dispatcher was ever written, so a recoverable
+# problem with an optional file cost the project every wf-* script. Whatever
+# goes wrong here, the install continues and says what was lost.
+install_post_commit_hook() {
+    mkdir -p "$GIT_COMMON_DIR/hooks" || return 1
+    if [ ! -f "$HOOK" ]; then
+        cp "$HOOK_SRC" "$HOOK" || return 1
+        chmod +x "$HOOK" || return 1
+        echo -e "${GREEN}  Installed post-commit hook ($HOOK)${NC}"
+    elif ! grep -q "claude-workflow" "$HOOK"; then
+        # Not ours. Keep it — clobbering a project's own hook is not our call.
+        cp "$HOOK" "$HOOK.pre-workflow" || return 1
+        cp "$HOOK_SRC" "$HOOK" || return 1
+        chmod +x "$HOOK" || return 1
+        echo -e "${YELLOW}  Replaced a non-workflow post-commit hook${NC}"
+        echo -e "${YELLOW}  The original is at $HOOK.pre-workflow — merge it back if you need it${NC}"
+    elif cmp -s "$HOOK_SRC" "$HOOK"; then
+        echo -e "${YELLOW}  post-commit hook already up to date — skipping${NC}"
+    else
+        cp "$HOOK_SRC" "$HOOK" || return 1
+        chmod +x "$HOOK" || return 1
+        echo -e "${GREEN}  Updated post-commit hook ($HOOK)${NC}"
+    fi
+    return 0
+}
+if ! install_post_commit_hook; then
+    echo -e "${YELLOW}  Could not install the post-commit hook at $HOOK${NC}"
+    echo -e "${YELLOW}  The verify agent will not be triggered automatically in this checkout.${NC}"
+    echo -e "${YELLOW}  Continuing — the rest of the harness does not depend on it.${NC}"
 fi
 
 # Install the Claude Code session hooks (state rehydration after compaction).
@@ -503,9 +560,12 @@ REHYDRATE_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-rehydrate.sh --hoo
 GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-guard-write.sh"
 GUARD_LINE="    PreToolUse    matcher Edit|Write|NotebookEdit  → $GUARD_CMD"
 if command -v python3 >/dev/null 2>&1; then
+    # `|| true` for the same reason the git hook above is non-fatal (WFI-191):
+    # a merge that dies must not abort the install before scripts/wf-exec.sh is
+    # written. An empty result falls through to the catch-all below and warns.
     SETTINGS_RESULT=$(SETTINGS_PATH="$SETTINGS" REHYDRATE_CMD="$REHYDRATE_CMD" \
         GUARD_CMD="$GUARD_CMD" \
-        python3 "$SCRIPT_DIR/templates/hooks/settings-merge.py")
+        python3 "$SCRIPT_DIR/templates/hooks/settings-merge.py") || true
     case "$SETTINGS_RESULT" in
         created)      echo -e "${GREEN}  Created .claude/settings.json with the rehydration and write-guard hooks${NC}" ;;
         updated)      echo -e "${GREEN}  Updated .claude/settings.json rehydration and write-guard hooks${NC}" ;;
@@ -516,6 +576,9 @@ if command -v python3 >/dev/null 2>&1; then
             echo "    SessionStart  matcher compact|clear|resume  → $REHYDRATE_CMD session-start 2>/dev/null || true"
             echo "    PostCompact   matcher manual|auto           → $REHYDRATE_CMD post-compact 2>/dev/null || true"
             echo "$GUARD_LINE" ;;
+        "")           echo -e "${YELLOW}  .claude/settings.json merge failed (see the error above) — hooks NOT installed${NC}"
+                      echo -e "${YELLOW}  Continuing; add them by hand (see docs/rehydration.md):${NC}"
+                      echo "$GUARD_LINE" ;;
         *)            echo -e "${YELLOW}  .claude/settings.json: unexpected result '$SETTINGS_RESULT'${NC}" ;;
     esac
 else
@@ -709,7 +772,17 @@ resolve_script_folder() {
 
 if git -C "$TARGET_DIR" rev-parse --git-dir &>/dev/null; then
     echo "Updating feature worktrees..."
-    TARGET_ABS="$(cd "$TARGET_DIR" && pwd)"
+    # `pwd -P`, not `pwd`. This is compared against the paths `git worktree
+    # list` reports, and git reports the PHYSICAL path. Under a symlinked
+    # prefix — /var → /private/var on macOS, or any project reached through a
+    # symlink — the logical form never matches, so install.sh sees its own
+    # target in the list, decides it is a foreign feature worktree, and runs
+    # wf-worktree-harness.sh over it. That step deliberately installs only
+    # wf-exec.sh (a feature worktree resolves version-map.txt and scripts/v*/
+    # from the main checkout), so it strips back out the very files the install
+    # had just written — an install that reports success and leaves the target
+    # unable to dispatch.
+    TARGET_ABS="$(cd "$TARGET_DIR" && pwd -P)"
     WT_COUNT=0
 
     wt_path="" wt_branch=""

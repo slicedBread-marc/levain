@@ -30,6 +30,34 @@
 # else is how it BUILDS one. A spec commit naming PLN-092 is expected and
 # silent here. A commit naming PLN-092 that edits `src/` is the report.
 #
+# WHERE ELSE A PROJECT TALKS ABOUT A PLAN
+#
+# Those four paths are the harness's own vocabulary, and a project may have
+# more. client-a's WFI-193: `drive/exchange/` is the cross-machine message
+# log for an air-gapped pair, so every bug filed from the remote machine
+# arrives as a commit naming its bug ID and touching a path outside the four.
+# Three plans in one session — PLN-171, PLN-172, PLN-174 — each opened a gate
+# over a communication-log note, each stalled, each cost a human round trip to
+# answer "it is a note". On that project the false positive fires on
+# essentially every bug-sourced plan.
+#
+#   priorWork:
+#     ignorePaths:
+#       - "drive/exchange/"        # a note about a bug, not an implementation
+#
+# Entries are path PREFIXES from the repository root, added to the four
+# built-ins — write the trailing slash for a directory. They are not globs:
+# this decides whether a HUMAN IS INTERRUPTED, and a pattern language whose
+# misfires are silent is the wrong trade here. Nothing is ever removed from the
+# four built-ins, so a project cannot configure the gate away entirely.
+#
+# WHAT IT SAYS WHEN IT DOES FIRE
+#
+# The report names the offending files, not just how many. Answering the gate
+# means knowing whether the commit is code or a note, and a bare count sends
+# the human to `git show --stat` before they can say either — which is exactly
+# what all three of those round trips were spent on.
+#
 # Merges are skipped: a feature branch merged into develop is the pipeline
 # working correctly, and its own commits carry the plan ID too. `--no-merges`
 # plus first-parent exclusion would still list the branch's commits, so the
@@ -38,7 +66,8 @@
 #
 # Output, one line per commit:
 #   <short-sha> <subject>
-#     files: <n> outside plans/ bugs/ briefs/ .claude/
+#     <n> file(s) outside the pipeline's own paths:
+#       <path>
 #
 # Exit 0 when prior work was found (there is something to answer), 1 when the
 # base branch is clean of it — the same polarity as wf-list-gates.sh.
@@ -84,22 +113,46 @@ if [ -n "$plan_dir" ] && [ -f "$plan_dir/plan.md" ]; then
 fi
 [ -n "$bug_id" ] || bug_id="BUG-$num"
 
+# The paths that are bookkeeping rather than implementation: the four the
+# harness owns, plus whatever this project declares (see the header).
+ignore_prefixes=(plans/ bugs/ briefs/ .claude/)
+extra_prefixes=()
+while IFS= read -r p; do
+  [ -n "$p" ] || continue
+  extra_prefixes+=("$p")
+done < <(wf_cfg_list priorWork.ignorePaths)
+ignore_prefixes+=("${extra_prefixes[@]+"${extra_prefixes[@]}"}")
+
+# Prefixes are literal, so every regex metacharacter in one is escaped — a `.`
+# in `.claude/` matching any character is harmless, but a project prefix like
+# `docs/api-v1.2/` silently over-matching is not.
+ignore_re=""
+for p in "${ignore_prefixes[@]}"; do
+  esc=$(printf '%s' "$p" | sed 's/[][\.^$*+?(){}|\\]/\\&/g')
+  ignore_re="${ignore_re:+$ignore_re|}$esc"
+done
+ignore_re="^($ignore_re)"
+
 # Candidate commits: named by ID, no merges, and reachable on base by the
 # first-parent path only — i.e. committed ONTO base rather than merged into it.
 found=0
 while IFS= read -r sha; do
   [ -n "$sha" ] || continue
   # Files this commit touched that are not pipeline bookkeeping.
-  code=$(git show --pretty=format: --name-only "$sha" 2>/dev/null \
-         | grep -vE '^(plans/|bugs/|briefs/|\.claude/)' \
-         | grep -c . || true)
-  [ "${code:-0}" -gt 0 ] || continue
+  code_files=$(git show --pretty=format: --name-only "$sha" 2>/dev/null \
+               | grep -vE "$ignore_re" | grep . || true)
+  [ -n "$code_files" ] || continue
+  code=$(printf '%s\n' "$code_files" | grep -c . || true)
   if [ "$found" -eq 0 ]; then
     echo "Prior work for $plan_id on '$base', outside the pipeline:"
   fi
   found=$((found + 1))
   printf '  %s %s\n' "$(git log -1 --format=%h "$sha")" "$(git log -1 --format=%s "$sha")"
-  printf '    files: %s outside plans/ bugs/ briefs/ .claude/\n' "$code"
+  # NAME the files. Answering this gate is deciding "code, or a note?", and a
+  # count alone makes the human run `git show --stat` first (WFI-193).
+  printf '    %s file(s) outside the pipeline'"'"'s own paths:\n' "$code"
+  printf '%s\n' "$code_files" | head -10 | sed 's/^/      /'
+  [ "$code" -gt 10 ] && printf '      … and %s more\n' "$((code - 10))"
 done < <(git log --first-parent --no-merges --format=%H \
            --grep="$plan_id" --grep="$bug_id" "$base" 2>/dev/null || true)
 
@@ -113,4 +166,10 @@ echo "This code did not come through wf-implement — no feature branch, no veri
 echo "Do not build over it and do not assume it is correct. A human decides:"
 echo "  accept it as this plan's work (straight to verify), or revert it on the"
 echo "  feature branch and implement per plan.md."
+echo ""
+echo "If those paths are notes rather than implementation and this keeps firing,"
+echo "declare them once in claude-workflow.yml instead of answering per plan:"
+echo "  priorWork:"
+echo "    ignorePaths:"
+echo "      - \"path/prefix/\""
 exit 0

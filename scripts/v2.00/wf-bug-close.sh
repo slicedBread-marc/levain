@@ -49,6 +49,35 @@
 # The caller's pathspec cannot know about a path this script chose; so this
 # script commits both sides itself.
 #
+# THE SUCCESS LINE IS PRINTED AFTER THE COMMIT, NOT BEFORE
+#
+# It used to be printed before, and that one ordering made every failure after
+# it silent. client-a's WFI-192: /wf-deploy step 9 piped 14 consecutive
+# closes through `head -1` to keep the output short. `head` exits after the
+# first line, the next write takes SIGPIPE, and the script died between
+# `git mv` and the commit. All 14 printed `BUG-NNN → closed` and none of them
+# committed — indistinguishable, in the output, from the two that did.
+#
+# The damage compounds because the index is not per-branch: the 14 staged
+# renames survived a `git checkout release` in the same worktree and turned up
+# staged on release, where a later unrelated commit would have swept them in.
+# That is the WFI-048/049 shape reached with no second worker involved. It was
+# caught only by diffing `git ls-tree main:bugs/closed` against the closes the
+# caller believed it had made; trusting the output would have pushed main with
+# 14 bugs still in triaged.
+#
+# So: the line is printed once the commit has returned, a failed commit exits
+# 1, and a death anywhere in the staging window says on stderr that a rename is
+# staged and uncommitted. `head -1` was that caller's doing, but any early-
+# closing pipe, any timeout and any kill reproduce it — the ordering is what
+# made it silent.
+#
+# What is deliberately NOT done here is refusing to start when the index
+# already holds unrelated staged paths. On develop that index is shared by
+# concurrent workers by design, and wf-commit.sh's pathspec is what makes each
+# commit correct in spite of it (WFI-048, WFI-049). A refusal would make the
+# normal orchestrated case fail.
+#
 # Example: wf-bug-close.sh BUG-003 PLN-005-login-crash
 # Exit 0 on success, 1 on error.
 
@@ -108,6 +137,19 @@ if [ -z "$bug_dir" ]; then
   for d in bugs/closed/${bug_id}*/; do
     if [ -d "$d" ]; then
       why=$(grep -m1 -E '^(Fixed by plan|Fixed directly in|Closed as duplicate of):' "$d/bug.md" 2>/dev/null || true)
+      # "Already closed" is only the whole answer when the close was COMMITTED.
+      # A run that died in the staging window (WFI-192) leaves the bug at
+      # bugs/closed/ on disk with the rename staged, and a re-run must finish
+      # that job rather than declare it done — otherwise the recovery for the
+      # failure is itself silent.
+      if $do_commit && [ -n "$(git status --porcelain -- "bugs" 2>/dev/null | grep -F "${bug_id}" || true)" ]; then
+        echo "$bug_id is at bugs/closed/ but the move is not committed — committing it now" >&2
+        if ! "$SELF_DIR/wf-commit.sh" "bug($bug_id): closed" \
+              --add "bugs/triaged/$(basename "$d")" "bugs/open/$(basename "$d")" "bugs/closed/$(basename "$d")"; then
+          echo "Error: $bug_id is staged at bugs/closed/ and could not be committed — commit it before another worker does" >&2
+          exit 1
+        fi
+      fi
       echo "$bug_id already closed${why:+ — $why} — nothing to do"
       exit 0
     fi
@@ -193,15 +235,33 @@ if [ -f "$bug_dir/bug.md" ]; then
   fi
 fi
 
+# From here to the commit, a rename is staged and the close is not yet real.
+# Anything that kills the script in that window — an early-closing pipe on
+# stdout, a timeout, a kill — must not leave the caller believing otherwise,
+# and must not leave the staged rename to be swept into a stranger's commit on
+# whatever branch this checkout is on next (WFI-192). Signals are trapped
+# explicitly: bash runs an EXIT trap for a signal only when that signal is
+# trapped too, and SIGPIPE is exactly the one that arrives here.
+staged_window=false
+trap '
+  if [ "$staged_window" = true ]; then
+    printf "wf-bug-close: DIED before committing %s — the rename is STAGED, not committed.\n" "$bug_id" >&2
+    printf "              Do NOT treat this bug as closed. Unstage it (git restore --staged bugs/)\n" >&2
+    printf "              or commit it before switching branches in this worktree.\n" >&2
+  fi
+' EXIT
+trap 'exit 141' PIPE
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
 # Move to closed. Same fallback as wf-bug-consume.sh: `git mv` fails on a folder
 # git has never seen, which a bug filed and fixed inside one session still is.
 mkdir -p bugs/closed
+staged_window=true
 git add -- "$bug_dir" >/dev/null 2>&1 || true
 if ! git mv "$bug_dir" "bugs/closed/$bug_slug" 2>/dev/null; then
   mv "$bug_dir" "bugs/closed/$bug_slug"
 fi
-
-echo "$bug_id → closed ($close_line)"
 
 # Land it now, naming BOTH sides of the rename — `git diff --cached --name-only
 # --no-renames` is how wf-commit.sh builds its pathspec, so the destination
@@ -210,6 +270,17 @@ echo "$bug_id → closed ($close_line)"
 if $do_commit; then
   if ! "$SELF_DIR/wf-commit.sh" "bug($bug_id): closed — $close_line" \
         --add "bugs/$found_in/$bug_slug" "bugs/closed/$bug_slug"; then
-    echo "wf-bug-close: the move is staged but could not be committed — commit it before another worker does" >&2
+    staged_window=false
+    echo "Error: $bug_id was moved to bugs/closed/ and staged, but the commit FAILED." >&2
+    echo "       The bug is NOT closed. Commit it before another worker does, then re-run." >&2
+    exit 1
   fi
+fi
+staged_window=false
+
+# Only now. The success line outliving the work is the whole of WFI-192.
+if $do_commit; then
+  echo "$bug_id → closed ($close_line)"
+else
+  echo "$bug_id → closed ($close_line) — staged, NOT committed (--no-commit)"
 fi

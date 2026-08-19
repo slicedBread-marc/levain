@@ -91,7 +91,24 @@ read_stamp() { [ -f "$1" ] && tr -d '[:space:]' < "$1" || true; }
 want_version=$(read_stamp .claude/workflow-version)
 
 # ── 1. The library, if this machine still has it ──────────────────────────
+#
+# .claude/workflow-source is UNTRACKED, and that has a consequence in a git
+# worktree: untracked files are not materialised there, so the file exists in
+# the MAIN checkout and nowhere else. client-a's WFI-191 ran the documented
+# recovery inside a dedicated release worktree, `cat .claude/workflow-source`
+# came back empty, and the guarded one-liner became a silent no-op that exited
+# 0 — the operator had to go read the file out of the main checkout by hand.
+#
+# So the main worktree is the fallback. `git worktree list` reports it first,
+# and it is where install.sh wrote the path.
 library=$(read_stamp .claude/workflow-source)
+if [ -z "$library" ]; then
+  main_root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+  if [ -n "$main_root" ] && [ "$main_root" != "$(pwd)" ]; then
+    library=$(read_stamp "$main_root/.claude/workflow-source")
+    [ -n "$library" ] && echo "Read the library path from the main worktree at $main_root"
+  fi
+fi
 if [ -n "$library" ] && [ -f "$library/install.sh" ]; then
   echo "Restoring from the workflow library at $library ..."
   if bash "$library/install.sh" "$(pwd)" >/dev/null 2>&1 && harness_intact; then

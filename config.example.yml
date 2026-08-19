@@ -312,6 +312,27 @@ specApproval:
   gateTags:
     - security
 
+# ── Prior work ──────────────────────────────────────────────────────────────
+# Before a builder starts, wf-prior-work.sh looks for a commit already on
+# develop that names this plan (or the bug it consumes) and touches something
+# other than pipeline bookkeeping. If it finds one, the plan parks on a gate: a
+# human decides whether to accept that code or revert it and build per plan.md.
+#
+# `plans/`, `bugs/`, `briefs/` and `.claude/` are always treated as
+# bookkeeping. `ignorePaths` adds the places THIS project talks about a plan
+# without implementing it. client-a's drive/exchange/ is a cross-machine
+# message log, so every bug relayed from the remote machine arrived as a commit
+# naming its bug ID — three plans in one session each opened a gate over a note
+# and each cost a human round trip (WFI-193).
+#
+# Entries are path PREFIXES from the repository root, not globs — write the
+# trailing slash for a directory. The four built-ins are never removed, so this
+# cannot turn the gate off; a commit that also touches real code still reports.
+priorWork:
+  ignorePaths: []
+    # - "drive/exchange/"   # relayed messages about a bug, not a fix for one
+    # - "docs/decisions/"   # an ADR naming a plan is a record, not an implementation
+
 # ── Orchestrator ────────────────────────────────────────────────────────────
 # Dispatches unattended workers by REGISTRY state so the pipeline runs from one
 # terminal instead of four. Routing is deterministic bash — only the workers

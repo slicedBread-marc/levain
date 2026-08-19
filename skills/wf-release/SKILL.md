@@ -58,12 +58,20 @@ release branch    → staging environment for E2E validation
 
    `HARNESS MISSING` means the untrack commit reached a branch that still tracked the generated harness, so git deleted the files — and they are gitignored now, so nothing puts them back.
 
-   **Reinstall from the library first.** `install.sh` recorded its own path when this project was set up, and it survives any checkout because it is untracked:
+   **Reinstall from the library first.** `install.sh` recorded its own path when this project was set up, and it survives any checkout because it is untracked. That last word is also why the snippet below looks in two places: untracked files are **not** materialised in a git worktree, so if you are releasing from a dedicated worktree, `.claude/workflow-source` exists only in the main checkout (client-a's WFI-191 — the old one-liner was guarded with `[ -n "$lib" ] &&`, so an empty `$lib` made it a silent no-op that exited 0).
    ```bash
-   lib=$(cat .claude/workflow-source 2>/dev/null)
-   [ -n "$lib" ] && [ -f "$lib/install.sh" ] && bash "$lib/install.sh" "$PWD"
+   lib=$(cat .claude/workflow-source 2>/dev/null | tr -d '[:space:]')
+   if [ -z "$lib" ]; then
+     main_root=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+     lib=$(cat "$main_root/.claude/workflow-source" 2>/dev/null | tr -d '[:space:]')
+   fi
+   if [ -n "$lib" ] && [ -f "$lib/install.sh" ]; then
+     bash "$lib/install.sh" "$PWD"
+   else
+     echo "NO LIBRARY — .claude/workflow-source is empty in this checkout and in the main worktree"
+   fi
    ```
-   That regenerates the harness this project's `.claude/workflow-version` actually names, and leaves the tree clean because the files are gitignored. Re-run the step 5a check; on `harness ok`, continue at step 6.
+   That regenerates the harness this project's `.claude/workflow-version` actually names, and leaves the tree clean because the files are gitignored. **Re-run the step 5a check** — do not take the installer's exit code as the answer. On `harness ok`, continue at step 6; on `NO LIBRARY` or a still-missing harness, use the history recovery below.
 
    **Only if the library is unreachable**, recover from history with plain git — but understand what you are getting. The newest ref that still *tracks* the harness is, by definition, a ref from before this client's untrack commit, so the further back that migration is, the staler the restore. client-a's WFI-119 recovered a v3.3.0-era harness into a project stamped 6.2.1 and reported success: three major versions of stale `wf-*` scripts, which is the exact failure mode WFI-014 warns about. **Find the ref first — do not assume `HEAD@{1}` — and check its version before trusting it:**
    ```bash
