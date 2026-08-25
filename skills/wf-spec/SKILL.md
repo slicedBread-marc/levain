@@ -579,6 +579,16 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
    ```
    Do **not** write the registry row's state as `ready`. `/wf-attend` closes it with a human, and the `## Review` section you just wrote is what they read.
 
+   **If the verdict changes while the gate is parked, refresh the question with `--requestion`.** This happens for real: a human amends the source bug mid-run, the plan is corrected and re-reviewed, and the parked gate still carries the superseded round-2 wording. Re-running `wf-gate-open.sh` plainly prints "already open — left as is" and changes nothing, and close-then-reopen is the re-derived-question anti-pattern (WFI-180/181/182). client-a's PLN-202 had no third option and left the understatement standing (WFI-200).
+
+   ```bash
+   scripts/wf-exec.sh wf-gate-open.sh PLN-NNN spec-approval \
+     "<goal> — Review: Approved (3 rounds; source bug amended mid-run). N steps, …. Approve?" \
+     --context plans/PLN-NNN-<slug>/plan.md --skill wf-spec --requestion
+   ```
+
+   It keeps the original opened-at timestamp and queue position, and preserves the old wording in `GATE_QUESTION_PREV` so the change is auditable. **Only when the recorded fact changed** — a new review round, an amended source artifact, a commit that settles what was asked. Never because you re-read the plan and would phrase it better; that is exactly the drift the anti-pattern names.
+
    **Otherwise** — transition and commit in one step, the commit message naming the verdict, and release the claim only once that has landed:
    ```bash
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN draft ready \

@@ -41,6 +41,7 @@ source "$SELF_DIR/wf-orch-lib.sh"
 artifact=""
 resolution=""
 forced_gate=""
+plan_body_fp_at_open=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -90,6 +91,11 @@ if [ -f "$gate_file" ]; then
   # can replay what was asked instead of writing it again from what they happen
   # to see now.
   gate_question=$(grep -m1 "^GATE_QUESTION=" "$gate_file" | sed "s/^GATE_QUESTION='//; s/'$//" || true)
+  # Read here, with the rest, because the gate file is gone on the next line.
+  # This is the plan's fingerprint as of when the question was ASKED — see the
+  # comment above `record=` for why the close-time one cannot stand alone.
+  plan_body_fp_at_open=$(grep -m1 "^GATE_PLAN_BODY_FP_AT_OPEN=" "$gate_file" \
+                         | sed "s/^GATE_PLAN_BODY_FP_AT_OPEN='//; s/'$//" || true)
   rm -f "$gate_file"
 else
   gate_name="$forced_gate"
@@ -141,6 +147,20 @@ plan_body_fp=$(wf_plan_body_fingerprint "$id")
 gate_state=$(grep -m1 "^| $id |" "$(wf_develop_root)/plans/REGISTRY.md" 2>/dev/null \
              | awk -F'|' '{print $4}' | xargs || true)
 
+# The fingerprint of the plan AS THE QUESTION WAS ASKED, carried through from
+# the gate file. This close-time record is written after the exit contract's
+# commit — close last, always — so `plan_body_fp` above includes anything the
+# worker committed between the human answering and this call. Recording only
+# that fingerprints post-answer work INTO the approval, which is how a
+# contract-tagged plan reached `ready` on an approval given before the
+# amendment existed (WFI-198, WFI-178). wf-gate-open.sh judges staleness
+# against this one instead when it is present.
+if [ -n "$plan_body_fp_at_open" ] && [ -n "$plan_body_fp" ] \
+   && [ "$plan_body_fp_at_open" != "$plan_body_fp" ]; then
+  echo "  note: $id changed between the question being asked and this close." >&2
+  echo "        The answer is recorded against the text the human saw; work committed since is NOT covered by it." >&2
+fi
+
 record=$(
   wf_emit GATE_ID           "$id"
   wf_emit GATE_NAME         "$gate_name"
@@ -148,6 +168,12 @@ record=$(
   wf_emit GATE_RESOLUTION   "$resolution"
   wf_emit GATE_RESOLVED     "$(wf_now)"
   wf_emit GATE_RESOLVED_STATE "${gate_state:-—}"
+  # Not `[ -n … ] && wf_emit …`: as the LAST command in this substitution a
+  # false test makes the subshell exit 1, and `set -e` then kills the script
+  # before the record is ever written.
+  if [ -n "$plan_body_fp_at_open" ]; then
+    wf_emit GATE_PLAN_BODY_FP_AT_OPEN "$plan_body_fp_at_open"
+  fi
   wf_emit GATE_PLAN_FP      "$plan_fp"
   wf_emit GATE_PLAN_BODY_FP "$plan_body_fp"
 )

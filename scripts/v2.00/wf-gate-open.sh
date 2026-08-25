@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 # wf-gate-open.sh <artifact-id> <gate-name> <question> [--context <path>] [--skill <name>]
+#                 [--requestion] [--force]
+#
+# --requestion  Replace the question on a gate that is ALREADY OPEN and still
+#               unanswered, keeping its opened-at timestamp and queue position.
+#               For a verdict that legitimately changed while the gate was
+#               parked — a new review round, an amended source artifact. NOT for
+#               rephrasing: see the comment at the already-open branch.
 #
 # Parks an artifact on a human decision. An unattended worker calls this INSTEAD
 # of asking a question, then exits 0. The dispatcher skips any artifact with an
@@ -55,11 +62,13 @@ shift 3 2>/dev/null || true
 context=""
 skill=""
 force=false
+requestion=false
 while [ $# -gt 0 ]; do
   case "$1" in
-    --context) context="${2:?--context requires a path}"; shift 2 ;;
-    --skill)   skill="${2:?--skill requires a name}"; shift 2 ;;
-    --force)   force=true; shift ;;
+    --context)    context="${2:?--context requires a path}"; shift 2 ;;
+    --skill)      skill="${2:?--skill requires a name}"; shift 2 ;;
+    --force)      force=true; shift ;;
+    --requestion) requestion=true; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -85,7 +94,61 @@ gate_file=$(wf_gate_file "$id" || true)
 if [ -f "$gate_file" ]; then
   existing=$(grep -m1 "^GATE_NAME=" "$gate_file" | sed "s/^GATE_NAME='//; s/'$//")
   if [ "$existing" = "$gate_name" ]; then
+    # ── The parked question can go out of date while it is parked ─────────
+    #
+    # A gate is opened carrying a verdict, and the verdict can legitimately
+    # change afterwards. client-a's PLN-202: a human amended the source bug
+    # mid-run (70d24890), so the plan was corrected and re-reviewed from
+    # "Approved with notes" to "Approved" — with the spec-approval gate already
+    # open and unanswered, carrying the superseded round-2 wording. Re-running
+    # this printed "already open — left as is" and exited 0. There was no
+    # documented way to refresh it, and close-then-reopen is the re-derived-
+    # question anti-pattern WFI-180/181/182 exist to forbid (WFI-200).
+    #
+    # `--requestion` is the narrow path between those. It rewrites the question
+    # in place, KEEPS the original GATE_OPENED so the queue position does not
+    # reset, and keeps the superseded wording in GATE_QUESTION_PREV so the
+    # change is auditable rather than silent.
+    #
+    # THIS IS NOT A LICENCE TO RE-DERIVE. The anti-pattern is a later worker
+    # composing a fresh question from a codebase that has moved — that is how
+    # PLN-135's question came to describe a HashSet that had been a Dictionary
+    # for two plans. Use this only when the FACT the question reports has
+    # changed on the record: a new review round, an amended source artifact, a
+    # commit that resolves the thing being asked about. Not because you have
+    # re-read the code and would phrase it better.
+    if $requestion; then
+      prev_q=$(grep -m1 "^GATE_QUESTION=" "$gate_file" | sed "s/^GATE_QUESTION='//; s/'$//" || true)
+      if [ "$prev_q" = "$question" ]; then
+        echo "$id: gate '$gate_name' already open — question unchanged, left as is"
+        exit 0
+      fi
+      opened_at=$(grep -m1 "^GATE_OPENED=" "$gate_file" | sed "s/^GATE_OPENED='//; s/'$//" || true)
+      prev_prev=$(grep -m1 "^GATE_QUESTION_PREV=" "$gate_file" | sed "s/^GATE_QUESTION_PREV='//; s/'$//" || true)
+      open_fp=$(grep -m1 "^GATE_PLAN_BODY_FP_AT_OPEN=" "$gate_file" | sed "s/^GATE_PLAN_BODY_FP_AT_OPEN='//; s/'$//" || true)
+      {
+        wf_emit GATE_ID       "$id"
+        wf_emit GATE_ARTIFACT "$artifact"
+        wf_emit GATE_NAME     "$gate_name"
+        wf_emit GATE_QUESTION "$question"
+        wf_emit GATE_CONTEXT  "$context"
+        wf_emit GATE_SKILL    "$skill"
+        wf_emit GATE_OPENED   "$opened_at"
+        wf_emit GATE_REQUESTIONED "$(wf_now)"
+        wf_emit GATE_QUESTION_PREV "${prev_prev:+$prev_prev
+}$prev_q"
+        # An `if`, not `[ … ] && …`: as the last command in this group a false
+        # test makes the group exit 1 and `set -e` kills the script.
+        if [ -n "$open_fp" ]; then
+          wf_emit GATE_PLAN_BODY_FP_AT_OPEN "$open_fp"
+        fi
+      } > "$gate_file"
+      wf_event gate-requestion "$id" "$gate_name: $question"
+      echo "$id: gate '$gate_name' question updated (opened $opened_at, still unanswered) — $question"
+      exit 0
+    fi
     echo "$id: gate '$gate_name' already open — left as is"
+    echo "  If the fact behind the question has changed on the record, refresh it with --requestion." >&2
     exit 0
   fi
 fi
@@ -126,6 +189,36 @@ if ! $force && wf_gate_revision_scoped "$gate_name"; then
 # plan with no REGISTRY row to find it by — and refusing to ask a human on the
 # strength of a file that is not there is how a real question goes unasked.
   eval "$("$SELF_DIR/wf-gate-status.sh" "$id" "$gate_name" 2>/dev/null || true)"
+
+  # ── The answer covers the text the human SAW, not the text at close ──────
+  #
+  # The exit contract is commit the transition, close the gate, unclaim — close
+  # last, always (docs/guard-ordering.md). The resolved record's fingerprint is
+  # taken at close, so anything committed between the human answering and the
+  # close is fingerprinted INTO the approval. The two rules interact badly:
+  # client-a's PLN-192 is contract-tagged, so wf-spec step 6d requires a
+  # re-gate after an amendment changes the document — and closing the gate after
+  # committing Amendment A2 stamped the resolution against the post-amendment
+  # revision, so this refusal fired and the re-gate could not happen. The
+  # suppression was an artifact of the mandated ordering, not of what the human
+  # approved: close the gate BEFORE committing the same amendment and it
+  # re-gates normally (WFI-198). A contract-tagged plan could therefore reach
+  # `ready` on an approval given before the amendment existed — WFI-178 exactly.
+  #
+  # wf-gate-open.sh records the plan's fingerprint when the question is ASKED,
+  # and wf-gate-close.sh carries it into the resolved record. That is the
+  # revision the human was shown, so it is the one staleness is judged against
+  # here. Records written before this existed have no at-open fingerprint, and
+  # fall back to the close-time comparison wf-gate-status.sh already did.
+  if [ -n "${GATE_PLAN_BODY_FP_AT_OPEN:-}" ]; then
+    now_fp=$(wf_plan_body_fingerprint "$id" || true)
+    if [ -n "$now_fp" ] && [ "$now_fp" != "$GATE_PLAN_BODY_FP_AT_OPEN" ]; then
+      echo "$id: '$gate_name' was answered, but the plan has changed since the question was ASKED." >&2
+      echo "  The answer of record is about the earlier text; opening a fresh gate on the plan as it now stands." >&2
+      GATE_STALE=true
+    fi
+  fi
+
   if [ "${GATE_ANSWERED:-false}" = "true" ] && [ "${GATE_STALE:-false}" != "true" ] \
      && [ "${GATE_ANSWERED_BASIS:-none}" = "revision" ]; then
     wf_event gate-refused "$id" "$gate_name: already answered ${GATE_RESOLVED_AT:-} — $question"
@@ -173,6 +266,10 @@ fi
   wf_emit GATE_CONTEXT  "$context"
   wf_emit GATE_SKILL    "$skill"
   wf_emit GATE_OPENED   "$(wf_now)"
+  # The revision the question is being asked ABOUT — see the refusal above.
+  # Empty for a bug or brief with no plan folder yet, which is fine: those
+  # gates fall back to the close-time comparison.
+  wf_emit GATE_PLAN_BODY_FP_AT_OPEN "$(wf_plan_body_fingerprint "$id" || true)"
   if [ -n "$prior_res" ]; then
     wf_emit GATE_PRIOR_QUESTION   "$prior_q"
     wf_emit GATE_PRIOR_RESOLUTION "$prior_res"

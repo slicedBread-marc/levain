@@ -35,6 +35,14 @@
 #                                trust. A caller that merely reports may treat
 #                                them alike; one that REFUSES to ask a human
 #                                must not.
+#   GATE_PLAN_BODY_FP_AT_OPEN='…'  the plan fingerprint as of when the question
+#                                was ASKED, when the record carries one. A gate
+#                                closes AFTER the exit contract's commit, so
+#                                the close-time fingerprint can include work the
+#                                human never saw; wf-gate-open.sh judges a
+#                                re-open against this instead (WFI-198). Empty
+#                                for records written before it existed, and for
+#                                gates on artifacts with no plan.md.
 #   GATE_RESOLUTION='approved'   the recorded resolution (empty if never closed)
 #   GATE_QUESTION='…'            the question AS ASKED when it was answered, so
 #                                a caller can replay it instead of writing it
@@ -85,6 +93,7 @@ basis=none
 resolution=""
 question=""
 resolved_at=""
+fp_at_open=""
 
 if [ -f "$resolved_file" ]; then
   resolution=$(grep -m1 "^GATE_RESOLUTION=" "$resolved_file" | sed "s/^GATE_RESOLUTION='//; s/'$//" || true)
@@ -94,6 +103,13 @@ if [ -f "$resolved_file" ]; then
   record_owner=$(grep -m1 "^GATE_ID=" "$resolved_file" | sed "s/^GATE_ID='//; s/'$//" || true)
   [ -n "$record_owner" ] && id="$record_owner"
   resolved_at=$(grep -m1 "^GATE_RESOLVED=" "$resolved_file" | sed "s/^GATE_RESOLVED='//; s/'$//" || true)
+  # The revision the question was ASKED about, when the record has it. Reported
+  # rather than acted on here — wf-gate-open.sh is what decides a re-open, and
+  # this is the evidence it needs: a close happens after the exit contract's
+  # commit, so the close-time fingerprint below can include work the human
+  # never saw (WFI-198).
+  fp_at_open=$(grep -m1 "^GATE_PLAN_BODY_FP_AT_OPEN=" "$resolved_file" \
+               | sed "s/^GATE_PLAN_BODY_FP_AT_OPEN='//; s/'$//" || true)
   # The body fingerprint decides when the record carries one: it normalises the
   # regions that move under machine control while the specification stands still
   # — ticked checkboxes above all. A tester ticking a deferred criterion, as
@@ -137,3 +153,4 @@ wf_emit GATE_RESOLUTION  "$resolution"
 wf_emit GATE_QUESTION    "$question"
 wf_emit GATE_RESOLVED_AT "$resolved_at"
 wf_emit GATE_STALE       "$stale"
+wf_emit GATE_PLAN_BODY_FP_AT_OPEN "$fp_at_open"
