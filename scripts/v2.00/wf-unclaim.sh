@@ -14,6 +14,19 @@ set -euo pipefail
 
 plan_name="${1:?Usage: wf-unclaim.sh <plan-name>}"
 
+# A release is idempotent, so it cannot tell a plan that was never claimed from
+# a plan whose name was mistyped — both report success. That is fine for the
+# first case and dangerous for the second: "Released PLN-2O6" reads as done
+# while the real claim on PLN-206 stays held, and the next worker is refused by
+# a guard nobody is looking at any more (WFI-206). So the one thing that IS
+# checkable — that the argument is shaped like an artifact ID at all — is
+# checked here. It catches every flag typo and every letter-for-digit slip.
+if ! printf '%s' "$plan_name" | grep -qE '^(PLN|BUG|BRF)-[0-9]+'; then
+  echo "Usage: wf-unclaim.sh <plan-name>" >&2
+  echo "Error: '$plan_name' is not an artifact ID — expected PLN-NNN, BUG-NNN or BRF-NNN, optionally followed by -<slug>." >&2
+  exit 2
+fi
+
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=wf-orch-lib.sh
 source "$SELF_DIR/wf-orch-lib.sh"

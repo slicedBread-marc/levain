@@ -151,6 +151,68 @@ sync_header() {
   echo "  refreshed the header of plans/deferred-criteria.md — it predated the current verbs" >&2
 }
 
+# ── A criterion is one line of prose, and that is enforceable ─────────────
+#
+# THE SHELL RUNS THE PLAN'S BACKTICKS BEFORE THIS SCRIPT EVER SEES THEM
+#
+# Plan criteria routinely contain backticked commands — that is how a planner
+# writes "run `scripts/drive-sync.sh pull` and confirm the refusal". A caller
+# that passes such a criterion inside DOUBLE quotes has already lost: the shell
+# command-substitutes every backtick pair before argv is built, so what arrives
+# here is the *output* of running the plan's own commands, with the backticked
+# text replaced by nothing.
+#
+# client-a's WFI-194 is that, exactly. An unattended tester deferring a
+# criterion for PLN-179 double-quoted it; the shell executed a real drive-sync
+# pull against a mounted physical volume, and DC-119 was written containing
+# ~2.5KB of rsync itemisation with the paths substituted to empty — "against
+# the real volume at , with  appended on the Mac". The row was wrong, and the
+# row was the *lesser* half: an unattended worker executed an unreviewed
+# command with its full privileges as a side effect of recording a deferral.
+#
+# This script cannot un-run that; substitution happens in the caller. What it
+# can do is refuse to accept the result, so the damage is loud instead of
+# committed. Two shapes catch it without guessing at content:
+#
+#   - a criterion arriving with embedded newlines. Every criterion is one line;
+#     command output almost never is. `tr -d '\n'` used to glue those lines
+#     into a single row silently, which is precisely why nobody noticed.
+#   - a criterion far longer than prose. 500 characters is several sentences.
+#
+# And the affordance that makes the right thing easy: `-` reads the criterion
+# from stdin, where no shell quoting exists to get wrong. Callers passing text
+# they did not write should prefer it; single quotes are the minimum.
+CRITERION_MAX=500
+
+read_criterion_stdin() {
+  # A single `-` means "the text is on stdin" — heredoc, pipe, file. Nothing in
+  # between for the shell to expand.
+  cat
+}
+
+check_criterion() {
+  # $1 = the text, $2 = what to call it in the error
+  local text="$1" what="$2"
+  # `case`, not `grep -q $'\n'`: a grep pattern containing a newline is two
+  # patterns, and both halves are empty, so that form matches every string.
+  if [ "$text" != "${text%$'\n'*}" ]; then
+    echo "Error: $what arrived with embedded newlines." >&2
+    echo "       A criterion is one line. Multi-line text here almost always means the" >&2
+    echo "       shell command-substituted backticks in the criterion and handed over the" >&2
+    echo "       OUTPUT of running them (WFI-194) — which also means those commands RAN." >&2
+    echo "       Pass the criterion in SINGLE quotes, or pass '-' and give it on stdin." >&2
+    return 1
+  fi
+  if [ "${#text}" -gt "$CRITERION_MAX" ]; then
+    echo "Error: $what is ${#text} characters — over the $CRITERION_MAX-character limit." >&2
+    echo "       Criteria are a sentence or two. This length usually means backticks in" >&2
+    echo "       the criterion were command-substituted by the caller's shell (WFI-194)." >&2
+    echo "       Pass the criterion in SINGLE quotes, or pass '-' and give it on stdin." >&2
+    return 1
+  fi
+  return 0
+}
+
 # ── Modes ─────────────────────────────────────────────────────────────────
 
 # The other place a caller looks for the verb list. It used to name only the
@@ -159,8 +221,17 @@ sync_header() {
 usage() {
   cat >&2 << 'USAGE'
 Usage:
-  wf-defer-criterion.sh <plan-id> <external|soak|unbuilt> "<criterion>" [--prereq <text>] [--note <text>] [--no-commit]
+  wf-defer-criterion.sh <plan-id> <external|soak|unbuilt> '<criterion>' [--prereq <text>] [--note <text>] [--no-commit]
       Defer a criterion its plan cannot satisfy, and tick it off in plan.md.
+
+      QUOTE THE CRITERION WITH SINGLE QUOTES. Criteria contain backticked
+      commands; inside double quotes the shell RUNS them before this script
+      sees anything (WFI-194). Better still, pass '-' and give the text on
+      stdin, where there is no quoting to get wrong:
+
+        wf-defer-criterion.sh PLN-179 external - <<'CRIT'
+        Confirm `scripts/drive-sync.sh pull` refuses on divergence
+        CRIT
 
   wf-defer-criterion.sh --list [prereq-filter]
       Open rows, tab-separated: ID, criterion, tag, from-plan, prereq, note.
@@ -226,6 +297,15 @@ case "${1:-}" in
 
     [ -f "$FILE" ] || { echo "Error: $FILE not found" >&2; exit 1; }
     grep -q "^| $dc |" "$FILE" || { echo "Error: $dc has no row in $FILE" >&2; exit 1; }
+
+    # `--criterion -` reads from stdin, so text full of backticks never passes
+    # through a shell word at all. See the header.
+    if $set_criterion && [ "$new_criterion" = "-" ]; then
+      new_criterion=$(read_criterion_stdin)
+    fi
+    if $set_criterion; then
+      check_criterion "$new_criterion" "--criterion" || exit 1
+    fi
 
     # Same sanitising as the add path: this is free text going into a markdown
     # table, and a pipe would silently add a column.
@@ -361,6 +441,10 @@ if [ -z "$plan_id" ] || [ -z "$criterion" ]; then
   usage
   exit 1
 fi
+
+# `-` means the criterion is on stdin, where the shell has nothing to expand.
+[ "$criterion" = "-" ] && criterion=$(read_criterion_stdin)
+check_criterion "$criterion" "the criterion" || exit 1
 
 case "$tag" in
   external) [ -n "$prereq" ] || prereq="first-real-use" ;;

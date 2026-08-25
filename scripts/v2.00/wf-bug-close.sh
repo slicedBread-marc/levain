@@ -2,10 +2,12 @@
 # wf-bug-close.sh <bug-id> <plan-name> [--no-commit]
 # wf-bug-close.sh <bug-id> --duplicate-of <ID> [--no-commit]
 # wf-bug-close.sh <bug-id> --fixed-in <sha> [--note <text>] [--no-commit]
+# wf-bug-close.sh <bug-id> --wont-fix [--note <text>] [--no-commit]
 #
 # Moves a bug to closed and marks it as resolved.
 # Updates bug.md Status to Closed with date and the reason: the fixing plan,
-# the artifact it duplicates, or the commit that fixed it directly.
+# the artifact it duplicates, the commit that fixed it directly, or the decision
+# not to fix it at all.
 #
 # NOT EVERY FIX IS WORTH A PLAN, AND THE ONES THAT ARE NOT WERE UNCLOSEABLE
 #
@@ -20,6 +22,21 @@
 #
 # `--fixed-in <sha>` is that path. The commit is the evidence, in place of the
 # plan that would otherwise carry it.
+#
+# AND NOT EVERY BUG GETS FIXED
+#
+# The argument above has an exact mirror. A bug the human decides not to fix —
+# a needs-input gate answered "won't fix / defer indefinitely" — is decided and
+# stuck in precisely the way WFI-149 describes, with none of the three reasons
+# fitting: there is no plan, there is no commit, and `--duplicate-of` would put
+# a false duplicate into the record just to reach the one phrase that says
+# "closed by decision, not fixed". client-a's BUG-183 was closed by hand
+# instead — a `git mv` and an edit, with only the operator's pathspec deciding
+# whether both sides of the rename landed (WFI-195, and WFI-136 for what goes
+# wrong when they do not).
+#
+# `--wont-fix` is that path. The decision is the resolution; `--note` carries
+# the reason, and is worth giving.
 #
 # CLOSING IS IDEMPOTENT, AND IT ACCEPTS A BUG WHEREVER IT ACTUALLY IS
 #
@@ -89,6 +106,7 @@ bug_id=""
 plan_name=""
 duplicate_of=""
 fixed_in=""
+wont_fix=false
 close_note_extra=""
 do_commit=true
 
@@ -97,6 +115,7 @@ while [ $# -gt 0 ]; do
     --no-commit)    do_commit=false; shift ;;
     --duplicate-of) duplicate_of="${2:?--duplicate-of requires an artifact ID}"; shift 2 ;;
     --fixed-in)     fixed_in="${2:?--fixed-in requires a commit sha}"; shift 2 ;;
+    --wont-fix)     wont_fix=true; shift ;;
     --note)         close_note_extra="${2:?--note requires a value}"; shift 2 ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *)  if [ -z "$bug_id" ]; then bug_id="$1"; else plan_name="$1"; fi; shift ;;
@@ -108,9 +127,10 @@ reasons=0
 [ -n "$plan_name" ]    && reasons=$((reasons + 1))
 [ -n "$duplicate_of" ] && reasons=$((reasons + 1))
 [ -n "$fixed_in" ]     && reasons=$((reasons + 1))
+$wont_fix              && reasons=$((reasons + 1))
 
 if [ "$reasons" -gt 1 ]; then
-  echo "Error: a bug is closed by a plan, as a duplicate, or by a commit — pick one." >&2
+  echo "Error: a bug is closed by a plan, as a duplicate, by a commit, or as won't-fix — pick one." >&2
   exit 1
 fi
 
@@ -118,6 +138,7 @@ if [ -z "$bug_id" ] || [ "$reasons" -eq 0 ]; then
   echo "Usage: $0 <bug-id> <plan-name> [--no-commit]" >&2
   echo "       $0 <bug-id> --duplicate-of <ID> [--no-commit]" >&2
   echo "       $0 <bug-id> --fixed-in <sha> [--note <text>] [--no-commit]" >&2
+  echo "       $0 <bug-id> --wont-fix [--note <text>] [--no-commit]" >&2
   exit 1
 fi
 
@@ -136,7 +157,7 @@ done
 if [ -z "$bug_dir" ]; then
   for d in bugs/closed/${bug_id}*/; do
     if [ -d "$d" ]; then
-      why=$(grep -m1 -E '^(Fixed by plan|Fixed directly in|Closed as duplicate of):' "$d/bug.md" 2>/dev/null || true)
+      why=$(grep -m1 -E "^(Fixed by plan|Fixed directly in|Closed as duplicate of|Closed as won't-fix):" "$d/bug.md" 2>/dev/null || true)
       # "Already closed" is only the whole answer when the close was COMMITTED.
       # A run that died in the staging window (WFI-192) leaves the bug at
       # bugs/closed/ on disk with the rename staged, and a re-run must finish
@@ -168,6 +189,13 @@ today=$(date +%Y-%m-%d)
 if [ -n "$duplicate_of" ]; then
   close_note="Closed as duplicate of: $duplicate_of — closed by decision, not fixed"
   close_line="duplicate of $duplicate_of"
+elif $wont_fix; then
+  # The reason is the whole record, so say so where the note would otherwise be
+  # missed: a won't-fix with no reason is a bug that will be re-filed.
+  close_note="Closed as won't-fix: ${close_note_extra:-no reason recorded} — closed by decision, not fixed"
+  close_line="won't fix"
+  [ -n "$close_note_extra" ] || \
+    echo "Note: closing $bug_id as won't-fix with no --note — the reason is the only record of this decision" >&2
 elif [ -n "$fixed_in" ]; then
   # The commit is the whole record here, so resolve it and carry its subject:
   # a bare sha in bug.md is unreadable a month later, and an unresolvable one

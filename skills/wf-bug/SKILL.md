@@ -92,6 +92,18 @@ The commit is the evidence in place of the plan. The script resolves the sha and
 
 **Ask before using this.** "This did not need a plan" is a judgement about scope, and it is the user's to make: if the fix wants acceptance criteria, a test, or a verify pass, it wants a plan. Never pass a plan name that does not exist to fake a close.
 
+## Closing a bug that will not be fixed
+
+A bug the user decides against — won't fix, or defer indefinitely — is decided and stuck in exactly the way the previous section describes, with none of the fixing reasons true. Do not reach for `--duplicate-of` to get at its "closed by decision, not fixed" wording; that writes a duplicate into the record that does not exist (WFI-195).
+
+```bash
+scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --wont-fix --note "<why not>"
+```
+
+It writes `Closed as won't-fix: <reason> — closed by decision, not fixed` and commits both sides of the rename. **Give the `--note`**: the reason is the entire record of the decision, and a won't-fix without one is a bug that gets re-filed by the next person who hits it.
+
+**Only on the user's word.** This is theirs to decide — a needs-input gate answered "won't fix", or a direct instruction. Never conclude it yourself from a bug being hard, old, or unreproducible.
+
 ## bug.md format
 
 This is what `wf-bug-new.sh` writes. You do not write it by hand — it is here so

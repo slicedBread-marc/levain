@@ -126,8 +126,16 @@ fi
 #
 # So: allow an optional bracketed date and any non-letter run between the marker
 # and the id. `A[0-9]` still anchors it, so prose headings do not match.
+#
+# That fix was still one heading style short. A project whose amendments read
+# `### Amendment 2 — 2026-08-20 · <description>` puts the number AFTER the word
+# and has no A-prefixed token anywhere, so `A[0-9]` cannot anchor: every
+# amendment such a plan has ever carried counted as zero, with the amendment
+# text printed verbatim underneath (WFI-201). The word `Amendment` is as good an
+# anchor as `A<n>` and no more likely to appear in prose at the head of a
+# heading, so both are accepted, with or without the A on the number.
 count=$(printf '%s\n' "$new_amendments" \
-        | grep -cE '^(#+|\*\*|>|-)[[:space:]]*(\[[^]]*\])?[^A-Za-z]*A[0-9]+([^0-9]|$)' || true)
+        | grep -cE '^(#+|\*\*|>|-)[[:space:]]*(\[[^]]*\])?[[:space:]]*([^A-Za-z]*A[0-9]+([^0-9]|$)|[Aa]mendment[[:space:]]+A?[0-9]+)' || true)
 printf 'AMENDMENTS_NEW: %s\n' "$count"
 printf -- '--- added to %s since HEAD ---\n' "$plan_file"
 printf '%s\n' "$new_amendments"

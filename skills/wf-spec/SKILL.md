@@ -223,8 +223,11 @@ If the user picks a bug BUG-NNN:
 
     If the user says a row is **right but incomplete** — it needs a precondition stated, or a qualification the original author did not know — that is neither ending. Amend the text and keep the ID, which is what any other plan or issue already cites:
     ```bash
-    scripts/wf-exec.sh wf-defer-criterion.sh --amend DC-001 --criterion "<corrected text>"
+    scripts/wf-exec.sh wf-defer-criterion.sh --amend DC-001 --criterion - <<'CRIT'
+    <corrected text>
+    CRIT
     ```
+    **Criterion text goes on stdin with `-`, never in double quotes.** Criteria contain backticked commands, and a double-quoted argument makes the shell run them before the script sees anything — an unattended worker once executed a real volume sync as a side effect of recording a deferral (WFI-194).
 2. **Choose a feature name** — a short kebab-case slug describing the work (e.g. `user-auth`, `payment-webhook`, `login-crash`)
 3. **Inherit the plan ID** — `eval "$(scripts/wf-exec.sh wf-plan-id.sh <SRC-ID>)"` and use `$PLAN_ID` (see [ID Inheritance](#id-inheritance)). Do not derive it by hand and do not call `wf-counter-next.sh`. This answer is provisional until step 5 re-asks.
 4. **Explore the codebase** — spawn **haiku agents** to find existing patterns, file structures, and signatures you need to reference in the plan. Keep agents focused: one per question, output under 2000 characters.

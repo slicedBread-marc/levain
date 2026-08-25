@@ -43,8 +43,11 @@ Order of work:
 5. Dispose of the criteria that never need a human, whatever remains untested:
    - `(external)` and `(soak)` — defer each and check it off. They cannot be satisfied at gate time by anyone, so they never gate:
      ```bash
-     scripts/wf-exec.sh wf-defer-criterion.sh <PLN-ID> external "<criterion text>"
+     scripts/wf-exec.sh wf-defer-criterion.sh <PLN-ID> external - <<'CRIT'
+     <criterion text, verbatim from plan.md>
+     CRIT
      ```
+     **Never put criterion text in double quotes** — backticks in it are commands, and the shell runs them before the script sees them (WFI-194). See [Deferring a criterion](#deferring-a-criterion).
      **Read what it printed.** The DC row is only half the job — the other half is the checkbox in `plan.md`, which is what anyone opening the completed plan actually reads. `ticked in …` means both halves are done. `ACTION REQUIRED: no matching unchecked criterion` means only the row was written: edit `plan.md` yourself, tick the box it listed, append ` — deferred as DC-NNN`, and only then move on. A completed plan with an empty box says "silently dropped", which is the exact ambiguity deferral exists to remove (WFI-056, WFI-137).
    - `(eyes:cosmetic)` — leave untested and unchecked; whether it gates is the gate script's call, not yours.
 6. **Ask the gate script whether a human is needed. Do not decide this yourself:**
@@ -616,8 +619,12 @@ When triggered:
 Never write `plans/deferred-criteria.md` by hand — one script owns it, so IDs stay unique and `/wf-spec` step 1a can read it back:
 
 ```bash
-../../scripts/wf-exec.sh wf-defer-criterion.sh PLN-NNN <tag> "<criterion text>" [--prereq <plan-id|first-real-use|next-cycle|date>] [--note "<what isn't built yet>"]
+../../scripts/wf-exec.sh wf-defer-criterion.sh PLN-NNN <tag> - [--prereq <plan-id|first-real-use|next-cycle|date>] [--note '<what is not built yet>'] <<'CRIT'
+<criterion text, copied verbatim from plan.md>
+CRIT
 ```
+
+**Pass the criterion on stdin with `-`, exactly as above. Never inside double quotes.** Plan criteria contain backticked commands — that is normal, and it is why this matters: in a double-quoted argument the shell **runs** those commands before this script sees anything, and substitutes the output into the row. client-a's WFI-194 is that: an unattended tester deferring a PLN-179 criterion executed a real `drive-sync` pull against a mounted physical volume as a side effect of recording a deferral, and DC-119 was written holding 2.5KB of rsync output with the backticked paths blanked out. **Any command a planner puts in backticks inside a criterion runs, unreviewed, with your privileges.** The heredoc is quoted (`<<'CRIT'`) so nothing in it expands. Single quotes are the minimum acceptable alternative; the script refuses text that arrives multi-line or over 500 characters, which is what a substituted criterion looks like.
 
 | Tag | Use when |
 |-|-|
@@ -646,10 +653,12 @@ sees them, and do not satisfy-and-re-defer, which breaks every reference to the
 old ID (WFI-158):
 
 ```bash
-../../scripts/wf-exec.sh wf-defer-criterion.sh --amend DC-NNN --criterion "<corrected text>"
+../../scripts/wf-exec.sh wf-defer-criterion.sh --amend DC-NNN --criterion - <<'CRIT'
+<corrected text>
+CRIT
 ```
 
-`--prereq` and `--note` amend the same way. The ID and the status are kept.
+`--prereq` and `--note` amend the same way. The ID and the status are kept. `--criterion` carries criterion text, so it takes `-`-on-stdin for the same reason the add form does — see the warning above.
 
 **`--satisfy` is the ordinary ending for an `external` criterion.** External means *satisfiable only at first real use*, so most of them come true when that use happens, with no plan involved — a deploy runs green, the third-party account is finally provisioned, someone plugs the device in. Say so, with the evidence: a run URL, a date, a commit, what was observed.
 
