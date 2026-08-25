@@ -217,17 +217,19 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
    ```bash
    eval "$(scripts/wf-exec.sh wf-gate-status.sh PLN-NNN prior-work)"
    ```
-   `GATE_ANSWERED=true` with `GATE_STALE=false` means **a human has already answered this**. `$GATE_RESOLUTION` is the decision of record: act on it — build per plan.md over the accepted commit, or revert it on the feature branch, whichever it says — and carry on to step 4. Do not re-ask, and do not re-derive the question from what you can see now.
+   `GATE_ANSWERED=true` with `GATE_STALE=false` means **a human has already answered this**. `$GATE_RESOLUTION` is the decision of record: act on it — build per plan.md over the accepted commit, revert it on the feature branch, or leave an unrelated commit alone and implement per plan.md unchanged, whichever it says — and carry on to step 4. Do not re-ask, and do not re-derive the question from what you can see now.
 
    client-a's PLN-135 re-opened this gate **four times** (WFI-180, WFI-181, WFI-182). The fourth was thirty minutes after the decision had been committed to `findings.md`, and by then the question had drifted: it offered an option the human never authorized and described a `HashSet` that had been a `Dictionary` since a merge two plans earlier. **A re-asked question does not come back the same** — it comes back re-derived from whatever the next worker happens to read, and a human answering it is answering something else. `wf-gate-open.sh` now refuses this gate outright when it is answered (exit **3**), but arriving there means you have already skipped this step.
 
    Otherwise, under `WF_UNATTENDED=1` this is a **[GATE]**:
    ```bash
    scripts/wf-exec.sh wf-gate-open.sh PLN-NNN prior-work \
-     "<sha> '<subject>' is already on develop and touches this plan's files. It came in outside the pipeline — no feature branch, no verify. Accept it as this plan's work (straight to verify), or revert it on the feature branch and implement per plan.md?" \
+     "<sha> '<subject>' is already on develop and came in outside the pipeline — no feature branch, no verify. It touches <N> file(s); <the overlap line wf-prior-work.sh printed>. (1) accept it as this plan's work — straight to verify; (2) revert it on the feature branch and implement per plan.md; or (3) it is unrelated work that stands — leave it on develop and implement per plan.md unchanged?" \
      --context plans/PLN-NNN-<slug>/plan.md --skill wf-implement
    ```
    Then exit 0 without transitioning the registry or creating a branch. Attended, put the same question to the user.
+
+   **Offer all three, and quote the overlap line `wf-prior-work.sh` printed under the commit.** A commit that merely mentions the ID while doing something else is common, and for it neither of the first two answers is true. client-a's PLN-206 had one touching only `docs/plan/reference/` while the plan's four steps target `RedactionGuards.cs` and two test files — zero file overlap, and Step 4 saying in as many words "No `docs/` change". With only two options offered, answering `accept` literally would have moved a plan at step 0 of 4, with no worktree and no code written, straight to `verify` (WFI-208). If answer (3) keeps recurring for the same paths, the durable fix is `priorWork.ignorePaths` in `claude-workflow.yml`, which the script prints.
 
    **Exit 3 from `wf-gate-open.sh` is not a failure.** It means the gate was refused because an answer of record already covers this revision of the plan; the resolution is printed. Act on it and continue — never work around it by re-opening under another name.
 
