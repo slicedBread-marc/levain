@@ -138,8 +138,16 @@ A replan amended the plan in a way that drops or narrows something its `## Goal`
      ```
      **Do not hand-edit `## Goal`.** On a plan mid-fix-cycle the live one-liner is the *sub-goal* the replan pushed; the promise your decision contradicts is archived in `### Goal History`, and `wf-goal-pop.sh` restores that text verbatim when the fix cycle ends. Amending only the live line leaves the unreduced promise to come back word for word and quietly undo you (WFI-084). The script amends whichever of the two is pending restore, and takes `--active` when you mean the live line specifically.
    - **restore** — the reduction is not acceptable; hand to `/wf-spec` to solve the underlying problem another way, with the constraint recorded in `findings.md` as ESCALATED.
-   - **split** — accept the reduction *and* file the dropped capability as a brief (`/wf-brainstorm`) so it is not silently lost. Note the brief ID in the plan's `## Out of Scope`.
+   - **split** — accept the reduction *and* file the dropped capability as a brief (`/wf-brainstorm`) so it is not silently lost. Note the brief ID in the plan's `## Out of Scope`, then **re-stamp the review** (see below).
 3. Close the gate with the outcome and the decision.
+
+**After any edit to a stamped `plan.md`, re-stamp — including a one-line bookkeeping note.** `wf-review-stamp.sh` anchors the verdict to a hash of the plan body, and `## Out of Scope` is part of that body, so adding a brief reference to it flips `wf-review-status.sh` from `REVIEW_STALE='false'` to `'true'`. That state's documented handling is "the verdict is about a document that no longer exists — re-run the review", which would tell the next reader to re-review a plan the human approved sixty seconds earlier, over an edit that changed no step, test, design decision, goal or scope line. The two instructions conflicted with no stated precedence; this is the precedence (WFI-199).
+
+```bash
+scripts/wf-exec.sh wf-review-stamp.sh <PLN-ID>
+```
+
+Then **record in `findings.md` exactly what you edited after the stamp and why**, so the hash moved for a reason a reader can see rather than silently. Re-stamping is only ever correct for an edit that does not change what was reviewed — a brief reference, a typo, a link. If the edit changes a step, a test, a criterion or the goal, the verdict really is stale: leave it, and let the plan be reviewed again.
 
 ### `manual-test`
 

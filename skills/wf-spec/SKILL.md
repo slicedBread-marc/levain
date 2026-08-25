@@ -326,6 +326,14 @@ If the user picks a bug BUG-NNN:
 
    `plans/TEMPLATE.md` is not a second opinion here. Its example was rendered from the config **when the harness was first installed** and is never re-rendered, so on any project whose runner changed since, the template's example is the stale one and the config is right.
 
+   **A bare method name is not a filter value.** `--filter-method` (Microsoft.Testing.Platform) matches a *fully-qualified* name — `Namespace.Class.Method` — or a wildcard. Handed a bare `Check_reports_the_line_count`, it matches nothing, prints `Test run summary: Zero tests ran`, and **exits 0**: not the `--ignore-exit-code 8` no-tests-matched code, but a plain success. Run verbatim by an agent that checks the exit code, that reads as a pass for a test that never executed — silently, and for every row in the table (client-a WFI-196). Write the wildcard form:
+
+   ```
+   dotnet test --filter-method '*.Check_reports_the_line_count_and_no_elision_at_the_cap_boundary'
+   ```
+
+   Single-quoted, so the shell does not glob the `*`. **Then prove the row before you write it down:** run each command once and confirm it reports a non-zero test count. "Zero tests ran" is a broken filter, never a passing test — and it is the one failure mode that gets *more* convincing the more rows it affects.
+
    **Write commands the implementer's host actually has.** A test command runs on whatever machine picks the plan up, and the GNU coreutils a Linux CI image ships are not on a stock macOS host. `timeout` is the one that bites — client-a's PLN-043 specified `timeout 30 dotnet run …` and the implementer hit `command not found: timeout` (WFI-127), then had to reproduce the cap with a background job and a sleep-then-kill watcher before the test could run at all. Same for `gtimeout`, `realpath`, `sha256sum`, `sed -i` without a backup suffix, and `date -d`. Prefer the runner's own facilities (a test-level timeout attribute, `dotnet test --blame-hang-timeout`) or plain shell; if a coreutils binary is genuinely required, say so in the plan's Design Decisions so the implementer installs it rather than improvising.
 
    **Maximize automation:** API responses, data correctness, markup structure, auth gates, redirects, and status codes are all automatable (unit tests, integration tests, curl commands, scripts). Only use `Manual` type for things that genuinely require human eyes — visual rendering, subjective UX, complex multi-step physical interactions.

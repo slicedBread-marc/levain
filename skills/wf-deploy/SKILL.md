@@ -21,10 +21,16 @@ bugs/closed/      → closed bugs
 
 Before starting, confirm E2E passed on release:
 
-1. **Confirm you are on the `release` branch:**
+1. **Find `release`, wherever it lives — do not assume this checkout is on it:**
    ```bash
-   scripts/wf-exec.sh wf-branch-check.sh release
+   git worktree list
+   git rev-parse --verify release
    ```
+   `release` must exist. It does **not** have to be checked out here, and on some projects it cannot be: a project that keeps `release` permanently checked out in a dedicated worktree makes `wf-branch-check.sh release` unsatisfiable from the project root — `git checkout release` answers `fatal: 'release' is already checked out at '…/_release-verify'`, so the check could never pass and the skill offered no alternative (client-a WFI-213).
+
+   Nothing in this pre-flight needs to be *standing on* release: steps 2 and 3 read `release` and `main` as refs, which resolve from any worktree in the repository.
+
+   **Steps 5–11 run in the checkout that holds `main` and `develop`** — normally the project root. If `git worktree list` shows `release` held elsewhere, that other worktree is not where the deploy happens; note which checkout is which before you start, and do the whole of 5–11 in the one that can take `main`.
 2. **Show recent release commits** so the user can confirm what's being promoted:
    ```bash
    git log --oneline release --not main -n 20
@@ -72,6 +78,10 @@ Before starting, confirm E2E passed on release:
    {{test_command}}
    ```
    If tests fail, abort the deploy — do NOT proceed to registry updates. Inform user of failures and suggest fixing on the release branch, then re-running `/wf-release`.
+
+   **This step reads as inline and on a large project it cannot be.** A foreground Bash call is capped at 10 minutes; client-a's full suite takes about 13, so it is killed mid-run every time and the deploy stalls at its most dangerous point — the shared checkout is off `develop` and the orchestrator is dispatching nothing (WFI-213). If the suite is known to exceed the cap, run it with `run_in_background` and **wait for it to finish before doing anything else**. That is safe here and nowhere else in the harness: `/wf-deploy` runs in a session that persists across turns, unlike the verify agent, which is killed the moment it stops producing output and must never background anything.
+
+   Either way, step 7a's re-assert is what protects you across that window — the longer the run, the more it matters.
 
 7a. **Re-assert the branch before anything else commits.** The suite above takes
     minutes, and this is the shared main worktree — the longest window in the
@@ -180,7 +190,7 @@ Plans never move folders, so the only potential conflict is REGISTRY.md — whic
 
 ## On startup
 
-1. Confirm on `release` branch
+1. Confirm `release` exists and note which worktree holds it (`git worktree list`) — it need not be this one, and on some projects it never is
 2. Show commits on release that aren't on main
 3. If new commits exist: prompt user to confirm promotion
 4. If no new commits: inform user there is nothing to deploy

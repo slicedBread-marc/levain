@@ -24,6 +24,7 @@ This skill is **always** unattended. Unlike `wf-spec`, `wf-implement` and `wf-te
 | Writing findings | Unsure whether an issue is in scope for this plan | [AUTO] | Read the plan's Out of Scope section. Out of scope and security-relevant → `← BROAD-SCOPE` plus an independent bug; out of scope and not → leave it out |
 | Writing findings | Unsure whether a finding is the implementer's or the planner's | [AUTO] | If the spec is wrong or incomplete, mark it `ESCALATED`; if the code does not match a correct spec, leave it unmarked |
 | Writing findings | The finding is an open `#### Manual` criterion needing human eyes, with no code to write | [AUTO] | Tag it `← MANUAL-TEST`. It travels with the plan to `testing` and is resolved at the manual gate — routing to `active` on it cannot terminate (WFI-203) |
+| What you check | A Tests-table command ran **zero tests** | [AUTO] | Never a pass, whatever it exited with. Record a `**Spec**` finding `← ESCALATED` naming the row: a bare method name given to `--filter-method` matches nothing, prints "Zero tests ran" and exits **0** (WFI-196). Only the planner can fix the row |
 | Exit | The plan needs a decision no finding can express | **[GATE]** | Park it and exit cleanly rather than guessing:<br>`scripts/wf-exec.sh wf-gate-open.sh <PLN-ID> needs-input "<question>" --skill wf-verify` |
 
 4. **Never guess.** Anything not covered above is a [GATE] with gate name `needs-input`.
@@ -138,6 +139,8 @@ Agent(model: haiku, prompt: "Run the test command in feature-branches/PLN-NNN-<s
   return until that Bash call has returned. A reply saying you are waiting for
   the run is a reply reporting nothing, and it is discarded.
   Report: total tests, passed, failed, skipped. Quote the 'scope: ...' line from /tmp/wf-scope.log.
+  A run that executed ZERO tests is NOT a pass, whatever it exited with. Report it
+  as 'zero tests ran' and quote the runner's own summary line.
   For each failure, quote the runner's own failure line VERBATIM — copy it from the
   output, do not paraphrase it, do not reconstruct the test name or the expected
   value from memory. If you cannot quote a line, do not report the failure.
