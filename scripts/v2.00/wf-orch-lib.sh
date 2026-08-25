@@ -350,6 +350,71 @@ wf_plan_body_fingerprint() {
   ' "$plan_md" | shasum 2>/dev/null | awk '{print $1}' || true
 }
 
+# ── Reading a review verdict ──────────────────────────────────────────────
+#
+# ONE PARSER, BECAUSE FOUR SCRIPTS TOUCH THIS SECTION
+#
+# `## Review` is written by hand, by whatever session ran the review, and read
+# back by wf-review-status.sh, wf-review-stamp.sh and wf-manual-lint.sh. When
+# each carried its own idea of what a verdict looks like, a plan could pass
+# every writer and fail the one reader that mattered.
+#
+# client-a's PLN-209: a prose review section (`### Round 1 — 2026-08-20 —
+# **Approved with notes**`, no blockquote, no `Result:` line) was linted clean
+# twice, stamped with a Plan-Hash, and then reported by wf-review-status.sh as
+# REVIEW_LOCATION='none', REVIEW_STAMPED='false' — the row /wf-attend renders
+# as a harness fault, on a plan that had actually been reviewed and approved
+# (WFI-207). Three scripts touched the section; only the fourth, read by
+# chance, revealed the verdict was invisible.
+#
+# So the rule lives once, here, and everything that has an opinion about a
+# review verdict asks these.
+
+# wf_section_body <file> <heading> → the lines under `## <heading>`
+# Matched by PREFIX, not equality: findings.md dates its headings
+# (`## Spec Review — 2026-08-03`), so an equality test finds nothing there.
+wf_section_body() {
+  local file="$1" heading="$2"
+  [ -f "$file" ] || return 0
+  awk -v want="$heading" '
+    /^## / {
+      name = $0; sub(/^## [ \t]*/, "", name)
+      sub(/[ \t]+$/, "", name)
+      inside = (index(name, want) == 1) ? 1 : 0
+      next
+    }
+    inside { print }
+  ' "$file"
+}
+
+# wf_review_result_lines <body> → the real verdict lines in a review body
+#
+# A verdict is any line naming a Result — anywhere in the section AND anywhere
+# in the line. Both spellings are in the field: the template writes
+# `> **Result:** Approved` on its own line, and a replan session has been seen
+# to bury it mid-sentence ("...run at the spec-approval gate. Result: Blocked").
+# Anchoring at line start finds the first and silently misses the second, which
+# is the same failure as not looking at all.
+#
+# The template's own line is excluded by its shape: it is a menu of every
+# possible verdict, and a real one names exactly one.
+wf_review_result_lines() {
+  printf '%s\n' "$1" \
+    | { grep -iE 'result:' || true; } \
+    | { grep -v 'Approved | Approved with notes | Blocked' || true; }
+}
+
+# wf_review_has_content <body> → 0 if the section holds anything but scaffolding
+# Used to tell "no review yet" (fine, it is coming) from "a review was written
+# and cannot be read" (a fault). The template's own placeholder menu line and
+# the wf-review-stamp comment are scaffolding, not content.
+wf_review_has_content() {
+  printf '%s\n' "$1" \
+    | grep -v 'Approved | Approved with notes | Blocked' \
+    | grep -v 'wf-review-stamp' \
+    | grep -qE '[^[:space:]>*_-]'
+}
+
 # ── The goal stack ────────────────────────────────────────────────────────
 #
 # Three scripts read and write `### Goal History` — push, pop, amend — and the

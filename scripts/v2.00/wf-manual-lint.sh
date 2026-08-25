@@ -102,6 +102,35 @@ if ! grep -q . "$plan_file" 2>/dev/null; then
   exit 2
 fi
 
+# ── A review that was written and cannot be read ──────────────────────────
+#
+# This lints `#### Manual` criteria, and a review verdict is not one. It is
+# checked here anyway because this is the pre-flight every plan passes through
+# on its way out of /wf-spec — the last place a malformed section is cheap to
+# fix, and the place PLN-209 went through twice, clean, carrying a `## Review`
+# that wf-review-status.sh could not read a verdict out of (WFI-207).
+#
+# The distinction that matters is between EMPTY and UNREADABLE:
+#
+#   empty      no review has been written yet. Normal for a plan mid-draft, and
+#              not this script's business. Silent.
+#   unreadable a review WAS written — there is prose in the section — and the
+#              parser that decides "has this plan been reviewed" finds no
+#              verdict in it. Downstream that is indistinguishable from never
+#              having been reviewed, and /wf-attend renders it as a harness
+#              fault. Reported as a finding.
+#
+# Same parser wf-review-status.sh uses, from wf-orch-lib.sh, so there is no
+# second opinion for the two to disagree on later.
+review_body=$(wf_section_body "$plan_file" "Review")
+review_finding=""
+if wf_review_has_content "$review_body" && [ -z "$(wf_review_result_lines "$review_body")" ]; then
+  review_line=$(grep -nE '^## Review([ \t]|$)' "$plan_file" | head -1 | cut -d: -f1)
+  review_finding=$(printf 'F\t%s\tunreadable-review\t## Review\t%s' \
+    "${review_line:-0}" \
+    'a review is written here but no `Result:` line — wf-review-status.sh reads this plan as never reviewed. Write the verdict as `> **Result:** Approved | Approved with notes | Blocked — <why>` (WFI-207)')
+fi
+
 # ── Schema guard ──────────────────────────────────────────────────────────
 # Tags arrived in schema v6. A v5 plan already in flight has none, and failing
 # it back to `draft` mid-pipeline would punish plans for being early rather
@@ -207,6 +236,12 @@ out=$(awk -v legacy="$legacy" '
 
 counts=$(printf '%s\n' "$out" | grep '^C	' | tail -1)
 findings=$(printf '%s\n' "$out" | grep '^F	' || true)
+
+# The review finding is not a Manual-criterion finding, so it plays no part in
+# --counts; it only ever affects the lint verdict.
+if [ -n "$review_finding" ]; then
+  findings=$(printf '%s%s%s' "$findings" "${findings:+$'\n'}" "$review_finding")
+fi
 
 if [ "$mode" = "counts" ]; then
   wf_emit MANUAL_TOTAL         "$(printf '%s' "$counts" | cut -f2)"

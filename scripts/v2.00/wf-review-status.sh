@@ -51,6 +51,14 @@
 
 set -euo pipefail
 
+# Sourced at the top, not lazily further down where wf_plan_body_fingerprint
+# used to pull it in: the section and verdict parsers now live in the lib too
+# (WFI-207), and they run well before that point. Nothing in the lib assigns
+# ROOT, so the deliberate choice below — not using wf_develop_root, whose
+# fallback contract differs — is unaffected.
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
+
 plan_id="${1:-}"
 if ! printf '%s' "$plan_id" | grep -qE '^PLN-[0-9]+'; then
   echo "Usage: $0 <PLN-NNN>" >&2
@@ -97,42 +105,19 @@ fi
 plan_file="$plan_dir/plan.md"
 findings_file="$plan_dir/findings.md"
 
-# Body of a `## <name>` section. Matched by PREFIX, not equality: findings.md dates its sections in the
-# heading itself (`## Spec Review — 2026-08-03`), so an equality test finds
-# nothing at all there.
-section_body() {
-  local file="$1" heading="$2"
-  [ -f "$file" ] || return 0
-  awk -v want="$heading" '
-    /^## / {
-      name = $0; sub(/^## [ \t]*/, "", name)
-      sub(/[ \t]+$/, "", name)
-      inside = (index(name, want) == 1) ? 1 : 0
-      next
-    }
-    inside { print }
-  ' "$file"
-}
+# Both of these now live in wf-orch-lib.sh, so that wf-review-stamp.sh and
+# wf-manual-lint.sh apply the same rule this script will apply when it reads
+# the section back. Three scripts with three private ideas of what a verdict
+# looks like is what let PLN-209 pass every writer and fail the only reader
+# (WFI-207). Kept as thin aliases so the body below reads unchanged.
+section_body() { wf_section_body "$@"; }
 
-# A review's `Result:` line, wherever it sits in the section AND wherever it
-# sits in the line. Both spellings are in the field: the template writes
-# `**Result:** Approved` on its own line, and the prose form a replan session
-# produced buries it mid-sentence ("...review run at the spec-approval gate.
-# Result: Blocked"). Anchoring at line start finds the first and silently
-# misses the second, which is the same failure as not looking at all.
-#
+result_lines() { wf_review_result_lines "$@"; }
+
 # The LAST Result line, not the first: a plan that went several rounds records
 # every one, and the verdict that matters is the most recent. Trimmed at the
 # first em-dash so a gate question carries "Approved with notes" rather than a
 # paragraph of reviewer commentary.
-# Real verdict lines: any line naming a Result, minus the template's own,
-# which is recognisable by listing every verdict at once.
-result_lines() {
-  printf '%s\n' "$1" \
-    | { grep -iE 'result:' || true; } \
-    | { grep -v 'Approved | Approved with notes | Blocked' || true; }
-}
-
 result_of() {
   result_lines "$1" | tail -1 \
     | sed -E 's/.*[Rr]esult:[ \t]*//; s/\*+//g; s/[ \t]*—.*$//; s/^[ \t]+//; s/[ \t]+$//'

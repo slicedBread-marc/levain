@@ -71,6 +71,42 @@ if ! grep -qE '^## Review([ \t]|$)' "$plan_md"; then
   exit 1
 fi
 
+# ── A stamp on a verdict nobody can read is worse than no stamp ───────────
+#
+# This used to stamp any section with the right heading, whatever was in it.
+# That is how a review becomes invisible without anyone noticing: client-a's
+# PLN-209 carried a hand-written prose `## Review` — `### Round 1 — 2026-08-20
+# — **Approved with notes**`, no blockquote, no `Result:` line — and three
+# scripts touched it without complaint. wf-manual-lint.sh returned 0 twice,
+# this script stamped a Plan-Hash into it, and only wf-review-status.sh, read
+# by chance on the way to the transition, reported REVIEW_LOCATION='none' and
+# REVIEW_STAMPED='false' for the very same plan. That is the row /wf-attend
+# renders as "the plan gated before its review" — a harness fault — on a plan
+# that had in fact been reviewed and approved (WFI-207).
+#
+# The stamp is what made it silent. An unstamped unparseable review still reads
+# as unstamped; a STAMPED unparseable one asserts a verdict was anchored, and
+# every later staleness check on it returns `none` while looking like it worked.
+#
+# So the parser that will read this back gets consulted before anything is
+# written. Same script, same rules — there is no second opinion to disagree
+# with later.
+review_status_out=$("$(dirname "$0")/wf-review-status.sh" "$plan_id" 2>/dev/null || true)
+review_location=$(printf '%s' "$review_status_out" | grep -m1 "^REVIEW_LOCATION=" \
+                  | sed "s/^REVIEW_LOCATION='\{0,1\}//; s/'\{0,1\}$//" || true)
+if [ "${review_location:-none}" = "none" ]; then
+  echo "Error: $plan_id has a '## Review' section, but wf-review-status.sh cannot read a verdict out of it." >&2
+  echo "       Refusing to stamp — a stamp on an unreadable verdict makes it look anchored while every" >&2
+  echo "       later check reports 'none', which reads downstream as 'never reviewed' (WFI-207)." >&2
+  echo "" >&2
+  echo "       A verdict is a line naming a Result. plans/TEMPLATE.md writes it as a blockquote:" >&2
+  echo "" >&2
+  echo "         > **Result:** Approved with notes — <what the notes were>" >&2
+  echo "" >&2
+  echo "       Rewrite the section into that shape and re-run. Do not work around this by skipping the stamp." >&2
+  exit 1
+fi
+
 wf_lock_acquire "plan-$plan_id"
 
 fp=$(wf_plan_body_fingerprint "$plan_id")
