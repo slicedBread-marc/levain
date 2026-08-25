@@ -250,27 +250,39 @@ If the user picks a bug BUG-NNN:
     Suggest from the listed tags — reuse the project's own words rather than inventing a synonym for one it already has. A genuinely new tag is allowed and `wf-set-tags.sh` will take it; it just gets a warning so a typo does not become a second vocabulary.
 
     This list used to be a hardcoded `security, arcade, admin, lessons, ux, infra, e2e, bugfix` — one project's game/admin/lessons vocabulary, shipped to everyone. Elsewhere it named tags that meant nothing and omitted the one tag the project actually gated on, which is the failure that matters: an allowlist that looks authoritative, isn't, and sits directly in front of a gating decision.
-5. **Re-ask for the ID, then create the plan folder.** The ID from step 3 is stale by now — ask again, in the same call that creates the folder:
+5. **Re-ask for the ID.** The ID from step 3 is stale by now — ask again:
    ```bash
    eval "$(scripts/wf-exec.sh wf-plan-id.sh <SRC-ID>)"
    ```
-   - `PLAN_ID_RESUME=true` — another session (or an earlier attempt of yours) created the folder while you were drafting. **Continue in `$PLAN_ID_DIR`**, whatever slug it carries, and under whatever number `$PLAN_ID` names — a resume folder may sit under a reallocated number (WFI-162). Fold anything you drafted into what is there. Do not create a second folder.
+   - `PLAN_ID_RESUME=true` — another session (or an earlier attempt of yours) created the folder while you were drafting. **Continue in `$PLAN_ID_DIR`**, whatever slug it carries, and under whatever number `$PLAN_ID` names — a resume folder may sit under a reallocated number (WFI-162). Fold anything you drafted into what is there. Do not create a second folder. (Write straight into `$PLAN_ID_DIR` — it is already tracked, so the staging below does not apply.)
    - `PLAN_ID_INHERITED=false` — the number was taken while you were drafting. Use the reallocated `$PLAN_ID` and record `$PLAN_ID_COLLISION` in the Context line.
-   - Otherwise nothing moved: create `plans/$PLAN_ID-<slug>/` as planned.
+   - Otherwise nothing moved: this is a new plan, and it is written in **staging** — see below.
 
-   Then write three files following `plans/TEMPLATE.md`:
-   - Folder is always `plans/PLN-NNN-<slug>/` (e.g. `plans/PLN-041-user-auth/`)
+   **Write a new plan into `.git/wf-spec-staging/PLN-NNN-<slug>/`, not into `plans/`.** Three files, following `plans/TEMPLATE.md`:
    - In `plan.md`, fill in `> **ID:** PLN-NNN` and `> **schema_version:** 6`
    - **Goal** — use the confirmed one-liner from step 4b as the first line under `## Goal`. Follow with an optional context paragraph.
    - `plan.md` — goal, steps, tests, checklist, design decisions, out of scope
    - `findings.md` — empty (no table header needed — findings are appended as flat checklists)
    - `progress.md` — step list (copied from plan steps), empty log
 
-5a. **Commit the folder as soon as it is written** — before the review gate, not after:
+   **Why staging, and why inside `.git/`.** An untracked folder under `plans/` on the shared develop checkout does not reliably survive from one tool call to the next. client-a lost three of them in one day — PLN-211, PLN-212 and PLN-213 — each confirmed present by an `ls` and gone by the next call, with an empty `git stash list` proving nothing had stashed them (WFI-209, WFI-210, WFI-211). Concurrent workers merge, check out and clean over that same checkout, and every one of those operations removes untracked files without leaving a trace to recover from. PLN-213's was the worst shape: WFI-164's stash was at least recoverable, and this simply was not there.
+
+   `.git/` is the one directory in the repository that none of those operations touches — `git clean` excludes it by construction, and no merge or checkout writes through it. So the plan is authored somewhere it cannot be swept from, and the window in which it exists untracked under `plans/` is reduced to the inside of a single shell invocation, in the next step.
+
+   Step 5a's rule was "commit as soon as it is written", and that was right and did not go far enough: **the write and the commit must not be separated by a turn boundary**, because that boundary is exactly where the folder went (WFI-209).
+
+5a. **Move it into place and commit it — one Bash call, no exceptions:**
    ```bash
-   scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): plan drafted" \
-     --add plans/PLN-NNN-<slug>/ --branch develop
+   mkdir -p plans/PLN-NNN-<slug> \
+     && mv .git/wf-spec-staging/PLN-NNN-<slug>/* plans/PLN-NNN-<slug>/ \
+     && rmdir .git/wf-spec-staging/PLN-NNN-<slug> \
+     && scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): plan drafted" \
+          --add plans/PLN-NNN-<slug>/ --branch develop
    ```
+   `&&` throughout: if the move fails, nothing is committed and the plan is still in staging, intact, to retry. **Read what it printed** — `committed N path(s)` naming your three files is the only proof the plan is in history. If the commit did not happen, the files are sitting untracked in `plans/` right now and are on the same clock that ate the three above; re-run the commit immediately rather than continuing.
+
+   For a resume (`PLAN_ID_RESUME=true`), there is nothing to move — commit `$PLAN_ID_DIR` directly.
+
    Then, for a new plan, add its REGISTRY row — **here, not at exit**:
    ```bash
    scripts/wf-exec.sh wf-registry-add.sh PLN-NNN <slug> --tags "<tags from step 4c>"
@@ -284,6 +296,19 @@ If the user picks a bug BUG-NNN:
    **Why not wait for the exit commit.** Between here and the exit commit sits the whole review loop, and until v6.3.1 the new files spent all of it *staged on the shared develop index*. Anyone else's commit sweeps that index. client-a's WFI-122: PLN-039's reviewed `plan.md` was committed by an unrelated `test(PLN-038-…): complete` merge, so the spec commit that approved it carried only `findings.md`, `progress.md` and `REGISTRY.md`, and `git log -- plans/PLN-039-…/plan.md` names a different plan's test run. No pathspec on the spec side defends against a merge; the only fix is to not be staged for that long. Same reasoning as `wf-bug-consume.sh` committing rather than staging (WFI-106, WFI-112).
 
    If the run dies after this point, the folder is in history and the next dispatch resumes it — see [ID Inheritance](#id-inheritance) and `PLAN_ID_RESUME`.
+
+   If it dies *before* this point, the draft is still in `.git/wf-spec-staging/`. A later run of this skill on the same source starts at step 5 with `PLAN_ID_RESUME=false` and no folder under `plans/`, so **check staging before writing anything**: `ls .git/wf-spec-staging/ 2>/dev/null`. A folder there is your own earlier attempt — fold your draft into it rather than starting over. (`/wf-spec` runs from the develop root, where `.git` is a real directory; it never runs from a feature worktree, where it is a file.)
+
+5b. **Update the brief — here, and commit it here (if this plan came from a brief).** Set the brief's `> **Status:**` to `Planned` and its `> **Plan:**` field to the plan folder, then move its `plans/briefs/INDEX.md` line into the `## Planned` section and append the plan link to it. Then commit both, immediately:
+   ```bash
+   scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): BRF-NNN planned" \
+     --add plans/briefs/BRF-NNN-<slug>.md plans/briefs/INDEX.md --branch develop
+   ```
+
+   **This is why it is here rather than at step 11.** Step 11 sits before the review loop, so the two edits used to spend every round of that loop dirty on the shared develop checkout — the same window `wf-registry-add.sh` closed for `REGISTRY.md` (WFI-140) and step 5a closed for `plan.md` (WFI-122), and the only one left open. client-a's PLN-192 wrote its INDEX line at step 11 and a concurrent worker's *correctly pathspecced* `spec(PLN-189-…): BRF-189 planned` carried it off mid-review: nothing was lost, but `git log -- plans/briefs/INDEX.md` now credits PLN-192's brief-consumption to PLN-189's commit, and this run's own exit commit reported one path, naming only the brief (WFI-197).
+
+   **A better pathspec cannot fix this and it is not the point.** Both workers legitimately name `plans/briefs/INDEX.md`; whoever commits first takes the other's uncommitted edits out of the same file. The fix is the same one the other three took — not being dirty for that long.
+
 6. **Specify everything** — every step must include:
    - Exact file paths to create or modify
    - Class/method/component names and signatures
@@ -365,7 +390,7 @@ If the user picks a bug BUG-NNN:
     - Assess data migration reversibility honestly — if irreversible, say so explicitly
     - Write exact rollback commands, not general descriptions
     - Add verification steps to confirm the rollback succeeded
-11. **Update the brief (if from brief)** — set status to `Planned`, add the plan folder link; update `plans/briefs/INDEX.md`
+11. **Update the brief (if from brief)** — done at step 5b, not here. If you have reached this point without doing it, do it now, and commit it in the same call.
 12. **Consume the bug (if from bug)** — see [Bug consumption](#bug-consumption) below
 
 ## Codebase exploration via agents
