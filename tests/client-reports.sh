@@ -3327,12 +3327,26 @@ assert_eq "PLAN_ID_DIR is empty when there is nothing to resume" "" \
 rm -rf plans/PLN-951-earlier-attempt
 
 # The instruction is the other half of the fix: step 3's answer is provisional
-# and step 5 asks again, in the call that actually creates the folder.
+# and step 5 asks again, before the folder is written.
 spec_skill="$LIB_ROOT/skills/wf-spec/SKILL.md"
-assert_eq "wf-spec re-asks for the ID at folder creation" "true" \
-  "$(grep -q 'Re-ask for the ID, then create the plan folder' "$spec_skill" && echo true || echo false)"
+assert_eq "wf-spec re-asks for the ID before writing the plan" "true" \
+  "$(grep -q '\*\*Re-ask for the ID' "$spec_skill" && echo true || echo false)"
 assert_eq "and says to continue in \$PLAN_ID_DIR, not in its own slug" "true" \
   "$(grep -q 'Write into `\$PLAN_ID_DIR`' "$spec_skill" && echo true || echo false)"
+
+# ── An untracked plan folder does not survive the shared checkout ────────
+#
+# client-a lost three plan folders in one day (WFI-209, WFI-210, WFI-211),
+# each confirmed present by an `ls` and gone by the next tool call, with an
+# empty `git stash list` proving nothing had stashed them. A concurrent
+# worker's merge, checkout or clean removes untracked files without a trace.
+# The fix is that no untracked plan content exists in `plans/` across a turn
+# boundary: it is authored in `.git/`, which none of those operations touches,
+# and moved+committed inside a single shell invocation.
+assert_eq "a new plan is authored outside plans/, where a clean cannot reach it" "true" \
+  "$(grep -q '\.git/wf-spec-staging/' "$spec_skill" && echo true || echo false)"
+assert_eq "and the move into plans/ is chained to the commit, not split across turns" "true" \
+  "$(grep -q 'mv \.git/wf-spec-staging/' "$spec_skill" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A fix cycle is not a lost state write (client-a WFI-145)"
