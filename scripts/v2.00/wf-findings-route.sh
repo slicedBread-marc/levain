@@ -6,6 +6,10 @@
 #   active    → has unchecked non-escalated items (route to active)
 #   clean     → no unchecked findings (route to testing)
 #
+# Two trailing tags are deliberately NOT routed on — BROAD-SCOPE and
+# MANUAL-TEST. Both mean "real work, but not the implementer's". See the
+# comment above `remaining=` for why routing on them cannot terminate.
+#
 # A relative <plan-dir> is anchored to the develop root, like every other
 # wf-*.sh script, because `plans/` exists nowhere else.
 #
@@ -140,14 +144,37 @@ fi
 
 # Check for any unchecked items.
 #
-# BROAD-SCOPE is the exception. A finding marked BROAD-SCOPE is out of this
-# plan's declared scope and is resolved by spawning an independent bug — the
-# skill is explicit that "a plan can go to active or testing while still
-# spawning bugs for out-of-scope security issues". Routing on it anyway sent
-# the plan back to an implementer whose own Out of Scope section forbids the
-# fix, so the only way out was to check off a finding nobody had acted on.
+# Two tags are the exception, and both mean the same structural thing: there is
+# work here, and it is not the implementer's.
+#
+# BROAD-SCOPE is out of this plan's declared scope and is resolved by spawning
+# an independent bug — the skill is explicit that "a plan can go to active or
+# testing while still spawning bugs for out-of-scope security issues". Routing
+# on it anyway sent the plan back to an implementer whose own Out of Scope
+# section forbids the fix, so the only way out was to check off a finding
+# nobody had acted on.
+#
+# MANUAL-TEST is a test-cycle item: a note that restates an `#### Manual`
+# acceptance criterion still needing human eyes. It is resolved at the manual
+# gate in `testing`, which is the purpose-built mechanism for it — so routing
+# to `active` on one puts the plan in front of an implementer who has NO CODE
+# TO WRITE, and whose only forward move is back to verify, which reaches this
+# same line and routes to `active` again.
+#
+# client-a's PLN-204 ran that loop three times (WFI-203, then WFI-204 and
+# WFI-205 watching it recur). Two leftover narrative lines from an earlier
+# human-test cycle, both restating one still-open (eyes:blocking) criterion
+# that no unattended session can execute, held a plan with a clean build,
+# 2300/2300 tests and five clean verify layers out of `testing` indefinitely —
+# and each pass re-asked a human the identical question through a fresh
+# needs-input gate, because a cycle-scoped gate cannot recognise its own
+# already-given answer.
+#
+# The exit from that loop is to let such a finding TRAVEL with the plan, which
+# is what it was always characterised as doing. It stays unchecked and visible;
+# it just stops deciding the route.
 remaining=$(grep '^\- \[ \]' "$findings" 2>/dev/null \
-            | grep -cvE "(←|<-)[[:space:]]*BROAD-SCOPE[[:space:]]*$" || true)
+            | grep -cvE "(←|<-)[[:space:]]*(BROAD-SCOPE|MANUAL-TEST)[[:space:]]*$" || true)
 if [ "${remaining:-0}" -gt 0 ]; then
   echo "active"
   exit 0
@@ -155,6 +182,10 @@ fi
 
 if wf_tagged "$findings" BROAD-SCOPE; then
   echo "wf-findings-route: unchecked BROAD-SCOPE finding(s) present — not routing on them; file each as an independent bug" >&2
+fi
+
+if wf_tagged "$findings" MANUAL-TEST; then
+  echo "wf-findings-route: unchecked MANUAL-TEST finding(s) present — not routing on them; they travel with the plan and are resolved at the manual gate in 'testing'" >&2
 fi
 
 echo "clean"

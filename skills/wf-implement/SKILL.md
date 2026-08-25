@@ -49,6 +49,7 @@ Rules, in force for the whole session:
 | Phase 3 | Plan ambiguous mid-implementation | [AUTO] | Note it in `progress.md` and continue with the most conservative reading. Only [GATE] (`needs-input`) if you cannot proceed at all |
 | Any | Escalation to spec | [AUTO] | Follow the normal escalation path — write ESCALATED findings and set state to `draft`. This is a state transition, not a question |
 | Fix cycle | A finding is a real bug in code this plan never touched | [AUTO] | Not a gate and not an escalation: file an independent bug, tag the finding `← BROAD-SCOPE` naming it, leave the box unchecked (WFI-081) |
+| Fix cycle | A finding has **no code to write** — it restates an open `#### Manual` criterion needing human eyes | [AUTO] | Not a gate: tag it `← MANUAL-TEST`, leave the box unchecked, and exit to `verify` as normal. It travels to `testing` and is resolved at the manual gate (WFI-203) |
 
 Exiting to `verify` is unchanged: it is a normal state transition, and the verify agent already runs unattended.
 
@@ -475,11 +476,15 @@ The verify agent found code/test/spec issues and set the REGISTRY state back to 
    ```bash
    DEVELOP_ROOT=$(pwd)
    scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug>
+   eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"
+   [ "$PLAN_STATE" = "ready" ] && scripts/wf-exec.sh wf-registry-update.sh PLN-NNN ready active
    cd $DEVELOP_ROOT/feature-branches/PLN-NNN-<slug>
    git add -u -- ':(exclude)scripts/wf-*.sh' ':(exclude).claude/' ':(exclude)plans/' ':(exclude)templates/' 2>/dev/null; git diff --cached --quiet || git commit -m "implement(PLN-NNN-<slug>): wip before merge"
    $DEVELOP_ROOT/scripts/wf-exec.sh wf-merge-develop.sh
    ```
    Shell variables do NOT persist across bash calls — keep these together so `DEVELOP_ROOT` stays in scope. After this call, you are INSIDE the worktree — never `cd feature-branches/...` again.
+
+   **The `ready → active` line is not optional, and it is why step 1 says "shows the plan" rather than "shows it as `active`".** A fix cycle is entered on the *type* `wf-list-implementable.sh` computes — worktree present plus unchecked findings — and that type is `fix` whatever the registry row says. A replan leaves a plan at `ready` while its worktree survives, so the fix path is reached with the row still reading `ready`, and every fix in the cycle then lands correctly right up until the Phase 3 exit refuses: `PLN-NNN is in state ready, not active` (client-a WFI-202). The transition belongs at entry, where the work actually starts, not at the exit that discovers it missing. `wf-list-implementable.sh` already treats `ready`-with-a-worktree as `active` internally; this makes the registry agree.
 4. **Set the Docker project name and port** — same as Phase 2 step 12, and for the same reason:
    ```bash
    eval "$($DEVELOP_ROOT/scripts/wf-exec.sh wf-plan-port.sh PLN-NNN-<slug>)"
@@ -531,6 +536,21 @@ The verify agent found code/test/spec issues and set the REGISTRY state back to 
    ```
 
    The bar is that all three hold: it reproduces, the code is outside this plan's declared scope, and the plan's own text is not wrong. If the failure is in code this plan *did* touch, it is yours however unrelated it feels.
+
+5b. **A finding with nothing to implement — `← MANUAL-TEST`**
+
+   A fix cycle sometimes arrives with no fix in it: the only unchecked findings restate an open `#### Manual` acceptance criterion that needs a human at a real keyboard — real hardware, real credentials, a state no unattended session can produce. There is no code to write, and there is nothing to escalate either: the plan is not wrong.
+
+   Tag it and leave the box unchecked, exactly as with `BROAD-SCOPE`:
+
+   ```markdown
+   - [ ] **Manual**: (eyes:blocking) criterion 3 needs a real terminal with 4+ pending packages — not producible unattended ← MANUAL-TEST
+   ```
+
+   `wf-findings-route.sh` does not route on it, so the plan reaches `testing`, where the manual gate is the mechanism that resolves it. **Do this rather than opening a gate to ask what to do.** Untagged, the item routes the plan to `active` — back to you, with the same nothing to do — and the cycle repeats: client-a's PLN-204 went round three times on two such lines, re-asking a human the identical question each pass (WFI-203, WFI-204, WFI-205).
+
+   The bar is the same one as above, applied to a different axis: **name the file the fix edits.** If there is no file — only a person and a machine you do not have — it is a `MANUAL-TEST` item. If there is a file under `src/` or `tests/`, it is yours.
+
 6. **Re-run build/tests** via haiku agents
 7. **When all findings are checked off** — commit and return to Phase 3 exit:
    ```bash

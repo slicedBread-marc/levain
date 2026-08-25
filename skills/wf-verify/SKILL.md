@@ -23,6 +23,7 @@ This skill is **always** unattended. Unlike `wf-spec`, `wf-implement` and `wf-te
 | What you check | A check cannot run (missing tool, unbuildable tree) | [AUTO] | Record it as a finding with the command and its output verbatim — an unrunnable check is a result, not a blocker |
 | Writing findings | Unsure whether an issue is in scope for this plan | [AUTO] | Read the plan's Out of Scope section. Out of scope and security-relevant → `← BROAD-SCOPE` plus an independent bug; out of scope and not → leave it out |
 | Writing findings | Unsure whether a finding is the implementer's or the planner's | [AUTO] | If the spec is wrong or incomplete, mark it `ESCALATED`; if the code does not match a correct spec, leave it unmarked |
+| Writing findings | The finding is an open `#### Manual` criterion needing human eyes, with no code to write | [AUTO] | Tag it `← MANUAL-TEST`. It travels with the plan to `testing` and is resolved at the manual gate — routing to `active` on it cannot terminate (WFI-203) |
 | Exit | The plan needs a decision no finding can express | **[GATE]** | Park it and exit cleanly rather than guessing:<br>`scripts/wf-exec.sh wf-gate-open.sh <PLN-ID> needs-input "<question>" --skill wf-verify` |
 
 4. **Never guess.** Anything not covered above is a [GATE] with gate name `needs-input`.
@@ -253,6 +254,20 @@ Example:
 - [ ] **Security**: Plan stores session token in localStorage — XSS exfiltration risk ← PLAN-SCOPED
 - [ ] **Security**: No CSRF protection on any POST endpoint ← BROAD-SCOPE
 ```
+
+### A finding that only a human at a keyboard can close
+
+Some findings restate an `#### Manual` acceptance criterion that is still open — "needs a human at a real terminal with N real pending packages", "cannot be produced on this machine". These are **test-cycle items, not code**. Tag each one `← MANUAL-TEST`:
+
+```markdown
+- [ ] **Manual**: (eyes:blocking) criterion 3 needs a real terminal with 4+ pending packages — not producible in an unattended session ← MANUAL-TEST
+```
+
+`wf-findings-route.sh` does not route on a `MANUAL-TEST` finding, exactly as it does not route on `BROAD-SCOPE`. The item stays unchecked and visible, travels with the plan into `testing`, and is resolved at the manual gate — which is the mechanism built for it.
+
+**Why the tag has to exist:** an untagged one routes the plan to `active`, where the implementer has no code to write and whose only forward move is back to verify, which routes to `active` again. client-a's PLN-204 ran that loop three times on two leftover lines, holding a plan with a clean build, 2300/2300 tests and five clean verify layers out of `testing` — and re-asked a human the identical question through a fresh gate on every pass (WFI-203, WFI-204, WFI-205).
+
+Do **not** reach for this tag on a real defect a human happened to observe. "The button does not respond on mobile" is a `**Behavior**` finding and routes to `active` correctly. The test is whether there is code to write: if there is, it is not a `MANUAL-TEST` item.
 
 ### When to escalate
 

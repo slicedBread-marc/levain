@@ -138,6 +138,33 @@ if ! $force && wf_gate_revision_scoped "$gate_name"; then
   fi
 fi
 
+# ── A cycle-scoped gate that keeps coming back ────────────────────────────
+#
+# The refusal above only covers revision-scoped gates. `needs-input` and
+# `manual-test` are asked once per CYCLE by design, so they must be allowed to
+# re-open — and that is exactly how a loop hides. client-a's PLN-204 opened
+# the same needs-input question on three consecutive verify cycles (WFI-203,
+# WFI-204, WFI-205). Dedup could not catch it: each cycle's wording differs in
+# its specifics — a new worktree sha, the same 2300/2300 restated — so a literal
+# match sees three different questions where a reader sees one.
+#
+# Semantic matching is not the answer; guessing that two questions "mean the
+# same" is how a genuinely new question gets swallowed. What IS certain is that
+# a gate of this name on this artifact has been answered before, and that the
+# human draining the queue cannot see it. So the prior answer is carried onto
+# the new gate. The question still gets asked — the reader just gets told they
+# have answered one like it, and what they said, which is what turns "another
+# question" into "this is the third time".
+prior_q=""; prior_res=""; prior_at=""
+if ! wf_gate_revision_scoped "$gate_name"; then
+  prior_file=$(wf_gate_resolved_file "$id" "$gate_name" || true)
+  if [ -n "$prior_file" ] && [ -f "$prior_file" ]; then
+    prior_q=$(grep -m1   "^GATE_QUESTION="   "$prior_file" | sed "s/^GATE_QUESTION='//; s/'$//" || true)
+    prior_res=$(grep -m1 "^GATE_RESOLUTION=" "$prior_file" | sed "s/^GATE_RESOLUTION='//; s/'$//" || true)
+    prior_at=$(grep -m1  "^GATE_RESOLVED="   "$prior_file" | sed "s/^GATE_RESOLVED='//; s/'$//" || true)
+  fi
+fi
+
 {
   wf_emit GATE_ID       "$id"
   wf_emit GATE_ARTIFACT "$artifact"
@@ -146,7 +173,19 @@ fi
   wf_emit GATE_CONTEXT  "$context"
   wf_emit GATE_SKILL    "$skill"
   wf_emit GATE_OPENED   "$(wf_now)"
+  if [ -n "$prior_res" ]; then
+    wf_emit GATE_PRIOR_QUESTION   "$prior_q"
+    wf_emit GATE_PRIOR_RESOLUTION "$prior_res"
+    wf_emit GATE_PRIOR_AT         "$prior_at"
+  fi
 } > "$gate_file"
+
+if [ -n "$prior_res" ]; then
+  echo "$id: NOTE — a '$gate_name' gate on this artifact was already answered${prior_at:+ at $prior_at}." >&2
+  echo "  asked before: ${prior_q:-—}" >&2
+  echo "  answered:     $prior_res" >&2
+  echo "  If this is the same question in different words, the answer did not stick — say so when you answer, and fix what re-asks it." >&2
+fi
 
 wf_event gate-open "$id" "$gate_name: $question"
 echo "$id: gate '$gate_name' opened — $question"

@@ -199,10 +199,16 @@ Each verify/test session appends a dated section with a flat checklist:
 - [ ] **Design**: Users expect different flow than specified ← ESCALATED
 ```
 
-**Routing rules** (applied by verify agent / wf-test exit logic):
-- Any `ESCALATED` item → state goes to `draft` (T2 replans)
+**Routing rules** (applied by `wf-findings-route.sh`, from the verify agent / wf-test exit logic):
+- Any `ESCALATED` or `PLAN-SCOPED` item → state goes to `draft` (T2 replans)
 - Any unchecked non-escalated items → state goes to `active` (T3 fix cycle)
 - All items checked → state advances (verify→testing, testing→complete)
+
+Two trailing tags are **not routed on**, because both mean "real work, but not the implementer's". Each stays unchecked and visible, and travels with the plan:
+- `← BROAD-SCOPE` — outside this plan's declared scope; resolved by an independent bug, named on the same line
+- `← MANUAL-TEST` — an open `#### Manual` criterion needing human eyes, with no code to write; resolved at the manual gate in `testing`
+
+An untagged item of either kind routes the plan to an implementer with nothing to do, whose only forward move returns it to verify and routes it back again (WFI-203).
 
 ---
 

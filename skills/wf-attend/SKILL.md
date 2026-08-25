@@ -45,6 +45,20 @@ Never route a `mismatch` row to its normal skill. client-a's WFI-082: a `manual-
 
 A gate that has been answered before carries `GATE_QUESTION` in its resolved record (`wf-gate-status.sh <PLN-ID> <gate>`) — **the text as originally asked**. Replay that rather than writing it again.
 
+### A question you have answered before
+
+Cycle-scoped gates — `needs-input`, `manual-test` — are allowed to re-open by design, and that is where a loop hides. When one re-opens on an artifact that already answered a gate of that name, `wf-gate-open.sh` copies the earlier answer onto the new gate file. Read it:
+
+```bash
+grep -E '^GATE_PRIOR_(QUESTION|RESOLUTION|AT)=' .claude/orchestrator/gates/<PLN-ID>.gate 2>/dev/null
+```
+
+When `GATE_PRIOR_RESOLUTION` is present, **show it to the human alongside the new question**, in as many words: *"you answered a gate like this at &lt;date&gt; with &lt;resolution&gt; — here is what is being asked now."*
+
+Dedup cannot catch this by itself. Each cycle's wording differs in its specifics — a new worktree sha, the same test count restated — so a literal match sees three different questions where a person sees one. client-a's PLN-204 asked one human the same routing question on three consecutive cycles, each time as though it were new (WFI-203, WFI-204, WFI-205).
+
+**If the human says it is the same question, the answer did not stick, and the fix is upstream of the gate.** Answering it a fourth time buys one more cycle. File a workflow issue with `wf-issue.sh` naming what re-asks it, then answer the gate.
+
 Then: "Which one? (number, or `all` to work through them in order)"
 
 If the script exits non-zero, say "No gates open — nothing is waiting on you" and stop. Do not go looking for work; that's `/wf-status`.
