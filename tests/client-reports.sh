@@ -4512,6 +4512,47 @@ assert_eq "and both steps are on it" "2/2" \
   "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-217 2>/dev/null)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "One number, two artifacts (client-a WFI-215)"
+
+# Claims key on the artifact NUMBER so a brief and the plan it becomes share
+# one lock (WFI-004) — which holds only while a number names one piece of work.
+# client-a had BRF-210 (an ergonomics spec, live) and PLN-210
+# (publish-path-reports-elision, complete since August) as unrelated artifacts
+# sharing 210. Claiming the brief printed the listing as the plan's name, and a
+# worker claiming the plan would have blocked the brief with nothing naming it.
+cd "$TEST_DIR/main" || exit 1
+mkdir -p plans/briefs
+registry_add_row PLN-215 already-complete complete
+printf '# BRF-215\n\nAn unrelated brief that happens to share the number.\n' \
+  > plans/briefs/BRF-215-unrelated-brief.md
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-215 and BRF-215" >/dev/null 2>&1
+
+claim_out=$("$SCRIPT_DIR/wf-claim.sh" BRF-215 --if-free 2>&1 || true)
+assert_eq "claiming a colliding number says so" "true" \
+  "$(printf '%s' "$claim_out" | grep -q 'names more than one thing' && echo true || echo false)"
+
+list_out=$("$SCRIPT_DIR/wf-claim.sh" --list 2>&1 || true)
+assert_eq "--list shows what was claimed, not only what the number resolves to" "true" \
+  "$(printf '%s' "$list_out" | grep -q 'BRF-215 →' && echo true || echo false)"
+"$SCRIPT_DIR/wf-unclaim.sh" BRF-215 >/dev/null 2>&1 || true
+
+# The root cause: a plan inheriting a number checked only for other PLANs, so
+# a live BRF or BUG holding it was invisible and the inherit went ahead.
+eval "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-215 --peek 2>/dev/null)"
+assert_eq "an inherit blocked by a brief does not take the number" "false" "$PLAN_ID_INHERITED"
+assert_eq "and the brief is named as what holds it" "true" \
+  "$(printf '%s' "$PLAN_ID_COLLISION" | grep -q 'BRF-215' && echo true || echo false)"
+
+# A free number is still inherited — the check adds a case, it does not
+# replace the rule.
+printf '# BRF-216\n\nA brief whose number nothing else uses.\n' \
+  > plans/briefs/BRF-216-free-number.md
+git add -A >/dev/null 2>&1 && git commit -qm "add BRF-216" >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-216 --peek 2>/dev/null)"
+assert_eq "a free number is still inherited" "true" "$PLAN_ID_INHERITED"
+assert_eq "and it is the source's own" "PLN-216" "$PLAN_ID"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

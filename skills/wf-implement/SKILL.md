@@ -268,6 +268,15 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
 
 **CWD RULE: After step 9 runs `cd` into the worktree, you are INSIDE the worktree for the rest of Phase 2. The path `feature-branches/...` does not exist from inside the worktree. Never `cd feature-branches/...` again. Use `$DEVELOP_ROOT` (resolved via `git worktree list`) for any path back to develop.**
 
+**`$DEVELOP_ROOT` is for the HARNESS, and only for the harness.** `wf-*.sh` and `wf-exec.sh` live on develop because deploy writes them there and they are gitignored in your worktree — that is the whole reason the prefix exists. **A project's own scripts are tracked, so they are in your worktree, and running develop's copy of one builds develop's tree.** client-a's PLN-191 ran `$DEVELOP_ROOT/scripts/build-installer.sh` to satisfy a Verification Checklist item; that script begins `cd "$(dirname "${BASH_SOURCE[0]}")/.."`, so it relocated to the develop checkout and staged a payload from develop's code, not the feature branch's. It exited clean and reported success, and the mistake surfaced only when the worktree's own copy was run and produced a different manifest (WFI-225 — the same wrong-tree-reported-as-success class as WFI-105).
+
+Two rules follow, and neither is optional:
+
+- **Harness script → `$DEVELOP_ROOT/scripts/wf-exec.sh <wf-script>`.** Never a bare relative path; `scripts/` does not exist where you are standing.
+- **Project script → `./scripts/<name>.sh` from the worktree.** Never `$DEVELOP_ROOT`-prefixed. If it is not there, that is a fact about the branch worth reporting — not a reason to reach for develop's copy.
+
+A build or test command that succeeds says nothing about *which tree* it built until you check. When a verification step's output is a build artifact, confirm it came from your branch (`git rev-parse HEAD` against whatever the artifact stamps) before recording the step done.
+
 **And do not trust that you are still there.** The working directory has been
 observed resetting from the worktree back to the main worktree between two
 consecutive Bash calls with no `cd` in between — twice in one session. One

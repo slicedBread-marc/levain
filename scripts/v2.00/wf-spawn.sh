@@ -325,7 +325,7 @@ log="$ORCH/logs/${artifact}-${role}-${ts}.log"
 if $foreground; then
   wf_event spawn "$id" "$role ($model) foreground"
   echo $$ > "$pidfile"
-  wf_claim_write "$claim_dir" $$
+  wf_claim_write "$claim_dir" $$ "$artifact"
   set +e
   # WF_CLAIM_PID names the claim we just took out FOR this worker, so its own
   # "is this plan free?" check recognises the claim as its own (WFI-073/075).
@@ -367,7 +367,7 @@ worker_pid=$!
 echo "$worker_pid" > "$pidfile"
 # The claim names the worker, so it dies with the worker rather than with the
 # shell that launched it.
-wf_claim_write "$claim_dir" "$worker_pid"
+wf_claim_write "$claim_dir" "$worker_pid" "$artifact"
 disown "$worker_pid" 2>/dev/null || true
 
 wf_event spawn "$id" "$role ($model) pid $worker_pid"

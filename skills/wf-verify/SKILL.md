@@ -161,6 +161,38 @@ Agent(model: haiku, prompt: "Read all new/modified files in feature-branches/PLN
   Report findings with file:line and severity. Response under 1500 chars.")
 ```
 
+### When the test run is killed by the timeout
+
+600000ms is generous, and it is not infinite. Under concurrent dispatch a
+machine can be running one test suite per in-flight plan: client-a measured
+nine simultaneous runs of the same assembly at load 27 on 12 cores, and two
+independent foreground runs were killed at ~600s having executed 778 and 1275
+tests with **zero failures logged** (WFI-222).
+
+**A timeout is not a pass and it is not a fail.** It is a run with no verdict,
+and the two wrong moves are recording it as clean because nothing failed, or
+routing findings from a suite that never finished. Do this instead, in order:
+
+1. **Kill the leak first.** The Bash wrapper dies at the timeout; the test
+   process it started often does not, and a leaked runner competes with
+   everything you do next. `pkill -f '<test runner>'` and confirm with `ps`.
+2. **Narrow to what this plan actually changed.** The plan's Tests table names
+   its own test classes; run those and nothing else. client-a's 21-test
+   scoped run finished in 35s under the same load that killed the full suite.
+   A green scoped run is real evidence about this plan's work.
+3. **Record the partial run as what it is.** Write into `findings.md`, under
+   `## Notes`, the assemblies that fully passed, the count the killed run
+   reached, and that it reached it with zero failures. That is the honest
+   shape of the evidence and the next reader needs all three parts.
+4. **Then route on the scoped result** — clean scoped run plus a partial
+   full-suite run with no failures is a `testing` route, and say in the
+   handover that the full suite did not complete. A scoped run with any
+   failure is a normal findings route.
+
+**Never re-spawn the agent to "finish" a timed-out run**, and never route a
+plan on a run you did not see terminate — see the paragraph above the agent
+block for why an unattached run reports nothing.
+
 ### Manual-criteria lint (mechanical — run it, don't judge it)
 
 Before the five-layer check, lint the plan's `#### Manual` criteria:

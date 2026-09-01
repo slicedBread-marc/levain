@@ -2,7 +2,7 @@
 # wf-claim.sh <artifact> [--pid N] [--if-free] [--steal] [--state s[,s...]]
 # Marks an artifact as actively being worked on by writing a timestamp + PID.
 # Claim file: .claude/orchestrator/claims/<NNN>/.wf-claim
-#             (line 1: timestamp, line 2: PID)
+#             (line 1: timestamp, line 2: PID, line 3: the artifact as named)
 # Other terminals see this as "processing" in list scripts.
 #
 # <artifact> is any of PLN-NNN, PLN-NNN-slug, BUG-NNN, BRF-NNN. The claim keys
@@ -106,12 +106,40 @@ if $list; then
     wf_claim_live "${d%/}" || continue
     num=$(basename "${d%/}")
     holder=$(sed -n '2p' "${d%/}/.wf-claim" 2>/dev/null | tr -cd '0-9')
+    # Line 3 is the artifact AS THE HOLDER NAMED IT (wf_claim_write). Absent on
+    # a claim written by an older client, which is why everything below still
+    # resolves the number independently.
+    asked=$(sed -n '3p' "${d%/}/.wf-claim" 2>/dev/null | tr -d '\r' || true)
     # `|| true` on both halves: this script runs under `set -euo pipefail`, and
     # a grep that matches nothing exits 1 — which pipefail promotes to the
     # pipeline's status and `set -e` turns into a silent exit mid-listing. The
     # no-match case is the one this branch exists to report.
-    row=$({ grep -iE "^\| (PLN|BUG|BRF)-0*${num} \|" "$registry" 2>/dev/null || true; } | head -1) || true
-    if [ -n "$row" ]; then
+    # EVERY row for this number, not the first.
+    #
+    # A claim keys on the number because a brief and the plan it becomes are
+    # one piece of work (WFI-004), and that holds only while the number is
+    # unique across types — which CLAUDE.md says it is and a client's registry
+    # is not obliged to be. client-a had BRF-210 (an ergonomics spec, held
+    # at Exploring) and PLN-210 (publish-path-reports-elision, complete and
+    # closed in August) as unrelated artifacts sharing one number. Claiming the
+    # brief printed the listing as "PLN-210-publish-path-reports-elision
+    # (complete)" — a `grep | head -1` resolving to whichever row came first —
+    # so the claim reported work it had nothing to do with, and a worker
+    # claiming the plan would have blocked the brief with no message naming it
+    # (WFI-215).
+    #
+    # Nothing here can decide which one the holder meant. What it can do is
+    # stop presenting a guess as the answer.
+    rows=$({ grep -iE "^\| (PLN|BUG|BRF)-0*${num} \|" "$registry" 2>/dev/null || true; }) || true
+    n_rows=$(printf '%s' "$rows" | grep -c . || true)
+    if [ "${n_rows:-0}" -gt 1 ]; then
+      label=$(printf '%s\n' "$rows" | awk -F'|' '{
+        gsub(/^[ \t]+|[ \t]+$/, "", $2); gsub(/^[ \t]+|[ \t]+$/, "", $4)
+        printf "%s%s (%s)", (NR > 1 ? " + " : ""), $2, $4
+      }')
+      label="artifact $num — AMBIGUOUS: $label"
+    elif [ -n "$rows" ]; then
+      row=$(printf '%s\n' "$rows" | head -1)
       id=$(printf '%s' "$row" | awk -F'|' '{print $2}' | xargs)
       slug=$(printf '%s' "$row" | awk -F'|' '{print $3}' | xargs)
       state=$(printf '%s' "$row" | awk -F'|' '{print $4}' | xargs)
@@ -119,11 +147,20 @@ if $list; then
     else
       label="artifact $num (no registry row)"
     fi
+
+    # What was CLAIMED, next to what the number resolves to. The reporter's own
+    # ask, and the cheap half of the fix: the collision was visible at all only
+    # because --list happened to print the resolved name, and the two disagreed
+    # in a way nobody could see side by side (WFI-215).
+    if [ -n "$asked" ] && [ "$asked" != "${label%% *}" ]; then
+      label="$asked → $label"
+    fi
+
     # `if`, not `wf_claim_mine … && mine=…`: under `set -e` a bare `a && b`
     # whose `a` fails carries that failure out as the statement's status.
     mine=""
     if wf_claim_mine "${d%/}"; then mine="  ← yours"; fi
-    printf '%-46s PID %-8s %sm%s\n' "$label" "${holder:-?}" "$((WF_CLAIM_AGE / 60))" "$mine"
+    printf '%-56s PID %-8s %sm%s\n' "$label" "${holder:-?}" "$((WF_CLAIM_AGE / 60))" "$mine"
     found=1
   done
   [ "$found" = "1" ] || echo "No live claims."
@@ -165,6 +202,32 @@ if [ -n "$want_states" ]; then
   fi
 fi
 
+# ── Is this number one artifact, or two? ──────────────────────────────────
+#
+# The claim keys on the NUMBER so that a brief and the plan it becomes share
+# one lock (WFI-004), and that is right exactly while a number names one piece
+# of work. client-a had BRF-210 and PLN-210 as unrelated artifacts: claiming
+# the brief silently locked a completed plan, and a worker claiming the plan
+# would have blocked the brief with nothing in the message naming it (WFI-215).
+#
+# Not a refusal — the shared key is the design, and no artifact is ever safer
+# for being unclaimable. But the holder is entitled to know that the lock they
+# just took covers something else as well, at the moment they take it.
+_claim_num=$(printf '%s' "$plan_name" | grep -oE '[0-9]+' | head -1 || true)
+if [ -n "$_claim_num" ]; then
+  # `|| true` on the whole pipeline: under `set -o pipefail` the sort finding
+  # nothing to read — an unused number — would fail it, and `set -e` turns that
+  # into a claim that silently never happens.
+  _kinds=$({ wf_artifacts_with_number "$_claim_num" \
+             | awk '{print $1}' | sort -u | tr '\n' ' '; } || true)
+  if [ "$(printf '%s' "$_kinds" | wc -w | xargs)" -gt 1 ]; then
+    echo "Note: artifact number $_claim_num names more than one thing here — ${_kinds% }." >&2
+    echo "      Claims key on the number, so this one lock covers all of them (WFI-215)." >&2
+    echo "      Numbers are meant to be globally unique across types; run wf-registry-audit.sh." >&2
+  fi
+fi
+unset _claim_num _kinds
+
 # Always resolve to the develop root (first worktree) so the claim is visible
 # to list scripts regardless of whether this runs from develop or a feature worktree.
 if ! plan_dir=$(wf_claim_dir "$plan_name"); then
@@ -184,7 +247,7 @@ if wf_claim_live "$plan_dir"; then
   # A claim this caller's own dispatch wrote is not a competing session — it is
   # this session, held in advance. Refresh it and carry on (WFI-073/075).
   if wf_claim_mine "$plan_dir"; then
-    wf_claim_write "$plan_dir" "$pid"
+    wf_claim_write "$plan_dir" "$pid" "$plan_name"
     echo "Claimed $plan_name (already held on your behalf by the dispatcher)"
     exit 0
   fi
@@ -205,5 +268,5 @@ if wf_claim_live "$plan_dir"; then
   echo "Taking $plan_name from a live session ($held) — --steal" >&2
 fi
 
-wf_claim_write "$plan_dir" "$pid"
+wf_claim_write "$plan_dir" "$pid" "$plan_name"
 echo "Claimed $plan_name"

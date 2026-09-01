@@ -355,6 +355,16 @@ orchestrator:
 
   # Live workers allowed per role. implement > 1 means concurrent worktrees;
   # keep spec at 1 so two specs can't race on the same brief.
+  #
+  # COUNT TEST RUNS, NOT WORKERS. These caps bound the workers; each implement
+  # and verify worker then runs the project's build and test commands, and
+  # wf-verify fans out to several agents that each run one. The defaults below
+  # (2 + 2 + 1) reached nine simultaneous runs of one test assembly on a
+  # client-a machine — load 27 on 12 cores — and two full-suite runs were
+  # killed by their own 600s timeout without finishing (WFI-222). If a project's
+  # suite takes minutes rather than seconds, halve implement and verify: a
+  # timed-out run yields no verdict at all, so a slower pipeline that finishes
+  # is strictly faster than a parallel one that does not.
   max_concurrent:
     spec: 1
     implement: 2

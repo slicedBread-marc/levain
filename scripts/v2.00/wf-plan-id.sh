@@ -169,6 +169,31 @@ if [ -n "$existing_dir" ]; then
   collision="${collision:+$collision, }folder $existing_dir"
 fi
 
+# A number is unique across ALL types, not just among plans.
+#
+# This asked "is PLN-${num} taken?" and stopped, so a BRF or BUG holding the
+# same number — a different artifact, other work, somebody else's — was
+# invisible and the inherit went ahead. client-a ended up with BRF-210
+# ("make the guarded path the easy one", held at Exploring) and PLN-210
+# (publish-path-reports-elision, inherited from BUG-210 and long since
+# complete) as unrelated artifacts sharing one number. Claims key on the
+# number, so claiming either silently locked both, and `--list` resolved the
+# brief's claim to the plan's name (WFI-215).
+#
+# The SOURCE is exempt: BUG-210 legitimately holds 210 when it is BUG-210 being
+# specced, and that is the whole inheritance rule. Every other type is a
+# collision, and the reallocation branch below already knows what to do with
+# one — it allocates a fresh number and says so.
+#
+# wf_artifacts_with_number is the one definition of "in use", shared with
+# wf-claim.sh — see its header for why there must be only one.
+while read -r other where; do
+  [ -n "$other" ] || continue
+  [ "$other" = "$prefix" ] && continue        # the source's own number
+  [ "$other" = "PLN" ] && continue            # covered by the two checks above
+  collision="${collision:+$collision, }$where"
+done <<< "$(wf_artifacts_with_number "$num")"
+
 if [ -z "$collision" ]; then
   wf_emit PLAN_ID           "PLN-${num}"
   wf_emit PLAN_NUM          "$num"

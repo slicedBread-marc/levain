@@ -18,8 +18,9 @@
 #   wf_emit <KEY> <value>            → eval-safe KEY='value' line
 #   wf_plan_fingerprint <PLN-NNN>    → hash of that plan's plan.md (may be empty)
 #   wf_session_pid                   → PID of the long-lived session, not the shell
+#   wf_artifacts_with_number <num>   → "<PREFIX> <where>" per artifact using it
 #   wf_claim_dir <artifact>          → the directory that holds this artifact's claim
-#   wf_claim_write <dir> [pid]       → write <dir>/.wf-claim
+#   wf_claim_write <dir> [pid] [artifact] → write <dir>/.wf-claim
 #   wf_claim_live <dir>              → 0 if a live claim holds it; sets WF_CLAIM_AGE
 #   wf_claim_mine <dir>              → 0 if that claim is this caller's own
 #   wf_claim_held <artifact>         → wf_claim_live against wf_claim_dir + legacy
@@ -585,12 +586,67 @@ wf_claim_held() {
   return 1
 }
 
-# wf_claim_write <plan-dir> [pid] — timestamp on line 1, owning PID on line 2.
+# wf_artifacts_with_number <num> — every artifact in this project carrying that
+# number, one "<PREFIX> <where>" line each. Empty when the number is unused.
+#
+# ONE definition of "is this number in use", because there were two and they
+# disagreed. wf-counter-next.sh derives its high-water mark from the registry
+# plus `plans/*/`, `bugs/*/*/` and `plans/briefs/*`; wf-plan-id.sh's collision
+# check asked about PLN rows and PLN folders only. So a BRF or BUG holding a
+# number was invisible to the inherit, and client-a ended up with BRF-210
+# and PLN-210 as unrelated artifacts sharing one — which claims, keying on the
+# number, then locked together (WFI-215).
+#
+# Numbers are compared NUMERICALLY, not by glob. `BRF-0*215-*` is a regex habit
+# that means something else entirely as a pathname pattern: `0*` there is a
+# literal zero followed by anything, so it matches nothing a client actually
+# has on disk. Padding is normalised with 10# so 215, 0215 and 00215 are one
+# number.
+wf_artifacts_with_number() {
+  local num="$1" root reg want f b n
+  [ -n "$num" ] || return 0
+  want=$((10#$num))
+  root="$(wf_develop_root)"
+  reg="$root/plans/REGISTRY.md"
+
+  if [ -f "$reg" ]; then
+    awk -F'|' -v want="$want" '
+      function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+      {
+        id = trim($2)
+        if (id !~ /^(PLN|BUG|BRF)-[0-9]+$/) next
+        split(id, p, "-")
+        if (p[2] + 0 == want) printf "%s REGISTRY row %s\n", p[1], id
+      }
+    ' "$reg"
+  fi
+
+  for f in "$root"/plans/PLN-*/ "$root"/bugs/*/BUG-*/ "$root"/plans/briefs/BRF-*.md; do
+    [ -e "${f%/}" ] || continue
+    b=$(basename "${f%/}")
+    n=${b#*-}; n=${n%%-*}
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    [ "$((10#$n))" -eq "$want" ] || continue
+    printf '%s %s\n' "${b%%-*}" "${f%/}"
+  done
+}
+
+# wf_claim_write <plan-dir> [pid] [artifact] — timestamp on line 1, owning PID
+# on line 2, and the artifact AS THE CALLER NAMED IT on line 3.
+#
+# The third line is new and every reader treats it as optional, because a claim
+# written by an older client has two lines. It exists because the claim keys on
+# the NUMBER, so the file itself has never said which artifact it is for — the
+# registry did, and a `grep | head -1` resolving the number picks whichever row
+# it reaches first. client-a claimed BRF-210 and the listing reported it as
+# "PLN-210-publish-path-reports-elision (complete)", a different artifact that
+# happened to share the number (WFI-215). Recording what was asked for costs
+# one line and removes the guess.
 wf_claim_write() {
-  local dir="$1" pid="${2:-}"
+  local dir="$1" pid="${2:-}" artifact="${3:-}"
   [ -d "$dir" ] || return 1
   [ -n "$pid" ] || pid=$(wf_session_pid)
-  printf '%s\n%s\n' "$(date +%s)" "$pid" > "$dir/.wf-claim"
+  printf '%s\n%s\n%s\n' "$(date +%s)" "$pid" "$artifact" > "$dir/.wf-claim"
 }
 
 # wf_claim_mine <plan-dir> — 0 when the live claim on <plan-dir> belongs to the

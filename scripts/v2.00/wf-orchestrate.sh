@@ -228,8 +228,14 @@ spawn_budget_bump() {
 # silent. skip_clear drops the latch the moment the pair dispatches, so a plan
 # that is gated, freed and gated again is reported both times.
 # skip_note <role> <artifact-id> <reason> [event-kind]
+# Sets WF_SKIP_WAS_NEW so a caller can gate its own console output on the same
+# latch. Returning a status would be the natural way to say it, but every call
+# below is a bare statement and this script runs under `set -e` — a `return 1`
+# meaning "not news" would kill the sweep.
+WF_SKIP_WAS_NEW=false
 skip_note() {
   local role="$1" id="$2" reason="$3" kind="${4:-skip}" file prev
+  WF_SKIP_WAS_NEW=false
   # A preview must leave no trace — latch files included (see --dry-run above).
   $dry_run && return 0
   mkdir -p "$ORCH/skips"
@@ -237,6 +243,7 @@ skip_note() {
   prev=$(cat "$file" 2>/dev/null || echo "")
   [ "$reason" = "$prev" ] && return 0
   printf '%s' "$reason" > "$file"
+  WF_SKIP_WAS_NEW=true
   wf_event "$kind" "$id" "$role: $reason"
 }
 
@@ -357,23 +364,57 @@ dispatch() {
   # delegating to it makes the preview run the same code the sweep does, and
   # anything it declines is reported as declined.
   if $dry_run; then
-    local drc=0
-    "$SELF_DIR/wf-spawn.sh" "$role" "$artifact" --dry-run >/dev/null 2>&1 || drc=$?
+    local drc=0 dout
+    # The reason, not a pointer to it.
+    #
+    # This threw wf-spawn's output away and told the operator to "re-run it
+    # directly to see why" — asking them to spawn a worker to learn something
+    # the dispatcher had just computed and discarded. The live sweep prints the
+    # real line ("BRF-189 was already specced as PLN-189, now complete") from
+    # the same call, so the preview had the answer in hand (WFI-216).
+    dout=$("$SELF_DIR/wf-spawn.sh" "$role" "$artifact" --dry-run 2>&1) || drc=$?
     if [ "$drc" -ne 0 ]; then
-      echo "  would SKIP: $role $artifact — wf-spawn declined (rc=$drc); re-run it directly to see why"
+      echo "  would SKIP: $role $artifact (rc=$drc)"
+      printf '%s\n' "$dout" | sed 's/^/      /'
       return 1
     fi
     echo "  would spawn: $role $artifact"
     return 0
   fi
 
-  local rc=0
-  "$SELF_DIR/wf-spawn.sh" "$role" "$artifact" || rc=$?
-  case "$rc" in
-    0) attempts_bump "$id" "$role"; spawn_budget_bump; return 0 ;;
-    2) return 1 ;;   # already running — not an error
-    *) wf_event error "$id" "$role: spawn failed rc=$rc"; return 1 ;;
-  esac
+  # A refusal wf-spawn.sh makes is a STANDING condition like every other skip,
+  # and it was the one reason that reached here unlatched. `skip_clear` above
+  # runs BEFORE the spawn, so a permanent refusal — "BRF-189 was already
+  # specced as PLN-189, now complete; spec does not act on that state" — was
+  # re-derived, re-printed and re-logged on every 60s sweep, forever, for a
+  # condition that can never change. Same unbounded-growth defect the latch
+  # exists to prevent, one step further down the path (WFI-216).
+  #
+  # So the refusal text is what the latch keys on, and wf-spawn's own output is
+  # relayed only when it is news. It is captured rather than inherited for
+  # exactly that reason; a successful spawn still writes straight through.
+  local rc=0 out
+  out=$("$SELF_DIR/wf-spawn.sh" "$role" "$artifact" 2>&1) || rc=$?
+  # Capturing is safe: wf-spawn.sh's background worker redirects its own stdout
+  # and stderr to a log file before detaching, so nothing inherits this
+  # substitution's pipe and holds it open.
+  if [ "$rc" -eq 0 ]; then
+    if [ -n "$out" ]; then printf '%s\n' "$out"; fi
+    attempts_bump "$id" "$role"; spawn_budget_bump
+    return 0
+  fi
+
+  local reason
+  reason=$(printf '%s' "$out" | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g; s/[[:space:]]*$//')
+  [ -n "$reason" ] || reason="wf-spawn declined with no explanation"
+  # rc=2 is "already running", which is not an error; anything else is.
+  if [ "$rc" -eq 2 ]; then
+    skip_note "$role" "$id" "$reason"
+  else
+    skip_note "$role" "$id" "spawn failed rc=$rc: $reason" error
+  fi
+  if $WF_SKIP_WAS_NEW && [ -n "$out" ]; then printf '%s\n' "$out"; fi
+  return 1
 }
 
 # ── Candidate lists, per role ─────────────────────────────────────────────
