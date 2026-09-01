@@ -203,6 +203,16 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
 
    Do not work around it silently and do not mark those criteria skipped, untested or passed. client-a's WFI-072 stalled a run at criterion 5 of 5 for exactly this, and the reporter's read of the earlier runs is the reason this paragraph exists: two prior plans shipped with every criterion behind the login unexecuted, and nothing in the record said so.
 
+   **If the container will not build, decide first whether that is a fact about the code or about the machine.** `no space left on device`, `ResourceExhausted` writing to the overlayfs snapshotter, `Cannot connect to the Docker daemon`, and an OOM kill are all statements about the host — none of them is a plan defect, a failed criterion or a finding, and writing one up as any of those puts a fabricated result into the record. client-a's WFI-212 was a full system disk reported through the test path with nothing to route it to.
+
+   ```bash
+   ../../scripts/wf-exec.sh wf-docker-cleanup.sh
+   ```
+
+   That tears down containers left behind by plans that have finished — the harness's own litter, and the only disk this skill owns. Retry the deploy once after it. **Reclaiming build cache and images is `docker system prune`, and that is not yours to run**: it affects everything on the machine, not just this project.
+
+   If the retry fails the same way, **stop** — the plan stays in `testing`, untouched. Attended: say plainly that the host is out of space (or the daemon is down), and that a prune is the likely fix and theirs to authorize. Unattended: **[GATE]** `needs-input`, quoting the error verbatim, with the question naming it as an infrastructure fault rather than a test outcome. Do not mark criteria passed, failed, skipped or untested, and do not route the plan anywhere.
+
    **If any criterion needs a real phone or tablet, bring the container up with `--tunnel`:**
    ```bash
    eval "$(../../scripts/wf-exec.sh wf-docker-up.sh --tunnel)"
