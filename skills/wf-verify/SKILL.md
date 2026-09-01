@@ -163,19 +163,51 @@ Agent(model: haiku, prompt: "Read all new/modified files in feature-branches/PLN
 
 ### When the test run is killed by the timeout
 
-600000ms is generous, and it is not infinite. Under concurrent dispatch a
-machine can be running one test suite per in-flight plan: client-a measured
-nine simultaneous runs of the same assembly at load 27 on 12 cores, and two
-independent foreground runs were killed at ~600s having executed 778 and 1275
-tests with **zero failures logged** (WFI-222).
+**600000ms is the Bash tool's hard ceiling, not a generous margin.** There is
+no larger number to ask for, so a suite that needs longer than ten minutes
+cannot be made to fit by raising it — it has to be run in pieces. Two ways it
+runs out:
+
+- **Load.** Under concurrent dispatch a machine runs one suite per in-flight
+  plan. client-a measured nine simultaneous runs of one assembly at load 27
+  on 12 cores; two independent foreground runs were killed at ~600s having
+  executed 778 and 1275 tests with **zero failures logged** (WFI-222).
+- **Scope that isn't one.** A `testScopes` value naming a whole assembly makes
+  the *scoped* command as large as the unscoped one. client-a's filter
+  included a bare `*Tracker.Cli.Tests*` matching 1,972 tests, so scoping
+  changed nothing about whether it would finish (WFI-228).
+
+**Run it split from the start when the scope names an assembly.** One
+invocation per filter value, each well inside the ceiling:
+
+```bash
+scripts/wf-exec.sh wf-test-scope.sh PLN-NNN-<slug> --split | while read -r a; do
+  eval "{{test_command}} $a"
+done
+```
+
+Every line is independently runnable and each result is a real one. This is
+not a fallback to reach for after a timeout — a scope you can see is
+assembly-wide will not fit, and finding that out by spending ten minutes is
+ten minutes for no verdict.
+
+**An agent that reports moving the run to the background has reported
+nothing.** client-a saw exactly that: the agent hit the ceiling mid-run,
+said it could not comply, backgrounded the still-running process, and reported
+counts read off a live progress line as though they were a summary — and a
+second notification for the same task arrived later carrying the killed
+process's exit code as if it were a result. Discard both, kill the process
+(`pkill -f '<test runner>'`, then confirm with `ps`), and run it yourself
+split. Partial counts scraped from a progress line are not a test result and
+must never reach `findings.md` as one.
 
 **A timeout is not a pass and it is not a fail.** It is a run with no verdict,
 and the two wrong moves are recording it as clean because nothing failed, or
-routing findings from a suite that never finished. Do this instead, in order:
+routing findings from a suite that never finished. When one happens anyway:
 
 1. **Kill the leak first.** The Bash wrapper dies at the timeout; the test
    process it started often does not, and a leaked runner competes with
-   everything you do next. `pkill -f '<test runner>'` and confirm with `ps`.
+   everything you do next. `pkill -f '<test runner>'`, confirm with `ps`.
 2. **Narrow to what this plan actually changed.** The plan's Tests table names
    its own test classes; run those and nothing else. client-a's 21-test
    scoped run finished in 35s under the same load that killed the full suite.

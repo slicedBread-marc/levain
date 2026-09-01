@@ -4553,6 +4553,61 @@ assert_eq "a free number is still inherited" "true" "$PLAN_ID_INHERITED"
 assert_eq "and it is the source's own" "PLN-216" "$PLAN_ID"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A scope too big for one call can be run in pieces (client-a WFI-228)"
+
+# 600000ms is the Bash tool's hard ceiling, not a margin, so a scope that does
+# not fit cannot be made to fit by asking for longer. client-a's testScopes
+# named a whole 1,972-test assembly, making the SCOPED command as unrunnable as
+# the unscoped one; the agent hit the ceiling, backgrounded the run, and
+# reported counts scraped off a live progress line as a result.
+SCOPE3="$TEST_DIR/split"
+mkdir -p "$SCOPE3/scripts" "$SCOPE3/plans/PLN-228-split-scope"
+cp "$SCRIPT_DIR/wf-test-scope.sh" "$SCRIPT_DIR/wf-plan-info.sh" \
+   "$SCRIPT_DIR/wf-orch-lib.sh" "$SCOPE3/scripts/"
+printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-228 | split-scope | verify | — | — | 2026-09-01 | %s | — | — |\n' \
+  "${SCRIPT_FOLDER#v}" > "$SCOPE3/plans/REGISTRY.md"
+printf '## Goal\nA plan whose scope names two whole assemblies.\n\n## Test Scope\n- unit\n- vectors\n' \
+  > "$SCOPE3/plans/PLN-228-split-scope/plan.md"
+
+if command -v yq >/dev/null 2>&1; then
+  printf 'testFilterStyle: mtp\ntestScopes:\n  unit:\n    - Tracker.Cli.Tests\n  vectors:\n    - Tracker.Core.Tests\n' \
+    > "$SCOPE3/claude-workflow.yml"
+
+  combined=$(cd "$SCOPE3" && ./scripts/wf-test-scope.sh PLN-228-split-scope --args 2>/dev/null || true)
+  assert_eq "--args still ORs the values into one run" "1" \
+    "$(printf '%s\n' "$combined" | grep -c . | xargs)"
+
+  split=$(cd "$SCOPE3" && ./scripts/wf-test-scope.sh PLN-228-split-scope --split 2>/dev/null || true)
+  assert_eq "--split emits one runnable line per filter value" "2" \
+    "$(printf '%s\n' "$split" | grep -c . | xargs)"
+  assert_eq "each line names exactly one class filter" "true" \
+    "$(printf '%s\n' "$split" | awk 'NF { n = gsub(/--filter-class/, ""); if (n != 1) bad = 1 } END { print bad ? "false" : "true" }')"
+  # Per RUN, not per invocation: a split makes MORE projects match zero tests.
+  assert_eq "and every line carries --ignore-exit-code 8" "true" \
+    "$(printf '%s\n' "$split" | awk 'NF && !/--ignore-exit-code 8/ { bad = 1 } END { print bad ? "false" : "true" }')"
+  assert_eq "the split covers the same values the combined run does" "true" \
+    "$(printf '%s\n' "$split" | grep -q 'Tracker.Cli.Tests' \
+       && printf '%s\n' "$split" | grep -q 'Tracker.Core.Tests' && echo true || echo false)"
+
+  # vstest splits the same way, one flag-plus-value per line and no MTP ignore.
+  printf 'testFilterStyle: vstest\ntestScopes:\n  unit:\n    - Tracker.Cli.Tests\n  vectors:\n    - Tracker.Core.Tests\n' \
+    > "$SCOPE3/claude-workflow.yml"
+  vsplit=$(cd "$SCOPE3" && ./scripts/wf-test-scope.sh PLN-228-split-scope --split 2>/dev/null || true)
+  assert_eq "vstest --split is one flag-plus-value per line" "2" \
+    "$(printf '%s\n' "$vsplit" | grep -c "^--filter 'FullyQualifiedName~" | xargs)"
+  assert_eq "and never carries the MTP exit-code ignore" "false" \
+    "$(printf '%s' "$vsplit" | grep -q -- '--ignore-exit-code' && echo true || echo false)"
+
+  # An unknown option is refused rather than silently read as --args.
+  scope_rc=0
+  (cd "$SCOPE3" && ./scripts/wf-test-scope.sh PLN-228-split-scope --splitt) >/dev/null 2>&1 || scope_rc=$?
+  assert_eq "a mistyped option is refused, not guessed at" "2" "$scope_rc"
+fi
+
+assert_eq "wf-verify tells a worker how to run a scope that will not fit" "true" \
+  "$(grep -q 'wf-test-scope.sh PLN-NNN-<slug> --split' "$LIB_ROOT/skills/wf-verify/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

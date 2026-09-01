@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wf-test-scope.sh <plan-name> [--args]
+# wf-test-scope.sh <plan-name> [--args|--split]
 #
 # Emits a test-filter expression for the given plan's test scope.
 #
@@ -22,6 +22,35 @@
 #         working directory. The values are project-authored config, the same
 #         trust level as the test command itself.
 #
+# --split: the same arguments, but one COMPLETE argument string per line — one
+#          line per filter value instead of all of them ORed into a single run.
+#
+#          A SCOPE IS NOT A TIME BUDGET
+#
+#          `--args` answers "which tests are in scope?", and a caller that has
+#          to run them inside one tool call needs a second answer: "will that
+#          fit?". client-a's WFI-228 — one testScopes value naming a whole
+#          1,972-test assembly, so the *scoped* command was as unrunnable as
+#          the unscoped one had been (WFI-222). The agent hit the 600s ceiling
+#          mid-run, moved the process to the background, and reported counts
+#          read off a live progress line as though they were a result.
+#
+#          There is no filter this script can compute that makes a large
+#          assembly small; the scope is what the project declared and it is
+#          correct. What it can do is hand the caller the pieces, so a run that
+#          does not fit in one call is several calls that do — which is exactly
+#          the recovery the reporter performed by hand, and it worked.
+#
+#              wf-test-scope.sh PLN-NNN-slug --split | while read -r a; do
+#                eval "<test command> $a"
+#              done
+#
+#          Each line is independently runnable and carries its own quoting, so
+#          each still needs eval. Every line of an `mtp` split carries
+#          `--ignore-exit-code 8` for the reason given below — it applies per
+#          run, and a split makes MORE projects match zero tests, not fewer.
+#          A --split of one value is one line, identical to --args.
+#
 # Why stdout/stderr split (diverges from wf-plan-info.sh env-var pattern):
 #   wf-plan-info.sh outputs eval-friendly key=value pairs for multiple values.
 #   This script outputs a single filter string that callers capture via $(...).
@@ -39,7 +68,13 @@ set -euo pipefail
 
 PLAN_NAME="${1:-}"
 EMIT_ARGS=false
-[ "${2:-}" = "--args" ] && EMIT_ARGS=true
+SPLIT=false
+case "${2:-}" in
+  --args)  EMIT_ARGS=true ;;
+  --split) EMIT_ARGS=true; SPLIT=true ;;
+  "")      ;;
+  *) echo "wf-test-scope.sh: unknown option '${2}' — expected --args or --split" >&2; exit 2 ;;
+esac
 
 # Input validation — close command-injection vector before plan name reaches eval.
 if ! echo "$PLAN_NAME" | grep -qE '^PLN-[0-9]+-[a-z0-9-]+$'; then
@@ -325,6 +360,13 @@ if [ "$filter_style" = "mtp" ]; then
     echo "wf-test-scope.sh: not one value. Falling back to the FULL suite." >&2
     exit 0
   fi
+  if [ "$SPLIT" = "true" ]; then
+    for part in "${fqn_parts[@]}"; do
+      fqn="${part#FullyQualifiedName~}"
+      printf -- "--filter-class '*%s*' --ignore-exit-code 8\n" "$fqn"
+    done
+    exit 0
+  fi
   args=""
   for part in "${fqn_parts[@]}"; do
     fqn="${part#FullyQualifiedName~}"   # the raw testScopes value
@@ -334,11 +376,19 @@ if [ "$filter_style" = "mtp" ]; then
   exit 0
 fi
 
+flag=$(yq e '.test_filter_flag // ""' "$CONFIG" 2>/dev/null || echo "")
+case "$flag" in ''|null) flag="--filter" ;; esac
+
+if [ "$SPLIT" = "true" ]; then
+  for part in "${fqn_parts[@]}"; do
+    printf "%s '%s'\n" "$flag" "$part"
+  done
+  exit 0
+fi
+
 filter=$(IFS="|"; echo "${fqn_parts[*]}")
 
 if [ "$EMIT_ARGS" = "true" ]; then
-  flag=$(yq e '.test_filter_flag // ""' "$CONFIG" 2>/dev/null || echo "")
-  case "$flag" in ''|null) flag="--filter" ;; esac
   printf "%s '%s'" "$flag" "$filter"
   exit 0
 fi
