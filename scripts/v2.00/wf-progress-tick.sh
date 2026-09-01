@@ -66,6 +66,38 @@ wf_lock_acquire "plan-$plan_id"
 
 today=$(date +%Y-%m-%d)
 
+# ── The section has to exist before a row can be appended to it ───────────
+#
+# Every fallback below — the whole-label match, the append-if-missing that
+# WFI-111 added — runs inside `## Steps`, and all of them are reached by an awk
+# rule that sets `in_steps` on seeing that heading. A progress.md with no such
+# heading therefore never enters any of them, including the one whose whole
+# purpose is to handle a row that is not there.
+#
+# client-a's PLN-249 (WFI-217) was written with only a `## Log` section.
+# `wf-progress-tick.sh PLN-249 1` appended its log line as designed, reported
+# "checklist now 0/0", and the tick landed nowhere at all — on the one signal
+# the orchestrator reads to tell a resume from a stall, so a plan being built
+# normally looked like a worker accomplishing nothing.
+#
+# /wf-spec writes this section (plans/TEMPLATE.md), so its absence is a defect
+# upstream of here. That is not a reason to drop the tick: the section is
+# cheap to create, the alternative is silence, and the note on stderr is what
+# makes the upstream defect visible instead of absorbed.
+if ! grep -q '^## Steps' "$progress"; then
+  echo "wf-progress-tick: $progress has no '## Steps' section — creating one." >&2
+  echo "  Its checklist is the forward-progress signal the orchestrator reads; without it" >&2
+  echo "  every tick lands nowhere and the plan reads as stalled (WFI-217). /wf-spec writes" >&2
+  echo "  this section from plans/TEMPLATE.md, so a plan missing it was specced incompletely." >&2
+  # Before `## Log` when there is one — the checklist is the state and the log
+  # is the history, and TEMPLATE.md orders them that way.
+  awk '
+    !done && /^## Log/ { print "## Steps"; print ""; done = 1 }
+    { print }
+    END { if (!done) { print ""; print "## Steps"; print "" } }
+  ' "$progress" > "$progress.tmp" && mv "$progress.tmp" "$progress"
+fi
+
 # ── Which row does this label mean? ───────────────────────────────────────
 #
 # The label is matched WHOLE. It used to be reduced to its leading digits —

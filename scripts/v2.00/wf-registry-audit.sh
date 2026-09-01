@@ -30,6 +30,8 @@
 #   5. State values outside the documented set (unroutable; orchestrator fails)
 #   6. draft/ready plan whose feature branch is ahead of develop (lost write),
 #      unless open findings explain it — that is the fix cycle, and it is noted
+#   7. Live worktree the Branch column does not name (the classifier's evidence
+#      and the filesystem disagree; client-a WFI-219/220/221/224)
 #
 # Exit 0 when clean, 1 when anything was found. Reports only — it never edits
 # the registry, because every finding here has more than one correct repair and
@@ -82,7 +84,7 @@ note() {
 # subprocesses per registry row and measured 1.7s on a 75-plan project, 3.8s
 # at 100. Everything below is string work in bash — no subprocess per row.
 #
-# `reg_rows`  one "<id> <slug> <state>" line per PLN row
+# `reg_rows`  one "<id> <slug> <state> <branch>" line per PLN row
 # `reg_ids`   space-delimited PLN ids, for membership tests
 # `art_ids`   every PLN/BUG/BRF id, for the counter check
 eval "$(awk -F'|' '
@@ -93,7 +95,10 @@ eval "$(awk -F'|' '
     if (id !~ /^(PLN|BUG|BRF)-[0-9]+$/) next
     nums = nums id "\n"
     if (id !~ /^PLN-/) next
-    rows = rows id " " trim($3) " " trim($4) "\n"
+    # The Branch column is field 6 — see check 7. An empty one is carried as
+    # the em-dash sentinel so the read below always gets four fields.
+    br = trim($6); if (br == "") br = "—"
+    rows = rows id " " trim($3) " " trim($4) " " br "\n"
     ids  = ids id " "
   }
   END {
@@ -184,17 +189,50 @@ if [ -n "$counter" ]; then
   fi
 fi
 
-# ── 5. Unroutable states, and 6. pre-implementation states on real work ──
+# Checked-out branches, read ONCE. Check 7 needs this per row, and this script
+# runs on every /wf-status and every /wf-board --watch — a `git worktree list`
+# per row is exactly the per-row subprocess the parse above exists to avoid.
+live_worktree_branches=$(git worktree list --porcelain 2>/dev/null \
+  | awk '/^branch /{ sub(/^branch refs\/heads\//, ""); print }' || true)
+
+# ── 5. Unroutable states, 6. pre-implementation states on real work, and ──
+# ── 7. a live worktree the registry does not name ────────────────────────
 #
 # One loop, because both read the same three fields. `draft` means nobody has
 # built it yet; app found two such plans carrying finished implementations —
 # 21 and 16 commits, no findings to explain the route back (WFI-010). A state
 # write that can be lost is worth catching from the branch side.
-while IFS=' ' read -r id slug state; do
+while IFS=' ' read -r id slug state reg_branch; do
   [ -n "$id" ] || continue
 
   wf_state_is_valid "$state" || \
     report "BAD STATE     $id is in state '$state', which is not a workflow state. The orchestrator hard-fails on it. Valid: $WF_STATES"
+
+  # ── 7. A live worktree the registry does not name ──────────────────────
+  #
+  # The Branch column is what `wf-list-implementable.sh` used to key its
+  # new/resume/fix decision on, and a `—` there is a bookkeeping fact rather
+  # than a statement about the filesystem. client-a filed it four times in
+  # one day (WFI-219, WFI-220, WFI-221, WFI-224): plans with 5, 7 and 11
+  # commits of finished work on live worktrees, all classified `new`, all
+  # ending in `git worktree add` failing with "already exists" and a gate a
+  # human had to answer. The classifier no longer trusts the column — it falls
+  # back to the `feature/<plan-name>` convention — but the drift itself is a
+  # registry that disagrees with the filesystem, and the audit is where that
+  # gets said out loud.
+  #
+  # Every state, not just draft/ready: a `complete` plan whose worktree is
+  # still live is a drain that did not finish, and that is worth seeing too.
+  conv_branch="feature/${id}-${slug}"
+  if printf '%s\n' "$live_worktree_branches" | grep -qx "$conv_branch"; then
+    if [ "$reg_branch" = "—" ] || [ -z "$reg_branch" ]; then
+      report "BRANCH DRIFT  $id has a live worktree on $conv_branch but its Branch column is empty."
+      detail "              Anything reading the column alone sees a plan with no branch. Set it: wf-registry-update.sh $id $state $state $conv_branch"
+    elif [ "$reg_branch" != "$conv_branch" ]; then
+      report "BRANCH DRIFT  $id has a live worktree on $conv_branch but its Branch column says '$reg_branch'."
+      detail "              Two different branches are named for one plan. Establish which carries the work before dispatching it."
+    fi
+  fi
 
   case "$state" in draft|ready) ;; *) continue ;; esac
   branch="feature/${id}-${slug}"

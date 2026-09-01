@@ -301,10 +301,12 @@ and must be discarded, not reported.
    cd $DEVELOP_ROOT/feature-branches/PLN-NNN-<slug>
    git branch --show-current
    $DEVELOP_ROOT/scripts/wf-exec.sh wf-branch-check.sh feature/PLN-NNN-<slug> || exit 1
-   git add -u -- ':(exclude)scripts/wf-*.sh' ':(exclude).claude/' ':(exclude)plans/' ':(exclude)templates/' 2>/dev/null; git diff --cached --quiet || git commit -m "implement(PLN-NNN-<slug>): wip before merge"
+   git add -A -- ':(exclude)scripts/wf-*.sh' ':(exclude).claude/' ':(exclude)plans/' ':(exclude)templates/' 2>/dev/null; git diff --cached --quiet || git commit -m "implement(PLN-NNN-<slug>): wip before merge"
    $DEVELOP_ROOT/scripts/wf-exec.sh wf-merge-develop.sh
    ```
    Shell variables do NOT persist across bash calls — run these together so `DEVELOP_ROOT` and `cd` stay in scope. In any later bash call that needs develop paths, re-resolve: `DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')`
+
+   **`git add -A`, not `git add -u`.** This commit exists to capture everything a previous session left behind before the merge rewrites the tree, and `-u` stages only changes to files git already tracks — a new file it has never seen is not one of them. client-a's PLN-246 resumed a crashed session that had written four new test files covering 10 of the plan's 13 tests; the documented wip commit skipped every one of them silently, and they would have reached verify and testing with no coverage at all had a `git status` not caught them by hand (WFI-223). The pathspec exclusions do the work of keeping develop's harness files out; `-u` was never what made this commit safe.
 
    **The branch check is a hard stop, not a receipt.** Printing `git branch --show-current` only helps if something reads it; the explicit check refuses to go on. A resume that finds anything other than `feature/PLN-NNN-<slug>` here is standing in the wrong directory or on a branch that is not this plan's, and everything after this line commits code (WFI-123).
 12. **Set the Docker project name and port:**
@@ -481,10 +483,12 @@ The verify agent found code/test/spec issues and set the REGISTRY state back to 
    eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"
    [ "$PLAN_STATE" = "ready" ] && scripts/wf-exec.sh wf-registry-update.sh PLN-NNN ready active
    cd $DEVELOP_ROOT/feature-branches/PLN-NNN-<slug>
-   git add -u -- ':(exclude)scripts/wf-*.sh' ':(exclude).claude/' ':(exclude)plans/' ':(exclude)templates/' 2>/dev/null; git diff --cached --quiet || git commit -m "implement(PLN-NNN-<slug>): wip before merge"
+   git add -A -- ':(exclude)scripts/wf-*.sh' ':(exclude).claude/' ':(exclude)plans/' ':(exclude)templates/' 2>/dev/null; git diff --cached --quiet || git commit -m "implement(PLN-NNN-<slug>): wip before merge"
    $DEVELOP_ROOT/scripts/wf-exec.sh wf-merge-develop.sh
    ```
    Shell variables do NOT persist across bash calls — keep these together so `DEVELOP_ROOT` stays in scope. After this call, you are INSIDE the worktree — never `cd feature-branches/...` again.
+
+   **`git add -A`, not `git add -u`** — see Phase 2 step 9. A fix cycle is entered on a worktree somebody else left, so this is the path where uncommitted new files are *most* likely to be sitting (WFI-223).
 
    **The `ready → active` line is not optional, and it is why step 1 says "shows the plan" rather than "shows it as `active`".** A fix cycle is entered on the *type* `wf-list-implementable.sh` computes — worktree present plus unchecked findings — and that type is `fix` whatever the registry row says. A replan leaves a plan at `ready` while its worktree survives, so the fix path is reached with the row still reading `ready`, and every fix in the cycle then lands correctly right up until the Phase 3 exit refuses: `PLN-NNN is in state ready, not active` (client-a WFI-202). The transition belongs at entry, where the work actually starts, not at the exit that discovers it missing. `wf-list-implementable.sh` already treats `ready`-with-a-worktree as `active` internally; this makes the registry agree.
 4. **Set the Docker project name and port** — same as Phase 2 step 12, and for the same reason:

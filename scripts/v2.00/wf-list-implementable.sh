@@ -55,9 +55,36 @@ state_of() {
 existing_worktrees=$(git worktree list --porcelain 2>/dev/null \
   | awk '/^branch /{ sub(/^branch refs\/heads\//, ""); print }' || true)
 
+# has_worktree <registry-branch> <plan-name>
+#
+# THE REGISTRY'S BRANCH COLUMN IS NOT THE ONLY EVIDENCE, AND IT IS THE LEAST
+# RELIABLE
+#
+# This asked the Branch column and nothing else, so `—` meant "no worktree" —
+# and a `—` in that column is a bookkeeping fact, not a statement about the
+# filesystem. client-a reported it four times in one day (WFI-219, WFI-220,
+# WFI-221, WFI-224): PLN-224 with 7 implementation commits on a live branch,
+# PLN-191 with all 11 steps done, PLN-248 with 5 — every one of them classified
+# `new`, because a trip through `verify → draft → ready` for a replan had left
+# the column empty. The implementer then ran Phase 1 and `git worktree add`
+# failed with "already exists", which opened a gate a human had to answer to
+# say "yes, the work you can see is the work you should use".
+#
+# The comment this function serves says it plainly — "anything with a live
+# worktree is a resume or a fix, whatever the registry says" — so ask the
+# worktrees. The branch a plan's worktree is on is `feature/<plan-name>` by
+# construction: wf-implement's Phase 1 creates it that way and nothing renames
+# it. That name is derivable from the row's own ID and slug, so it holds when
+# the column is empty, and it is checked ALONGSIDE the column rather than
+# instead of it — a plan whose column names some other live branch is still a
+# resume.
 has_worktree() {
-  [ -n "$1" ] && [ "$1" != "—" ] || return 1
-  printf '%s\n' "$existing_worktrees" | grep -qx "$1"
+  local col="$1" plan_name="${2:-}"
+  if [ -n "$col" ] && [ "$col" != "—" ]; then
+    printf '%s\n' "$existing_worktrees" | grep -qx "$col" && return 0
+  fi
+  [ -n "$plan_name" ] || return 1
+  printf '%s\n' "$existing_worktrees" | grep -qx "feature/$plan_name"
 }
 
 urgent_lines=()
@@ -129,8 +156,18 @@ while IFS=$'\037' read -r id slug state priority branch _updated _wf _tags deps;
   # exist. Anything with a live worktree is a resume or a fix, whatever the
   # registry says.
   effective_state="$state"
-  if [ "$state" = "ready" ] && has_worktree "$branch"; then
+  if [ "$state" = "ready" ] && has_worktree "$branch" "$plan_name"; then
     effective_state="active"
+    # Say so, once, on stderr. A row whose Branch column is empty while a
+    # worktree is live is a registry that disagrees with the filesystem, and
+    # the four reports behind has_worktree all began with somebody unable to
+    # see that. This is the classifier, not a repair tool — wf-registry-audit.sh
+    # is where a fix belongs — so it names the drift and carries on.
+    if [ -z "$branch" ] || [ "$branch" = "—" ]; then
+      echo "note: $plan_name is 'ready' with a live worktree on feature/$plan_name," >&2
+      echo "      but its REGISTRY Branch column is empty. Classified as a resume/fix" >&2
+      echo "      from the worktree (WFI-219/224). The column wants backfilling." >&2
+    fi
   fi
 
   if [ "$effective_state" = "ready" ]; then

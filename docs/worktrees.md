@@ -81,7 +81,7 @@ That is worse than litter, because the loop closes on itself:
    pointing at a plan that finished weeks ago.
 2. `wf-implement` overwrites it with the right ID — which now registers as a
    modification to a **tracked** file rather than a new ignored one.
-3. The next `git add -u` in the implement loop stages that modification, and the
+3. The next `git add -A` in the implement loop stages that modification, and the
    next merge carries the new value onward. Go to 1.
 
 Untracking breaks the loop at step 2: an ignored file has no committed blob to

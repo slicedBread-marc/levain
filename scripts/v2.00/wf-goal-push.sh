@@ -100,7 +100,18 @@ fi
 #
 # So: find the section, and only then find its separator. If the header is
 # still commented out, uncomment it rather than writing a second one.
-WF_ROW="| $today | $current_goal | $trigger | — |" awk '
+# A pipe inside a cell is escaped on the way in.
+#
+# Markdown says so — an unescaped `|` in a cell splits the row — and so does
+# every reader of this table. client-a's PLN-224 archived a goal naming
+# `tool change push|apply|status|unapply|return`, which made a four-column row
+# into an eight-column one; the pop that followed restored the goal as far as
+# the first pipe and reported success (WFI-218). wf-goal-pop.sh now reads the
+# row from the right so it survives the rows already written this way, and
+# unescapes `\|` for the ones written from here on. Both halves are worth
+# having: this one keeps the table valid for anything that renders it.
+esc_pipes() { printf '%s' "$1" | sed 's/|/\\|/g'; }
+WF_ROW="| $today | $(esc_pipes "$current_goal") | $(esc_pipes "$trigger") | — |" awk '
   BEGIN { row = ENVIRON["WF_ROW"] }   # not -v: -v expands \n, \t, \\ (WFI-154)
   /^### Goal History/ { in_hist = 1; print; next }
 

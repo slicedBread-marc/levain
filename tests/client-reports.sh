@@ -4322,6 +4322,196 @@ git worktree remove --force "$TEST_DIR/wt-191" >/dev/null 2>&1 || true
 git branch -q -D release-wfi191 2>/dev/null || true
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A live worktree outranks an empty Branch column (client-a WFI-219/220/221/224)"
+
+# Four reports in one day. A plan back at `ready` after a replan, with its
+# worktree and branch still live and 5-11 commits of finished work on them,
+# classified `new` — because the classifier asked the REGISTRY Branch column
+# and that column read `—`. The implementer then ran Phase 1 and
+# `git worktree add` failed with "already exists", opening a gate a human had
+# to answer to say "use the work you can already see".
+cd "$TEST_DIR/main" || exit 1
+registry_add_row PLN-224 empty-branch-column ready
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-224" >/dev/null 2>&1
+git worktree add -q -b feature/PLN-224-empty-branch-column "$TEST_DIR/wt-224" develop 2>/dev/null
+
+assert_eq "the Branch column really is empty" "—" \
+  "$(grep '^| PLN-224 |' plans/REGISTRY.md | awk -F'|' '{print $6}' | xargs)"
+impl=$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null | grep 'PLN-224-empty-branch-column' || true)
+assert_eq "a ready plan with a live worktree is not 'new'" "false" \
+  "$(printf '%s' "$impl" | grep -q '^new' && echo true || echo false)"
+assert_eq "it is a resume or a fix" "true" \
+  "$(printf '%s' "$impl" | grep -qE '^(resume|fix)' && echo true || echo false)"
+
+# And the drift itself gets said out loud, rather than only worked around.
+audit=$("$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+assert_eq "the audit names the plan whose column does not match its worktree" "true" \
+  "$(printf '%s' "$audit" | grep -q 'BRANCH DRIFT  PLN-224' && echo true || echo false)"
+
+# A populated column still works — the convention is a fallback, not a
+# replacement. WFI-221 reported a correct column misclassified too.
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-224 ready ready feature/PLN-224-empty-branch-column >/dev/null 2>&1
+impl=$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null | grep 'PLN-224-empty-branch-column' || true)
+assert_eq "a populated column classifies the same way" "true" \
+  "$(printf '%s' "$impl" | grep -qE '^(resume|fix)' && echo true || echo false)"
+assert_eq "and the audit is quiet about it now" "false" \
+  "$("$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 | grep -q 'BRANCH DRIFT  PLN-224' && echo true || echo false)"
+
+git worktree remove --force "$TEST_DIR/wt-224" >/dev/null 2>&1 || true
+git branch -q -D feature/PLN-224-empty-branch-column 2>/dev/null || true
+
+# ═══════════════════════════════════════════════════════════════════════
+section "An unattended worker may not answer its own gate (client-a WFI-227)"
+
+# A worker closed PLN-250's spec-approval gate on its own recognisance, writing
+# a resolution that admitted no human had approved it, and the daemon had an
+# implementer running three minutes before the human answered the same question
+# in /wf-attend. wf-gate-close.sh closed whatever it was told to close.
+cd "$TEST_DIR/main" || exit 1
+registry_add_row PLN-227 self-approval draft
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-227" >/dev/null 2>&1
+
+open_227() {
+  "$SCRIPT_DIR/wf-gate-open.sh" PLN-227 spec-approval "Approve this plan?" >/dev/null 2>&1
+}
+gate_227() { ls .claude/orchestrator/gates/PLN-227.gate >/dev/null 2>&1 && echo open || echo closed; }
+
+open_227
+out=$(env WF_UNATTENDED=1 "$SCRIPT_DIR/wf-gate-close.sh" PLN-227 "approved under a standing instruction" 2>&1; echo "rc=$?")
+assert_eq "an unattended close with no --basis is refused" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=4' && echo true || echo false)"
+assert_eq "and the gate is still open, so the human still owes the answer" "open" "$(gate_227)"
+
+out=$(env WF_UNATTENDED=1 "$SCRIPT_DIR/wf-gate-close.sh" PLN-227 "approved" --basis "process-them-all" 2>&1; echo "rc=$?")
+assert_eq "a basis outside the vocabulary is refused" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=4' && echo true || echo false)"
+
+# `autonomy` is the exact move WFI-227 invented: spec-approval is on
+# wf-autonomy.sh's never-grantable list, so there is no action to ask about.
+out=$(env WF_UNATTENDED=1 "$SCRIPT_DIR/wf-gate-close.sh" PLN-227 "approved" --basis autonomy 2>&1; echo "rc=$?")
+assert_eq "--basis autonomy on a never-grantable gate is refused" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=4' && echo true || echo false)"
+
+# A human reference has to point at something. An invented sha does not.
+out=$(env WF_UNATTENDED=1 "$SCRIPT_DIR/wf-gate-close.sh" PLN-227 "approved by Marc" \
+        --basis "human:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" 2>&1; echo "rc=$?")
+assert_eq "--basis human:<sha> that resolves to nothing is refused" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=4' && echo true || echo false)"
+assert_eq "the gate survived every refusal" "open" "$(gate_227)"
+
+# And the legitimate back-fill path still works: a real commit as the evidence.
+real_sha=$(git rev-parse HEAD)
+assert_ok "--basis human:<real sha> closes it" \
+  env WF_UNATTENDED=1 "$SCRIPT_DIR/wf-gate-close.sh" PLN-227 "approved by Marc in $real_sha" --basis "human:$real_sha"
+assert_eq "the gate is closed" "closed" "$(gate_227)"
+assert_eq "and the ledger records WHAT answered it, not just the prose" "true" \
+  "$(grep -q "GATE_RESOLVED_BASIS='human:$real_sha'" \
+       .claude/orchestrator/gates/resolved/PLN-227.spec-approval && echo true || echo false)"
+
+# An attended caller is unaffected — a human at a terminal IS the basis.
+# A fresh plan, because spec-approval is revision-scoped: re-opening it on
+# PLN-227 is refused now that an answer of record covers this revision.
+registry_add_row PLN-229 attended-close draft
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-229" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-229 spec-approval "Approve this plan?" >/dev/null 2>&1
+assert_ok "an attended close needs no basis" \
+  "$SCRIPT_DIR/wf-gate-close.sh" PLN-229 "approved"
+assert_eq "and is recorded as attended" "true" \
+  "$(grep -q "GATE_RESOLVED_BASIS='human (attended)'" \
+       .claude/orchestrator/gates/resolved/PLN-229.spec-approval && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A gate question keeps its apostrophes (client-a WFI-214)"
+
+# GATE_QUESTION is copied out of a SHELL-SOURCED gate file, where an apostrophe
+# is correctly written as the four characters '\''. findings.md is markdown, so
+# PLN-214's decision of record read:
+#   08c3a136 '\''bug(BUG-214): root cause is a stale relay...'\''
+# Commit subjects get quoted into gate questions routinely, and English has
+# apostrophes, so this is the common case.
+registry_add_row PLN-228 quoted-question draft
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-228" >/dev/null 2>&1
+
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-228 prior-work \
+  "08c3a136 'bug(BUG-214): root cause is a stale relay' — accept it?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-228 "accepted" >/dev/null 2>&1
+
+assert_eq "the archived question carries no shell escaping" "false" \
+  "$(grep -q "'\\\\''" plans/PLN-228-quoted-question/findings.md && echo true || echo false)"
+assert_eq "and reads as the prose the human was asked" "true" \
+  "$(grep -qF "08c3a136 'bug(BUG-214): root cause is a stale relay'" \
+       plans/PLN-228-quoted-question/findings.md && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A goal survives its own pipe characters (client-a WFI-218)"
+
+# The Goal History row was read as `awk -F'|' '{print $3}'`, which is field 3
+# only while no cell holds a pipe. PLN-224's goal named
+# `tool change push|apply|status|unapply|return`; the pop restored
+# "...so `tool change push" and reported success. The length-and-whitespace
+# guard could not catch it — the truncation left a long, plausible fragment.
+cd "$TEST_DIR/main" || exit 1
+registry_add_row PLN-218 piped-goal draft
+piped_goal='Make the guarded path the easy one so `tool change push|apply|status|unapply|return` and `tool commit` stop failing.'
+printf '# PLN-218\n\n## Goal\n%s\n\n## Steps\n' "$piped_goal" > plans/PLN-218-piped-goal/plan.md
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-218" >/dev/null 2>&1
+
+"$SCRIPT_DIR/wf-goal-push.sh" PLN-218 "Fix the flicker (show-stopper)" "Verify: 2 findings" >/dev/null 2>&1
+assert_eq "the archived row escapes its pipes, so the table stays four columns" "4" \
+  "$(grep -m1 '^| 2' plans/PLN-218-piped-goal/plan.md | sed 's/\\|//g' | awk -F'|' '{print NF-2}')"
+
+out=$("$SCRIPT_DIR/wf-goal-pop.sh" PLN-218 2>&1 || true)
+assert_eq "the pop restores the whole goal, pipes and all" "$piped_goal" \
+  "$(awk '/^## Goal/{g=1;next} g&&NF{print;exit}' plans/PLN-218-piped-goal/plan.md)"
+assert_eq "and says so, rather than reporting a fragment as success" "true" \
+  "$(printf '%s' "$out" | grep -qF 'unapply|return' && echo true || echo false)"
+
+# The same read, against a row written BEFORE push learned to escape — the
+# shape every client already has on disk.
+registry_add_row PLN-230 legacy-piped-goal draft
+{
+  printf '# PLN-230\n\n## Goal\nA replacement goal that is long enough to pass the guard.\n\n'
+  printf '### Goal History\n| Date | Previous Goal | Trigger | Resolution |\n|-|-|-|-|\n'
+  printf '| 2026-09-01 | %s | Verify: 2 findings | — |\n' "$piped_goal"
+} > plans/PLN-230-legacy-piped-goal/plan.md
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-230" >/dev/null 2>&1
+
+"$SCRIPT_DIR/wf-goal-pop.sh" PLN-230 >/dev/null 2>&1
+assert_eq "an unescaped legacy row pops whole too" "$piped_goal" \
+  "$(awk '/^## Goal/{g=1;next} g&&NF{print;exit}' plans/PLN-230-legacy-piped-goal/plan.md)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A tick lands even when progress.md has no Steps (client-a WFI-217)"
+
+# PLN-249's progress.md was written with only a `## Log`. Every fallback in
+# wf-progress-tick.sh — including the append-if-missing one WFI-111 added —
+# lives inside an awk rule that fires on `^## Steps`, so none of them ran. The
+# log line appeared, the checklist reported 0/0, and the tick landed nowhere:
+# on the one signal the orchestrator reads to tell a resume from a stall.
+registry_add_row PLN-217 no-steps-section active
+printf '# Progress — PLN-217\n\n## Log\n' > plans/PLN-217-no-steps-section/progress.md
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-217" >/dev/null 2>&1
+
+out=$("$SCRIPT_DIR/wf-progress-tick.sh" PLN-217 1 "wire the export command" 2>&1 || true)
+assert_eq "the missing section is reported, not absorbed" "true" \
+  "$(printf '%s' "$out" | grep -q "no '## Steps' section" && echo true || echo false)"
+assert_eq "a Steps section now exists" "true" \
+  "$(grep -q '^## Steps' plans/PLN-217-no-steps-section/progress.md && echo true || echo false)"
+assert_eq "the tick is ON the checklist, not only in the log" "true" \
+  "$(grep -q '^- \[x\] Step 1: wire the export command' plans/PLN-217-no-steps-section/progress.md && echo true || echo false)"
+assert_eq "and the count the orchestrator reads is no longer 0/0" "1/1" \
+  "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-217 2>/dev/null)"
+assert_eq "the log line is still written" "true" \
+  "$(grep -q 'Step 1 — done' plans/PLN-217-no-steps-section/progress.md && echo true || echo false)"
+
+# A second tick goes to the same section rather than creating another.
+"$SCRIPT_DIR/wf-progress-tick.sh" PLN-217 2 "second step" >/dev/null 2>&1
+assert_eq "exactly one Steps section after a second tick" "1" \
+  "$(grep -c '^## Steps' plans/PLN-217-no-steps-section/progress.md | xargs)"
+assert_eq "and both steps are on it" "2/2" \
+  "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-217 2>/dev/null)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

@@ -56,8 +56,29 @@ fi
 
 line_content=$(sed -n "${line_num}p" "$plan_file")
 
-# Extract the previous goal from the row (field 3, pipe-delimited)
-previous_goal=$(echo "$line_content" | awk -F'|' '{print $3}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+# Extract the previous goal from the row: | Date | Previous Goal | Trigger | Res |
+#
+# Read from the RIGHT, not by field index from the left.
+#
+# `awk -F'|' '{print $3}'` is correct only while no cell contains a pipe, and a
+# goal is prose written by a planner. client-a's PLN-224 promised that
+# "`tool change push|apply|status|unapply|return` and `tool commit` stop failing"
+# — the history row stored that sentence intact, and the pop restored
+# "...so `tool change push" and nothing else, exit 0, "Goal restored" (WFI-218).
+# The length and whitespace guard below could not catch it: the truncation left
+# a long, spaced, entirely plausible fragment.
+#
+# Date is the first cell and cannot contain a pipe; Resolution and Trigger are
+# the last two. So strip the row's outer delimiters, drop the first cell from
+# the left and the last two from the right, and whatever is between them is the
+# goal however many pipes it holds. `\|` is unescaped on the way out, for rows
+# wf-goal-push.sh wrote after it learned to escape them.
+goal_row="${line_content#*|}"                       # drop the leading `| `
+goal_row="${goal_row%|*}"                           # drop the trailing ` |`
+goal_row="${goal_row#*|}"                           # drop Date
+goal_row="${goal_row%|*}"                           # drop Resolution
+previous_goal="${goal_row%|*}"                      # drop Trigger
+previous_goal=$(printf '%s' "$previous_goal" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//; s/\\|/|/g')
 if [ -z "$previous_goal" ]; then
   echo "Error: could not extract previous goal from history row" >&2
   exit 1

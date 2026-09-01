@@ -235,9 +235,23 @@ Three rules on writing one, all of them the difference between a record and a ru
 
 Never write a grant the user did not ask for, never widen one to save a future round trip, and never set `mode: standing` with an empty `standing_for` — `wf-autonomy.sh` rejects it, correctly, as a grant that authorizes nothing.
 
+**A thing the user said to you is not a grant.** "Process them all", "go ahead", "yes to everything" — these tell *you*, in this conversation, how to work the queue in front of you. They authorize nothing outside it and they expire when the conversation does. client-a's WFI-227: a worker took "process them all" as standing authority, closed a `spec-approval` gate on its own recognisance, and had an implementer running by the time the human answered the same question three minutes later in `/wf-attend`. The resolution it wrote said so out loud — "approved by the assistant … not by Marc" — and nothing read it.
+
+The only durable authorization is the one in `claude-workflow.yml`, which is why this section exists at all (WFI-159). If a conversational instruction sounds like it should outlive the session, that is the moment to offer to write it down — with an author, a date and an expiry — not to act as though it already had been. And `spec-approval` and `manual-test` can never be written down there; `wf-gate-close.sh` refuses an unattended close of any gate without a checked `--basis`, so the harness now stops this rather than trusting it.
+
 ### `needs-input` (or any gate name not listed above)
 
 Display the question verbatim, get the answer, apply it, close the gate with the answer as the resolution. If applying it means writing code, route to `/wf-implement` — never edit source here.
+
+**If the answer disposes of a bug, use the scripted close.** A `needs-input` gate often resolves as "this bug is a duplicate", "this one is already fixed", or "we are not fixing this", and each has a verb — none of them needs a plan, and none of them should be a hand-edit plus a `git mv`:
+
+```bash
+scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --duplicate-of <BRF-NNN|BUG-NNN|PLN-NNN>
+scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --fixed-in <sha> [--note "<what and why>"]
+scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --wont-fix --note "<why not>"
+```
+
+All three find the bug in `bugs/open/` as readily as `bugs/triaged/`, write the real reason rather than a plan that does not exist, and commit both sides of the rename themselves. client-a's WFI-226 closed a duplicate by hand because the two-argument `<bug-id> <plan-name>` form was the only one it knew about — the close was correct in content and invisible to everything that reads a scripted close.
 
 ## After each gate
 

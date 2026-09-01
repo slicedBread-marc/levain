@@ -263,7 +263,7 @@ If the user picks a bug BUG-NNN:
    - **Goal** — use the confirmed one-liner from step 4b as the first line under `## Goal`. Follow with an optional context paragraph.
    - `plan.md` — goal, steps, tests, checklist, design decisions, out of scope
    - `findings.md` — empty (no table header needed — findings are appended as flat checklists)
-   - `progress.md` — step list (copied from plan steps), empty log
+   - `progress.md` — a `## Steps` checklist with **one `- [ ] Step N: <title>` row per step in `plan.md`**, then an empty `## Log`. Both headings are required and `## Steps` comes first, exactly as `plans/TEMPLATE.md` writes it. This is not decoration: the checklist is the forward-progress signal `wf-progress-count.sh` reads and the orchestrator's attempt budget resets on. A progress.md with only a `## Log` makes every `wf-progress-tick.sh` call land nowhere and reports `0/0` forever, so a plan being built normally looks to the dispatcher like a worker accomplishing nothing (client-a WFI-217).
 
    **Why staging, and why inside `.git/`.** An untracked folder under `plans/` on the shared develop checkout does not reliably survive from one tool call to the next. client-a lost three of them in one day — PLN-211, PLN-212 and PLN-213 — each confirmed present by an `ls` and gone by the next call, with an empty `git stash list` proving nothing had stashed them (WFI-209, WFI-210, WFI-211). Concurrent workers merge, check out and clean over that same checkout, and every one of those operations removes untracked files without leaving a trace to recover from. PLN-213's was the worst shape: WFI-164's stash was at least recoverable, and this simply was not there.
 
@@ -574,9 +574,12 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
 
    **If the approval is provable but unrecorded, record it instead of re-asking.** A resolution that predates the ledger — or one a human gave in a commit message or in `findings.md` while the gate file was cleared some other way — reads here as `GATE_ANSWERED=false`, and following the rule then re-asks a question already answered in writing (WFI-060). When you can point at the evidence, back-fill it and proceed:
    ```bash
-   scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "approved by <who>, <commit-sha or file>" --gate spec-approval
+   scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "approved by <who>, <commit-sha or file>" \
+     --gate spec-approval --basis human:<commit-sha or file path>
    ```
    Only with evidence you have actually read. "Probably approved" is a gate.
+
+   `--basis` is **required** under `WF_UNATTENDED=1` and the script checks it: `human:<ref>` must resolve to a real commit or a real file. That is the mechanical form of the rule above — a back-fill is a record of a decision someone else made, so it has to point at where they made it. Without a reference the close is refused with exit 4 and the gate stays open, which is the correct outcome: you have found no evidence, so this is a gate. **Never invent a standing authorization to get past it.** A conversational instruction — "process them all", "go ahead" — is not a grant; `spec-approval` is on `wf-autonomy.sh`'s never-grantable list, and a worker approving its own spec is client-a's WFI-227.
 
    **Needs a gate** (`SPEC_MODE` is `gate`, or the plan carries a tag in `GATE_TAGS`) — commit the reviewed plan, leave the state at `draft`, park, and exit. The gate question carries the verdict, because the human is now deciding on a *reviewed* plan and should not have to open the file to learn that:
    ```bash

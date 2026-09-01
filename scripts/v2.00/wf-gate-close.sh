@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wf-gate-close.sh <artifact-id> [resolution] [--gate <name>]
+# wf-gate-close.sh <artifact-id> [resolution] [--gate <name>] [--basis <basis>]
 #
 # Releases a parked artifact. The next dispatcher sweep picks it up again.
 # Safe to call when no gate is open.
@@ -30,7 +30,42 @@
 #                the only workarounds are faking an open gate or overriding the
 #                skill's own rule.
 #
-# Exit 0 always (idempotent).
+# --basis <b>    WHAT answered this gate. Required when WF_UNATTENDED=1 — see
+#                below. The vocabulary is closed and each value is checked:
+#
+#                  verdict      a recorded review verdict decides it. Verified
+#                               against wf-review-status.sh: the plan must carry
+#                               an `Approved*` result that is NOT stale.
+#                  config       a claude-workflow.yml setting decides it. Name
+#                               the key in the resolution text.
+#                  autonomy     wf-autonomy.sh authorized it. Verified by asking
+#                               it, and only `release-approval` and
+#                               `deploy-approval` have an action to ask about.
+#                  human:<ref>  a human's answer of record exists at <ref>.
+#                               Verified to resolve to a commit or a real file.
+#
+# A GATE IS A QUESTION FOR A HUMAN, AND A WORKER MAY NOT ANSWER ITS OWN
+#
+# client-a's WFI-227. An unattended worker closed PLN-250's `spec-approval`
+# gate with the resolution "approved by the assistant under Marc's standing
+# 'process them all' instruction, not by Marc" — a sentence that knows no human
+# approved it. No such grant existed; `spec-approval` is on wf-autonomy.sh's
+# never-grantable list precisely so it cannot be granted. The daemon then
+# dispatched an implementer, which was three minutes into the build when the
+# human, mid-`/wf-attend`, finally answered the same question.
+#
+# Nothing in this script asked. It closed whatever it was told to close, and
+# the only record of who decided was free text that nothing reads. So the
+# question is asked here, mechanically: an unattended caller must name a basis
+# from the vocabulary above, and this script checks the basis rather than
+# believing it. A worker with no basis parks the gate and stops, which is what
+# the gate was for.
+#
+# Attended callers are unaffected. A human at a terminal IS the basis, and
+# `/wf-attend` is where that answer belongs.
+#
+# Exit 0 on success (idempotent), 1 on usage error,
+#        4 when an unattended close has no acceptable basis.
 
 set -euo pipefail
 
@@ -41,19 +76,21 @@ source "$SELF_DIR/wf-orch-lib.sh"
 artifact=""
 resolution=""
 forced_gate=""
+basis=""
 plan_body_fp_at_open=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --gate) forced_gate="${2:?--gate requires a gate name}"; shift 2 ;;
-    -*)     echo "Unknown option: $1" >&2; exit 1 ;;
+    --gate)  forced_gate="${2:?--gate requires a gate name}"; shift 2 ;;
+    --basis) basis="${2:?--basis requires a value}"; shift 2 ;;
+    -*)      echo "Unknown option: $1" >&2; exit 1 ;;
     *)
       if [ -z "$artifact" ]; then artifact="$1"; else resolution="$1"; fi
       shift ;;
   esac
 done
 
-[ -n "$artifact" ] || { echo "Usage: $0 <artifact-id> [resolution] [--gate <name>]" >&2; exit 1; }
+[ -n "$artifact" ] || { echo "Usage: $0 <artifact-id> [resolution] [--gate <name>] [--basis <basis>]" >&2; exit 1; }
 resolution="${resolution:-resolved}"
 
 id=$(printf '%s' "$artifact" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
@@ -90,17 +127,103 @@ if [ -f "$gate_file" ]; then
   # The conclusion survived by luck. Keeping the original text means a reader
   # can replay what was asked instead of writing it again from what they happen
   # to see now.
-  gate_question=$(grep -m1 "^GATE_QUESTION=" "$gate_file" | sed "s/^GATE_QUESTION='//; s/'$//" || true)
-  # Read here, with the rest, because the gate file is gone on the next line.
+  #
+  # Unescaped on the way out. The gate file is SHELL-SOURCED, so wf-gate-open.sh
+  # correctly writes an apostrophe as the four characters `'\''` — right there,
+  # and wrong everywhere this value goes next. findings.md is markdown and the
+  # ledger is read by eye, so client-a's PLN-214 recorded its question as
+  # `08c3a136 '\''bug(BUG-214): root cause is a stale relay...'\''` (WFI-214).
+  # Commit subjects are quoted into gate questions routinely, and English has
+  # apostrophes, so this is the common case rather than the exotic one.
+  gate_question=$(grep -m1 "^GATE_QUESTION=" "$gate_file" \
+                  | sed "s/^GATE_QUESTION='//; s/'$//; s/'\\\\''/'/g" || true)
+  # Read here, with the rest, because the gate file is gone below.
   # This is the plan's fingerprint as of when the question was ASKED — see the
   # comment above `record=` for why the close-time one cannot stand alone.
   plan_body_fp_at_open=$(grep -m1 "^GATE_PLAN_BODY_FP_AT_OPEN=" "$gate_file" \
                          | sed "s/^GATE_PLAN_BODY_FP_AT_OPEN='//; s/'$//" || true)
-  rm -f "$gate_file"
 else
   gate_name="$forced_gate"
 fi
 [ -n "$forced_gate" ] && gate_name="$forced_gate"
+
+# ── Who is answering? ─────────────────────────────────────────────────────
+#
+# Checked BEFORE the gate file is removed, so a refusal leaves the gate exactly
+# as it was and the human still owes the same answer. See WFI-227 in the header.
+if [ "${WF_UNATTENDED:-0}" = "1" ]; then
+  refuse_basis() {
+    echo "wf-gate-close: refusing to close '$gate_name' on $id — $1" >&2
+    echo "  You are running UNATTENDED (WF_UNATTENDED=1). A gate is a question parked for a" >&2
+    echo "  human, and a worker may not answer its own (WFI-227). Nothing was closed." >&2
+    echo "  Leave the gate open and exit 0; /wf-attend is where this gets answered." >&2
+    echo "  If a decision of record DOES exist, name it: --basis verdict | config |" >&2
+    echo "  autonomy | human:<commit-sha or file path>" >&2
+    wf_event gate-close-refused "$id" "$gate_name: ${basis:-no --basis} — $1"
+    exit 4
+  }
+
+  case "$basis" in
+    "")
+      refuse_basis "no --basis given" ;;
+
+    verdict)
+      # Not taken on trust: the same staleness question wf-spec's own gating
+      # rule asks, asked here, because "a review approved it" is only an answer
+      # when the review judged the text that is in front of us now (WFI-046).
+      review=$("$SELF_DIR/wf-review-status.sh" "$id" 2>/dev/null || true)
+      review_result=$(printf '%s\n' "$review" | sed -n "s/^REVIEW_RESULT='\(.*\)'$/\1/p")
+      review_stale=$(printf '%s\n' "$review" | sed -n "s/^REVIEW_STALE='\(.*\)'$/\1/p")
+      case "$review_result" in
+        Approved*) ;;
+        "") refuse_basis "--basis verdict, but $id carries no review verdict" ;;
+        *)  refuse_basis "--basis verdict, but the verdict on $id is '$review_result'" ;;
+      esac
+      [ "$review_stale" = "false" ] || \
+        refuse_basis "--basis verdict, but that verdict is stale (REVIEW_STALE=$review_stale) — it judged text that has since changed"
+      ;;
+
+    config)
+      # The setting is the answer, so the resolution has to say which one. A
+      # bare "config" is the same unfalsifiable prose this guard exists to stop.
+      printf '%s' "$resolution" | grep -q '[A-Za-z]' || \
+        refuse_basis "--basis config with an empty resolution — name the claude-workflow.yml key that decides this"
+      ;;
+
+    autonomy)
+      # Only two gates have an autonomy action behind them. Everything else on
+      # wf-autonomy.sh's list is never-grantable BY NAME, and reaching for
+      # `autonomy` on one of those is exactly the WFI-227 move.
+      case "$gate_name" in
+        release-approval) auto_action=release ;;
+        deploy-approval)  auto_action=deploy ;;
+        *) refuse_basis "--basis autonomy, but '$gate_name' has no autonomy action — wf-autonomy.sh --list names the four that do" ;;
+      esac
+      "$SELF_DIR/wf-autonomy.sh" "$auto_action" --artifact "$id" --quiet \
+        || refuse_basis "--basis autonomy, but wf-autonomy.sh refuses '$auto_action' for this project"
+      ;;
+
+    human:*)
+      # A named reference, checked to exist. This cannot prove a human wrote it
+      # — nothing here can — but it turns an assertion into something a reader
+      # can go and look at, and an invented sha fails the check.
+      ref="${basis#human:}"
+      [ -n "$ref" ] || refuse_basis "--basis human: with no reference — name the commit or file that carries the answer"
+      if ! git -C "$(wf_develop_root)" cat-file -e "${ref}^{commit}" 2>/dev/null \
+         && [ ! -e "$ref" ] && [ ! -e "$(wf_develop_root)/$ref" ]; then
+        refuse_basis "--basis human:$ref, but that is neither a commit in this repository nor a file that exists"
+      fi
+      ;;
+
+    *)
+      refuse_basis "--basis '$basis' is not in the vocabulary (verdict | config | autonomy | human:<ref>)" ;;
+  esac
+fi
+
+# Past the guard: the gate is answered, so the parking file goes. An attended
+# caller reaches here with no basis, which is correct — the human IS the basis
+# — and `--basis` is still recorded when given.
+if [ -f "$gate_file" ]; then rm -f "$gate_file"; fi
 
 # ── Remember that it was answered ─────────────────────────────────────────
 #
@@ -168,6 +291,10 @@ record=$(
   wf_emit GATE_RESOLUTION   "$resolution"
   wf_emit GATE_RESOLVED     "$(wf_now)"
   wf_emit GATE_RESOLVED_STATE "${gate_state:-—}"
+  # WHO answered, in the record. An empty basis is an attended close: a human
+  # was at the terminal. Anything else names the mechanism, checked above.
+  wf_emit GATE_RESOLVED_BASIS "${basis:-human (attended)}"
+  wf_emit GATE_RESOLVED_UNATTENDED "${WF_UNATTENDED:-0}"
   # Not `[ -n … ] && wf_emit …`: as the LAST command in this substitution a
   # false test makes the subshell exit 1, and `set -e` then kills the script
   # before the record is ever written.
@@ -222,6 +349,7 @@ transcribe_resolution() {
     printf '\n### %s — %s\n' "$gate_name" "$(wf_now)"
     [ -n "$gate_question" ] && printf '> **Asked:** %s\n' "$(printf '%s' "$gate_question" | tr '\n' ' ')"
     printf '> **Resolution:** %s\n' "$(printf '%s' "$resolution" | tr '\n' ' ')"
+    printf '> **Answered by:** %s\n' "${basis:-a human at an attended terminal}"
     printf '> **State at close:** %s\n' "${gate_state:-—}"
     printf '> Recorded by wf-gate-close.sh. This is the decision of record — act on it rather than re-deriving the question (WFI-181).\n'
   } >> "$findings"

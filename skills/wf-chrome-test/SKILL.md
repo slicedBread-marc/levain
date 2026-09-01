@@ -312,7 +312,7 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    ```
    **Commit any dirty files before merging** (workflow infra may have been updated by deploy):
    ```bash
-   git add -u -- ':(exclude)plans/' ':(exclude)bugs/' ':(exclude)briefs/' 2>/dev/null; git diff --cached --quiet || git commit -m "test($PLAN_NAME): wip before release merge"
+   git add -A -- ':(exclude)plans/' ':(exclude)bugs/' ':(exclude)briefs/' 2>/dev/null; git diff --cached --quiet || git commit -m "test($PLAN_NAME): wip before release merge"
    ```
    **Merge release into feature branch** to ensure it's up-to-date:
    ```bash

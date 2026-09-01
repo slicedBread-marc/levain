@@ -220,7 +220,7 @@ it sits on: feature → release on the PR merge, release → main on deploy, mai
 the back-merge. client-a's WFI-103 found develop tracking a `.plan-ref` reading
 `PLN-015`, delivered by that plan's own merge commit — after which every new worktree cut
 from develop was born pointing at a finished plan, and each session's correction to it read
-as a tracked modification the next `git add -u` would carry onward.
+as a tracked modification the next `git add` in the implement loop would carry onward.
 
 Untracked in **v6.0.0**, by the same three steps: `install.sh` seeds the ignore and prints
 the one-time `git rm --cached .plan-ref`; `wf-implement` writes the file without committing
