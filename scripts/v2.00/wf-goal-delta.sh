@@ -134,8 +134,16 @@ fi
 # text printed verbatim underneath (WFI-201). The word `Amendment` is as good an
 # anchor as `A<n>` and no more likely to appear in prose at the head of a
 # heading, so both are accepted, with or without the A on the number.
+#
+# And the separator between the A and its number is optional, because the
+# wf-spec skill's own gate wording is "Amendment <A-N> drops a capability the
+# Goal promises." — so `A-1` is the form the skill teaches, and it was the one
+# form this regex could not read. A heading of `### A-1 — …` counted zero;
+# renaming it to `### Amendment 1 — …` counted one, with nothing else changed
+# (WFI-230). Third widening of this pattern: the lesson is that the id is
+# `A`, an optional separator, and a number.
 count=$(printf '%s\n' "$new_amendments" \
-        | grep -cE '^(#+|\*\*|>|-)[[:space:]]*(\[[^]]*\])?[[:space:]]*([^A-Za-z]*A[0-9]+([^0-9]|$)|[Aa]mendment[[:space:]]+A?[0-9]+)' || true)
+        | grep -cE '^(#+|\*\*|>|-)[[:space:]]*(\[[^]]*\])?[[:space:]]*([^A-Za-z]*A[-_ ]?[0-9]+([^0-9]|$)|[Aa]mendment[[:space:]]+A?[-_ ]?[0-9]+)' || true)
 printf 'AMENDMENTS_NEW: %s\n' "$count"
 printf -- '--- added to %s since HEAD ---\n' "$plan_file"
 printf '%s\n' "$new_amendments"

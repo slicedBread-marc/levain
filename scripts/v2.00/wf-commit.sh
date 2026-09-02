@@ -92,7 +92,20 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --add)
       shift
-      while [ $# -gt 0 ] && [[ "$1" != --* ]]; do paths+=("$1"); shift; done
+      while [ $# -gt 0 ] && [[ "$1" != --* ]]; do
+        # Trailing slashes off. `dir/` and `dir` are the same pathspec to git in
+        # the ordinary case, and not in every case — a sparse index in
+        # particular treats them differently. client-a's WFI-238: an --add
+        # naming `plans/PLN-265-tool-verbs-live-directory/` staged nothing and
+        # reported "nothing to commit for the given paths — skipped" while
+        # `git status` showed the plan.md under it modified; naming the file
+        # exactly committed the same diff. The directory form is what the
+        # skills document, so it is the form that has to work.
+        _p="$1"
+        while [ "${_p%/}" != "$_p" ] && [ "${#_p}" -gt 1 ]; do _p="${_p%/}"; done
+        paths+=("$_p")
+        shift
+      done
       ;;
     --allow-empty) allow_empty=true; shift ;;
     --branch) shift; want_branch="${1:-}"; shift || true ;;
@@ -328,6 +341,17 @@ fi
 
 if [ "$allow_empty" != "true" ]; then
   echo "wf-commit: nothing to commit for the given paths — skipped"
+  # WHICH paths, and whether they even exist. A bare "skipped" is the same line
+  # whether the caller named an optional file that was never created or a
+  # directory full of work that failed to stage, and the second reads as the
+  # first (WFI-238). One line per requested path costs nothing and makes the
+  # next occurrence diagnosable instead of mysterious.
+  for p in "${paths[@]+"${paths[@]}"}"; do
+    if [ -d "$p" ]; then    echo "           $p (directory, no staged changes under it)"
+    elif [ -e "$p" ]; then  echo "           $p (exists, unchanged)"
+    else                    echo "           $p (does not exist)"
+    fi
+  done
   exit 0
 fi
 

@@ -4361,6 +4361,48 @@ git worktree remove --force "$TEST_DIR/wt-224" >/dev/null 2>&1 || true
 git branch -q -D feature/PLN-224-empty-branch-column 2>/dev/null || true
 
 # ═══════════════════════════════════════════════════════════════════════
+section "The audit sees a shortened slug, and a Branch column full of prose (WFI-241/242)"
+
+# Check 7 was gated on the full conventional branch name, so a worktree created
+# under a shortened slug was invisible to the whole block — including the
+# mismatch arm written to catch exactly that. PLN-223 sat `complete` with a
+# live worktree and the prose "BUG-234-235 shipped alongside" in its Branch
+# column, and the audit printed "clean".
+cd "$TEST_DIR/main" || exit 1
+registry_add_row PLN-225 change-apply-recognizes-applied-by-content complete
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-225" >/dev/null 2>&1
+git worktree add -q -b feature/PLN-225-apply-by-content "$TEST_DIR/wt-225" develop 2>/dev/null
+
+audit=$("$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+assert_eq "a worktree on a shortened slug is still found" "true" \
+  "$(printf '%s' "$audit" | grep -q 'PLN-225' && echo true || echo false)"
+assert_eq "and a terminal plan is told to drain it, not to set a column" "true" \
+  "$(printf '%s' "$audit" | grep -q 'UNDRAINED     PLN-225' && echo true || echo false)"
+assert_eq "the remedy is a worktree removal" "true" \
+  "$(printf '%s' "$audit" | grep -q 'git worktree remove' && echo true || echo false)"
+assert_eq "and it does NOT advise writing a branch into a complete row" "false" \
+  "$(printf '%s' "$audit" | grep -q 'wf-registry-update.sh PLN-225 complete complete feature/' && echo true || echo false)"
+
+git worktree remove --force "$TEST_DIR/wt-225" >/dev/null 2>&1 || true
+git branch -q -D feature/PLN-225-apply-by-content 2>/dev/null || true
+assert_eq "drained, the audit is quiet about it" "false" \
+  "$("$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 | grep -q 'PLN-225' && echo true || echo false)"
+
+# A Branch column that is neither an em-dash nor a real ref is a bad cell
+# whatever the filesystem holds — checked with no worktree in sight, which is
+# how PLN-115's column reading the literal word "complete" went unreported.
+awk -F'|' -v OFS='|' '
+  function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+  trim($2) == "PLN-225" { $6 = " BUG-234-235 shipped alongside " }
+  { print }
+' plans/REGISTRY.md > plans/REGISTRY.tmp && mv plans/REGISTRY.tmp plans/REGISTRY.md
+audit=$("$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+assert_eq "prose in the Branch column is reported with no worktree present" "true" \
+  "$(printf '%s' "$audit" | grep -q 'BAD BRANCH    PLN-225' && echo true || echo false)"
+assert_eq "and a terminal plan is told the em-dash is the convention" "true" \
+  "$(printf '%s' "$audit" | grep -q 'complete complete -' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "An unattended worker may not answer its own gate (client-a WFI-227)"
 
 # A worker closed PLN-250's spec-approval gate on its own recognisance, writing

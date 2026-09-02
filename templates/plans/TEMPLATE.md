@@ -159,13 +159,21 @@ How to confirm the rollback succeeded.
 > `> **Result:** clean | amended PLN-NNN (<what and why>) | escalated (<migration>)`
 
 ## Review
-> Filled by the planner's review gate before status is set to Ready.
-> Can also be populated by an independent `/review` invocation.
->
-> **[date] — Plan Review / Code Review**
-> **Result:** Approved | Approved with notes | Blocked
-> | # | Severity | Category | Finding | Recommendation |
-> |-|-|-|-|-|
+<!--
+Filled by the planner's review gate before status is set to Ready, or by an
+independent /review invocation. Left as a comment, not as blockquoted
+scaffolding: wf-manual-lint.sh reads a non-empty ## Review as "a review was
+written here", and a placeholder that looks like one failed the pre-review
+self-lint on every brand-new plan written verbatim from this template
+(WFI-236). An EMPTY Review section is silent by design.
+
+The shape to write, once there is a verdict:
+
+  > **2026-09-02 — Plan Review**
+  > **Result:** Approved | Approved with notes | Blocked
+  > | # | Severity | Category | Finding | Recommendation |
+  > |-|-|-|-|-|
+-->
 
 ## Amendments
 > Append-only. Added by /spec when a plan in active/ or beyond needs a design change.

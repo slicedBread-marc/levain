@@ -410,6 +410,38 @@ assert_fails "closed gate no longer probes open" "$SCRIPT_DIR/wf-list-gates.sh" 
 assert_ok "closing an already-closed gate is a no-op" "$SCRIPT_DIR/wf-gate-close.sh" PLN-010
 assert_fails "a bad artifact id is rejected" "$SCRIPT_DIR/wf-gate-open.sh" NOPE-1 x "y"
 
+# ── An answer that settles a finding ticks the finding (WFI-233/237) ───────
+#
+# wf-findings-route.sh routes on checkboxes and cannot read a resolution
+# paragraph. A gate answered in full, written up in the same findings.md and
+# left unchecked, sent plans with clean builds and green suites back to
+# `draft` over decisions already made — twice, on two different plans.
+registry_add_row PLN-038 settled ready
+cat > "plans/PLN-038-settled/findings.md" <<'FIND'
+## Consistency — 2026-09-01
+
+- [ ] **Design**: D7 contradicts the migration story ← ESCALATED
+- [ ] **Behavior**: unrelated, still open
+FIND
+assert_eq "an unchecked finding routes the plan away from clean" "escalated" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-038-settled)"
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-038 consistency-migration "D7 or the steps?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-038 "D7 corrected, step 4 widened" \
+  --resolves "D7 contradicts" >/dev/null 2>&1
+assert_eq "the settled finding is checked off" "1" \
+  "$(grep -c '^- \[x\] \*\*Design\*\*' "plans/PLN-038-settled/findings.md" | xargs)"
+assert_eq "and the finding that was not settled is left alone" "1" \
+  "$(grep -c '^- \[ \] \*\*Behavior\*\*' "plans/PLN-038-settled/findings.md" | xargs)"
+assert_eq "so the plan no longer routes as escalated" "active" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-038-settled)"
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-038 needs-input "and the rest?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-038 "all of it" --resolves all >/dev/null 2>&1
+assert_eq "--resolves all clears what is left" "clean" \
+  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-038-settled)"
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-038 needs-input "again?" >/dev/null 2>&1
+assert_eq "a close with no --resolves warns about what it leaves unchecked" "false" \
+  "$("$SCRIPT_DIR/wf-gate-close.sh" PLN-038 "noted" 2>&1 >/dev/null | grep -q 'unchecked finding' && echo true || echo false)"
+
 # ── The resolved slot has no memory; the ledger does (WFI-100) ─────────────
 #
 # `resolved/<id>.<gate>` is one slot per plan per gate name, and a manual-test

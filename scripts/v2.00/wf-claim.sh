@@ -221,9 +221,41 @@ if [ -n "$_claim_num" ]; then
   _kinds=$({ wf_artifacts_with_number "$_claim_num" \
              | awk '{print $1}' | sort -u | tr '\n' ' '; } || true)
   if [ "$(printf '%s' "$_kinds" | wc -w | xargs)" -gt 1 ]; then
+    # Is this INHERITANCE or a collision?
+    #
+    # A plan inherits its number from the bug or brief it consumed — BUG-043
+    # becomes PLN-043 — and wf-spec mandates it. So a number naming a BUG and a
+    # PLN is the ordinary designed case, and telling its holder that numbers
+    # "are meant to be globally unique across types" reported the design as a
+    # violation and sent them to an audit tool over a non-problem (WFI-234).
+    # WFI-215's real fault was different: BRF-210 and PLN-210 were UNRELATED,
+    # so one lock covered two separate pieces of work with nothing to say so.
+    #
+    # The plan's own Goal is what separates them. A plan that inherited says so
+    # — `**Bug:** BUG-NNN` / `**Brief:** BRF-NNN` — and a plan that merely
+    # collided does not. The first two lines are true either way and stay.
+    _claim_inherited=false
+    for _p in "$(wf_develop_root)"/plans/PLN-*"${_claim_num}"*/plan.md; do
+      [ -f "$_p" ] || continue
+      case "$(basename "$(dirname "$_p")")" in
+        PLN-"$_claim_num"-*|PLN-"$_claim_num") ;;
+        *) continue ;;
+      esac
+      if grep -qE "^\*\*(Bug|Brief):\*\*[[:space:]]*(BUG|BRF)-0*${_claim_num#0}\b" "$_p" 2>/dev/null; then
+        _claim_inherited=true
+      fi
+      break
+    done
     echo "Note: artifact number $_claim_num names more than one thing here — ${_kinds% }." >&2
     echo "      Claims key on the number, so this one lock covers all of them (WFI-215)." >&2
-    echo "      Numbers are meant to be globally unique across types; run wf-registry-audit.sh." >&2
+    if $_claim_inherited; then
+      echo "      That is the designed case: the plan inherited this number from the artifact it" >&2
+      echo "      consumed, and one lock covering both is the point. Nothing to do." >&2
+    else
+      echo "      These do not appear to be the same work — no plan here names the other as its" >&2
+      echo "      source. Numbers are meant to be globally unique; run wf-registry-audit.sh." >&2
+    fi
+    unset _claim_inherited _p
   fi
 fi
 unset _claim_num _kinds

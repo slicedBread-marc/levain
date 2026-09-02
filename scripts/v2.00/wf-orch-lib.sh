@@ -409,10 +409,30 @@ wf_review_result_lines() {
 # Used to tell "no review yet" (fine, it is coming) from "a review was written
 # and cannot be read" (a fault). The template's own placeholder menu line and
 # the wf-review-stamp comment are scaffolding, not content.
+# Is there a REVIEW here, or only the template's placeholder?
+#
+# The menu line and the stamp hint were filtered; the rest of TEMPLATE.md's
+# `## Review` block was not, so a plan.md written verbatim from the template
+# the wf-spec skill tells planners to follow counted as "a review is written
+# here" and failed wf-manual-lint.sh with `unreadable-review` — every brand-new
+# plan failing the pre-review self-lint the skill requires to pass (WFI-236).
+#
+# The scaffolding is recognisable without knowing its prose: an unfilled block
+# stamps the literal `[date]` where a real one carries a date, and its table is
+# a bare header with no rows under it. Both are filtered here as well as
+# trimmed from the template, because plans already in flight carry the old
+# block and a lint that fails them is a lint nobody can act on.
 wf_review_has_content() {
+  # HTML comments first: the template's guidance lives in one, and a comment is
+  # by definition not a verdict. Stripped rather than pattern-matched so the
+  # guidance can be reworded without breaking the lint.
   printf '%s\n' "$1" \
+    | awk '/<!--/{ c = 1 } !c { print } /-->/{ c = 0 }' \
     | grep -v 'Approved | Approved with notes | Blocked' \
     | grep -v 'wf-review-stamp' \
+    | grep -v '\[date\]' \
+    | grep -vE '^[[:space:]]*>?[[:space:]]*\|' \
+    | grep -vE '^[[:space:]]*>[[:space:]]*(Filled by|Can also be populated)' \
     | grep -qE '[^[:space:]>*_-]'
 }
 

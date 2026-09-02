@@ -192,8 +192,15 @@ fi
 # Checked-out branches, read ONCE. Check 7 needs this per row, and this script
 # runs on every /wf-status and every /wf-board --watch — a `git worktree list`
 # per row is exactly the per-row subprocess the parse above exists to avoid.
-live_worktree_branches=$(git worktree list --porcelain 2>/dev/null \
-  | awk '/^branch /{ sub(/^branch refs\/heads\//, ""); print }' || true)
+# Path AND branch, tab-separated: a worktree that should be drained is drained
+# by path, and check 7's remedy for a `complete` plan is a `git worktree remove`
+# that has to name one.
+live_worktrees=$(git worktree list --porcelain 2>/dev/null \
+  | awk '
+      /^worktree /{ path = substr($0, 10) }
+      /^branch /  { b = $0; sub(/^branch refs\/heads\//, "", b); print b "\t" path }
+    ' || true)
+live_worktree_branches=$(printf '%s\n' "$live_worktrees" | cut -f1)
 
 # ── 5. Unroutable states, 6. pre-implementation states on real work, and ──
 # ── 7. a live worktree the registry does not name ────────────────────────
@@ -223,14 +230,63 @@ while IFS=' ' read -r id slug state reg_branch; do
   #
   # Every state, not just draft/ready: a `complete` plan whose worktree is
   # still live is a drain that did not finish, and that is worth seeing too.
+  # Matched on the PLN-NNN prefix, not on the full conventional name. A slug
+  # shortened when the worktree was created — `feature/PLN-223-apply-by-content`
+  # against a plan named `PLN-223-change-apply-recognizes-applied-by-content` —
+  # made the whole block invisible, including the mismatch arm that exists to
+  # catch exactly that. PLN-223 sat `complete` with a live worktree and the
+  # prose "BUG-234-235 shipped alongside" in its Branch column, and the audit
+  # printed "clean" (WFI-242). The prefix is the identity; the slug is a label.
   conv_branch="feature/${id}-${slug}"
-  if printf '%s\n' "$live_worktree_branches" | grep -qx "$conv_branch"; then
-    if [ "$reg_branch" = "—" ] || [ -z "$reg_branch" ]; then
-      report "BRANCH DRIFT  $id has a live worktree on $conv_branch but its Branch column is empty."
-      detail "              Anything reading the column alone sees a plan with no branch. Set it: wf-registry-update.sh $id $state $state $conv_branch"
-    elif [ "$reg_branch" != "$conv_branch" ]; then
-      report "BRANCH DRIFT  $id has a live worktree on $conv_branch but its Branch column says '$reg_branch'."
-      detail "              Two different branches are named for one plan. Establish which carries the work before dispatching it."
+  live_branch=$(printf '%s\n' "$live_worktree_branches" | grep -m1 -E "^feature/${id}(-|$)" || true)
+  if [ -n "$live_branch" ]; then
+    live_path=$(printf '%s\n' "$live_worktrees" | awk -F'\t' -v b="$live_branch" '$1 == b { print $2; exit }')
+    case "$state" in
+      complete|abandoned)
+        # The remedy has to match the state. This branch used to print the same
+        # "set the Branch column" advice as every other, which for a plan
+        # completed weeks earlier meant writing a branch name into a column
+        # every other complete row clears — and leaving the actual fault, an
+        # undrained worktree, in place. The audit would then stop reporting it,
+        # because the empty-column arm no longer matched (WFI-241).
+        report "UNDRAINED     $id is '$state' but still has a live worktree on $live_branch."
+        detail "              A terminal plan's worktree is a drain that did not finish. Remove it and leave the branch and the Branch column alone:"
+        detail "                git worktree remove ${live_path:-<path>}"
+        ;;
+      *)
+        if [ "$reg_branch" = "—" ] || [ -z "$reg_branch" ]; then
+          report "BRANCH DRIFT  $id has a live worktree on $live_branch but its Branch column is empty."
+          detail "              Anything reading the column alone sees a plan with no branch. Set it: wf-registry-update.sh $id $state $state $live_branch"
+        elif [ "$reg_branch" != "$live_branch" ]; then
+          report "BRANCH DRIFT  $id has a live worktree on $live_branch but its Branch column says '$reg_branch'."
+          detail "              Two different branches are named for one plan. Establish which carries the work before dispatching it."
+          [ "$live_branch" = "$conv_branch" ] || \
+            detail "              (The worktree is not on the conventional name $conv_branch either — the slug was shortened when it was created.)"
+        fi
+        ;;
+    esac
+  fi
+
+  # ── 7b. The Branch column holds a branch, or it holds an em-dash ───────
+  #
+  # Checked with no reference to the filesystem, because a bad cell is bad
+  # whatever the filesystem holds. Everything above needs a live worktree to
+  # reach a verdict, so a column containing prose was only ever caught when a
+  # worktree happened to exist to contradict it — PLN-223's read
+  # "BUG-234-235 shipped alongside" and PLN-115's read the literal word
+  # "complete", and neither was reported (WFI-242). The column feeds
+  # `git worktree add` and `git rev-parse`; a value neither of those can use
+  # is a fault on its own.
+  if [ -n "$reg_branch" ] && [ "$reg_branch" != "—" ] && [ "$reg_branch" != "-" ]; then
+    if ! git rev-parse --verify --quiet "refs/heads/$reg_branch" >/dev/null 2>&1; then
+      report "BAD BRANCH    $id's Branch column reads '$reg_branch', which is not a branch in this repository."
+      detail "              The column is a ref or an em-dash — nothing else. Anything reading it feeds it to git."
+      case "$state" in
+        complete|abandoned)
+          detail "              This plan is terminal, so the convention is an em-dash: wf-registry-update.sh $id $state $state -" ;;
+        *)
+          detail "              Set it to the branch that carries the work, or to '-' if none does yet." ;;
+      esac
     fi
   fi
 

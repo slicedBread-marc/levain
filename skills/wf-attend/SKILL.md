@@ -69,6 +69,10 @@ Once the user picks one, read the gate's `<context>` file if it has one, then fo
 
 **Closing the gate is always the last act.** An open gate is what keeps the orchestrator off the plan, so every commit, state transition and file move the decision implies lands *first*, and `wf-gate-close.sh` runs only once they have. Close it early and the dispatcher's very next sweep — up to a minute before your work is committed — reads the plan as free and still in its old state, and launches a worker into the decision you are in the middle of making. That is how client-a got an unattended tester onto a plan already routed back to its planner, which then re-gated it and blocked it entirely (WFI-079). Each row below is written in the safe order; do not reorder it.
 
+**If the answer settles a finding, tick the finding in the same breath.** Pass `--resolves "<some distinctive words from the finding>"` (or `--resolves all` when the answer clears every open item) to `wf-gate-close.sh`, and it checks the box and commits it as part of the close. This matters because `wf-findings-route.sh` routes on checkboxes and cannot read your resolution text: a consistency escalation answered here and written up in full still routed PLN-254 back to `draft` on the strength of an empty box, past a clean build and 961 passing tests, and a verify worker had to tick it by hand (WFI-233, WFI-237). When a close leaves unchecked findings behind, the script says so on stderr — read that line rather than scrolling past it.
+
+**If the decision changes why the plan is where it is, say so with `--note`.** `wf-registry-update.sh <ID> <from> <to> --note "<why>"` records the reason in the plan's `progress.md` under `## Notes`, under the same lock and in the same commit as the transition — so a note explaining the state a plan is *leaving* can never survive into the next state contradicting it. PLN-259 reached `ready` still carrying "scope needs re-check before build", an instruction to stop on a row that says go, and the only correction available was a hand edit of REGISTRY.md, which the workflow forbids (WFI-235). The registry has no Notes column and is not where a note goes.
+
 ### `spec-approval`
 
 The plan is drafted, **already reviewed**, and committed in `draft` state. The orchestrator wrote it and ran the architecture review; it is not allowed to approve it.
@@ -190,6 +194,24 @@ The plan burned its attempt budget without changing state — a retry will not h
    ls -t .claude/orchestrator/logs/<plan-name>-*.log | head -3
    ```
    Display the tail of the newest one.
+
+   **Check whether the newest worker is still alive before you read its log as a result.**
+   ```bash
+   cat .claude/orchestrator/logs/<NNN>-<role>.pid 2>/dev/null | xargs -r ps -o pid=,etime=,command= -p
+   ```
+   A 0-byte log under a live PID means *not finished yet*, not *produced nothing* — this
+   gate is read while workers are still running, so that is the common case rather than the
+   exotic one. client-a escalated PLN-265 to `draft` on a log that was empty when read
+   and filled minutes later with a complete, correct verify result; the escalation had to be
+   withdrawn, the spec worker it triggered stopped before it amended anything, and the plan
+   routed straight to `testing` on the evidence that had been arriving all along (WFI-244).
+   If a worker is live, the answer is `stop` — leave the gate parked and come back.
+
+   **And read what the logs actually say before believing the gate's own question.** It
+   asserts that a worker ran and made no progress, and that assertion is only as good as the
+   spawns behind it. A log holding nothing but a launch error is a worker that never
+   started (WFI-231, WFI-232); those no longer charge an attempt, but an older gate may
+   still be standing on them.
 2. Ask what to do: `retry / escalate to planner / stop`.
    - **retry** — clear the counter, then close the gate:
      ```bash

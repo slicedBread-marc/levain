@@ -232,6 +232,46 @@ assert_eq "no open blocking criteria" "0" "$MANUAL_OPEN_BLOCKING"
 eval "$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-020 --counts)"
 assert_eq "pre-v6 criteria count as blocking" "2" "$MANUAL_OPEN_BLOCKING"
 
+# ── The template's own Review block is not a review (WFI-236) ──────────
+#
+# wf_review_has_content filtered the menu line and the stamp hint and nothing
+# else, so a plan.md written verbatim from TEMPLATE.md — which wf-spec tells
+# planners to follow — counted as "a review is written here but no Result:
+# line" and failed the pre-review self-lint on every brand-new plan.
+section "An unfilled Review reads as empty (WFI-236)"
+
+review_says() {
+  # shellcheck disable=SC1090
+  ( source "$SCRIPT_DIR/wf-orch-lib.sh"
+    wf_review_has_content "$1" && echo HAS || echo EMPTY )
+}
+assert_eq "the template's placeholder block is empty" "EMPTY" \
+  "$(review_says "$(awk '/^## Review/{r=1;next} /^## /{r=0} r' "$LIB_ROOT/templates/plans/TEMPLATE.md")")"
+assert_eq "the pre-v6.40 blockquoted placeholder is empty too" "EMPTY" \
+  "$(review_says '> Filled by the planner'"'"'s review gate before status is set to Ready.
+> Can also be populated by an independent `/review` invocation.
+>
+> **[date] — Plan Review / Code Review**
+> **Result:** Approved | Approved with notes | Blocked
+> | # | Severity | Category | Finding | Recommendation |
+> |-|-|-|-|-|')"
+assert_eq "a real verdict still reads as content" "HAS" \
+  "$(review_says '> **2026-09-02 — Plan Review**
+> **Result:** Approved')"
+
+# ── A transition can carry the reason it happened (WFI-235) ────────────
+section "wf-registry-update --note"
+
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-013 ready active - \
+  --note "scope settled against the publish guard" >/dev/null 2>&1
+assert_contains "the note lands in the plan's progress.md" "scope settled against the publish guard" \
+  "$(cat plans/PLN-013-done/progress.md 2>/dev/null || true)"
+assert_contains "stamped with the transition it explains" "ready → active" \
+  "$(cat plans/PLN-013-done/progress.md 2>/dev/null || true)"
+assert_eq "and REGISTRY.md is not where it went" "0" \
+  "$(grep -c 'scope settled' plans/REGISTRY.md || true)"
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-013 active ready - >/dev/null 2>&1
+
 # ── P-003 surface-gated manual test ────────────────────────────────────
 section "wf-manual-gate (P-003)"
 

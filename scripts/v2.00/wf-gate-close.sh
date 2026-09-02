@@ -30,6 +30,24 @@
 #                the only workarounds are faking an open gate or overriding the
 #                skill's own rule.
 #
+# --resolves <s> Tick the unchecked finding(s) this answer settles. <s> is a
+#                substring matched against the finding text, or the word `all`
+#                for every unchecked finding in the plan. Each match is checked
+#                off and annotated with the gate that settled it.
+#
+#                A resolution recorded only as prose leaves the checkbox above
+#                it unchecked, and wf-findings-route.sh routes on checkboxes
+#                and nothing else — it cannot read a paragraph. client-a's
+#                PLN-254 and PLN-259 both carried findings answered at a gate,
+#                written up in full in the same findings.md, and still
+#                unchecked; a plan with a clean build and every test green
+#                routed back to `draft` over a design question that had been
+#                settled before implementation began (WFI-233, WFI-237). This
+#                is how the answer and the checkbox stop disagreeing.
+#
+#                Without it, an unchecked finding surviving the close is
+#                reported on stderr rather than silently left to route.
+#
 # --basis <b>    WHAT answered this gate. Required when WF_UNATTENDED=1 — see
 #                below. The vocabulary is closed and each value is checked:
 #
@@ -77,12 +95,14 @@ artifact=""
 resolution=""
 forced_gate=""
 basis=""
+resolves=""
 plan_body_fp_at_open=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --gate)  forced_gate="${2:?--gate requires a gate name}"; shift 2 ;;
     --basis) basis="${2:?--basis requires a value}"; shift 2 ;;
+    --resolves) resolves="${2:?--resolves requires a finding substring, or 'all'}"; shift 2 ;;
     -*)      echo "Unknown option: $1" >&2; exit 1 ;;
     *)
       if [ -z "$artifact" ]; then artifact="$1"; else resolution="$1"; fi
@@ -362,6 +382,69 @@ transcribe_resolution() {
     || echo "wf-gate-close: the resolution is written to $findings but could not be committed" >&2
 }
 transcribe_resolution || true
+
+# ── The checkbox has to agree with the answer ─────────────────────────────
+#
+# wf-findings-route.sh routes on checkboxes and on nothing else. It cannot read
+# the paragraph under a finding, and it cannot tell a question still open from
+# one answered in full three lines further down. Both of client-a's PLN-254
+# and PLN-259 carried a finding settled at a gate, written up completely in the
+# same findings.md, box still empty — and each would have routed a plan with a
+# clean build and every test green back to `draft` over a decision already made
+# (WFI-233, WFI-237). The worker that noticed had to tick the box by hand and
+# file an issue saying so.
+#
+# So the close ticks what it settled. `--resolves` names it; without one, an
+# unchecked finding that survives the close is at least said out loud, here,
+# where the person closing the gate can still act on it.
+resolve_findings() {
+  local root plan_dir findings ticked=0 stamp left before after tmp
+  root="$(wf_develop_root)"
+  plan_dir=$(ls -d "$root"/plans/"${id}"-* 2>/dev/null | head -1 || true)
+  [ -n "$plan_dir" ] && [ -d "$plan_dir" ] || return 0
+  findings="$plan_dir/findings.md"
+  [ -f "$findings" ] || return 0
+
+  if [ -n "$resolves" ]; then
+    tmp=$(mktemp "${TMPDIR:-/tmp}/wf-findings.XXXXXX")
+    stamp="resolved at gate '$gate_name', $(wf_now)"
+    RESOLVES="$resolves" STAMP="$stamp" awk '
+      # Column-0 unchecked findings only — the same shape wf-findings-route.sh
+      # routes on. An indented checkbox has never been a finding here.
+      /^- \[ \]/ && (ENVIRON["RESOLVES"] == "all" || index($0, ENVIRON["RESOLVES"]) > 0) {
+        sub(/^- \[ \]/, "- [x]")
+        print $0 "  <!-- " ENVIRON["STAMP"] " -->"
+        next
+      }
+      { print }
+    ' "$findings" > "$tmp"
+    # `grep -c` exits 1 on a zero count while still printing `0`, so `|| true`
+    # keeps the count and drops the status. `|| echo 0` would print it twice.
+    before=$(grep -c '^- \[ \]' "$findings" 2>/dev/null || true)
+    after=$(grep -c '^- \[ \]' "$tmp" 2>/dev/null || true)
+    ticked=$(( ${before:-0} - ${after:-0} ))
+    cat "$tmp" > "$findings"
+    rm -f "$tmp"
+    if [ "${ticked:-0}" -gt 0 ]; then
+      echo "$id: ticked $ticked finding(s) settled by this answer"
+      ( cd "$root" && "$SELF_DIR/wf-commit.sh" \
+          "gate($id): $gate_name — $ticked finding(s) checked off as settled" \
+          --add "plans/$(basename "$plan_dir")/findings.md" >/dev/null 2>&1 ) || true
+    else
+      echo "wf-gate-close: --resolves '$resolves' matched no unchecked finding in $findings" >&2
+    fi
+  fi
+
+  # Whatever is still unchecked is what the next router will route on. Saying so
+  # is the difference between a decision that lands and one that gets re-asked.
+  left=$(grep -c '^- \[ \]' "$findings" 2>/dev/null || true)
+  if [ "${left:-0}" -gt 0 ]; then
+    echo "wf-gate-close: $id still has ${left} unchecked finding(s) in findings.md." >&2
+    echo "  wf-findings-route.sh routes on those boxes and cannot read your resolution text." >&2
+    echo "  If this answer settled any of them, re-run with --resolves '<finding text>' (WFI-233, WFI-237)." >&2
+  fi
+}
+resolve_findings || true
 
 # ── Answering a gate is forward progress ──────────────────────────────────
 #

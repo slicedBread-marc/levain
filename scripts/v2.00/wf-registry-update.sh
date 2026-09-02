@@ -4,6 +4,26 @@
 # If branch is provided, updates the Branch column too.
 # If branch is "-", clears the Branch column to "—".
 #
+# --note "text"    Record WHY this transition happened, atomically with it.
+#
+#                  The note goes to the plan's progress.md, under `## Notes`,
+#                  dated and stamped with the transition — not to REGISTRY.md,
+#                  which has no Notes column (ID, Slug, State, Priority,
+#                  Branch, Updated, WF, Tags, Deps and nothing else). A note
+#                  with nowhere to go gets stuffed into whichever cell is
+#                  nearest, and the audit keeps finding prose in the Branch
+#                  column as a result: `BUG-234-235 shipped alongside`, or the
+#                  literal word `complete` (WFI-242).
+#
+#                  It is written under the same lock and lands in the same
+#                  commit as the transition, which is the point: a note that
+#                  explains the state a plan is LEAVING cannot survive into the
+#                  next state contradicting it. PLN-259 reached `ready` still
+#                  carrying "scope needs re-check before build" — an
+#                  instruction to stop, on a row that says go — and the only
+#                  way to correct it was a hand edit of REGISTRY.md, which the
+#                  workflow forbids (WFI-235).
+#
 # --commit "msg"   Atomically: update → git add → git commit, all under the lock.
 # --add file ...   Extra files to stage (in addition to REGISTRY.md). Only with --commit.
 # --no-commit      Leave the transition staged but uncommitted (rarely correct).
@@ -28,6 +48,7 @@
 #   wf-registry-update.sh PLN-004 active verify
 #   wf-registry-update.sh PLN-004 testing complete -
 #   wf-registry-update.sh PLN-004 verify testing --commit "verify(PLN-004): clean"
+#   wf-registry-update.sh PLN-004 draft ready --note "scope settled against publish-guard"
 #   wf-registry-update.sh PLN-004 verify active --commit "verify(PLN-004): findings" --add plans/PLN-004-slug/findings.md
 #
 # Exit 0 on success, 1 on error.
@@ -57,6 +78,7 @@ shift 3 2>/dev/null || true
 
 branch=""
 commit_msg=""
+note=""
 no_commit=false
 add_files=()
 
@@ -70,6 +92,10 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --commit)
       commit_msg="${2:?--commit requires a message}"
+      shift 2
+      ;;
+    --note)
+      note="${2:?--note requires text}"
       shift 2
       ;;
     --no-commit)
@@ -94,7 +120,7 @@ done
 plan_id=$(echo "$raw_id" | grep -oE '^PLN-[0-9]+' || echo "$raw_id")
 
 if [ -z "$plan_id" ] || [ -z "$from_state" ] || [ -z "$to_state" ]; then
-  echo "Usage: $0 <plan-id> <from-state> <to-state> [branch] [--commit \"msg\" [--add file ...]]" >&2
+  echo "Usage: $0 <plan-id> <from-state> <to-state> [branch] [--note \"text\"] [--commit \"msg\" [--add file ...]]" >&2
   exit 1
 fi
 
@@ -315,6 +341,29 @@ if [ "$to_state" = "active" ]; then
   fi
 fi
 
+# --- The note, written under the same lock as the row it explains ---
+#
+# Before the staging below, so the note and the transition are one commit. A
+# note committed afterwards is a second commit that a concurrent worker can
+# interleave with, which is the whole class of problem this script's lock
+# exists to close.
+if [ -n "$note" ]; then
+  note_slug=$(grep "^| $plan_id |" "$REGISTRY" | head -1 | awk -F'|' '{print $3}' | xargs || true)
+  note_dir="plans/${plan_id}-${note_slug}"
+  if [ -n "$note_slug" ] && [ -d "$note_dir" ]; then
+    note_file="$note_dir/progress.md"
+    [ -f "$note_file" ] || printf '# Progress — %s\n' "$plan_id" > "$note_file"
+    grep -q '^## Notes' "$note_file" 2>/dev/null || printf '\n## Notes\n' >> "$note_file"
+    printf -- '- **%s — %s → %s:** %s\n' "$today" "$from_state" "$to_state" \
+      "$(printf '%s' "$note" | tr '\n' ' ')" >> "$note_file"
+    add_files+=("$note_file")
+    git add "$note_file" 2>/dev/null || true
+  else
+    echo "wf-registry-update: --note given but $plan_id has no plan directory — the note was not recorded" >&2
+    echo "  The note: $note" >&2
+  fi
+fi
+
 # --- Stage the transition, always ---
 #
 # REGISTRY.md is staged here, not by the caller, and whether or not --commit
@@ -348,7 +397,7 @@ elif ! $no_commit; then
   # here is worth saying out loud but is not the caller's fault — the write it
   # asked for landed, and it is staged for whatever commits next.
   if ! "$SELF_DIR/wf-commit.sh" "registry($plan_id): $from_state → $to_state" \
-        --add "$REGISTRY"; then
+        --add "$REGISTRY" "${add_files[@]+"${add_files[@]}"}"; then
     echo "wf-registry-update: the transition is staged but could not be committed — commit plans/REGISTRY.md before another worker does" >&2
   fi
 fi

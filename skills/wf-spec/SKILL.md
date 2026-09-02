@@ -634,6 +634,14 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
 3. **Write an Amendment** (if needed) — append to `plan.md`'s **Amendments** section. Never rewrite Steps, Tests, or Design Decisions already there.
 4. **Update Design Decisions** — add any new decisions to `plan.md`
 5. **Address findings** — for each `ESCALATED` item in `findings.md`, check it off if resolved by the amendment. Leave behavior findings unchecked (T3 will handle them).
+
+   **An amendment is not the only thing that resolves a finding, and every other route has to tick the box too.** A gate answered, a peer correction adjudicated, a question settled in the prose you just wrote — each of those ends an item, and `wf-findings-route.sh` cannot see any of it. It routes on checkboxes and nothing else. PLN-259 carried two items written by this skill during a peer-correction cycle, both answered in full in the surrounding paragraphs of the same file, both still empty-boxed; PLN-254 the same, from a consistency escalation closed at an attend gate. Each would have sent a plan with a clean build and every test green back to `draft` over a decision already made, and in both cases a downstream worker had to tick the box by hand and file an issue (WFI-233, WFI-237).
+
+   Two ways to keep them in step, and one of them must happen:
+   - Closing the gate that settled it: `wf-gate-close.sh <ID> "<resolution>" --resolves "<finding text>"` ticks the finding as part of the close.
+   - Resolving it yourself in this pass: tick it in the same edit that records the resolution, never in a later one.
+
+   **Do not write a `- [ ]` for narrative you are about to answer.** An unchecked box is a claim on a future worker's time. If the resolution is in the same document, the box was never a finding — write it as prose.
 6. **Run the review gate** — same as above, on the plan **as amended**, and write the verdict to `plan.md`'s `## Review` like any other round.
 
    Two rules, both learned the hard way (WFI-046):
