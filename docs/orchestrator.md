@@ -493,6 +493,10 @@ Everything below is configurable in `claude-workflow.yml → orchestrator`:
 - Per-role `max_concurrent` caps.
 - `max_attempts_per_plan` parks thrashing plans.
 - `max_spawns_per_hour` is the hard ceiling on a runaway pipeline.
+- `max_launch_failures` stands the daemon down (exit 4) when launches keep
+  dying before their worker starts. That failure is a property of the daemon
+  process, not of any artifact — it fails every dispatch identically until the
+  daemon is replaced — so it costs no attempt and parks no plan.
 - `--stop` ends the daemon; `--kill-all` also terminates live workers.
 - `events.log` is the audit trail: every spawn, exit, gate, skip and sweep.
 

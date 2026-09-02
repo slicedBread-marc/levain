@@ -75,7 +75,7 @@ After user picks:
 4. **Run e2e tests** (app is now running):
    ```
    Agent(model: haiku, run_in_background: true, prompt:
-     "Run `{{test_command}} {{test_only_e2e}}` in the current directory.
+     "Run `{{test_command}} {{test_only_e2e}} < /dev/null` in the current directory.
       Report: total tests, passed, failed, skipped.
       If any failed, list each failure with test name and error message.
       Final response under 1500 characters.")

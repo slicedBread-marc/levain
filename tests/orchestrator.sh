@@ -707,6 +707,41 @@ rc=0; "$SCRIPT_DIR/wf-spawn.sh" implement BUG-036 >/dev/null 2>&1 || rc=$?
 assert_eq "the same work under its other name is refused too" "2" "$rc"
 rm -f "$ORCH/logs/036-implement.pid" "$ORCH/logs/036-consistency.pid"
 
+# --- a launch that dies before its worker starts is not an attempt
+#
+# nohup refusing to detach ("can't detach from console") ends the launch before
+# `claude` runs at all. wf-spawn.sh used to report that as a healthy spawn — it
+# had a PID and exited 0 — so the orchestrator charged an attempt to a plan
+# nothing had run on, six times over, and opened `stuck` gates asserting a
+# worker had made no progress. Nothing had run (WFI-231, WFI-232).
+section "A launch that never started costs no attempt (WFI-231/232)"
+registry_add_row PLN-037 launchfail ready
+cat > "$STUB_BIN/nohup" <<'STUB'
+#!/usr/bin/env bash
+echo "nohup: can't detach from console: Inappropriate ioctl for device" >&2
+exit 1
+STUB
+chmod +x "$STUB_BIN/nohup"
+rm -f "$ORCH/attempts/PLN-037".* "$ORCH/launch-fails"
+rc=0; out=$("$SCRIPT_DIR/wf-spawn.sh" consistency PLN-037-launchfail 2>&1) || rc=$?
+assert_eq "wf-spawn reports a pre-start launch failure as rc 3" "3" "$rc"
+assert_eq "and says nothing ran" "true" \
+  "$(printf '%s' "$out" | grep -q 'before the worker started' && echo true || echo false)"
+assert_eq "no pidfile is left behind" "false" \
+  "$([ -f "$ORCH/logs/037-consistency.pid" ] && echo true || echo false)"
+orch --sweep >/dev/null 2>&1 || true
+assert_eq "the sweep charges PLN-037 no attempt" "0" \
+  "$(cat "$ORCH/attempts/PLN-037.consistency" 2>/dev/null || echo 0)"
+assert_eq "and counts the failure against the daemon instead" "true" \
+  "$([ -f "$ORCH/launch-fails" ] && echo true || echo false)"
+rm -f "$STUB_BIN/nohup" "$ORCH/launch-fails"
+rc=0; "$SCRIPT_DIR/wf-spawn.sh" consistency PLN-037-launchfail >/dev/null 2>&1 || rc=$?
+assert_eq "a healthy launch is rc 0 again once nohup works" "0" "$rc"
+assert_eq "and a successful spawn clears the daemon's failure count" "false" \
+  "$([ -f "$ORCH/launch-fails" ] && echo true || echo false)"
+rm -f "$ORCH/logs/037-consistency.pid"
+
+section "Dispatcher — spawning (stub claude), continued"
 echo "999999" > "$ORCH/logs/036-implement.pid"  # dead PID
 rc=0; "$SCRIPT_DIR/wf-spawn.sh" implement PLN-036-dup --dry-run >/dev/null 2>&1 || rc=$?
 assert_eq "a dead pidfile does not block a respawn" "0" "$rc"

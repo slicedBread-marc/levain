@@ -30,6 +30,12 @@
 #        caller does not read a concurrent run as a stalled plan.
 #   1    error (bad artifact, worker failure, orchestrator disabled)
 #
+# DAEMON EXIT CODES:
+#   0    stopped on request (--stop, SIGTERM, Ctrl-C)
+#   4    stood down: launches kept dying before their workers started, so the
+#        fault is in this process. Start a fresh daemon. No attempts were
+#        charged to any artifact.
+#
 # The dispatcher skips an artifact when ANY of these hold:
 #   · a gate is open on it            · its deps are not complete
 #   · another session holds its claim · its role is at max_concurrent
@@ -81,6 +87,7 @@ cfg_enabled=$(wf_cfg orchestrator.enabled false)
 cfg_interval="${interval_override:-$(wf_cfg orchestrator.sweep_interval 60)}"
 cfg_max_attempts=$(wf_cfg orchestrator.max_attempts_per_plan 3)
 cfg_max_spawns=$(wf_cfg orchestrator.max_spawns_per_hour 20)
+cfg_max_launch_fails=$(wf_cfg orchestrator.max_launch_failures 3)
 
 cfg_consistency=$(wf_cfg orchestrator.consistency_pass true)
 
@@ -161,6 +168,19 @@ attempts_bump() {
   echo "$n" > "$ORCH/attempts/$1.$2"
 }
 attempts_reset() { rm -f "$ORCH/attempts/$1".* 2>/dev/null || true; }
+
+# Launch failures — the OTHER loop breaker, and it counts the daemon rather
+# than the plan. When a launch dies before its worker starts (wf-spawn.sh
+# rc=3), nothing about the artifact is wrong and retrying a different one will
+# not help: the fault travels with this process. client-a's daemon spent
+# 70 minutes in that state, failing every dispatch across four artifacts while
+# reporting healthy (WFI-232). Consecutive failures across ANY artifact are
+# counted here, and the daemon stands down rather than draining its queue into
+# skips. A single successful spawn clears it — a one-off is not a broken
+# daemon.
+launch_fails_get() { cat "$ORCH/launch-fails" 2>/dev/null || echo 0; }
+launch_fails_bump() { echo $(( $(launch_fails_get) + 1 )) > "$ORCH/launch-fails"; }
+launch_fails_reset() { rm -f "$ORCH/launch-fails" 2>/dev/null || true; }
 
 # Forward progress — what makes the attempt budget mean something.
 #
@@ -401,15 +421,23 @@ dispatch() {
   if [ "$rc" -eq 0 ]; then
     if [ -n "$out" ]; then printf '%s\n' "$out"; fi
     attempts_bump "$id" "$role"; spawn_budget_bump
+    launch_fails_reset
     return 0
   fi
 
   local reason
   reason=$(printf '%s' "$out" | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g; s/[[:space:]]*$//')
   [ -n "$reason" ] || reason="wf-spawn declined with no explanation"
-  # rc=2 is "already running", which is not an error; anything else is.
+  # rc=2 is "already running", which is not an error; rc=3 is a launch that
+  # died before the worker started — also not the artifact's fault, and
+  # deliberately NOT an attempt: charging one to a plan nothing ran on is how
+  # a `stuck` gate comes to assert a worker made no progress when no worker
+  # existed (WFI-231). Anything else is a real spawn error.
   if [ "$rc" -eq 2 ]; then
     skip_note "$role" "$id" "$reason"
+  elif [ "$rc" -eq 3 ]; then
+    launch_fails_bump
+    skip_note "$role" "$id" "launch failed before the worker started (no attempt charged): $reason" error
   else
     skip_note "$role" "$id" "spawn failed rc=$rc: $reason" error
   fi
@@ -592,13 +620,14 @@ case "$mode" in
     # outgoing daemon deletes its successor's pidfile, after which wf-board
     # reports "daemon: off" while the successor is still sweeping and the next
     # --stop finds nothing to stop.
+    daemon_exit_rc=0
     daemon_shutdown() {
       trap - INT TERM EXIT
       if [ "$(cat "$DAEMON_PID" 2>/dev/null || echo "")" = "$$" ]; then
         rm -f "$DAEMON_PID"
       fi
       wf_event daemon "—" "stopped"
-      exit 0
+      exit "$daemon_exit_rc"
     }
     trap daemon_shutdown INT TERM EXIT
 
@@ -614,6 +643,22 @@ case "$mode" in
         stall_note
       else
         rm -f "$ORCH/stalled"          # work is in flight; not stalled
+      fi
+      # A daemon that can no longer launch anything should say so and stop,
+      # not keep sweeping. Every dispatch it makes in that state is a skip
+      # against an artifact that has nothing wrong with it, and the operator
+      # reading `wf-board` sees a daemon that is up and a queue that never
+      # moves (WFI-232). Standing down is recoverable — restarting the daemon
+      # is what fixed it — and a non-zero exit lets a supervisor do that.
+      lf=$(launch_fails_get)
+      if [ "$lf" -ge "$cfg_max_launch_fails" ]; then
+        echo "wf-orchestrate: $lf consecutive launches died before their worker started." >&2
+        echo "wf-orchestrate: the fault is in this process, not in any artifact — no attempts were charged." >&2
+        echo "wf-orchestrate: standing down. Start a fresh daemon; if it recurs immediately, read the newest log in $ORCH/logs." >&2
+        wf_event daemon "—" "stood down after $lf consecutive launch failures"
+        launch_fails_reset
+        daemon_exit_rc=4
+        exit 4
       fi
       # Backgrounded so the trap fires now rather than whenever the interval
       # happens to elapse. Bash defers a trap until a FOREGROUND child returns,

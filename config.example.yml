@@ -411,3 +411,11 @@ orchestrator:
   # Hard ceiling on worker launches per hour, across all roles. The backstop
   # for a runaway pipeline.
   max_spawns_per_hour: 20
+
+  # Stand-down threshold for launches that die BEFORE their worker starts.
+  # This counts the daemon, not the plan: when the launch itself fails, the
+  # artifact is fine and the next one will fail identically, so after this
+  # many consecutive failures the daemon exits 4 rather than draining its
+  # queue into skips. A single successful spawn clears the count. These
+  # failures never cost an artifact an attempt.
+  max_launch_failures: 3

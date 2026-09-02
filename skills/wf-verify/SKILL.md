@@ -39,6 +39,8 @@ This skill is **always** unattended. Unlike `wf-spec`, `wf-implement` and `wf-te
 
    If a check cannot be completed — the suite is too slow, a runner hangs — that is a **finding**, recorded with the command and what it printed, and you route on the findings you have. Routing on incomplete evidence is recoverable; exiting on none is not.
 
+6. **Redirect stdin from `/dev/null` on every build and test command: `<command> < /dev/null`.** Your shell's stdin is not at EOF, so a test that reads from it blocks forever rather than getting the immediate EOF a non-interactive run should see — one such test hangs the entire suite, with no failure, no crash and no output to say why. client-a's PLN-264 spent two 10-minute timeouts on exactly that; the offending test finished in 0.8s with the redirect (WFI-240). If you are appending `$TEST_ARGS` through `eval`, the redirect goes on the end of the whole invocation.
+
 ## Input
 
 You receive a plan ID (e.g. `PLN-003`) as context. From this:
@@ -78,7 +80,7 @@ TEST_ARGS=$(scripts/wf-exec.sh wf-test-scope.sh PLN-NNN-<slug> --args 2>/tmp/wf-
 # stderr carries "scope: <categories>" — include it in the verify log.
 ```
 
-If `$TEST_ARGS` is empty → run the **full suite** (backward-compat fallback). Otherwise append it to the test command **through `eval`** — `eval "{{test_command}} $TEST_ARGS"` — because the string carries its own quoting and may be several flags, not one.
+If `$TEST_ARGS` is empty → run the **full suite** (backward-compat fallback). Otherwise append it to the test command **through `eval`** — `eval "{{test_command}} $TEST_ARGS < /dev/null"` — because the string carries its own quoting and may be several flags, not one. The `< /dev/null` is rule 6 and belongs on every form below.
 
 `--args` returns the whole argument string rather than a bare filter value on purpose: a Microsoft.Testing.Platform project needs a repeated `--filter-class` plus `--ignore-exit-code 8`, which `<flag> "<value>"` cannot express. Nothing here needs to know which runner is in play — `testFilterStyle` in `claude-workflow.yml` decides, defaulting to auto-detection.
 
@@ -125,13 +127,14 @@ started is unattached to any turn. Kill any stray runner first
 
 ```
 # Launch all in parallel:
-Agent(model: haiku, prompt: "Run `{{build_command}}` in feature-branches/PLN-NNN-<slug>/. 
+Agent(model: haiku, prompt: "Run `{{build_command}} < /dev/null` in feature-branches/PLN-NNN-<slug>/. 
   Report: success/failure, any errors or warnings. Response under 1000 chars.")
 
 Agent(model: haiku, prompt: "Run the test command in feature-branches/PLN-NNN-<slug>/,
   tee'd to a log: append ` 2>&1 | tee /tmp/wf-tests-PLN-NNN.log` to whichever command you run.
-  If TEST_ARGS is non-empty: `eval \"{{test_command}} $TEST_ARGS\"`
-  Otherwise (full-suite fallback): `{{test_command}} {{test_exclude_e2e}}`
+  If TEST_ARGS is non-empty: `eval \"{{test_command}} $TEST_ARGS < /dev/null\"`
+  Otherwise (full-suite fallback): `{{test_command}} {{test_exclude_e2e}} < /dev/null`
+  The `< /dev/null` is not optional: a single test that reads stdin blocks forever without it (WFI-240).
   RUN IT IN THE FOREGROUND, in ONE Bash call, with an explicit generous timeout
   (timeout: 600000). Do not use run_in_background. Do not use Monitor. Do not
   poll a log file and do not start something you intend to check on later —
@@ -182,7 +185,7 @@ invocation per filter value, each well inside the ceiling:
 
 ```bash
 scripts/wf-exec.sh wf-test-scope.sh PLN-NNN-<slug> --split | while read -r a; do
-  eval "{{test_command}} $a"
+  eval "{{test_command}} $a < /dev/null"
 done
 ```
 

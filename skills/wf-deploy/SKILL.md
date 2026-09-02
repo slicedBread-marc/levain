@@ -74,8 +74,8 @@ Before starting, confirm E2E passed on release:
 
 7. **Run full test suite** (final integration check):
    ```bash
-   {{build_command}}
-   {{test_command}}
+   {{build_command}} < /dev/null
+   {{test_command}} < /dev/null
    ```
    If tests fail, abort the deploy — do NOT proceed to registry updates. Inform user of failures and suggest fixing on the release branch, then re-running `/wf-release`.
 

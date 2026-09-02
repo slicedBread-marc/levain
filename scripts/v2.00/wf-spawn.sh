@@ -353,7 +353,14 @@ claimfile="$claim_dir/.wf-claim"
 # $$ inside the bash -c is the PID this shell records as $! below, which is the
 # same PID wf_claim_write stamps on the claim — so the worker can name its own
 # claim rather than standing down against it (WFI-073/075).
+# The started-marker is how the launch tells us `bash -c` actually began. A
+# worker that exits quickly and one that never started look identical from the
+# outside — same absent process, same PID — and only the marker separates them.
+started_marker="$log.started"
+rm -f "$started_marker"
+
 nohup bash -c "
+    : > '$started_marker'
     cd '$ROOT'
     export WF_CLAIM_PID=\$\$
     claude -p --model '$model' --dangerously-skip-permissions \"\$WF_PROMPT\"
@@ -361,7 +368,7 @@ nohup bash -c "
     rm -f '$pidfile'
     [ -n '$claimfile' ] && rm -f '$claimfile'
     '$event_sh' exit '$id' \"$role rc=\$rc\"
-" > "$log" 2>&1 &
+" < /dev/null > "$log" 2>&1 &
 
 worker_pid=$!
 echo "$worker_pid" > "$pidfile"
@@ -369,6 +376,34 @@ echo "$worker_pid" > "$pidfile"
 # shell that launched it.
 wf_claim_write "$claim_dir" "$worker_pid" "$artifact"
 disown "$worker_pid" 2>/dev/null || true
+
+# ── Did the worker actually start? ────────────────────────────────────────
+# A launch can fail BEFORE `claude` ever runs, and the shape that hit
+# client-a is nohup refusing to detach: "can't detach from console:
+# Inappropriate ioctl for device". It is a property of the LAUNCHING process,
+# not of the artifact or the role — once a long-lived daemon starts failing
+# this way it fails every dispatch until it is replaced. The old code could
+# not tell that from a healthy spawn: it had a PID and exited 0, so the
+# orchestrator bumped the attempt counter on six dispatches across four
+# artifacts and opened three "stuck" gates whose stated question — a worker
+# ran and made no forward progress — was false in every case (WFI-231,
+# WFI-232). Nothing ran.
+#
+# So a launch that dies before the worker starts exits non-zero, which is the
+# orchestrator's spawn-failure path: reported once through the skip latch,
+# and costing no attempt.
+sleep 1
+if [ ! -f "$started_marker" ] \
+   || grep -qi "can't detach from console" "$log" 2>/dev/null; then
+  launch_err=$(head -3 "$log" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g; s/[[:space:]]*$//')
+  rm -f "$pidfile"
+  [ -n "$claimfile" ] && rm -f "$claimfile"
+  wf_event error "$id" "$role launch failed before the worker started: ${launch_err:-no output}"
+  echo "wf-spawn: launch failed before the worker started — ${launch_err:-no output}" >&2
+  echo "wf-spawn: nothing ran, so this costs no attempt; the fault is in the launching process, not $artifact." >&2
+  exit 3
+fi
+rm -f "$started_marker"
 
 wf_event spawn "$id" "$role ($model) pid $worker_pid"
 echo "wf-spawn: $role/$artifact on $model — PID $worker_pid, log $log"

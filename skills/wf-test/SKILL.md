@@ -37,7 +37,10 @@ Order of work:
    moment you stop producing output, so anything still running is killed unread
    and the turn is recorded as a worker that accomplished nothing (WFI-114).
    Where this skill spawns a background test agent below, that is the attended
-   path only.
+   path only. **Redirect stdin from `/dev/null`** on every suite you run
+   (`… && {{test_command}} < /dev/null`): your shell's stdin is not at EOF, so
+   a single test that reads it blocks forever with no failure and no output to
+   say why (WFI-240).
 3. Work every `#### Chrome-Assisted` criterion — these are scripted navigations and assertions, so run them and record PASS/FAIL yourself. **Every one of them ends at PASS, FAIL or a recorded reason it could not run** — leaving them at `—` and then gating for "one Manual criterion" misreports what is actually left, and the gate question is the only thing a human reads (WFI-070).
 4. For every criterion where the mode menu applies, take `[a]` (auto-test) whenever the criterion matches a recurring auto-testable shape. On auto-test FAIL, record it as a Candidate as normal — do **not** fall through to the manual flow.
 5. Dispose of the criteria that never need a human, whatever remains untested:
@@ -168,7 +171,7 @@ Exit 1 here means you are standing somewhere else — almost always the develop 
 ```bash
 cd /abs/path/to/feature-branches/PLN-NNN-<slug> \
   && ../../scripts/wf-exec.sh wf-test-tree.sh PLN-NNN-<slug> \
-  && {{test_command}}
+  && {{test_command}} < /dev/null
 ```
 It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp in `test-progress.md` immediately above the totals it belongs to — copied verbatim from the tool output, character for character.** Never compose the line yourself and never write a `$(…)` into a document: client-a's PLN-153 carries `TREE … @ feature/PLN-153-projectname-path-guard $(git rev-parse HEAD) ($(date '+%b %d %H:%M'))` as literal text (WFI-183), which records neither the commit nor the time — the two facts the stamp exists to record. A stamp whose sha is unresolved is worth less than no stamp, because it looks like provenance. A test result is a measurement of one working tree and nothing in `dotnet test`'s output says which — an unattended tester recorded develop's 1120 tests against a plan whose tree holds 1123, and opened a gate saying the implementation "appears incomplete" while verify's own run of the same plan was 1123 passed / 0 failed (WFI-132). A totals line without a stamp above it is not a result; re-run it.
 
@@ -249,7 +252,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    background agent below is the attended path (WFI-114).
    ```
    Agent(model: haiku, run_in_background: true, prompt:
-     "Run `{{test_command}} {{test_only_e2e}} $E2E_SCOPE` in the current directory.
+     "Run `{{test_command}} {{test_only_e2e}} $E2E_SCOPE < /dev/null` in the current directory.
       (If E2E_SCOPE is empty, omit it — runs full suite.)
       Report: total tests, passed, failed, skipped.
       If any failed, list each failure with test name and error message.
@@ -886,6 +889,27 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "manual test passed"
    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    ```
+
+   **Say what actually happened in that message.** "human test passed" is the
+   attended wording and it is a claim about a person. An unattended run that
+   reached `complete` because every Manual criterion was legitimately deferred
+   did not have a human test — PLN-191 went `testing → complete` in three
+   minutes with `GATES: 0`, deferred four `(external)` criteria, and then
+   committed a human acceptance test that never occurred, on a plan whose own
+   design rationale was "attended, no bypass" (WFI-229). The deferral path
+   itself is sanctioned; asserting a test into git history is not. Under
+   `WF_UNATTENDED=1`, use the wording that matches the route taken:
+
+   | What happened | Commit message |
+   |-|-|
+   | A human worked the criteria | `test(PLN-NNN-<slug>): human test passed — complete` |
+   | Every Manual criterion deferred `(external)` / `(soak)` | `test(PLN-NNN-<slug>): criteria automated or deferred, no human test — complete` |
+   | Automated + Chrome-assisted only, no Manual criteria at all | `test(PLN-NNN-<slug>): automated criteria passed, none required a human — complete` |
+
+   Whichever line you write, the plan's `## Steps`-level record of *which*
+   criteria ran, deferred or were skipped goes into `progress.md` before step 7
+   deletes `test-progress.md`. A completed plan with no such record leaves the
+   next reader unable to tell an automated pass from an unworked one.
    The gate is closed **here**, at the end, not when testing started. `/wf-attend` hands this plan over with the gate still open on purpose: while it is open the orchestrator will not dispatch anything at this plan, which is what keeps an unattended tester out of the worktree a human is using (WFI-070). Closing it is this skill's last act, and it is safe to run when no gate is open.
 
    **The order of these three lines is the contract — see [Order of exit](#order-of-exit).**
@@ -895,15 +919,37 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    ```
    It commits the rename itself, both sides. Do not add the bug folder to any commit of your own — the destination path alone leaves the deletion staged for whoever commits next, which is how six bugs ended up tracked at `triaged/` **and** `closed/` in the same HEAD (WFI-136).
 6. Clean up feature branch and worktree:
+
+   **Nothing of yours may still be running in that directory.** Removing a
+   worktree out from under a live test runner does not stop the runner — it
+   keeps going against a path that no longer exists, and every remaining test
+   fails on `DirectoryNotFoundException`. PLN-260 produced 446 such failures
+   from a plan that had already reached `complete`, and the wreckage reads
+   exactly like a broken implementation (WFI-239). The runner was backgrounded,
+   which unattended rule 2 already forbids; this check is the second line of
+   defence, and it costs one command:
+   ```bash
+   pgrep -fl "feature-branches/PLN-NNN-<slug>" || true
+   ```
+   Anything listed is yours to wait for or kill **before** the removal. If you
+   cannot account for a process, stop and report it rather than removing.
    ```bash
    git worktree remove feature-branches/PLN-NNN-<slug> --force 2>/dev/null || true
    git branch -d "$CURRENT_BRANCH" 2>/dev/null || true
    ```
 7. Clean up test progress and commit REGISTRY/bug changes:
+
+   **Write the summary into `progress.md` before deleting the file it came
+   from.** `test-progress.md` is working state and goes; the one-line-per-
+   criterion record of what ran, what deferred and why is the plan's evidence
+   that it was tested at all, and PLN-191 completed leaving none of it (WFI-229).
+   Append a `## Testing — YYYY-MM-DD` section to `plans/PLN-NNN-<slug>/progress.md`
+   listing each criterion and its outcome (PASS / FAIL-then-fixed / deferred
+   `(external)` / deferred `(soak)`), then:
    ```bash
    rm -f plans/PLN-NNN-<slug>/test-progress.md
    scripts/wf-exec.sh wf-commit.sh "test(PLN-NNN-<slug>): complete — merged to develop" --allow-empty \
-     --add plans/PLN-NNN-<slug>/test-progress.md plans/auto-test-log.md \
+     --add plans/PLN-NNN-<slug>/test-progress.md plans/PLN-NNN-<slug>/progress.md plans/auto-test-log.md \
      --branch develop
    ```
    **Never a bare `git add … ; git commit --allow-empty` here.** That was this

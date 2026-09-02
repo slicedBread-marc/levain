@@ -108,8 +108,8 @@ release branch    → staging environment for E2E validation
    ```
 7. **Run E2E / integration tests** (staging validation):
    ```bash
-   {{build_command}}
-   {{test_command}}
+   {{build_command}} < /dev/null
+   {{test_command}} < /dev/null
    # Full suite — no filter. Release aggregation guarantee (BRF-080):
    # every test skipped on a feature branch by tiered gating MUST run here.
    ```

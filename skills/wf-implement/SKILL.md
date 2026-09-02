@@ -40,6 +40,17 @@ Rules, in force for the whole session:
    `progress.md` so the next dispatch resumes instead of restarting. Recorded
    partial progress is what makes the attempt budget mean something.
 
+6. **Redirect stdin from `/dev/null` on every build, test and tool command:
+   `<command> < /dev/null`.** Your shell's stdin is not at EOF, so anything the
+   command reads from it blocks forever instead of getting the immediate EOF a
+   non-interactive run should see. It is one test doing this that hangs the
+   whole suite, and it looks nothing like a hang from the outside — no failure,
+   no crash, no output, just a build that never returns. client-a's PLN-264
+   burned the 5-minute *and* 10-minute timeouts twice over on a suite whose only
+   stdin reader was a single CLI test waiting on a token prompt; the same test
+   finished in 0.8s under `< /dev/null` (WFI-240). Apply it to the whole
+   invocation, including the attended forms below.
+
 | Where | Prompt | Mode | Unattended behavior |
 |-|-|-|-|
 | Entry | Plan selection menu | [AUTO] | Use the plan named in your instructions |
@@ -351,7 +362,9 @@ and must be discarded, not reported.
 18. **Run build and tests.**
 
     **Under `WF_UNATTENDED=1`, run both commands yourself, in the foreground,
-    and read the output** — see rule 5 in [Unattended mode](#unattended-mode).
+    with stdin redirected from `/dev/null`, and read the output** — see rules 5
+    and 6 in [Unattended mode](#unattended-mode). A suite containing one test
+    that reads stdin hangs indefinitely without that redirect (WFI-240).
     Backgrounding here is what ended three PLN-030 dispatches with nothing done
     (WFI-114). Steps 19–20 are then done after the output is in hand rather
     than alongside it; that costs wall-clock and nothing else.
@@ -360,12 +373,12 @@ and must be discarded, not reported.
     so the reviews in steps 19–20 can run in parallel:
     ```
     Agent(model: haiku, run_in_background: true, prompt:
-      "Run `{{build_command}}` in the current directory.
+      "Run `{{build_command}} < /dev/null` in the current directory.
        Report: success or failure. If failure, list all errors (not warnings).
        Final response under 1000 characters.")
 
     Agent(model: haiku, run_in_background: true, prompt:
-      "Run `{{test_command}} {{test_exclude_e2e}}` in the current directory.
+      "Run `{{test_command}} {{test_exclude_e2e}} < /dev/null` in the current directory.
        Report: total tests, passed, failed, skipped.
        If any failed, list each failure with test name and error message.
        Final response under 1500 characters.")
