@@ -10,6 +10,9 @@
 
 set -euo pipefail
 
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
+
 # Must be on a feature branch
 branch=$(git branch --show-current)
 [[ "$branch" == feature/* ]] || { echo "Error: not on a feature branch (on $branch)" >&2; exit 1; }
@@ -50,19 +53,11 @@ fi
 #
 # The main worktree is the case with nowhere to copy from — client-c lost
 # the harness outright on the release side (WFI-006) — so only there does the
-# fallback apply.
-_restore_harness() {
-  "$(dirname "$0")/wf-worktree-harness.sh" . >/dev/null 2>&1 || true
-  local main_wt
-  main_wt=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
-  [ -n "$main_wt" ] && [ "$main_wt" = "$(git rev-parse --show-toplevel 2>/dev/null)" ] || return 0
-  [ -x scripts/wf-exec.sh ] && [ -f scripts/version-map.txt ] && return 0
-  "$(dirname "$0")/wf-harness-restore.sh" >/dev/null 2>&1 || true
-}
+# fallback apply. See wf_restore_harness (wf-orch-lib.sh) for the shared body.
 
 # Attempt clean merge first
 if git merge origin/release --no-edit 2>/dev/null; then
-  _restore_harness
+  wf_restore_harness
   echo "Merged release cleanly."
   exit 0
 fi

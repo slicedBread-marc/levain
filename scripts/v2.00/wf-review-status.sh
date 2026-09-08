@@ -53,9 +53,7 @@ set -euo pipefail
 
 # Sourced at the top, not lazily further down where wf_plan_body_fingerprint
 # used to pull it in: the section and verdict parsers now live in the lib too
-# (WFI-207), and they run well before that point. Nothing in the lib assigns
-# ROOT, so the deliberate choice below — not using wf_develop_root, whose
-# fallback contract differs — is unaffected.
+# (WFI-207), and they run well before that point.
 # shellcheck source=wf-orch-lib.sh
 source "$(dirname "$0")/wf-orch-lib.sh"
 
@@ -67,11 +65,8 @@ fi
 plan_id=$(printf '%s' "$plan_id" | grep -oE '^PLN-[0-9]+')
 
 # Registry work is develop-root work: the main worktree is always the first one
-# git lists, and plans/ exists only there. Written inline, as the other
-# non-orchestrator scripts do — deliberately NOT named wf_develop_root, which
-# is wf-orch-lib.sh's function with a different fallback contract.
-ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //') || true
-[ -n "$ROOT" ] || ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
+# git lists, and plans/ exists only there.
+ROOT=$(wf_develop_root)
 
 plan_dir=""
 for d in "$ROOT"/plans/${plan_id}-*/; do
@@ -84,17 +79,13 @@ done
 # quote early, runs the next word as a command, and loses every variable
 # emitted after it. Same failure as BUG-094, which is why wf-plan-info.sh
 # escapes identically.
-emit_one() {
-  printf "%s='%s'\n" "$1" "$(printf '%s' "$2" | sed "s/'/'\\\\''/g")"
-}
-
 emit() {
-  emit_one REVIEW_LOCATION "${1:-none}"
-  emit_one REVIEW_RESULT   "${2:-}"
-  emit_one REVIEW_DATE     "${3:-}"
-  emit_one AMENDMENT_DATE  "${4:-}"
-  emit_one REVIEW_STALE    "${5:-false}"
-  emit_one REVIEW_STAMPED  "${6:-false}"
+  wf_emit REVIEW_LOCATION "${1:-none}"
+  wf_emit REVIEW_RESULT   "${2:-}"
+  wf_emit REVIEW_DATE     "${3:-}"
+  wf_emit AMENDMENT_DATE  "${4:-}"
+  wf_emit REVIEW_STALE    "${5:-false}"
+  wf_emit REVIEW_STAMPED  "${6:-false}"
 }
 
 if [ -z "$plan_dir" ]; then
@@ -205,8 +196,6 @@ if [ "$review_location" != "none" ]; then
           | sed -E 's/.*[Pp]lan-[Hh]ash:[ \t]*//; s/\*+//g; s/[ \t]*<!--.*$//; s/[^0-9a-fA-F]//g')
   if [ -n "$stamp" ]; then
     stamped=true
-    # shellcheck source=wf-orch-lib.sh
-    source "$(dirname "$0")/wf-orch-lib.sh"
     now_fp=$(wf_plan_body_fingerprint "$plan_id")
     if [ -n "$now_fp" ]; then
       if [ "$stamp" = "$now_fp" ]; then stale=false; else stale=true; fi

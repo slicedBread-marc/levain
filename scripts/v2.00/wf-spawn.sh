@@ -392,7 +392,15 @@ disown "$worker_pid" 2>/dev/null || true
 # So a launch that dies before the worker starts exits non-zero, which is the
 # orchestrator's spawn-failure path: reported once through the skip latch,
 # and costing no attempt.
-sleep 1
+#
+# Short-poll rather than one flat `sleep 1`: the marker appears almost
+# immediately on every healthy spawn, so a fixed second charged the daemon's
+# dispatch loop on every single launch — this pays that cost only on the
+# failure path, which is rare by construction.
+for _ in $(seq 1 20); do
+  [ -f "$started_marker" ] && break
+  sleep 0.05
+done
 if [ ! -f "$started_marker" ] \
    || grep -qi "can't detach from console" "$log" 2>/dev/null; then
   launch_err=$(head -3 "$log" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g; s/[[:space:]]*$//')

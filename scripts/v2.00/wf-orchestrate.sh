@@ -106,14 +106,13 @@ cfg_cap_verify=$(wf_cfg orchestrator.max_concurrent.verify 2)
 cfg_cap_test=$(wf_cfg orchestrator.max_concurrent.test 1)
 cfg_cap_consistency=$(wf_cfg orchestrator.max_concurrent.consistency 1)
 
+# Indirect lookup, not a case arm per role: the five cfg_cap_* reads above are
+# the only place role names are enumerated, so adding a role means adding one
+# read instead of a read AND a matching case line that silently returns empty
+# if it's missed.
 max_concurrent() {
-  case "$1" in
-    spec)        printf '%s' "$cfg_cap_spec" ;;
-    implement)   printf '%s' "$cfg_cap_implement" ;;
-    verify)      printf '%s' "$cfg_cap_verify" ;;
-    test)        printf '%s' "$cfg_cap_test" ;;
-    consistency) printf '%s' "$cfg_cap_consistency" ;;
-  esac
+  local var="cfg_cap_$1"
+  printf '%s' "${!var:-}"
 }
 
 require_enabled() {
@@ -780,13 +779,12 @@ case "$mode" in
           complete)       result="done"; break ;;
           # Terminal like complete, but not successful. Dispatching a worker at
           # a plan someone deliberately dropped is the exact re-dispatch loop
-          # `abandoned` exists to end (WFI-008).
-          abandoned)      result="abandoned"; break ;;
-          # `rolled-back` has been a documented state since v4 and was never
-          # routed here — it fell through to "unknown state" and exit 1, the
-          # same hard failure `abandoned` produced. Both are terminal; neither
-          # is a fault in the plan.
-          rolled-back)    result="abandoned"; break ;;
+          # `abandoned` exists to end (WFI-008). `rolled-back` has been a
+          # documented state since v4 and was never routed here — it fell
+          # through to "unknown state" and exit 1, the same hard failure
+          # `abandoned` produced. Both are terminal; neither is a fault in
+          # the plan.
+          abandoned|rolled-back) result="abandoned"; break ;;
           *) echo "Error: unknown state '$state' for $pln_id" >&2; exit 1 ;;
         esac
       fi

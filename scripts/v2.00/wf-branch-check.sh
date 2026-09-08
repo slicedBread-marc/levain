@@ -50,9 +50,11 @@
 # anymore — each pins its branch to its own persistent worktree instead
 # (`wf-worktree-pin.sh`, docs/release-worktrees.md), so this branch of the
 # case statement should no longer fire in the documented flow. Left in place
-# as defense-in-depth: a client session still running a pre-migration copy of
-# either skill, or a human who parks the shared checkout on `release`/`main`
-# by hand, still gets the same refusal it always did.
+# as defense-in-depth: a human who parks the shared checkout on `release`/
+# `main` by hand still gets the same refusal it always did. A client running
+# a pre-migration copy of either skill gets it too, but only briefly — both
+# skills are part of the gitignored harness `deploy-all.sh` regenerates
+# wholesale, so that case closes on the client's next deploy, not later.
 
 set -euo pipefail
 

@@ -18,7 +18,7 @@ branch=$(git branch --show-current)
 [[ "$branch" == feature/* ]] || { echo "Error: not on a feature branch (on $branch)" >&2; exit 1; }
 
 # Auto-claim: mark this plan as actively being worked on
-develop_root=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+develop_root=$(wf_develop_root)
 plan_name=$(echo "$branch" | sed 's#^feature/##')
 claim_dir="$develop_root/plans/$plan_name"
 if [ -d "$claim_dir" ]; then
@@ -56,7 +56,7 @@ done
 # re-dirties the very files just restored — the main worktree holds develop's
 # newer content, which is exactly what makes them differ from this branch's
 # committed blob. The copy belongs after the merge, once they are untracked and
-# git can no longer see them (_restore_harness below).
+# git can no longer see them (wf_restore_harness below).
 
 # ── Reset develop-only content for non-sparse worktrees ─────────────────────
 # Legacy (non-sparse) worktrees still track plans/, bugs/ and templates/ —
@@ -90,19 +90,11 @@ fi
 #
 # The main worktree is the case with nowhere to copy from — client-c lost
 # the harness outright on the release side (WFI-006) — so only there does the
-# fallback apply.
-_restore_harness() {
-  "$(dirname "$0")/wf-worktree-harness.sh" . >/dev/null 2>&1 || true
-  local main_wt
-  main_wt=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
-  [ -n "$main_wt" ] && [ "$main_wt" = "$(git rev-parse --show-toplevel 2>/dev/null)" ] || return 0
-  [ -x scripts/wf-exec.sh ] && [ -f scripts/version-map.txt ] && return 0
-  "$(dirname "$0")/wf-harness-restore.sh" >/dev/null 2>&1 || true
-}
+# fallback apply. See wf_restore_harness (wf-orch-lib.sh) for the shared body.
 
 # Attempt clean merge first
 if git merge develop --no-edit 2>/dev/null; then
-  _restore_harness
+  wf_restore_harness
   echo "Merged develop cleanly."
   exit 0
 fi
@@ -170,5 +162,5 @@ if $has_non_plan_conflicts; then
 fi
 
 git commit --no-edit
-_restore_harness
+wf_restore_harness
 echo "Merged develop with auto-resolved plan files."

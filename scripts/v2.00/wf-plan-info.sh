@@ -104,7 +104,7 @@ if [ "$deps" != "—" ] && [ -n "$deps" ]; then
   IFS=',' read -ra dep_list <<< "$deps"
   for dep_id in "${dep_list[@]}"; do
     dep_id=$(echo "$dep_id" | xargs)
-    dep_state=$(grep "^| $dep_id |" "$REGISTRY" 2>/dev/null | awk -F'|' '{print $4}' | xargs || true)
+    dep_state=$(wf_registry_field "$dep_id" state "$REGISTRY")
     if [ "$dep_state" != "complete" ]; then
       blocked=true
       [ -n "$blocking" ] && blocking="$blocking,$dep_id" || blocking="$dep_id"
@@ -117,25 +117,23 @@ fi
 
 # Every value is single-quoted so eval survives spaces, semicolons, backticks, etc.
 # (a Tags value like "infra, hosting" word-splits under eval when emitted bare).
-emit() {
-  printf "%s='%s'\n" "$1" "$(printf '%s' "$2" | sed "s/'/'\\\\''/g")"
-}
+# wf_emit (wf-orch-lib.sh) does exactly this — no local redefinition needed.
 
-emit PLAN_ID "$id"
-emit PLAN_SLUG "$slug"
-emit PLAN_STATE "$state"
-emit PLAN_PRIORITY "$priority"
-emit PLAN_BRANCH "$branch"
-emit PLAN_UPDATED "$updated"
-emit PLAN_WF "$wf"
-emit PLAN_TAGS "$tags"
-emit PLAN_DEPS "$deps"
-emit PLAN_BLOCKED "$blocked"
-emit PLAN_BLOCKING "$blocking"
-emit PLAN_DEPS_DEAD "$dead"
-emit PLAN_DIR "$plan_dir"
-emit PLAN_NAME "$plan_name"
-emit PLAN_GOAL "$goal"
+wf_emit PLAN_ID "$id"
+wf_emit PLAN_SLUG "$slug"
+wf_emit PLAN_STATE "$state"
+wf_emit PLAN_PRIORITY "$priority"
+wf_emit PLAN_BRANCH "$branch"
+wf_emit PLAN_UPDATED "$updated"
+wf_emit PLAN_WF "$wf"
+wf_emit PLAN_TAGS "$tags"
+wf_emit PLAN_DEPS "$deps"
+wf_emit PLAN_BLOCKED "$blocked"
+wf_emit PLAN_BLOCKING "$blocking"
+wf_emit PLAN_DEPS_DEAD "$dead"
+wf_emit PLAN_DIR "$plan_dir"
+wf_emit PLAN_NAME "$plan_name"
+wf_emit PLAN_GOAL "$goal"
 if [ -z "$goal" ]; then
   echo "PLAN_GOAL_MISSING=true"
 else

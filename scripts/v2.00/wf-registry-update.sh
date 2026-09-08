@@ -201,7 +201,7 @@ wf_lock_acquire registry
 # state below, because a replan had written `ready` where the caller's exit
 # contract expected `active`.
 if ! grep -q "^| $plan_id |.*| $from_state |" "$REGISTRY"; then
-  actual=$(grep "^| $plan_id |" "$REGISTRY" | head -1 | awk -F'|' '{print $4}' | xargs || true)
+  actual=$(wf_registry_field "$plan_id" state "$REGISTRY")
   if [ -n "$actual" ]; then
     echo "Error: $plan_id is in state '$actual', not '$from_state'" >&2
   else
@@ -286,7 +286,7 @@ fi
 # another branch name, or a plan completed by hand. To drop a plan whose work
 # will never land, use wf-abandon.sh — that is what `abandoned` is for.
 if [ "$to_state" = "complete" ] && [ "${WF_ALLOW_UNMERGED:-}" != "1" ]; then
-  row_branch=$(grep "^| $plan_id |" "$REGISTRY" | head -1 | awk -F'|' '{print $6}' | xargs || true)
+  row_branch=$(wf_registry_field "$plan_id" branch "$REGISTRY")
   case "$row_branch" in ""|"—"|"-"|"–") row_branch="" ;; esac
   if [ -n "$row_branch" ] && git rev-parse --verify --quiet "$row_branch" >/dev/null 2>&1; then
     merged=false
@@ -332,9 +332,13 @@ else
   exit 1
 fi
 
+# Slug doesn't change in a transition, and both the auto-claim below and the
+# --note handling further down need it — read the just-rewritten row once
+# and reuse it, rather than two separate greps of the same line.
+slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
+
 # Auto-claim when entering active state
 if [ "$to_state" = "active" ]; then
-  slug=$(grep "^| $plan_id |" "$REGISTRY" | head -1 | awk -F'|' '{print $3}' | xargs)
   claim_dir="plans/${plan_id}-${slug}"
   if [ -d "$claim_dir" ]; then
     wf_claim_write "$claim_dir"
@@ -348,9 +352,8 @@ fi
 # interleave with, which is the whole class of problem this script's lock
 # exists to close.
 if [ -n "$note" ]; then
-  note_slug=$(grep "^| $plan_id |" "$REGISTRY" | head -1 | awk -F'|' '{print $3}' | xargs || true)
-  note_dir="plans/${plan_id}-${note_slug}"
-  if [ -n "$note_slug" ] && [ -d "$note_dir" ]; then
+  note_dir="plans/${plan_id}-${slug}"
+  if [ -n "$slug" ] && [ -d "$note_dir" ]; then
     note_file="$note_dir/progress.md"
     [ -f "$note_file" ] || printf '# Progress — %s\n' "$plan_id" > "$note_file"
     grep -q '^## Notes' "$note_file" 2>/dev/null || printf '\n## Notes\n' >> "$note_file"

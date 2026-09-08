@@ -90,7 +90,13 @@ reason, as for a feature worktree.
   gone. That guard existed because the shared worktree could be moved out
   from under a running deploy by something else entirely (WFI-157); nothing
   else ever reaches `release-branches/main`, so there is nothing left to
-  guard against beyond a quick sanity check.
+  guard against beyond a quick sanity check. Step 10's own
+  `wf-commit.sh ... --branch main` is that sanity check, and it stays: it
+  costs one `git branch --show-current`, and it is the one thing standing
+  between a stray commit and the wrong branch if a human ever `cd`s into
+  `release-branches/main` by hand and checks something else out mid-deploy —
+  a narrower threat than WFI-157's shared-checkout race, but not a
+  nonexistent one.
 
 ## Migration note for an existing client
 

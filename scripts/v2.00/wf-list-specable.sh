@@ -196,13 +196,11 @@ briefs_found=0
 if [ -f "plans/briefs/INDEX.md" ]; then
   in_decided=0
   while IFS= read -r line; do
-    if echo "$line" | grep -q "^## Decided"; then
-      in_decided=1; continue
-    fi
-    if echo "$line" | grep -q "^## "; then
-      in_decided=0; continue
-    fi
-    if [ $in_decided -eq 1 ] && echo "$line" | grep -q "^\- \["; then
+    case "$line" in
+      "## Decided"*) in_decided=1; continue ;;
+      "## "*)        in_decided=0; continue ;;
+    esac
+    if [ $in_decided -eq 1 ] && [[ "$line" == "- ["* ]]; then
       name=$(echo "$line" | sed 's/^\- \[//' | sed 's/\].*//')
       link=$(echo "$line" | grep -oE '\([^)]+\)' | head -1 | tr -d '()')
       brief_id=$(echo "$link" | grep -oE 'BRF-[0-9]+' | head -1)

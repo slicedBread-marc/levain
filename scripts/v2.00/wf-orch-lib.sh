@@ -12,10 +12,12 @@
 #   wf_develop_root                  → absolute path of the first worktree
 #   wf_orch_dir                      → <develop-root>/.claude/orchestrator (created)
 #   wf_registry_rows [path]          → one trimmed plan row per line (0x1f-separated)
+#   wf_registry_field <id> <col>     → one trimmed field of one plan's row
 #   wf_bug_id <bug.md>               → the bug that file declares itself to be
 #   wf_goal_text <plan.md>           → that plan's one-line goal
 #   wf_cfg <dotted.path> [default]   → value from claude-workflow.yml
 #   wf_emit <KEY> <value>            → eval-safe KEY='value' line
+#   wf_restore_harness               → re-copy the gitignored runtime files after a merge
 #   wf_plan_fingerprint <PLN-NNN>    → hash of that plan's plan.md (may be empty)
 #   wf_session_pid                   → PID of the long-lived session, not the shell
 #   wf_artifacts_with_number <num>   → "<PREFIX> <where>" per artifact using it
@@ -99,6 +101,29 @@ wf_registry_rows() {
         id, US, trim($3), US, trim($4), US, trim($5), US, trim($6), US,
         trim($7), US, trim($8), US, trim($9), US, trim($10)
     }
+  ' "$reg"
+}
+
+# wf_registry_field <id> <column> [registry-path]
+# One column of one plan's row, trimmed. Empty when the id or the row isn't
+# found. Column names: slug state priority branch updated wf tags deps.
+#
+# wf_registry_rows solved "every row" once so scripts stopped re-walking the
+# table themselves; this is that same fix for "one field of one row" — the
+# `grep "^| $id |" REGISTRY | head -1 | awk -F'|' '{print $N}' | xargs` idiom
+# was hand-rolled at some two dozen call sites, each naming its column by a
+# raw field NUMBER, so a registry schema change means auditing every one of
+# them by hand instead of updating the index map below once.
+wf_registry_field() {
+  local id="$1" col="$2" reg="${3:-$(wf_develop_root)/plans/REGISTRY.md}"
+  [ -f "$reg" ] || return 0
+  awk -F'|' -v id="$id" -v col="$col" '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    BEGIN {
+      idx["slug"]=3; idx["state"]=4; idx["priority"]=5; idx["branch"]=6
+      idx["updated"]=7; idx["wf"]=8; idx["tags"]=9; idx["deps"]=10
+    }
+    trim($2) == id { print trim($(idx[col])); exit }
   ' "$reg"
 }
 
@@ -263,6 +288,42 @@ wf_emit() {
   printf "%s='%s'\n" "$1" "$(printf '%s' "$2" | sed "s/'/'\\\\''/g")"
 }
 
+# ── Harness ───────────────────────────────────────────────────────────────
+
+# wf_restore_harness — put the gitignored runtime files back after a merge.
+#
+# A branch cut before the v5.0.0 untrack commit still TRACKS
+# .claude/skills/wf-*, .claude/workflow.md and scripts/wf-exec.sh; merging one
+# that has already taken the migration DELETES them from this worktree, and
+# they are gitignored afterwards, so nothing puts them back on its own
+# (client-c WFI-006). In a feature worktree the main worktree still has
+# the files, so copying is enough — and copying is all that is wanted: a
+# worktree needs only the three paths wf-worktree-harness.sh delivers,
+# because wf-exec.sh resolves scripts/v*/ from the main worktree. Reaching
+# into git history there would put a stale TRACKED copy back on a branch that
+# no longer wants one.
+#
+# The main worktree is the case with nowhere to copy from — client-c lost
+# the harness outright on the release side (WFI-006) — so only there does the
+# wf-harness-restore.sh fallback apply.
+#
+# Was two byte-identical copies (wf-merge-develop.sh, wf-merge-release.sh);
+# a fix to one silently didn't reach the other. Resolved via BASH_SOURCE, not
+# the caller's $0: both call sites already used $0 to reach these same
+# scripts, which happened to work because both live next to this library, but
+# a shared function looking up ITS OWN directory doesn't depend on that
+# coincidence holding at every future call site.
+wf_restore_harness() {
+  local dir
+  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  "$dir/wf-worktree-harness.sh" . >/dev/null 2>&1 || true
+  local main_wt
+  main_wt=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+  [ -n "$main_wt" ] && [ "$main_wt" = "$(git rev-parse --show-toplevel 2>/dev/null)" ] || return 0
+  [ -x scripts/wf-exec.sh ] && [ -f scripts/version-map.txt ] && return 0
+  "$dir/wf-harness-restore.sh" >/dev/null 2>&1 || true
+}
+
 # ── Plan identity ─────────────────────────────────────────────────────────
 
 # wf_plan_fingerprint <PLN-NNN> → hash of that plan's plan.md, or empty.
@@ -278,8 +339,7 @@ wf_emit() {
 wf_plan_fingerprint() {
   local id="$1" root slug plan_md
   root="$(wf_develop_root)"
-  slug=$(grep "^| $id |" "$root/plans/REGISTRY.md" 2>/dev/null \
-         | head -1 | awk -F'|' '{print $3}' | xargs || true)
+  slug=$(wf_registry_field "$id" slug "$root/plans/REGISTRY.md")
   [ -n "$slug" ] || return 0
   plan_md="$root/plans/${id}-${slug}/plan.md"
   [ -f "$plan_md" ] || return 0
@@ -332,8 +392,7 @@ wf_plan_fingerprint() {
 wf_plan_body_fingerprint() {
   local id="$1" root slug plan_md
   root="$(wf_develop_root)"
-  slug=$(grep "^| $id |" "$root/plans/REGISTRY.md" 2>/dev/null \
-         | head -1 | awk -F'|' '{print $3}' | xargs || true)
+  slug=$(wf_registry_field "$id" slug "$root/plans/REGISTRY.md")
   [ -n "$slug" ] || return 0
   plan_md="$root/plans/${id}-${slug}/plan.md"
   [ -f "$plan_md" ] || return 0
