@@ -67,8 +67,34 @@ plan_file="$plan_dir/plan.md"
 # Plan-scoped, not the global registry lock — this only rewrites plan.md.
 wf_lock_acquire "plan-$plan_id"
 
-# Read current goal (first non-empty line after ## Goal)
-current_goal=$(wf_goal_text "$plan_file")
+# Read current goal — the WHOLE goal, not just its first physical line.
+#
+# `wf_goal_text` (and the old `content_line=$(wf_goal_line ...)` below) only
+# ever looked at the first non-blank line under `## Goal`. That is right for a
+# goal spec-time wrote as one line, but nothing enforces that constraint on
+# the way in — a goal sentence long enough to wrap across two physical lines
+# in plan.md is ordinary prose, not the WFI-154 injected-`\n` case. Pushing a
+# sub-goal against a wrapped original replaced only the first line, leaving
+# the wrapped continuation dangling under the new one-liner as orphaned text,
+# and truncated the Goal History "Previous Goal" cell to match (WFI-008).
+#
+# wf_goal_span already exists for exactly this (built for wf-goal-pop.sh's
+# side of WFI-154) — read the full span here too, and archive all of it.
+goal_span=$(wf_goal_span "$plan_file")
+[ -n "$goal_span" ] || { echo "Error: no current goal found in $plan_file" >&2; exit 1; }
+goal_span_start=${goal_span% *}
+goal_span_end=${goal_span#* }
+
+if [ "$goal_span_end" -gt "$goal_span_start" ] \
+   && sed -n "$((goal_span_start + 1)),${goal_span_end}p" "$plan_file" | grep -q '^#'; then
+  echo "Error: '## Goal' in $plan_file spans lines $goal_span_start-$goal_span_end and one of the" >&2
+  echo "       extra lines starts with '#', so it may be a real section heading:" >&2
+  sed -n "$((goal_span_start + 1)),${goal_span_end}p" "$plan_file" | sed 's/^/         /' >&2
+  echo "       Nothing was written. Make '## Goal' a single line by hand, then re-run." >&2
+  exit 1
+fi
+
+current_goal=$(sed -n "${goal_span_start},${goal_span_end}p" "$plan_file" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
 [ -n "$current_goal" ] || { echo "Error: no current goal found in $plan_file" >&2; exit 1; }
 
 today=$(date +%Y-%m-%d)
@@ -148,19 +174,12 @@ if ! grep -q "^| $today | " "$plan_file"; then
   exit 1
 fi
 
-# Replace the current goal line with the new goal.
-#
-# wf_goal_line, not `## Goal` + 1: a plan whose heading is followed by a blank
-# line would otherwise have the new goal written into the blank and the old one
-# left standing underneath — two goals, to everything that reads this file.
-content_line=$(wf_goal_line "$plan_file")
-if [ -z "$content_line" ]; then
-  echo "Error: no goal one-liner under '## Goal' in $plan_file" >&2
-  exit 1
-fi
-WF_GOAL="$new_goal" awk -v n="$content_line" '
+# Replace the current goal span with the new goal — the WHOLE span read
+# above, not just its first line (see the WFI-008 note above `goal_span`).
+WF_GOAL="$new_goal" awk -v s="$goal_span_start" -v e="$goal_span_end" '
   BEGIN { goal = ENVIRON["WF_GOAL"] }   # not -v: see WFI-154 above
-  NR == n { print goal; next }
+  NR == s { print goal; next }
+  NR > s && NR <= e { next }
   { print }
 ' "$plan_file" > "$plan_file.tmp" && mv "$plan_file.tmp" "$plan_file"
 

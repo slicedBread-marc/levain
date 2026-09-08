@@ -32,6 +32,18 @@ Before starting, confirm E2E passed on release:
    git log --oneline release --not main -n 20
    ```
 3. **If no new commits on release vs main**: inform the user there is nothing to deploy and exit.
+3a. **Check for open deferred criteria on the plans being promoted:**
+   ```bash
+   scripts/wf-exec.sh wf-deferred-check.sh $(git log --oneline release --not main | grep -oE 'PLN-[0-9]+' | sort -u)
+   ```
+   Exit `0` — nothing open, continue. Exit `1` — print its output to the user before the confirmation
+   prompt below: these are `external`/`soak`/`unbuilt` criteria that plan shipped without,
+   read from `plans/deferred-criteria.md`. Most are harmless (a soak period, a future
+   integration test) — but some describe a hard runtime dependency (a secret, a certificate, a
+   required external service) that will crash the app in production if it's still missing. This
+   check cannot tell the two apart; a human or grant has to. client-c's DC-014 was exactly
+   the dangerous kind and went unread straight into a production crash-loop (WFI-011) — don't
+   let this step become the same silent skip.
 4. **Prompt user**: "These commits will be promoted to main. Proceed? (y/n)"
    Wait for explicit confirmation before continuing.
 

@@ -241,7 +241,11 @@ if [ -n "$_claim_num" ]; then
         PLN-"$_claim_num"-*|PLN-"$_claim_num") ;;
         *) continue ;;
       esac
-      if grep -qE "^\*\*(Bug|Brief):\*\*[[:space:]]*(BUG|BRF)-0*${_claim_num#0}\b" "$_p" 2>/dev/null; then
+      # Real plan.md writes this as a blockquote ('> **Brief:** ...'), and the
+      # Brief value is a file path ('briefs/BRF-NNN-slug.md'), not a bare
+      # token — so the id can appear anywhere after the label, not only right
+      # after the colon (WFI-248, WFI-246, WFI-009, WFI-007).
+      if grep -qE "^>?[[:space:]]*\*\*(Bug|Brief):\*\*.*\b(BUG|BRF)-0*${_claim_num#0}\b" "$_p" 2>/dev/null; then
         _claim_inherited=true
       fi
       break

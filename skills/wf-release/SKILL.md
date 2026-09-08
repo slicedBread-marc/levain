@@ -31,6 +31,16 @@ release-branches/release → release's own permanent worktree — staging enviro
    git log main..release --oneline | head -10
    ```
 3. **If no new commits on release vs main**: inform the user ("Release is up to date with main — nothing to release.") and exit. Next step: work on a plan with `/wf-implement`, test it with `/wf-test`, then return here.
+3a. **Check for open deferred criteria on the plans being staged:**
+   ```bash
+   scripts/wf-exec.sh wf-deferred-check.sh $(git log main..release --oneline | grep -oE 'PLN-[0-9]+' | sort -u)
+   ```
+   Exit `1` — show its output to the user alongside the commit list in the next step. These are
+   `external`/`soak`/`unbuilt` criteria read from `plans/deferred-criteria.md` that a plan shipped
+   without — most are harmless, but one describing a hard runtime dependency (a secret, a
+   certificate, a required external service) can crash production if `/wf-deploy` promotes it
+   before that dependency exists (WFI-011). Surfacing here gives `/wf-deploy` a second, earlier
+   read of the same list.
 4. **Show commits to user** — display the commit list from step 2. Tell the user: "Run `/model haiku` if not already on it, then confirm to proceed." Then prompt: "These commits are staged for E2E. Proceed? (y/n)"
    Wait for explicit confirmation before continuing.
 

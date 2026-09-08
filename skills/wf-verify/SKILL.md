@@ -208,9 +208,14 @@ must never reach `findings.md` as one.
 and the two wrong moves are recording it as clean because nothing failed, or
 routing findings from a suite that never finished. When one happens anyway:
 
-1. **Kill the leak first.** The Bash wrapper dies at the timeout; the test
-   process it started often does not, and a leaked runner competes with
-   everything you do next. `pkill -f '<test runner>'`, confirm with `ps`.
+1. **Kill the leak first.** The Bash call does not die at the timeout — it
+   moves itself to the background and reports a task ID
+   (`Command did not complete within its 600s timeout and was moved to the
+   background (ID: ...)`), and the test process it started keeps running
+   behind it, competing with everything you do next (client-a WFI-247:
+   still consuming CPU minutes after the "timeout" had already been
+   reported). Stop both halves — `TaskStop` on the task ID, then
+   `pkill -f '<test runner>'`, confirm with `ps` that nothing survived.
 2. **Narrow to what this plan actually changed.** The plan's Tests table names
    its own test classes; run those and nothing else. client-a's 21-test
    scoped run finished in 35s under the same load that killed the full suite.

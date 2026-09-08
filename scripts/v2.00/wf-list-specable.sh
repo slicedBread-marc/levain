@@ -133,7 +133,13 @@ for bug_md in bugs/open/*/bug.md; do
   # This list is where the orchestrator's spec candidates come from, so a
   # misread id here is a worker dispatched at another bug entirely (WFI-176).
   bug_id=$(wf_bug_id "$bug_md")
-  severity=$(grep -E "Severity:" "$bug_md" 2>/dev/null | head -1 | sed 's/.*Severity:\*\*[[:space:]]*//' | sed 's/^> //')
+  # `|| true` on the whole pipeline: under pipefail, a bug.md with no
+  # Severity: line makes grep the only nonzero exit in the pipe, so under
+  # `set -e` the bare assignment killed the whole script the first time a
+  # bug lacking that field ever reached this line (surfaced by BUG-900-dup,
+  # a "a bug\n" fixture with no header fields at all, once WFI-249's
+  # triaged/ scan started reading it too).
+  severity=$({ grep -E "Severity:" "$bug_md" 2>/dev/null | head -1 | sed 's/.*Severity:\*\*[[:space:]]*//' | sed 's/^> //'; } || true)
   title=$(head -1 "$bug_md" | sed 's/^# //')
   [ -n "$bug_id" ] || continue
   # A bug being specced right now is claimed under its number, even though no
@@ -142,6 +148,49 @@ for bug_md in bugs/open/*/bug.md; do
   wf_claim_held "$bug_id" && continue
   if [ $bugs_found -eq 0 ]; then echo "# bugs"; fi
   printf "%s\t%s\t%s\n" "$bug_id" "$severity" "$title"
+  bugs_found=1
+  found=1
+done
+
+# --- Bugs hand-filed straight into triaged/ ────────────────────────────────
+#
+# `triaged/` is normally reached only by wf-bug-consume.sh, at the moment a
+# fix plan exists, and it always writes `> **Plan:** PLN-NNN-slug` into
+# bug.md when it does. A bug placed there by hand — modeled on a sibling that
+# legitimately lives in triaged/ because it already has a plan — carries no
+# such field, and this script used to scan only bugs/open/*/bug.md. The
+# result: silently invisible to every sweep, with no error anywhere
+# (client-a BUG-270, WFI-249).
+#
+# So: any triaged bug whose Plan: field is empty, absent, or names a plan
+# directory that does not exist is un-specced regardless of which folder it
+# sits in, and belongs in the same list as an open bug.
+for bug_md in bugs/triaged/*/bug.md; do
+  [ -f "$bug_md" ] || continue
+  bug_id=$(wf_bug_id "$bug_md")
+  [ -n "$bug_id" ] || continue
+  plan_field=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Plan:\*\*' "$bug_md" 2>/dev/null \
+               | sed -E 's/^.*\*\*Plan:\*\*[ \t]*//; s/[ \t]*$//; s#/$##' || true)
+  case "$plan_field" in
+    ""|*"(none"*|*_none_*) ;;
+    # `if`, not `[ -d ... ] && continue` — under `set -e` a bare `&&` whose
+    # left side is false is the exit status of this whole case arm, and a
+    # case statement outside any exempted context aborts the script on that
+    # (the rest of bugs/triaged/ and every briefs row after it went unread
+    # silently, caught only by tests/client-reports.sh).
+    *) if [ -d "plans/$plan_field" ]; then continue; fi ;;
+  esac
+  # `|| true` on the whole pipeline: under pipefail, a bug.md with no
+  # Severity: line makes grep the only nonzero exit in the pipe, so under
+  # `set -e` the bare assignment killed the whole script the first time a
+  # bug lacking that field ever reached this line (surfaced by BUG-900-dup,
+  # a "a bug\n" fixture with no header fields at all, once WFI-249's
+  # triaged/ scan started reading it too).
+  severity=$({ grep -E "Severity:" "$bug_md" 2>/dev/null | head -1 | sed 's/.*Severity:\*\*[[:space:]]*//' | sed 's/^> //'; } || true)
+  title=$(head -1 "$bug_md" | sed 's/^# //')
+  wf_claim_held "$bug_id" && continue
+  if [ $bugs_found -eq 0 ]; then echo "# bugs"; fi
+  printf "%s\t%s\t%s (hand-filed into triaged/, no plan)\n" "$bug_id" "$severity" "$title"
   bugs_found=1
   found=1
 done
