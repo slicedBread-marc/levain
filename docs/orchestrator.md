@@ -113,11 +113,19 @@ precisely when the registry is wrong. So the rule is now "is this develop?",
 with one exception: before `develop` exists there is no other copy to be stale
 against, so a greenfield client dispatches from whatever branch it has.
 
+**As of the release/deploy worktree pin, neither skill parks the shared
+checkout here at all anymore** — `/wf-release` and `/wf-deploy` each pin their
+branch to its own persistent worktree (`release-branches/release`,
+`release-branches/main`) instead of borrowing this one. See
+[`docs/release-worktrees.md`](release-worktrees.md). This skip rule stays as a
+guard against whatever it was originally built for beyond those two skills — a
+human parking the shared worktree on `release`/`main`/some other branch by
+hand — but a release or a deploy no longer trips it, and the pause it causes
+is no longer a documented, expected cost of either.
+
 The pause is latched, self-clearing and loud: the sweep prints which branch it
 is standing on and why, and the next sweep after the checkout returns to
-develop dispatches normally. `/wf-release` and `/wf-deploy` are each responsible
-for handing the checkout back when they finish — a release left parked stops the
-pipeline, silently, until someone notices.
+develop dispatches normally.
 
 ### Claims name the worker, and the worker knows it
 

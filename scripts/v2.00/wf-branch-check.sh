@@ -45,6 +45,14 @@
 #   · `release` or `main` (WFI-157 — a /wf-release or /wf-deploy is holding it)
 #
 # Only `develop` and `feature/*` are switched away from without comment.
+#
+# NEITHER /wf-release NOR /wf-deploy calls this against the shared checkout
+# anymore — each pins its branch to its own persistent worktree instead
+# (`wf-worktree-pin.sh`, docs/release-worktrees.md), so this branch of the
+# case statement should no longer fire in the documented flow. Left in place
+# as defense-in-depth: a client session still running a pre-migration copy of
+# either skill, or a human who parks the shared checkout on `release`/`main`
+# by hand, still gets the same refusal it always did.
 
 set -euo pipefail
 

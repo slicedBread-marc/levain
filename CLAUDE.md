@@ -163,7 +163,9 @@ feature/*   → one branch per plan (e.g. feature/PLN-005-bug-002-guest-logout)
 
 T3 creates a `feature/<plan-name>` branch and worktree from `develop`. On completion, the worktree merges back to `develop` and the feature branch is deleted.
 
-What a feature worktree may and may not contain is a contract, not a preference — a path that is both sparse-excluded and written by deploy breaks git outright. Read `docs/worktrees.md` before changing either list.
+`release` and `main` each live in their own persistent worktree too — `release-branches/release` and `release-branches/main`, pinned by `/wf-release` and `/wf-deploy` respectively (`wf-worktree-pin.sh`). Neither skill checks out its branch in the shared develop worktree anymore, so a release or a deploy in progress no longer moves what a parallel session, or the orchestrator, reads as `develop`. Read `docs/release-worktrees.md` before changing either skill's worktree step.
+
+What a feature worktree may and may not contain is a contract, not a preference — a path that is both sparse-excluded and written by deploy breaks git outright. Read `docs/worktrees.md` before changing either list. Release and main worktrees are **not** sparse — they need the real `plans/**` content, which is the entire point of merging into them — see `docs/release-worktrees.md`.
 
 How a skill hands a plan back is also a contract: **commit the state transition, then close the gate, then unclaim** — never the reverse. Read `docs/guard-ordering.md` before editing any skill's exit path.
 

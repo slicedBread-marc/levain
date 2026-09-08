@@ -12,25 +12,21 @@ You are in **deploy mode**. Your job is to promote the validated release branch 
 ## State context
 
 ```
-plans/REGISTRY.md → single source of truth (plans move testing → complete)
-bugs/triaged/     → bugs linked to plans (move to closed/ when plan completes)
-bugs/closed/      → closed bugs
+plans/REGISTRY.md    → single source of truth (plans move testing → complete)
+bugs/triaged/        → bugs linked to plans (move to closed/ when plan completes)
+bugs/closed/         → closed bugs
+release-branches/main → main's own permanent worktree, pinned by step 5
 ```
 
 ## Pre-flight check
 
 Before starting, confirm E2E passed on release:
 
-1. **Find `release`, wherever it lives — do not assume this checkout is on it:**
+1. **`release` must exist as a ref** — it doesn't need to be checked out anywhere for this check:
    ```bash
-   git worktree list
    git rev-parse --verify release
    ```
-   `release` must exist. It does **not** have to be checked out here, and on some projects it cannot be: a project that keeps `release` permanently checked out in a dedicated worktree makes `wf-branch-check.sh release` unsatisfiable from the project root — `git checkout release` answers `fatal: 'release' is already checked out at '…/_release-verify'`, so the check could never pass and the skill offered no alternative (client-a WFI-213).
-
-   Nothing in this pre-flight needs to be *standing on* release: steps 2 and 3 read `release` and `main` as refs, which resolve from any worktree in the repository.
-
-   **Steps 5–11 run in the checkout that holds `main` and `develop`** — normally the project root. If `git worktree list` shows `release` held elsewhere, that other worktree is not where the deploy happens; note which checkout is which before you start, and do the whole of 5–11 in the one that can take `main`.
+   Steps 2 and 3 read `release` and `main` as refs too, which resolve from any worktree in the repository.
 2. **Show recent release commits** so the user can confirm what's being promoted:
    ```bash
    git log --oneline release --not main -n 20
@@ -53,12 +49,13 @@ Before starting, confirm E2E passed on release:
 
 ## What you do
 
-5. **Switch to `main` branch**:
+5. **Pin `main` to its own worktree and move into it:**
    ```bash
-   git checkout main
+   eval "$(scripts/wf-exec.sh wf-worktree-pin.sh main release-branches/main)"
+   cd "$WORKTREE_PATH"
    git pull origin main
    ```
-   From here until step 11 puts it back, the shared main worktree is off `develop` — so `plans/REGISTRY.md` is main's older copy and the orchestrator dispatches nothing at all (WFI-135). That is deliberate: dispatching from a stale registry is how two builders were sent at a completed plan. **Steps 5–11 are one unit.** If you abort anywhere in the middle, `git checkout develop` before you stop, and say that you did.
+   `release-branches/main` is `main`'s permanent home — created once, reused forever. Before this, `/wf-deploy` moved the *shared* develop worktree onto `main` for the duration of the run, which put `plans/REGISTRY.md` — the file the orchestrator and every other session reads — behind `main`'s older copy for as long as the deploy took, and any concurrent session standing in that same directory found itself on `main` too (client-a's WFI-135, WFI-157, WFI-213 — the last of those had a client already work around exactly this by hand, keeping `release` in its own worktree; this generalizes that shape and applies it to `main` as well). Pinning `main` here means the develop worktree — project root, wherever this session started — never moves at all. **Steps 5–10 run in `release-branches/main`**, not the project root; every command below assumes that cwd. See [`docs/release-worktrees.md`](../../docs/release-worktrees.md).
 6. **Merge `release` into `main`** (auto-resolve in favor of release):
    ```bash
    git merge -X theirs --no-ff release -m "release: promote to main"
@@ -70,7 +67,7 @@ Before starting, confirm E2E passed on release:
    [ -x scripts/wf-exec.sh ] && [ -f scripts/version-map.txt ] && echo "harness ok" \
      || echo "HARNESS MISSING"
    ```
-   `HARNESS MISSING` means this merge carried the commit that stops tracking the generated harness onto a branch that still tracked it, so git deleted the files — and they are gitignored, so nothing puts them back. Restore with `scripts/wf-exec.sh wf-harness-restore.sh` if the dispatcher survived — it reinstalls from the library recorded in `.claude/workflow-source` and only falls back to history, with a version check, if the library is gone. **Exit 3 means it could only find a stale harness**: treat that as unrecovered and reinstall from the library before doing anything else (WFI-119). If the dispatcher itself did not survive, use the recovery in `/wf-release` step 5a, which needs no harness. Run the same check again after step 11's `git checkout develop` (WFI-006).
+   `HARNESS MISSING` means this merge carried the commit that stops tracking the generated harness onto a branch that still tracked it, so git deleted the files — and they are gitignored, so nothing puts them back. Restore with `scripts/wf-exec.sh wf-harness-restore.sh` if the dispatcher survived — it reinstalls from the library recorded in `.claude/workflow-source` and only falls back to history, with a version check, if the library is gone. **Exit 3 means it could only find a stale harness**: treat that as unrecovered and reinstall from the library before doing anything else (WFI-119). If the dispatcher itself did not survive, use the recovery in `/wf-release` step 5a, which needs no harness. Run the same check again after step 11 returns to the develop worktree (WFI-006) — the back-merge there is a separate merge and can go stale independently.
 
 7. **Run full test suite** (final integration check):
    ```bash
@@ -79,41 +76,20 @@ Before starting, confirm E2E passed on release:
    ```
    If tests fail, abort the deploy — do NOT proceed to registry updates. Inform user of failures and suggest fixing on the release branch, then re-running `/wf-release`.
 
-   **This step reads as inline and on a large project it cannot be.** A foreground Bash call is capped at 10 minutes; client-a's full suite takes about 13, so it is killed mid-run every time and the deploy stalls at its most dangerous point — the shared checkout is off `develop` and the orchestrator is dispatching nothing (WFI-213). If the suite is known to exceed the cap, run it with `run_in_background` and **wait for it to finish before doing anything else**. That is safe here and nowhere else in the harness: `/wf-deploy` runs in a session that persists across turns, unlike the verify agent, which is killed the moment it stops producing output and must never background anything.
+   **This step reads as inline and on a large project it cannot be.** A foreground Bash call is capped at 10 minutes; client-a's full suite takes about 13, so it used to be killed mid-run every time, and back when this ran in the shared develop worktree that stalled the deploy at its most dangerous point — the registry every other session read was `main`'s stale copy (WFI-213). That specific danger is gone now that `main` lives in its own worktree: a long suite here no longer touches `plans/REGISTRY.md` on develop, and the orchestrator keeps dispatching normally throughout. The 10-minute cap itself is unchanged, though — if the suite is known to exceed it, run it with `run_in_background` and **wait for it to finish before doing anything else**. That is safe here and nowhere else in the harness: `/wf-deploy` runs in a session that persists across turns, unlike the verify agent, which is killed the moment it stops producing output and must never background anything.
 
-   Either way, step 7a's re-assert is what protects you across that window — the longer the run, the more it matters.
-
-7a. **Re-assert the branch before anything else commits.** The suite above takes
-    minutes, and this is the shared main worktree — the longest window in the
-    whole pipeline during which somebody else can move it:
+7a. **Sanity-check the branch before anything else commits:**
     ```bash
     git branch --show-current    # must print: main
     ```
-    If it prints anything else, **stop and do not continue the deploy.** Something
-    moved the checkout while the suite ran; go back to step 5 once it is quiet.
-    client-a's WFI-157: a spec worker dispatched moments before step 5 switched
-    the checkout from `main` to `develop` three minutes into the suite, and steps
-    9 and 10 committed to `develop` — then step 11's `git checkout develop`
-    printed "Already on develop" and the deploy reported success. As of v6.12
-    `wf-branch-check.sh` refuses that switch unattended, so this check is the
-    second line, not the first.
-
-    **Then hold the branch for steps 8–10** by naming it on every call:
-    ```bash
-    export WF_REQUIRE_BRANCH=main
-    ```
-    `wf-commit.sh` reads it and refuses any commit made on another branch —
-    including the ones `wf-registry-update.sh` and `wf-bug-close.sh` make on
-    their own. Each Bash call is a fresh shell, so prefix it per command
-    (`WF_REQUIRE_BRANCH=main scripts/wf-exec.sh …`) rather than relying on the
-    export surviving. Unset it at step 11, which legitimately leaves `main`.
+    `release-branches/main` is pinned — nothing else in this pipeline ever checks it out to anything else, so this should always pass. If it doesn't, a human touched this worktree by hand; stop and sort that out before continuing rather than guess.
 8. **Update REGISTRY.md** — for each plan that was on the release branch, verify state is `complete`. If not:
    ```bash
-   WF_REQUIRE_BRANCH=main scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete -
+   scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete -
    ```
 9. **Close linked bugs** — for each completed plan, check `plan.md` Goal for `**Bug:**` line:
    ```bash
-   WF_REQUIRE_BRANCH=main scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
+   scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
    ```
    Each call commits its own rename, both sides — leave the bug folders out of step 10's pathspec (WFI-136).
 
@@ -126,11 +102,9 @@ Before starting, confirm E2E passed on release:
     scripts/wf-exec.sh wf-commit.sh "release: complete <plan-names>" \
       --branch main --add plans/PLN-NNN-<slug>/plan.md
     ```
-11. **Back-merge `main` → `develop`** (auto-resolve in favor of main). This step
-    leaves `main` on purpose, so drop the step 7a guard first — `unset
-    WF_REQUIRE_BRANCH`, or simply stop prefixing it:
+11. **Return to the develop worktree and back-merge `main` → `develop`** (auto-resolve in favor of main). Unlike steps 5–10, this one runs in the develop worktree itself — the commits `main` just received in `release-branches/main` are already visible there as local refs, no push needed:
     ```bash
-    git checkout develop
+    cd "$(git worktree list --porcelain | head -1 | sed 's/^worktree //')"
     git pull origin develop
     git merge -X ours main -m "sync: bring completed plans back to develop"
     ```
@@ -186,11 +160,12 @@ Plans never move folders, so the only potential conflict is REGISTRY.md — whic
 - **E2E must have passed** — this skill assumes `/wf-release` already validated the release branch
 - **Do NOT** force push — this is a main branch, use regular merge
 - **Do NOT** skip back-merge — develop needs to stay in sync with main
-- **Complete all steps** — if the user interrupts, provide a clear resumption point
+- **Steps 5–10 run in `release-branches/main`, step 11 onward runs in the develop worktree** — step 5 pins and moves you into the former; step 11 moves you back
+- **Complete all steps** — if the user interrupts, tell them which step to resume at; there is no shared checkout to leave parked, so an interruption costs nothing beyond finishing later
 
 ## On startup
 
-1. Confirm `release` exists and note which worktree holds it (`git worktree list`) — it need not be this one, and on some projects it never is
+1. Confirm `release` exists as a ref (`git rev-parse --verify release`) — it need not be checked out anywhere
 2. Show commits on release that aren't on main
 3. If new commits exist: prompt user to confirm promotion
 4. If no new commits: inform user there is nothing to deploy

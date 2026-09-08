@@ -428,6 +428,19 @@ if ! grep -qF "feature-branches/" "$GITIGNORE" 2>/dev/null; then
     echo -e "${GREEN}  Added feature-branches/ to .gitignore${NC}"
 fi
 
+# Release/deploy worktrees.
+#
+# `release-branches/` is the same idea as `feature-branches/` above, but
+# permanent rather than per-plan: `/wf-release` and `/wf-deploy` pin `release`
+# and `main` to their own worktrees here (`wf-worktree-pin.sh`) instead of
+# borrowing the shared develop checkout. See docs/release-worktrees.md. Left
+# out of .gitignore, the same class of accident applies — a `git add -A` on
+# develop would commit an entire pinned worktree into the planning branch.
+if ! grep -qF "release-branches/" "$GITIGNORE" 2>/dev/null; then
+    echo "release-branches/" >> "$GITIGNORE"
+    echo -e "${GREEN}  Added release-branches/ to .gitignore${NC}"
+fi
+
 # The plan pointer.
 #
 # `.plan-ref` names which plan a WORKTREE is building. It is per-worktree

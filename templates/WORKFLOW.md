@@ -286,3 +286,7 @@ scripts/vN.NN/                  versioned script generations
    a limit. Hitting one is a signal.
 6. Branches: `main` (production) ← `release` (staging) ← `develop` (integration)
    ← `feature/*` (one per plan). Plan content lives on `develop` only.
+   `release` and `main` each live in their own permanent worktree
+   (`release-branches/release`, `release-branches/main`), pinned by
+   `/wf-release` and `/wf-deploy` — neither ever checks out its branch in
+   this shared `develop` checkout.

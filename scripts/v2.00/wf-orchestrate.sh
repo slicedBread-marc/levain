@@ -305,7 +305,15 @@ skip_clear() {
 # (WFI-123). All four mean: dispatch nothing this sweep.
 #
 # It clears itself: the next sweep after the checkout returns to develop
-# dispatches normally, so a release or a deploy costs a pause, not a stop.
+# dispatches normally.
+#
+# `/wf-release` and `/wf-deploy` no longer park the shared checkout on
+# `release`/`main` at all — each pins its branch to its own persistent
+# worktree instead (`wf-worktree-pin.sh`, docs/release-worktrees.md), so a
+# release or a deploy no longer costs a pause here. This function is
+# unchanged and still guards the remaining case: a human (or a
+# not-yet-migrated skill) parking the shared checkout somewhere other than
+# develop by hand.
 checkout_available() {
   local root branch
   root=$(wf_develop_root)

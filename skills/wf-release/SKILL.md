@@ -12,17 +12,20 @@ You are in **release mode**. Your job is to sync `develop` into `release`, valid
 ## State context
 
 ```
-plans/REGISTRY.md → single source of truth (plans stay in "complete" state after this skill)
-release branch    → staging environment for E2E validation
+plans/REGISTRY.md      → single source of truth (plans stay in "complete" state after this skill)
+release-branches/release → release's own permanent worktree — staging environment for E2E validation
 ```
 
 ## What you do
 
-1. **Confirm you are on the `release` branch:**
+1. **Pin `release` to its own worktree and move into it:**
    ```bash
-   scripts/wf-exec.sh wf-branch-check.sh release
+   eval "$(scripts/wf-exec.sh wf-worktree-pin.sh release release-branches/release)"
+   cd "$WORKTREE_PATH"
    ```
-   **This moves the shared checkout, and the orchestrator reads its `plans/REGISTRY.md`.** On `release` that file is whatever release last merged, so every plan whose state advanced since then reads stale — client-a's PLN-051 read `active` there while develop had it `complete`, and two unattended builders were dispatched at a finished plan (WFI-135, WFI-134). As of v6.4.3 the daemon refuses to dispatch anything while the main worktree is off `develop`, so the cost is a paused pipeline rather than a wrong one. **The pause lasts exactly as long as you hold the checkout — finish, then hand it back at step 9.**
+   `release-branches/release` is `release`'s permanent home — created once, reused forever, never the shared develop checkout. Before this, `/wf-release` moved the shared main worktree onto `release` for the duration of the run: the orchestrator reads `plans/REGISTRY.md` from that worktree, and on `release` that file is whatever release last merged, so every plan whose state advanced since then read stale — client-a's PLN-051 read `active` there while develop had it `complete`, and two unattended builders were dispatched at a finished plan (WFI-135, WFI-134, WFI-157). Pinning `release` to its own path removes the borrowing: develop's worktree never leaves develop, so there is nothing to hand back at the end and nothing for a parallel session to catch mid-move. See [`docs/release-worktrees.md`](../../docs/release-worktrees.md).
+
+   Everything from here through step 8 runs **in `release-branches/release`**, not the project root — every command below assumes that cwd.
 2. **Check if release has unreleased commits:**
    ```bash
    git log main..release --oneline | head -10
@@ -58,7 +61,7 @@ release branch    → staging environment for E2E validation
 
    `HARNESS MISSING` means the untrack commit reached a branch that still tracked the generated harness, so git deleted the files — and they are gitignored now, so nothing puts them back.
 
-   **Reinstall from the library first.** `install.sh` recorded its own path when this project was set up, and it survives any checkout because it is untracked. That last word is also why the snippet below looks in two places: untracked files are **not** materialised in a git worktree, so if you are releasing from a dedicated worktree, `.claude/workflow-source` exists only in the main checkout (client-a's WFI-191 — the old one-liner was guarded with `[ -n "$lib" ] &&`, so an empty `$lib` made it a silent no-op that exited 0).
+   **Reinstall from the library first.** `install.sh` recorded its own path when this project was set up, and it survives any checkout because it is untracked. That last word is also why the snippet below looks in two places: untracked files are **not** materialised in a git worktree, and you are always releasing from `release-branches/release` — a dedicated worktree — so `.claude/workflow-source` exists only in the main (develop) checkout (client-a's WFI-191 — the old one-liner was guarded with `[ -n "$lib" ] &&`, so an empty `$lib` made it a silent no-op that exited 0).
    ```bash
    lib=$(cat .claude/workflow-source 2>/dev/null | tr -d '[:space:]')
    if [ -z "$lib" ]; then
@@ -114,11 +117,11 @@ release branch    → staging environment for E2E validation
    # every test skipped on a feature branch by tiered gating MUST run here.
    ```
    If tests fail, inform the user of failures. The release branch stays as-is for fixes.
-8. **Hand the checkout back — run this whether the E2E passed or failed:**
+8. **Return to the develop worktree** — you never left it checked out, but this session's own cwd did:
    ```bash
-   scripts/wf-exec.sh wf-branch-check.sh develop true
+   cd "$(git worktree list --porcelain | head -1 | sed 's/^worktree //')"
    ```
-   The orchestrator dispatches nothing at all while the main worktree sits on `release`, because the registry it would read is release's older copy (WFI-135). Leaving it parked does not stop *this* skill — it stops the whole pipeline, silently, until someone notices. A failed E2E is fixed on a feature branch anyway, so there is no case where release needs to stay checked out.
+   There is nothing to hand back — `release-branches/release` stays on `release`, always, so the orchestrator's own read of `plans/REGISTRY.md` off the develop worktree was never affected by any of this. (Don't cache the path from step 1 in a shell variable — each step here may run as a separate shell, and only the working directory itself is guaranteed to carry over.)
 9. **Display result**:
 
    **On success:**
@@ -140,16 +143,16 @@ release branch    → staging environment for E2E validation
 
 ## Rules
 
-- **Confirm branch** — always check you're on `release` before starting
+- **Work in `release-branches/release`** — step 1 pins it and moves you there; every step through 7 assumes that cwd
 - **Do NOT merge to main** — that's `/wf-deploy`
 - **Do NOT update REGISTRY.md** — plan states are already set by `wf-test` and `wf-deploy`
 - **Do NOT** force push — use regular merge
-- **Complete all steps** — if the user interrupts, provide a clear resumption point
-- **Never leave the checkout on `release`** — it is the shared main worktree, and while it is parked there the orchestrator dispatches nothing (WFI-135). If you stop early, for any reason, run `wf-branch-check.sh develop true` on the way out and say so
+- **Complete all steps** — if the user interrupts mid-run, tell them which step to resume at; there is no shared checkout to leave parked, so an interruption costs nothing beyond finishing later
+- **Return your own cwd to the develop worktree at step 8** — not because anything needs it back (nothing else ever touches `release-branches/release`), but so the session you're running in ends up back where the human expects it
 
 ## On startup
 
-1. Confirm on `release` branch
+1. Pin `release` to `release-branches/release` and move into it (step 1)
 2. Check for commits on `release` that aren't on `main`
 3. If new commits exist: show them and prompt user to confirm proceeding
 4. If no new commits: inform user there is nothing to release
