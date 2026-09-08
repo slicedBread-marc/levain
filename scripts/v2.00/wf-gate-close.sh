@@ -130,12 +130,12 @@ fi
 
 gate_question=""
 if [ -f "$gate_file" ]; then
-  gate_name=$(grep -m1 "^GATE_NAME=" "$gate_file" | sed "s/^GATE_NAME='//; s/'$//")
+  gate_name=$(wf_gate_field "$gate_file" GATE_NAME)
   # The gate's OWN id, which is the plan when a plan opened it. Everything
   # below — the fingerprints, the registry state, the findings.md the
   # resolution is written into — is about that plan, and none of it can be
   # found under the brief or bug the caller happens to be holding (WFI-187).
-  gate_owner=$(grep -m1 "^GATE_ID=" "$gate_file" | sed "s/^GATE_ID='//; s/'$//" || true)
+  gate_owner=$(wf_gate_field "$gate_file" GATE_ID)
   [ -n "$gate_owner" ] && id="$gate_owner"
   # The question AS ASKED, kept with the answer.
   #
@@ -155,13 +155,11 @@ if [ -f "$gate_file" ]; then
   # `08c3a136 '\''bug(BUG-214): root cause is a stale relay...'\''` (WFI-214).
   # Commit subjects are quoted into gate questions routinely, and English has
   # apostrophes, so this is the common case rather than the exotic one.
-  gate_question=$(grep -m1 "^GATE_QUESTION=" "$gate_file" \
-                  | sed "s/^GATE_QUESTION='//; s/'$//; s/'\\\\''/'/g" || true)
+  gate_question=$(wf_gate_field "$gate_file" GATE_QUESTION --unescape)
   # Read here, with the rest, because the gate file is gone below.
   # This is the plan's fingerprint as of when the question was ASKED — see the
   # comment above `record=` for why the close-time one cannot stand alone.
-  plan_body_fp_at_open=$(grep -m1 "^GATE_PLAN_BODY_FP_AT_OPEN=" "$gate_file" \
-                         | sed "s/^GATE_PLAN_BODY_FP_AT_OPEN='//; s/'$//" || true)
+  plan_body_fp_at_open=$(wf_gate_field "$gate_file" GATE_PLAN_BODY_FP_AT_OPEN)
 else
   gate_name="$forced_gate"
 fi

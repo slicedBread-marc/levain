@@ -29,9 +29,8 @@ REGISTRY="plans/REGISTRY.md"
 [ -f "$REGISTRY" ] || { echo "Error: $REGISTRY not found" >&2; exit 1; }
 
 # Resolve plan dir
-row=$(grep "^| $plan_id |" "$REGISTRY" | head -1)
-[ -n "$row" ] || { echo "Error: $plan_id not found in registry" >&2; exit 1; }
-slug=$(echo "$row" | awk -F'|' '{print $3}' | xargs)
+slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
+[ -n "$slug" ] || { echo "Error: $plan_id not found in registry" >&2; exit 1; }
 plan_dir="plans/${plan_id}-${slug}"
 plan_file="$plan_dir/plan.md"
 [ -f "$plan_file" ] || { echo "Error: $plan_file not found" >&2; exit 1; }

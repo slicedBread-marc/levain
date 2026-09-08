@@ -33,9 +33,8 @@ REGISTRY="$ROOT/plans/REGISTRY.md"
 
 progress=""
 if [ -f "$REGISTRY" ]; then
-  row=$(grep "^| $plan_id |" "$REGISTRY" | head -1 || true)
-  if [ -n "$row" ]; then
-    slug=$(printf '%s' "$row" | awk -F'|' '{print $3}' | xargs)
+  slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
+  if [ -n "$slug" ]; then
     progress="$ROOT/plans/${plan_id}-${slug}/progress.md"
   fi
 fi

@@ -61,31 +61,9 @@ flatten() {
 
 # state_of <id> → the artifact's REGISTRY state, or `—` when it has no row yet
 # (a bug or brief on its way to a first spec, which is a legitimate gate target).
-# The registry read once into `<id>=<state>` pairs, rather than a
-# grep|head|awk|xargs per gate per lookup — this script runs on every board
-# render and twice more per candidate inside the dispatcher.
-_state_map=""
-if [ -f "$REGISTRY" ]; then
-  _state_map=" $(awk -F'|' '
-    function trim(x) { gsub(/^[ \t]+|[ \t]+$/, "", x); return x }
-    { id = trim($2); if (id ~ /^(PLN|BUG|BRF)-[0-9]+$/) printf "%s=%s ", id, trim($4) }
-  ' "$REGISTRY")"
-fi
-_map_get() {
-  local rest="${_state_map##* $1=}"
-  [ "$rest" = "$_state_map" ] && return 0
-  printf '%s' "${rest%% *}"
-}
-
-state_of() {
-  local id="$1" s=""
-  [ -n "$_state_map" ] || { printf '—'; return 0; }
-  s=$(_map_get "$id")
-  # A bug or brief keeps its number when it becomes a plan (BUG-022 → PLN-022),
-  # and the gate may have been opened under the earlier name.
-  [ -n "$s" ] || s=$(_map_get "PLN-${id#*-}")
-  printf '%s' "${s:-—}"
-}
+# wf_state_of (wf-orch-lib.sh) does the PLN-alias fallback and the once-per-
+# process memoization; this used to carry its own copy of both.
+state_of() { wf_state_of "$1" "$REGISTRY"; }
 
 # gate_fit <gate-name> <state> → ok | mismatch
 #
@@ -118,16 +96,22 @@ gate_fit() {
   if [ "$2" = "$want" ]; then printf 'ok'; else printf 'mismatch'; fi
 }
 
-# How many other incomplete plans sit behind this one in the Deps graph.
+# How many other incomplete plans sit behind each plan in the Deps graph.
 # BFS over the reverse-dependency edges; a plan already `complete` is not
 # blocked by anything, so it and its own dependents are not counted through it.
-blocked_by() {
-  [ -f "$REGISTRY" ] || { printf '0'; return 0; }
-  awk -F'|' -v root="$1" '
+#
+# Computed once for every plan in the table, not per gate file: this used to
+# re-parse the whole registry and re-run its own BFS on every call, and the
+# gate loop below calls it once per open gate. On a queue of N gates that was
+# N full re-reads of REGISTRY.md rebuilding the identical graph each time.
+_blocked_map=""
+if [ -f "$REGISTRY" ]; then
+  _blocked_map=" $(awk -F'|' '
     function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
     /^\|/ {
       pid = trim($2)
       if (pid == "" || pid == "ID" || pid ~ /^-+$/) next
+      ids[++nids] = pid
       state[pid] = trim($4)
       n = split(trim($10), d, ",")
       for (i = 1; i <= n; i++) {
@@ -136,20 +120,29 @@ blocked_by() {
       }
     }
     END {
-      queue[1] = root; head = 1; tail = 1; count = 0
-      while (head <= tail) {
-        cur = queue[head++]
-        n = split(rdeps[cur], kids, ",")
-        for (i = 1; i <= n; i++) {
-          k = kids[i]
-          if (k == "" || (k in seen) || state[k] == "complete") continue
-          seen[k] = 1; count++
-          queue[++tail] = k
+      for (j = 1; j <= nids; j++) {
+        root = ids[j]
+        delete seen
+        queue[1] = root; head = 1; tail = 1; count = 0
+        while (head <= tail) {
+          cur = queue[head++]
+          n = split(rdeps[cur], kids, ",")
+          for (i = 1; i <= n; i++) {
+            k = kids[i]
+            if (k == "" || (k in seen) || state[k] == "complete") continue
+            seen[k] = 1; count++
+            queue[++tail] = k
+          }
         }
+        printf "%s=%d ", root, count
       }
-      print count
     }
-  ' "$REGISTRY"
+  ' "$REGISTRY")"
+fi
+blocked_by() {
+  local rest="${_blocked_map##* $1=}"
+  [ "$rest" = "$_blocked_map" ] && { printf '0'; return 0; }
+  printf '%s' "${rest%% *}"
 }
 
 # Single-artifact probe

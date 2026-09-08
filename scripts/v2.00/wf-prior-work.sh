@@ -187,7 +187,7 @@ while IFS= read -r sha; do
     echo "Prior work for $plan_id on '$base', outside the pipeline:"
   fi
   found=$((found + 1))
-  printf '  %s %s\n' "$(git log -1 --format=%h "$sha")" "$(git log -1 --format=%s "$sha")"
+  printf '  %s\n' "$(git log -1 --format='%h %s' "$sha")"
   # NAME the files. Answering this gate is deciding "code, or a note?", and a
   # count alone makes the human run `git show --stat` first (WFI-193).
   printf '    %s file(s) outside the pipeline'"'"'s own paths — %s:\n' "$code" "$(overlap_note "$code_files")"

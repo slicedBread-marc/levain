@@ -61,9 +61,8 @@ plan_id=$(printf '%s' "$raw_id" | grep -oE 'PLN-[0-9]+' || true)
 ROOT="$(wf_develop_root)"
 REGISTRY="$ROOT/plans/REGISTRY.md"
 [ -f "$REGISTRY" ] || { echo "Error: $REGISTRY not found" >&2; exit 2; }
-row=$(grep "^| $plan_id |" "$REGISTRY" | head -1 || true)
-[ -n "$row" ] || { echo "Error: $plan_id not found in registry" >&2; exit 2; }
-slug=$(printf '%s' "$row" | awk -F'|' '{print $3}' | xargs)
+slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
+[ -n "$slug" ] || { echo "Error: $plan_id not found in registry" >&2; exit 2; }
 plan_name="${plan_id}-${slug}"
 
 # ── Criterion counts (single parser, shared with the lint) ────────────────

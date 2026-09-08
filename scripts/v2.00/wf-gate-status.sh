@@ -79,11 +79,11 @@ resolved_file=$(wf_gate_resolved_file "$id" "$gate_name" || true)
 
 open=false
 if [ -f "$gate_file" ]; then
-  existing=$(grep -m1 "^GATE_NAME=" "$gate_file" | sed "s/^GATE_NAME='//; s/'$//")
+  existing=$(wf_gate_field "$gate_file" GATE_NAME)
   [ "$existing" = "$gate_name" ] && open=true
   # The plan the gate is actually about — see wf-gate-close.sh. The
   # fingerprints below are a question about a plan.md, and a brief has none.
-  gate_owner=$(grep -m1 "^GATE_ID=" "$gate_file" | sed "s/^GATE_ID='//; s/'$//" || true)
+  gate_owner=$(wf_gate_field "$gate_file" GATE_ID)
   [ -n "$gate_owner" ] && id="$gate_owner"
 fi
 
@@ -96,20 +96,19 @@ resolved_at=""
 fp_at_open=""
 
 if [ -f "$resolved_file" ]; then
-  resolution=$(grep -m1 "^GATE_RESOLUTION=" "$resolved_file" | sed "s/^GATE_RESOLUTION='//; s/'$//" || true)
-  question=$(grep -m1 "^GATE_QUESTION=" "$resolved_file" | sed "s/^GATE_QUESTION='//; s/'$//" || true)
+  resolution=$(wf_gate_field "$resolved_file" GATE_RESOLUTION)
+  question=$(wf_gate_field "$resolved_file" GATE_QUESTION)
   # Same normalisation as the open-gate branch: the record names the plan it
   # was an answer about, and that is what the fingerprints below are for.
-  record_owner=$(grep -m1 "^GATE_ID=" "$resolved_file" | sed "s/^GATE_ID='//; s/'$//" || true)
+  record_owner=$(wf_gate_field "$resolved_file" GATE_ID)
   [ -n "$record_owner" ] && id="$record_owner"
-  resolved_at=$(grep -m1 "^GATE_RESOLVED=" "$resolved_file" | sed "s/^GATE_RESOLVED='//; s/'$//" || true)
+  resolved_at=$(wf_gate_field "$resolved_file" GATE_RESOLVED)
   # The revision the question was ASKED about, when the record has it. Reported
   # rather than acted on here — wf-gate-open.sh is what decides a re-open, and
   # this is the evidence it needs: a close happens after the exit contract's
   # commit, so the close-time fingerprint below can include work the human
   # never saw (WFI-198).
-  fp_at_open=$(grep -m1 "^GATE_PLAN_BODY_FP_AT_OPEN=" "$resolved_file" \
-               | sed "s/^GATE_PLAN_BODY_FP_AT_OPEN='//; s/'$//" || true)
+  fp_at_open=$(wf_gate_field "$resolved_file" GATE_PLAN_BODY_FP_AT_OPEN)
   # The body fingerprint decides when the record carries one: it normalises the
   # regions that move under machine control while the specification stands still
   # — ticked checkboxes above all. A tester ticking a deferred criterion, as
@@ -117,11 +116,11 @@ if [ -f "$resolved_file" ]; then
   # revising the spec, and used to make every answered gate on that plan read
   # stale (client-c WFI-005). Records written before v5.6 have only the raw
   # hash; fall back to it so an upgrade does not invalidate them wholesale.
-  was_fp=$(grep -m1 "^GATE_PLAN_BODY_FP=" "$resolved_file" | sed "s/^GATE_PLAN_BODY_FP='//; s/'$//" || true)
+  was_fp=$(wf_gate_field "$resolved_file" GATE_PLAN_BODY_FP)
   if [ -n "$was_fp" ]; then
     now_fp=$(wf_plan_body_fingerprint "$id")
   else
-    was_fp=$(grep -m1 "^GATE_PLAN_FP=" "$resolved_file" | sed "s/^GATE_PLAN_FP='//; s/'$//" || true)
+    was_fp=$(wf_gate_field "$resolved_file" GATE_PLAN_FP)
     now_fp=$(wf_plan_fingerprint "$id")
   fi
 

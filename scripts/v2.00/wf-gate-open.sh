@@ -92,7 +92,7 @@ fi
 gate_file=$(wf_gate_file "$id" || true)
 
 if [ -f "$gate_file" ]; then
-  existing=$(grep -m1 "^GATE_NAME=" "$gate_file" | sed "s/^GATE_NAME='//; s/'$//")
+  existing=$(wf_gate_field "$gate_file" GATE_NAME)
   if [ "$existing" = "$gate_name" ]; then
     # ── The parked question can go out of date while it is parked ─────────
     #
@@ -118,14 +118,14 @@ if [ -f "$gate_file" ]; then
     # commit that resolves the thing being asked about. Not because you have
     # re-read the code and would phrase it better.
     if $requestion; then
-      prev_q=$(grep -m1 "^GATE_QUESTION=" "$gate_file" | sed "s/^GATE_QUESTION='//; s/'$//" || true)
+      prev_q=$(wf_gate_field "$gate_file" GATE_QUESTION)
       if [ "$prev_q" = "$question" ]; then
         echo "$id: gate '$gate_name' already open — question unchanged, left as is"
         exit 0
       fi
-      opened_at=$(grep -m1 "^GATE_OPENED=" "$gate_file" | sed "s/^GATE_OPENED='//; s/'$//" || true)
-      prev_prev=$(grep -m1 "^GATE_QUESTION_PREV=" "$gate_file" | sed "s/^GATE_QUESTION_PREV='//; s/'$//" || true)
-      open_fp=$(grep -m1 "^GATE_PLAN_BODY_FP_AT_OPEN=" "$gate_file" | sed "s/^GATE_PLAN_BODY_FP_AT_OPEN='//; s/'$//" || true)
+      opened_at=$(wf_gate_field "$gate_file" GATE_OPENED)
+      prev_prev=$(wf_gate_field "$gate_file" GATE_QUESTION_PREV)
+      open_fp=$(wf_gate_field "$gate_file" GATE_PLAN_BODY_FP_AT_OPEN)
       {
         wf_emit GATE_ID       "$id"
         wf_emit GATE_ARTIFACT "$artifact"
@@ -252,9 +252,9 @@ prior_q=""; prior_res=""; prior_at=""
 if ! wf_gate_revision_scoped "$gate_name"; then
   prior_file=$(wf_gate_resolved_file "$id" "$gate_name" || true)
   if [ -n "$prior_file" ] && [ -f "$prior_file" ]; then
-    prior_q=$(grep -m1   "^GATE_QUESTION="   "$prior_file" | sed "s/^GATE_QUESTION='//; s/'$//" || true)
-    prior_res=$(grep -m1 "^GATE_RESOLUTION=" "$prior_file" | sed "s/^GATE_RESOLUTION='//; s/'$//" || true)
-    prior_at=$(grep -m1  "^GATE_RESOLVED="   "$prior_file" | sed "s/^GATE_RESOLVED='//; s/'$//" || true)
+    prior_q=$(wf_gate_field "$prior_file" GATE_QUESTION)
+    prior_res=$(wf_gate_field "$prior_file" GATE_RESOLUTION)
+    prior_at=$(wf_gate_field "$prior_file" GATE_RESOLVED)
   fi
 fi
 

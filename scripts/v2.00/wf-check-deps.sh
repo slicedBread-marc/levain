@@ -28,10 +28,7 @@ fi
 
 [ -f "$REGISTRY" ] || { echo "CLEAR"; exit 0; }
 
-row=$(grep "^| $plan_id |" "$REGISTRY" | head -1 || true)
-[ -n "$row" ] || { echo "CLEAR"; exit 0; }
-
-deps=$(echo "$row" | awk -F'|' '{print $10}' | xargs)
+deps=$(wf_registry_field "$plan_id" deps "$REGISTRY")
 [ -n "$deps" ] && [ "$deps" != "—" ] || { echo "CLEAR"; exit 0; }
 
 # An incomplete dependency is "not yet"; an abandoned one is "never". Reported
@@ -43,7 +40,7 @@ dead=""
 IFS=',' read -ra dep_list <<< "$deps"
 for dep_id in "${dep_list[@]}"; do
   dep_id=$(echo "$dep_id" | xargs)
-  dep_state=$(grep "^| $dep_id |" "$REGISTRY" 2>/dev/null | awk -F'|' '{print $4}' | xargs || true)
+  dep_state=$(wf_registry_field "$dep_id" state "$REGISTRY")
   case "$dep_state" in
     complete) ;;
     abandoned) [ -n "$dead" ] && dead="$dead,$dep_id" || dead="$dep_id" ;;

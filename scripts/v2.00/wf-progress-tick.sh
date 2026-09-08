@@ -56,9 +56,8 @@ ROOT="$(wf_develop_root)"
 REGISTRY="$ROOT/plans/REGISTRY.md"
 [ -f "$REGISTRY" ] || { echo "Error: $REGISTRY not found" >&2; exit 1; }
 
-row=$(grep "^| $plan_id |" "$REGISTRY" | head -1 || true)
-[ -n "$row" ] || { echo "Error: $plan_id not found in registry" >&2; exit 1; }
-slug=$(printf '%s' "$row" | awk -F'|' '{print $3}' | xargs)
+slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
+[ -n "$slug" ] || { echo "Error: $plan_id not found in registry" >&2; exit 1; }
 progress="$ROOT/plans/${plan_id}-${slug}/progress.md"
 [ -f "$progress" ] || { echo "Error: $progress not found" >&2; exit 1; }
 

@@ -10,8 +10,11 @@
 
 set -euo pipefail
 
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
+
 # Find the develop root to read claude-workflow.yml
-DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+DEVELOP_ROOT="$(wf_develop_root)"
 CFG="$DEVELOP_ROOT/claude-workflow.yml"
 
 if [ ! -f "$CFG" ]; then

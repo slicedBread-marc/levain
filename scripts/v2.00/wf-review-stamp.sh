@@ -59,8 +59,7 @@ plan_id=$(printf '%s' "$raw_id" | grep -oE '^PLN-[0-9]+' || true)
 [ -n "$plan_id" ] || { echo "Usage: $0 <PLN-NNN> [--no-commit]" >&2; exit 1; }
 
 ROOT="$(wf_develop_root)"
-slug=$(grep "^| $plan_id |" "$ROOT/plans/REGISTRY.md" 2>/dev/null \
-       | head -1 | awk -F'|' '{print $3}' | xargs || true)
+slug=$(wf_registry_field "$plan_id" slug "$ROOT/plans/REGISTRY.md")
 [ -n "$slug" ] || { echo "Error: $plan_id has no row in plans/REGISTRY.md" >&2; exit 1; }
 
 plan_md="$ROOT/plans/${plan_id}-${slug}/plan.md"

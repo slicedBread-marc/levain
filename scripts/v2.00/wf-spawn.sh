@@ -272,7 +272,7 @@ esac
 
 cur_state=""
 if [ -f "$registry" ] && [ -n "$state_id" ]; then
-  cur_state=$(grep "^| $state_id |" "$registry" 2>/dev/null | head -1 | awk -F'|' '{print $4}' | xargs || true)
+  cur_state=$(wf_registry_field "$state_id" state "$registry")
 fi
 
 # An empty state means there is no plan row yet — a bug or brief on its way to

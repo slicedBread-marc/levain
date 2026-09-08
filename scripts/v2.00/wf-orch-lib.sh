@@ -13,10 +13,12 @@
 #   wf_orch_dir                      → <develop-root>/.claude/orchestrator (created)
 #   wf_registry_rows [path]          → one trimmed plan row per line (0x1f-separated)
 #   wf_registry_field <id> <col>     → one trimmed field of one plan's row
+#   wf_state_of <id>                 → one plan's REGISTRY state, PLN-alias aware
 #   wf_bug_id <bug.md>               → the bug that file declares itself to be
 #   wf_goal_text <plan.md>           → that plan's one-line goal
 #   wf_cfg <dotted.path> [default]   → value from claude-workflow.yml
 #   wf_emit <KEY> <value>            → eval-safe KEY='value' line
+#   wf_gate_field <file> <KEY> [--unescape] → one field of a gate file
 #   wf_restore_harness               → re-copy the gitignored runtime files after a merge
 #   wf_plan_fingerprint <PLN-NNN>    → hash of that plan's plan.md (may be empty)
 #   wf_session_pid                   → PID of the long-lived session, not the shell
@@ -125,6 +127,46 @@ wf_registry_field() {
     }
     trim($2) == id { print trim($(idx[col])); exit }
   ' "$reg"
+}
+
+# wf_state_of <id> [registry-path] → the artifact's REGISTRY state, or `—`
+# when it has no row yet (a bug or brief on its way to a first spec — a
+# legitimate lookup target, not an error).
+#
+# A bug or brief keeps its number when it becomes a plan (BUG-022 → PLN-022),
+# and a caller may be holding the earlier name — a gate opened under BUG-022
+# is still open once the row is PLN-022. The PLN-<num> alias is checked as a
+# fallback for exactly that.
+#
+# Memoized per (process, registry-path) like wf_develop_root: this is called
+# once per artifact on every board render and, from the dispatcher, twice
+# more per candidate, and re-parsing REGISTRY.md on every call was measurable
+# on a 70-row table. Three call sites each carried their own copy of this
+# map before this existed; only one had the PLN-alias fallback, so the other
+# two silently read state `—` for a renamed artifact.
+_WF_STATE_MAP=""
+_WF_STATE_MAP_REG=""
+wf_state_of() {
+  local id="$1" reg="${2:-$(wf_develop_root)/plans/REGISTRY.md}" s alt
+  if [ "$_WF_STATE_MAP_REG" != "$reg" ]; then
+    _WF_STATE_MAP=""
+    if [ -f "$reg" ]; then
+      _WF_STATE_MAP=" $(awk -F'|' '
+        function trim(x) { gsub(/^[ \t]+|[ \t]+$/, "", x); return x }
+        { i = trim($2); if (i ~ /^(PLN|BUG|BRF)-[0-9]+$/) printf "%s=%s ", i, trim($4) }
+      ' "$reg")"
+    fi
+    _WF_STATE_MAP_REG="$reg"
+  fi
+  [ -n "$_WF_STATE_MAP" ] || { printf '—'; return 0; }
+  s="${_WF_STATE_MAP##* $id=}"
+  [ "$s" != "$_WF_STATE_MAP" ] || s=""
+  s="${s%% *}"
+  if [ -z "$s" ]; then
+    alt="${_WF_STATE_MAP##* PLN-${id#*-}=}"
+    [ "$alt" = "$_WF_STATE_MAP" ] || s="${alt%% *}"
+  fi
+  printf '%s' "${s:-—}"
 }
 
 # ── Artifacts ─────────────────────────────────────────────────────────────
@@ -794,6 +836,25 @@ wf_claim_live() {
 }
 
 # ── Gates ─────────────────────────────────────────────────────────────────
+
+# wf_gate_field <gate-file> <KEY> [--unescape]
+# One field from a gate file written by wf_emit — `KEY='value'`, with any
+# embedded quote already shell-escaped as `'\''`. Plain form returns exactly
+# that escaped text, which is what most callers want: it is re-emitted into
+# another gate file, or compared against another still-escaped GATE_* value.
+# `--unescape` undoes the `'\''` → `'` shell-quoting, for a value going out to
+# a human reader instead — a findings.md entry, a printed report. Printing the
+# escaped form there renders the four characters `'\''` literally where an
+# apostrophe belongs (WFI-214). Empty, not a failure, when the key or the file
+# is missing — every call site here used to hand-roll this same grep|sed pair.
+wf_gate_field() {
+  local file="$1" key="$2" mode="${3:-}" val
+  val=$(grep -m1 "^${key}=" "$file" 2>/dev/null | sed "s/^${key}='//; s/'\$//" || true)
+  if [ "$mode" = "--unescape" ]; then
+    val=$(printf '%s' "$val" | sed "s/'\\\\''/'/g")
+  fi
+  printf '%s' "$val"
+}
 
 # wf_gate_file <artifact> — path of the gate file for that artifact, open or
 # not. Prints the path and returns 0 when one EXISTS; prints the path it would

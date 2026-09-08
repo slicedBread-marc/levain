@@ -62,7 +62,7 @@ plan_id=$(printf '%s' "$raw_id" | grep -oE '^PLN-[0-9]+' || true)
 [ -n "$plan_id" ] || { echo "Usage: $0 <PLN-NNN> [--base <ref>]" >&2; exit 1; }
 [ -f "$REGISTRY" ] || { echo "Error: $REGISTRY not found" >&2; exit 1; }
 
-slug=$(grep "^| $plan_id |" "$REGISTRY" 2>/dev/null | head -1 | awk -F'|' '{print $3}' | xargs || true)
+slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
 [ -n "$slug" ] || { echo "Error: $plan_id has no registry row" >&2; exit 1; }
 
 plan_file="plans/$plan_id-$slug/plan.md"

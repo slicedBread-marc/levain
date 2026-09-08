@@ -131,13 +131,13 @@ bare_id() { printf '%s' "$1" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true; }
 plan_state() {
   local id="$1"
   [ -f "$REGISTRY" ] || return 0
-  grep "^| $id |" "$REGISTRY" 2>/dev/null | head -1 | awk -F'|' '{print $4}' | xargs || true
+  wf_registry_field "$id" state "$REGISTRY"
 }
 
 # Full plan name (PLN-NNN-slug) for an ID.
 plan_name_of() {
   local id="$1" slug
-  slug=$(grep "^| $id |" "$REGISTRY" 2>/dev/null | head -1 | awk -F'|' '{print $3}' | xargs || true)
+  slug=$(wf_registry_field "$id" slug "$REGISTRY")
   [ -n "$slug" ] && printf '%s-%s' "$id" "$slug" || printf '%s' "$id"
 }
 

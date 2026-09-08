@@ -107,8 +107,14 @@ wf_lock_acquire registry
 # One row per plan, always. A second row is not a duplicate record, it is a
 # second state: `grep -q "^| $id |.*| $from |"` in wf-registry-update.sh matches
 # whichever row it reaches first, and the dispatcher reads the other one.
+#
+# Tested by ROW EXISTENCE, not by the state field's emptiness — this is the
+# one guard in the registry scripts where that distinction is load-bearing.
+# wf_registry_field alone can't tell "no row" from "a row whose state column
+# is blank", and this is the single check standing between a malformed row
+# and a second, silently duplicate one.
 if grep -q "^| $plan_id |" "$REGISTRY"; then
-  actual=$(grep "^| $plan_id |" "$REGISTRY" | head -1 | awk -F'|' '{print $4}' | xargs || true)
+  actual=$(wf_registry_field "$plan_id" state "$REGISTRY")
   echo "Error: $plan_id already has a row in $REGISTRY (state '$actual')." >&2
   echo "       To move it, use wf-registry-update.sh $plan_id $actual <to-state>." >&2
   exit 1
