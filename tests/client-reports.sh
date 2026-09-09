@@ -1447,6 +1447,99 @@ for skill in wf-bug wf-test wf-verify wf-implement; do
 done
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A dependency bug lands in the HOST's own pipeline, not the reporter's"
+
+# client-e integrates client-c's OIDC and has no way to tell client-c
+# about a bug or request in that integration except by hand — there was no
+# shared channel and no convention either side's skills followed. wf-dep-bug.sh
+# cd's into the dependency's own checkout and runs ITS OWN wf-bug-new.sh
+# through ITS OWN wf-exec.sh, so the report is allocated through that
+# project's counter and lands where its own /wf-spec already looks.
+DEPA="$TEST_DIR/dep-caller"
+DEPB="$TEST_DIR/dep-host"
+SCRIPT_FOLDER_LIVE=$(basename "$SCRIPT_DIR")
+
+setup_dep_project() {
+  local d="$1"
+  mkdir -p "$d/plans" "$d/bugs/open" "$d/scripts/$SCRIPT_FOLDER_LIVE" "$d/.claude"
+  cp "$LIB_SCRIPTS/wf-exec.sh" "$d/scripts/wf-exec.sh"
+  cp "$LIB_SCRIPTS/version-map.txt" "$d/scripts/version-map.txt"
+  cp "$SCRIPT_DIR"/*.sh "$d/scripts/$SCRIPT_FOLDER_LIVE/"
+  chmod +x "$d/scripts/wf-exec.sh" "$d/scripts/$SCRIPT_FOLDER_LIVE"/*.sh
+  printf '99.99.99\n' > "$d/.claude/workflow-version"
+  printf '| ID | Slug | State |\n|-|-|-|\n\n<!-- Counter: 10 -->\n' > "$d/plans/REGISTRY.md"
+  ( cd "$d" && git init -qb develop . && git config user.email t@t && git config user.name t \
+    && git add -A && git commit -qm seed ) >/dev/null 2>&1
+}
+setup_dep_project "$DEPA"
+setup_dep_project "$DEPB"
+
+cat > "$DEPA/claude-workflow.yml" <<YML
+project_slug: "dep-caller"
+dependencies:
+  - "dep-host:$DEPB"
+YML
+( cd "$DEPA" && git add -A && git commit -qm "declare dependency" ) >/dev/null 2>&1
+
+dep_out=$(cd "$DEPA" && scripts/wf-exec.sh wf-dep-bug.sh --host dep-host \
+  'OIDC refresh token rejected before real expiry' \
+  --severity High --description 'reporter sees a still-valid token 401' \
+  --expected 'refresh succeeds until real expiry' --actual '401 from /connect/token' 2>/dev/null)
+assert_eq "exit 0 on a clean host" "0" "$?"
+assert_eq "stdout is the eval contract and nothing else" "true" \
+  "$(printf '%s' "$dep_out" | grep -qvE "^(DEP_BUG_ID|DEP_BUG_HOST|DEP_BUG_PATH|DEP_BUG_DIR)='.*'$" && echo false || echo true)"
+eval "$dep_out"
+assert_eq "the bug was allocated through the HOST's own counter" "BUG-010" "$DEP_BUG_ID"
+assert_eq "and landed in the HOST's bugs/open/, not the caller's" "true" \
+  "$([ -f "$DEPB/$DEP_BUG_DIR/bug.md" ] && echo true || echo false)"
+assert_eq "the caller's own bugs/open/ stayed empty" "true" \
+  "$(find "$DEPA/bugs/open" -mindepth 1 | grep -q . && echo false || echo true)"
+assert_eq "the caller's own tree is clean — nothing was written locally" "true" \
+  "$(cd "$DEPA" && git status --short | grep -q . && echo false || echo true)"
+assert_eq "the report names the reporting project, not a generic source" "true" \
+  "$(grep -q '\*\*Source:\*\* cross-project:dep-caller' "$DEPB/$DEP_BUG_DIR/bug.md" && echo true || echo false)"
+assert_eq "the HOST's own commit recorded it" "true" \
+  "$(cd "$DEPB" && git log -1 --format=%s | grep -q "^bug($DEP_BUG_ID)" && echo true || echo false)"
+assert_eq "the host was left back on develop" "develop" \
+  "$(cd "$DEPB" && git branch --show-current)"
+
+# A request (not a defect) is tagged as such, distinctly from the default.
+req_out=$(cd "$DEPA" && scripts/wf-exec.sh wf-dep-bug.sh --host dep-host \
+  'Longer-lived refresh tokens' --kind request \
+  --description 'would remove a re-login client-e cannot avoid today' 2>/dev/null)
+eval "$req_out"
+assert_eq "a request is tagged Kind: Request in the host's bug.md" "true" \
+  "$(grep -q '\*\*Kind:\*\* Request' "$DEPB/$DEP_BUG_DIR/bug.md" && echo true || echo false)"
+assert_eq "and a plain bug still defaults to Kind: Bug" "true" \
+  "$(grep -q '\*\*Kind:\*\* Bug' "$DEPB/bugs/open/BUG-010"*/bug.md && echo true || echo false)"
+
+# An unconfigured host name fails clearly and lists what IS configured.
+unknown_err=$(cd "$DEPA" && scripts/wf-exec.sh wf-dep-bug.sh --host nope 'x' 2>&1 >/dev/null)
+assert_eq "an unknown --host is refused" "true" \
+  "$(printf '%s' "$unknown_err" | grep -q "no dependency named 'nope'" && echo true || echo false)"
+assert_eq "and it names what IS configured" "true" \
+  "$(printf '%s' "$unknown_err" | grep -q 'Configured dependencies: dep-host' && echo true || echo false)"
+
+# A host a human has parked on their own branch is left alone — same
+# protection wf-bug gets locally, extended across the repo boundary. Without
+# WF_UNATTENDED=1 forced on the host-side branch check, the attended path
+# would just warn and switch anyway; that is right for a human but wrong for
+# a script reaching into a checkout that is not its own.
+( cd "$DEPB" && git checkout -qb someones-feature-branch ) >/dev/null 2>&1
+before_bugs=$(ls "$DEPB/bugs/open" | wc -l | tr -d ' ')
+dep_refused_out=$(cd "$DEPA" && scripts/wf-exec.sh wf-dep-bug.sh --host dep-host 'should not land' 2>/dev/null)
+dep_refused_exit=$?
+after_bugs=$(ls "$DEPB/bugs/open" | wc -l | tr -d ' ')
+assert_eq "a host parked on a foreign branch is refused with exit 2" "2" "$dep_refused_exit"
+assert_eq "nothing is written when refused" "$before_bugs" "$after_bugs"
+assert_eq "the host's branch is untouched" "someones-feature-branch" \
+  "$(cd "$DEPB" && git branch --show-current)"
+( cd "$DEPB" && git checkout -q develop && git branch -D someones-feature-branch ) >/dev/null 2>&1
+
+assert_eq "wf-bug documents the dependency path, not just the local one" "true" \
+  "$(grep -q 'wf-dep-bug.sh' "$LIB_ROOT/skills/wf-bug/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "client-c's first three reports (WFI-001/002/003)"
 
 # WFI-001 — wf-spec cited templates/plans/TEMPLATE.md, a path that exists in

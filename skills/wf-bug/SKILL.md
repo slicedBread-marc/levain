@@ -68,6 +68,53 @@ bugs/closed/  → resolved by /wf-deploy when a plan completes
    ```
 6. **Confirm** — show the user the bug ID, folder path, and commit hash
 
+## Filing against a dependency, not this project
+
+Sometimes what you're hearing about is not a bug in *this* project — it's a defect or missing
+capability in something this project depends on. The standing example: client-e integrating
+client-c's OIDC hits a 401 on token refresh. That's client-c's bug, not client-e's,
+even though client-e is where it was noticed.
+
+**Recognize it first.** Ask whose code would actually change to fix this. If the answer is a
+different repo, this is a dependency report — filing it here means nobody on the other side
+ever sees it.
+
+Check this project's `claude-workflow.yml` for a `dependencies:` block:
+```yaml
+dependencies:
+  - "client-c:/Users/you/dev/client-c"
+```
+If the project the bug belongs to is listed there, file through the dependency instead of step 2:
+```bash
+eval "$(scripts/wf-exec.sh wf-dep-bug.sh --host client-c "<title>" \
+  --kind bug|request \
+  --severity Critical|High|Medium|Low \
+  --description "<what's broken and the impact, written for the HOST's reader>" \
+  --steps "<numbered list, or TBD>" \
+  --expected "<what should happen>" \
+  --actual "<what does happen>" \
+  --notes "<how this project hit it — a plan ID, a page, a call it made>")"
+```
+This `cd`s into the dependency's own checkout and runs **its own** `wf-bug-new.sh` through **its
+own** `wf-exec.sh` — the bug is allocated through that project's counter and lands in that
+project's `bugs/open/`, exactly where its own `/wf-spec` already looks. There is no second inbox
+for anyone to learn. It sets `$DEP_BUG_ID`, `$DEP_BUG_HOST`, `$DEP_BUG_PATH`, `$DEP_BUG_DIR`.
+
+It refuses (exit 2) rather than disturb a checkout a human on the other project has parked
+somewhere of their own. When that happens nothing is written — say so and stop, don't retry.
+
+**It commits in the host but does not push.** Tell the user a bug was filed in `<host>` at
+`$DEP_BUG_PATH/$DEP_BUG_DIR`, and that project's `develop` still needs a `git push` from over
+there — that push is that project's call, not something to do from here.
+
+**If the dependency isn't listed**, or its local path doesn't exist, fall back to filing it in
+*this* project's own `bugs/open/` (step 2), with `--links` naming the real dependency and
+`--notes` explaining it belongs elsewhere, then tell the user to add a `dependencies:` entry so
+next time it can go straight there. Never invent a path or file it silently in the wrong place.
+
+See `docs/cross-project-reports.md` for the full convention — the dependency's own skills use
+the identical mechanism in reverse, so both sides behave the same way.
+
 ## Closing a bug that duplicates something already filed
 
 A duplicate has no fixing plan and is never triaged, so the normal close path — `/wf-deploy` closing a bug when its plan completes — never reaches it. Close it here, with the script, from `bugs/open/`:
@@ -114,10 +161,11 @@ you know what the fields mean and what a later edit must preserve.
 
 > **Status:** Open
 > **ID:** BUG-NNN
+> **Kind:** Bug | Request
 > **Filed:** YYYY-MM-DD
 > **Project:** [project]
 > **Severity:** Critical | High | Medium | Low
-> **Source:** human
+> **Source:** human | cross-project:<reporting-project-slug>
 > **Plan:** _(none — link added by /wf-spec when a fix plan is created)_
 > **Links:** _(optional: caused by BUG-NNN, blocks BUG-NNN, regression from PLN-NNN, discovered during debug of BUG-NNN, etc.)_
 
@@ -170,3 +218,4 @@ When an attachment is provided:
 - Attachments are co-located with `bug.md` in the bug folder
 - The bug can be moved to `triaged/` by `/wf-spec` when a fix plan is created
 - The bug moves to `closed/` by `/wf-deploy` when the fix plan completes
+- A bug or request that actually belongs to a project this one depends on goes through `wf-dep-bug.sh` into that project's own `bugs/open/` — see [Filing against a dependency, not this project](#filing-against-a-dependency-not-this-project). It never gets filed here on that project's behalf.

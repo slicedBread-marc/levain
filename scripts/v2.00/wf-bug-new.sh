@@ -5,6 +5,7 @@
 # the rest of the pipeline parses, and commits it.
 #
 #   --severity  Critical|High|Medium|Low   (default: Medium)
+#   --kind      bug|request                (default: bug — a capability ask, not a defect)
 #   --source    <who filed it>             (default: human; agents pass agent:wf-verify etc.)
 #   --project   <repo or app>
 #   --slug      <kebab-case>               (default: derived from the title)
@@ -42,6 +43,7 @@ cd "$(wf_develop_root)"   # plans/* is develop-root work — see wf-orch-lib.sh
 
 title=""
 severity="Medium"
+kind="bug"
 source_who="human"
 project=""
 slug=""
@@ -56,6 +58,7 @@ do_commit=true
 while [ $# -gt 0 ]; do
   case "$1" in
     --severity)    severity="${2:?--severity requires a value}"; shift 2 ;;
+    --kind)        kind="${2:?--kind requires a value}"; shift 2 ;;
     --source)      source_who="${2:?--source requires a value}"; shift 2 ;;
     --project)     project="${2:?--project requires a value}"; shift 2 ;;
     --slug)        slug="${2:?--slug requires a value}"; shift 2 ;;
@@ -83,6 +86,11 @@ case "$severity" in
   *) echo "Error: --severity must be Critical, High, Medium or Low (got '$severity')" >&2; exit 1 ;;
 esac
 
+case "$kind" in
+  bug|request) ;;
+  *) echo "Error: --kind must be 'bug' or 'request' (got '$kind')" >&2; exit 1 ;;
+esac
+
 # Derive the slug from the title when none was given: lowercase, non-alphanumerics
 # to single hyphens, trimmed, capped at 6 words so the folder name stays readable.
 if [ -z "$slug" ]; then
@@ -100,6 +108,9 @@ fi
 bug_id=$("$SELF_DIR/wf-counter-next.sh" BUG)
 bug_dir="bugs/open/$bug_id-$slug"
 
+kind_label="Bug"
+[ "$kind" = "request" ] && kind_label="Request"
+
 if [ -e "$bug_dir" ]; then
   echo "Error: $bug_dir already exists — refusing to overwrite it" >&2
   exit 1
@@ -111,6 +122,7 @@ mkdir -p "$bug_dir"
   printf '# %s\n\n' "$title"
   printf '> **Status:** Open\n'
   printf '> **ID:** %s\n' "$bug_id"
+  printf '> **Kind:** %s\n' "$kind_label"
   printf '> **Filed:** %s\n' "$(date +%Y-%m-%d)"
   [ -n "$project" ] && printf '> **Project:** %s\n' "$project"
   printf '> **Severity:** %s\n' "$severity"

@@ -51,6 +51,26 @@ tested like anything else:
 
 The bug lands in `bugs/open/BUG-NNN-<slug>/bug.md`.
 
+### Report a bug or request against a project this one depends on
+
+Distinct from both of the above. If what you found is actually a defect or a
+missing capability in a **dependency** — not this project, not the harness —
+file it there instead, so the team on that side actually sees it:
+
+```bash
+scripts/wf-exec.sh wf-dep-bug.sh --host <name> "<title>" \
+  --kind bug|request \
+  --description "..." --expected "..." --actual "..."
+```
+
+`<name>` must be declared in this project's `claude-workflow.yml` under
+`dependencies:`. The report is filed through **that project's own**
+`wf-bug-new.sh`, allocated by **its own** counter, landing in **its own**
+`bugs/open/` — picked up by its own `/wf-spec` like any bug filed there by
+hand. It commits there but does not push; that push is the dependency's call.
+See [`docs/cross-project-reports.md`](docs/cross-project-reports.md) in the
+claude-workflow library for the full convention.
+
 ### Report the workflow itself misbehaving
 
 Distinct from a bug in *this project*. If the **harness** does something its own

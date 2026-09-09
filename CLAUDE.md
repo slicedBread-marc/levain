@@ -15,6 +15,16 @@ Work in this repo is about building, improving, and maintaining that library, no
 - Deployment targets are listed in `deployments.txt` (one absolute path per line). Each receives copies of skills and scripts via `deploy-all.sh`.
 - To add a new client: append its path to `deployments.txt`, ensure its `claude-workflow.yml` sets a unique `project_slug` (prevents Docker compose collisions), then run `./deploy-all.sh`.
 
+### Clients depending on each other
+
+Two clients can depend on one another (client-e integrating client-c's OIDC is the standing
+case). A bug or request that belongs to the *other* side of an integration is filed through
+`wf-dep-bug.sh` — it runs the dependency's own `wf-bug-new.sh` through the dependency's own
+`wf-exec.sh`, so the report lands in that project's own `bugs/open/`, allocated by its own
+counter, picked up by its own `/wf-spec`. Declared per-client in that client's own
+`claude-workflow.yml` under `dependencies:`, never in this repo. See
+[`docs/cross-project-reports.md`](docs/cross-project-reports.md).
+
 ### The client copy of the harness is generated
 
 Everything `deploy-all.sh` writes into a client — `scripts/v*/`, `.claude/skills/wf-*/`,
