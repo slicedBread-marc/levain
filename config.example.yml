@@ -250,8 +250,37 @@ test_account_note: ""
 # to a public URL, which is a decision, not a default.
 tunnel_command: "cloudflared tunnel --url http://localhost:$FEATURE_PORT"
 
+# ── Project profile ─────────────────────────────────────────────────────────
+# How much governance this project's real-world stakes currently justify.
+#
+# Not a runtime switch — nothing below reads this to silently change gate
+# behavior. It is the recorded reason specApproval.mode, manualTestGate and
+# orchestrator.autonomy are set the way they are, and the checklist to work
+# through when that reason stops being true. Read docs/project-profile.md
+# before adding one.
+#
+#   pre-launch   No real users yet, or negligible ones. A bad unattended call
+#                costs a redeploy or a rollback, not an incident. Recommends
+#                specApproval.mode: verdict, manualTestGate.blockOnCosmetic:
+#                false, standing autonomy through production-push.
+#   governed     Real users depend on this. Recommends specApproval.mode:
+#                gate, manualTestGate.blockOnCosmetic: true, autonomy scoped
+#                to release/deploy at most — production-push stays attended.
+#
+# Leave unset until you've deliberately picked one — wf-profile.sh --show
+# refuses rather than assume a tier for you.
+#
+#   scripts/wf-exec.sh wf-profile.sh --show     tier, reason, who, when
+#   scripts/wf-exec.sh wf-profile.sh --check    drift against the table above
+projectProfile: {}
+#   tier: pre-launch
+#   reason: "No real users yet."
+#   set_by: "Marc Blais"
+#   set_on: 2026-09-10
+
 # ── Manual-test gate ────────────────────────────────────────────────────────
-# When an unattended /wf-test run stops for a human.
+# When an unattended /wf-test run stops for a human. See projectProfile above
+# for what tier recommends blockOnCosmetic: true vs false.
 #
 # The rule used to be "stop if any `#### Manual` criterion remains". Every plan
 # has some, so every plan stopped. But the criteria are not evenly spread: plans
@@ -299,7 +328,8 @@ manualTestGate:
 #
 # Read `docs/orchestrator.md` before switching. In `verdict` mode nothing else
 # reads the plan before it is built, so the cross-plan consistency pass is the
-# compensating control — leave it on.
+# compensating control — leave it on. See projectProfile above for which mode
+# each governance tier recommends.
 specApproval:
   mode: gate
 

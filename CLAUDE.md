@@ -53,6 +53,23 @@ Fix the cause **here**, in the library — never in the client, where the next d
 
 Resolved entries stay in the client's file as the record of what was already reported. `sweep-issues.sh` exits 0 when there is work and 1 when every client is clean.
 
+### Governance tiers: how strict each client is right now
+
+Each client can declare `projectProfile.tier` (`pre-launch` | `governed`) in its own
+`claude-workflow.yml` — the recorded reason its `specApproval.mode`, `manualTestGate`
+and `orchestrator.autonomy` are set the way they are. It does not change gate
+behavior itself; it is what a human or Claude checks before re-tuning those knobs, and
+what flags drift once they've fallen out of step with the declared tier.
+
+```bash
+./check-profiles.sh              # tier + drift per client
+./check-profiles.sh --count      # one line per client
+```
+
+Read [`docs/project-profile.md`](docs/project-profile.md) before adding or changing a
+tier. Applying a tier to a client is a hand edit to that client's `claude-workflow.yml`
+(preserving its own rationale comments) — never something a script writes for you.
+
 ### VERSION is bumped by a hook, and you state the level
 
 `.git/hooks/pre-commit` bumps `VERSION` into every commit. It bumps a **patch** unless told otherwise:
