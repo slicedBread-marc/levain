@@ -21,9 +21,11 @@
 #                 script to parse (see coordinator' wf-board-all, which builds a
 #                 cross-project grid from this). Not for humans. Includes
 #                 attn=<comma-separated gated plan IDs, most-important
-#                 first, `!` suffix on a stuck one> and
-#                 deploy_pending=<plans on release but not main, or `-`
-#                 if this project has no release/main split>.
+#                 first, `!` suffix on a stuck one>,
+#                 release_pending=<plans complete on develop but not yet
+#                 carried through /wf-release, or `-` with no release
+#                 branch>, and deploy_pending=<plans on release but not
+#                 main, or `-` if this project has no release/main split>.
 #
 # Exit 0 always.
 
@@ -174,6 +176,23 @@ render() {
     done
   fi
 
+  # ── Release pending ──────────────────────────────────────────────────
+  # Plans complete on `develop` that have never been carried through
+  # /wf-release — so the full, unfiltered suite has never run against them
+  # and `release` has never validated them against staging. This is the gap
+  # the REGISTRY state histogram above can't show: a plan reads `complete`
+  # the moment its PR merges to develop, which is also true the day before
+  # /wf-release runs and the day after — the registry has no state for
+  # "done, but not yet promoted." Same distinct-plan-ID convention as
+  # deploy_pending below; same `-1`/`-` meaning for a project with no
+  # release branch at all.
+  local release_pending=-1
+  if git -C "$ROOT" rev-parse --verify develop >/dev/null 2>&1 \
+     && git -C "$ROOT" rev-parse --verify release >/dev/null 2>&1; then
+    release_pending=$(git -C "$ROOT" log --oneline develop --not release 2>/dev/null \
+      | grep -oE 'PLN-[0-9]+' | sort -u | wc -l | tr -d ' ')
+  fi
+
   # ── Deploy pending ────────────────────────────────────────────────────
   # Plans whose commits reached `release` (passed /wf-release's E2E) but
   # haven't reached `main` yet — staged for /wf-deploy. Distinct plan IDs,
@@ -210,13 +229,15 @@ render() {
     # than scraping the human-formatted output above).
     local registry_field="clean"
     $registry_dirty && registry_field="$registry_n"
+    local release_field="$release_pending"
+    [ "$release_field" -lt 0 ] 2>/dev/null && release_field="-"
     local deploy_field="$deploy_pending"
     [ "$deploy_field" -lt 0 ] 2>/dev/null && deploy_field="-"
-    printf 'daemon=%s\tenabled=%s\tspawns=%s/%s\trunning=%s\tgates=%s\tgates_stuck=%s\tgates_blocked=%s\tdraft=%s\tready=%s\tactive=%s\tverify=%s\ttesting=%s\tcomplete=%s\tabandoned=%s\tregistry=%s\tattn=%s\tdeploy_pending=%s\n' \
+    printf 'daemon=%s\tenabled=%s\tspawns=%s/%s\trunning=%s\tgates=%s\tgates_stuck=%s\tgates_blocked=%s\tdraft=%s\tready=%s\tactive=%s\tverify=%s\ttesting=%s\tcomplete=%s\tabandoned=%s\tregistry=%s\tattn=%s\trelease_pending=%s\tdeploy_pending=%s\n' \
       "$daemon_raw" "$enabled" "$budget_used" "$budget_max" \
       "$running_n" "$gates_n" "$gates_stuck" "$gates_blocked" \
       "$st_draft" "$st_ready" "$st_active" "$st_verify" "$st_testing" "$st_complete" "$st_abandoned" \
-      "$registry_field" "$attn" "$deploy_field"
+      "$registry_field" "$attn" "$release_field" "$deploy_field"
     return
   fi
 
@@ -284,6 +305,13 @@ render() {
     printf '  %-9s %s\n' "testing" "$st_testing"
     printf '  %s%-9s %s%s\n' "$DIM" "complete" "$st_complete" "$R"
     printf '  %s%-9s %s%s\n' "$DIM" "abandoned" "$st_abandoned" "$R"
+    if [ "$release_pending" -ge 0 ] 2>/dev/null; then
+      if [ "$release_pending" -gt 0 ]; then
+        printf '  %s%-9s %s%s\n' "$YEL" "release" "$release_pending" "$R"
+      else
+        printf '  %s%-9s %s%s\n' "$DIM" "release" "$release_pending" "$R"
+      fi
+    fi
     if [ "$deploy_pending" -ge 0 ] 2>/dev/null; then
       if [ "$deploy_pending" -gt 0 ]; then
         printf '  %s%-9s %s%s\n' "$YEL" "deploy" "$deploy_pending" "$R"
