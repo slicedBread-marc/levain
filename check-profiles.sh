@@ -40,7 +40,7 @@ while IFS= read -r client; do
 
   out=$( cd "$client" && ./scripts/wf-exec.sh wf-profile.sh --check 2>&1 )
   rc=$?
-  tier=$( cd "$client" && ./scripts/wf-exec.sh wf-profile.sh --show 2>/dev/null | awk -F': ' '/^tier:/ {print $2}' )
+  tier=$( cd "$client" && ./scripts/wf-exec.sh wf-profile.sh --show 2>/dev/null | awk -F': *' '/^tier:/ {print $2}' )
   tier="${tier:-none}"
 
   case "$mode" in
