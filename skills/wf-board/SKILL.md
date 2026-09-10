@@ -40,6 +40,15 @@ If the user asks to watch it live, tell them to run this themselves rather than 
 scripts/wf-exec.sh wf-board.sh --watch 10
 ```
 
+If they want a version that never scrolls — e.g. running it in a small pane
+alongside other work — point them at `--stats`: header + pipeline counts
+only, a fixed line count regardless of how much is running or gated, so a
+`--watch` loop never grows past one screen:
+
+```bash
+scripts/wf-exec.sh wf-board.sh --watch 10 --stats
+```
+
 ## Rules
 
 - **Never** spawn workers, open or close gates, or edit REGISTRY.md.
