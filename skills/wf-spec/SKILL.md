@@ -187,12 +187,31 @@ Never resolve a collision by writing into the existing plan's folder or row. cli
 If the user picks a bug BUG-NNN:
 
 1. **Read the bug** — read `bugs/open/BUG-NNN-<slug>/bug.md`
-2. **Inherit the plan ID** — BUG-NNN becomes PLN-NNN via `wf-plan-id.sh` (see [ID Inheritance](#id-inheritance))
-3. **Use it as context** — the bug's description, steps, and expected behavior become the plan's Goal and acceptance criteria
-4. **Choose a feature name** — a short kebab-case slug describing the fix (e.g. `login-crash`, `webhook-timeout`)
-5. **Construct the plan folder name** — `PLN-NNN-<slug>` (e.g. `PLN-003-login-crash`)
-6. **Treat it like a brief** — proceed as normal, but the scope is defined by fixing the bug
-7. The bug consumption happens in the [Bug consumption](#bug-consumption) section below
+2. **Check for an already-fixed duplicate — the one shape that auto-closes.** When
+   this bug's `Source:` is `agent:wf-verify` (a verify run filed it as a side effect,
+   not a human decided it was worth reporting) and its Description/Actual names a
+   concrete identifier — an error string, a function or endpoint name, a file path —
+   search other bugs and REGISTRY plans for the same identifier. If another plan
+   already names it **and has reached `verify` or later** (its fix is committed and
+   has passed that plan's own checks), this bug is a stale echo of a fix that landed
+   after wf-verify filed it, not new work. Close it and stop, without asking:
+   ```bash
+   scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --duplicate-of <the-other-ID> \
+     --note "same <identifier> as <other-ID>, already fixed on <PLN-NNN>, in verify+"
+   ```
+   Narrow on purpose: both the source (`agent:wf-verify`, not a human) and the match
+   (a named identifier shared with a plan already past verify, not a resemblance you
+   inferred) must hold. Either one missing — a human-filed bug, a fuzzy match, or the
+   other plan still short of `verify` — falls through to the general rule in
+   `skills/wf-bug/SKILL.md` ("Closing a bug that duplicates something already
+   filed"): **[GATE]** `needs-input`, because deciding two artifacts are the same
+   issue is the user's call, not yours, outside this one mechanically-checkable case.
+3. **Inherit the plan ID** — BUG-NNN becomes PLN-NNN via `wf-plan-id.sh` (see [ID Inheritance](#id-inheritance))
+4. **Use it as context** — the bug's description, steps, and expected behavior become the plan's Goal and acceptance criteria
+5. **Choose a feature name** — a short kebab-case slug describing the fix (e.g. `login-crash`, `webhook-timeout`)
+6. **Construct the plan folder name** — `PLN-NNN-<slug>` (e.g. `PLN-003-login-crash`)
+7. **Treat it like a brief** — proceed as normal, but the scope is defined by fixing the bug
+8. The bug consumption happens in the [Bug consumption](#bug-consumption) section below
 
 ## What you do
 
