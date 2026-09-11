@@ -1,4 +1,4 @@
-# Cross-project bugs and requests
+# Cross-project bugs, requests, and notices
 
 Projects on this harness depend on each other — client-e integrates
 client-c's OIDC, for example. Nothing before this made it possible to
@@ -8,6 +8,12 @@ in that project's pipeline would ever see. `wf-dep-bug.sh` and the
 `dependencies:` config key are the workaround. Read this before adding a
 `dependencies:` entry or filing across one.
 
+The same gap exists in the other direction: a project making a change that
+affects its dependents had no way to tell them either, short of the same
+Slack-message-nobody-tracks fallback. `wf-dep-notify.sh` and the
+`dependents:` config key — [below](#notifying-dependents-of-a-change) — are
+that workaround, built on the identical mechanism reversed.
+
 ## The core idea
 
 A report about a dependency belongs in the **dependency's own** `bugs/open/`,
@@ -15,6 +21,10 @@ allocated through the **dependency's own** counter, so it is picked up by the
 **dependency's own** `/wf-spec` exactly like any bug filed there by hand.
 There is no second inbox, no new triage path, no cross-project registry to
 keep in sync. The only new thing is *how the file gets there*.
+
+This holds for both directions. A notice about a change lands in the
+**dependent's own** `bugs/open/` the same way — the direction of the arrow
+changes, the mechanism doesn't.
 
 ## Setup: declare the dependency
 
@@ -166,3 +176,112 @@ neither of which fits a report arriving from a different project's pipeline
 with no planner in the loop on either side. A bug-shaped request still reaches
 the host's `/wf-spec`, which can turn it into a real brief there if it turns
 out to need one.
+
+## Notifying dependents of a change
+
+`wf-dep-bug.sh` above is inbound: a project reporting a problem *into* a
+dependency. `wf-dep-notify.sh` is the same mechanism run the other way —
+outbound, a project announcing a change *to* the projects that depend on it.
+client-c shipping an OIDC contract change that client-e and client-f both
+integrate against is the standing case: nothing before this told either of
+them it happened except however client-c's owner remembered to mention
+it.
+
+### Why push, not a changelog
+
+The obvious alternative — client-c publishes a changelog, dependents pull
+from it — was considered and rejected. It's the second-inbox pattern [the
+core idea](#the-core-idea) above already ruled out for the other direction,
+just relocated: a changelog needs a "last-seen" cursor per dependent, a
+script to diff against it, and something that actually triggers the check
+(a hook, a `/wf-status` addition), and if that trigger auto-files an unread
+entry into `bugs/open/` anyway, you've built push with an extra layer in
+front of it. Filing directly into the dependent's own `bugs/open/` — same
+mechanism as `wf-dep-bug.sh`, same guarantee that the dependent's own
+`/wf-spec` picks it up — has no such gap: there's nothing to forget to check.
+
+### Setup: declare dependents
+
+In the **notifying** project's `claude-workflow.yml`:
+
+```yaml
+dependents:
+  - "client-e:/Users/you/dev/client-e"
+  - "client-f:/Users/you/dev/client-f"
+```
+
+Same shape as `dependencies:` — `name:absolute-path`, one entry per line,
+read with the same `wf_cfg_list` parser — just declared on the notifying
+project's side instead of the reporting project's side. **Nothing scans for
+this automatically.** A project appears in another's `dependents:` only
+because a human put it there, which means it can drift from what the
+dependent itself declares in its own `dependencies:` — client-c could
+list a client that quietly dropped the integration, or miss one that added
+it without telling client-c's owner. That drift is a stale path failing
+loudly at filing time, not a silent gap, which is the trade this design
+makes deliberately: see [Why push, not a changelog](#why-push-not-a-changelog)
+above.
+
+### Filing a notice
+
+From the notifying project, broadcasting to every declared dependent:
+
+```bash
+scripts/wf-exec.sh wf-dep-notify.sh "<title>" \
+  --severity Critical|High|Medium|Low \
+  --description "..." --expected "..." --actual "..." --notes "..."
+```
+
+Add `--to <name>` to reach just one dependent instead of all of them. `/wf-bug`
+is *not* the entry point here — filing a notice isn't reporting a bug in the
+notifying project, it's announcing one that doesn't exist yet in a project
+that hasn't built against the change. `/wf-dep-notify` is the entry point a
+human or agent uses — see
+[`skills/wf-dep-notify/SKILL.md`](../skills/wf-dep-notify/SKILL.md).
+`wf-dep-notify.sh` is what it calls.
+
+Notices land with `--kind notice` — a third value alongside `bug`/`request`
+on `wf-bug-new.sh`, so a dependent reading their own `bugs/open/` can tell at
+a glance "this is an upstream announcement" apart from a defect found
+locally or a capability someone there asked for.
+
+### What actually happens
+
+For each target dependent, `wf-dep-notify.sh`:
+
+1. Resolves it against the notifying project's own `dependents:` list.
+2. Confirms the path exists and has `scripts/wf-exec.sh`.
+3. Reads (never writes) the dependent's current branch. If it isn't
+   `develop`, that one dependent is **skipped**, not refused wholesale —
+   see [It's a broadcast](#its-a-broadcast-not-an-all-or-nothing-call) below.
+4. Runs `scripts/wf-exec.sh wf-bug-new.sh` there, with
+   `--source cross-project:<notifying-slug>` and `--kind notice`.
+
+Same as `wf-dep-bug.sh`: it commits in each dependent but does **not**
+push — that's each dependent's own call, made by a human or its own
+orchestrator over there, not by a script filing on this project's behalf.
+
+### It's a broadcast, not an all-or-nothing call
+
+`wf-dep-bug.sh` has exactly one host and refuses outright (exit 2, nothing
+written) if that host isn't on `develop` right now. `wf-dep-notify.sh`
+usually has several targets, and the entire point is keeping every consumer
+in sync — so one dependent parked on a feature branch must not block the
+notice from landing in the others. Each dependent is attempted
+independently; a skip is reported (`SKIPPED <name> <reason>`) rather than
+aborting the run, and the script exits `0` once every target has been
+attempted, whether or not all of them landed. The caller — `/wf-dep-notify`
+or whoever invoked the script — is responsible for reading which dependents
+were skipped and telling the user, since nothing else retries them.
+
+### Why this isn't `/wf-bug`
+
+`/wf-bug`'s dependency section files a report about *this* project's problem
+into someone else's inbox. A notice is the reverse: this project already
+knows what changed, and is telling someone else's inbox about *their*
+problem before it becomes one. Both end up as a `bug.md` filed through the
+counter, because both need the same guarantee — landing in the target's own
+pipeline with no second inbox — but conflating the entry points would mean
+`/wf-bug` asking "is this a bug in this project, in a dependency, or an
+announcement to a dependent?" on every invocation, for a distinction that's
+usually obvious to whoever is already typing the request.

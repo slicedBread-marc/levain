@@ -127,6 +127,11 @@ next time it can go straight there. Never invent a path or file it silently in t
 See `docs/cross-project-reports.md` for the full convention — the dependency's own skills use
 the identical mechanism in reverse, so both sides behave the same way.
 
+**This is the inbound direction only** — this project reporting *into* a dependency. The
+outbound direction — this project announcing a change *to* the projects that depend on it — is
+`/wf-dep-notify` (`wf-dep-notify.sh`), not this skill. Reach for that when the code you just
+changed here is what broke, or will break, someone else's integration.
+
 ## Closing a bug that duplicates something already filed
 
 A duplicate has no fixing plan and is never triaged, so the normal close path — `/wf-deploy` closing a bug when its plan completes — never reaches it. Close it here, with the script, from `bugs/open/`:
@@ -175,7 +180,7 @@ you know what the fields mean and what a later edit must preserve.
 
 > **Status:** Open
 > **ID:** BUG-NNN
-> **Kind:** Bug | Request
+> **Kind:** Bug | Request | Notice
 > **Filed:** YYYY-MM-DD
 > **Project:** [project]
 > **Severity:** Critical | High | Medium | Low

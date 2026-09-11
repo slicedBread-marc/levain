@@ -5,7 +5,9 @@
 # the rest of the pipeline parses, and commits it.
 #
 #   --severity  Critical|High|Medium|Low   (default: Medium)
-#   --kind      bug|request                (default: bug — a capability ask, not a defect)
+#   --kind      bug|request|notice         (default: bug — request is a capability ask, not a
+#                                           defect; notice is an upstream change announcement
+#                                           filed by wf-dep-notify.sh, not local to this project)
 #   --source    <who filed it>             (default: human; agents pass agent:wf-verify etc.)
 #   --project   <repo or app>
 #   --slug      <kebab-case>               (default: derived from the title)
@@ -87,8 +89,8 @@ case "$severity" in
 esac
 
 case "$kind" in
-  bug|request) ;;
-  *) echo "Error: --kind must be 'bug' or 'request' (got '$kind')" >&2; exit 1 ;;
+  bug|request|notice) ;;
+  *) echo "Error: --kind must be 'bug', 'request' or 'notice' (got '$kind')" >&2; exit 1 ;;
 esac
 
 # Derive the slug from the title when none was given: lowercase, non-alphanumerics
@@ -110,6 +112,7 @@ bug_dir="bugs/open/$bug_id-$slug"
 
 kind_label="Bug"
 [ "$kind" = "request" ] && kind_label="Request"
+[ "$kind" = "notice" ] && kind_label="Notice"
 
 if [ -e "$bug_dir" ]; then
   echo "Error: $bug_dir already exists — refusing to overwrite it" >&2

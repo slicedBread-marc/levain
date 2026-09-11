@@ -71,6 +71,26 @@ hand. It commits there but does not push; that push is the dependency's call.
 See [`docs/cross-project-reports.md`](docs/cross-project-reports.md) in the
 claude-workflow library for the full convention.
 
+### Announce a change to the projects that depend on this one
+
+The reverse of the above. A change here — a contract change, a breaking API
+shift, a migration — that a **dependent** project needs to react to gets
+told to them directly, not left for them to discover:
+
+```bash
+scripts/wf-exec.sh wf-dep-notify.sh "<title>" [--to <name>] \
+  --severity Critical|High|Medium|Low \
+  --description "..." --expected "..." --actual "..."
+```
+
+Every entry in this project's `claude-workflow.yml` under `dependents:` gets
+the notice by default; `--to <name>` restricts it to one. Same mechanism as
+`wf-dep-bug.sh`, reversed: it lands as `--kind notice` in **each dependent's
+own** `bugs/open/`, filed through **its own** `wf-bug-new.sh`. One dependent
+off `develop` right now is skipped, not a reason to abort the rest — see
+[`docs/cross-project-reports.md`](docs/cross-project-reports.md) § Notifying
+dependents of a change.
+
 ### Report the workflow itself misbehaving
 
 Distinct from a bug in *this project*. If the **harness** does something its own
