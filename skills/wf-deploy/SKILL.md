@@ -106,6 +106,12 @@ Before starting, confirm E2E passed on release:
    Each call commits its own rename, both sides — leave the bug folders out of step 10's pathspec (WFI-136).
 
    **Run it for every completed plan that names a bug, without checking first.** `/wf-test` closes some bugs at plan completion and some it does not, with nothing in the plan telling them apart (WFI-143), so this step meets a mix. A bug that is already closed is the outcome this step wants: the script says `already closed — nothing to do` and exits 0. Do not skip the call to avoid an error, and do not treat one as a deploy failure.
+
+   **This only ever looks at the plans THIS run just carried.** A bug whose link was never acted on before this step existed, or one an earlier deploy skipped on error, sits orphaned in `bugs/triaged/` forever otherwise — client-c's WFI-017 found two, each a full deploy cycle stale. So also run the general sweep, which checks every triaged bug against the registry rather than one run's batch:
+   ```bash
+   scripts/wf-exec.sh wf-bug-close-sweep.sh --apply
+   ```
+   Read-only without `--apply`, for a standalone check outside a deploy (`/wf-status` can point to it the same way this repo's own `check-profiles.sh` and `sweep-issues.sh` are pointed to).
 10. **Commit plan updates** — name the plans this deploy actually carried, not
     `plans/PLN-*/`. That wildcard spans every concurrent worker's tree;
     `wf-commit.sh` commits the pathspec and nothing else staged (WFI-109,

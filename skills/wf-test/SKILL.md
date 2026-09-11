@@ -53,7 +53,7 @@ Order of work:
      **Never put criterion text in double quotes** — backticks in it are commands, and the shell runs them before the script sees them (WFI-194). See [Deferring a criterion](#deferring-a-criterion).
      **Read what it printed.** The DC row is only half the job — the other half is the checkbox in `plan.md`, which is what anyone opening the completed plan actually reads. `ticked in …` means both halves are done. `ACTION REQUIRED: no matching unchecked criterion` means only the row was written: edit `plan.md` yourself, tick the box it listed, append ` — deferred as DC-NNN`, and only then move on. A completed plan with an empty box says "silently dropped", which is the exact ambiguity deferral exists to remove (WFI-056, WFI-137).
    - `(eyes:cosmetic)` — leave untested and unchecked; whether it gates is the gate script's call, not yours.
-6. **Ask the gate script whether a human is needed. Do not decide this yourself:**
+6. **Ask the gate script whether a human is needed. Do not decide this yourself. First confirm step 3 actually happened — do not trust that it did:** every `#### Chrome-Assisted` criterion must show PASS, FAIL, or a recorded reason in `test-progress.md`; none may still read `—`. client-c's WFI-022: 8 of 10 Chrome-Assisted criteria were left untested, and the gate that opened next asked about the 2 genuinely Manual ones without ever mentioning the other 8 — correct about what it counts, silent about what it doesn't. If any Chrome-Assisted criterion is still `—`, go back and run it now; do not open a gate that describes only the Manual criteria while Chrome-Assisted work sits undone and unmentioned.
    ```bash
    eval "$(scripts/wf-exec.sh wf-manual-gate.sh <PLN-ID>)"
    ```
@@ -208,11 +208,13 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
 
    **If the container will not build, decide first whether that is a fact about the code or about the machine.** `no space left on device`, `ResourceExhausted` writing to the overlayfs snapshotter, `Cannot connect to the Docker daemon`, and an OOM kill are all statements about the host — none of them is a plan defect, a failed criterion or a finding, and writing one up as any of those puts a fabricated result into the record. client-a's WFI-212 was a full system disk reported through the test path with nothing to route it to.
 
+   `no space left on device` specifically already self-heals: `wf-docker-up.sh` prunes (`docker system prune -f` and `docker builder prune -f`) and retries on its own, bounded by `dockerRetry.maxAttempts` (default 2), before it ever returns failure to you (client-e's WFI-019 — this was previously a needs-input gate every time, fixed twice by hand with nothing more than a prune). So a build failure you actually see naming that message already survived the automatic retries; do not prune again on top of it.
+
    ```bash
    ../../scripts/wf-exec.sh wf-docker-cleanup.sh
    ```
 
-   That tears down containers left behind by plans that have finished — the harness's own litter, and the only disk this skill owns. Retry the deploy once after it. **Reclaiming build cache and images is `docker system prune`, and that is not yours to run**: it affects everything on the machine, not just this project.
+   That tears down containers left behind by plans that have finished — the harness's own litter, and the only disk this skill owns. Retry the deploy once after it. **Reclaiming build cache and images beyond what `wf-docker-up.sh` already tried is `docker system prune` run by hand, and that is not yours to run**: it affects everything on the machine, not just this project.
 
    If the retry fails the same way, **stop** — the plan stays in `testing`, untouched. Attended: say plainly that the host is out of space (or the daemon is down), and that a prune is the likely fix and theirs to authorize. Unattended: **[GATE]** `needs-input`, quoting the error verbatim, with the question naming it as an infrastructure fault rather than a test outcome. Do not mark criteria passed, failed, skipped or untested, and do not route the plan anywhere.
 
@@ -1049,6 +1051,12 @@ The reverse order is a check-then-act race, and client-a ran it: an attended ses
 While the transition is uncommitted it does not exist to any other session; while the gate or claim is up, no worker can be dispatched regardless of what the registry says. Committing first means there is never an instant where the plan is both unguarded and stale.
 
 `wf-spawn.sh` re-reads the registry immediately before it launches and stands down on a state it cannot act on, so a worker is not dispatched into a window this small. That is a backstop, not the fix — it narrows the window to milliseconds rather than closing it.
+
+**After the guards are down, push develop.** Neither exit path above does otherwise — both routes commit locally and nothing pushes, and this is an unattended agent with no session boundary to force it. client-c's WFI-012: `origin/develop` sat 38 commits behind local develop across a session's worth of automated verify/test cycles. Best-effort, never a routing failure — the transition above already committed and is the outcome that matters:
+```bash
+scripts/wf-exec.sh wf-retry.sh --label "push develop" -- git push origin develop \
+  || echo "wf-test: push to origin/develop failed after retries — local commits are ahead; push by hand" >&2
+```
 
 ---
 

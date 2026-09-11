@@ -40,10 +40,45 @@ echo "FEATURE_PORT=$FEATURE_PORT"
 echo "COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME"
 
 # Start the container (stderr so eval callers only get KEY=VALUE on stdout)
-FEATURE_PORT=$FEATURE_PORT docker compose \
-  -f docker/docker-compose.yml \
-  -p "$COMPOSE_PROJECT_NAME" \
-  up --build -d >&2
+#
+# ── Self-healing on 'no space left on device' ──────────────────────────────
+#
+# Docker Desktop's VM disk is a fixed cap shared by every concurrent build the
+# orchestrator dispatches across active plans, independent of host disk space
+# — so a build here can fail transiently under pipeline concurrency and clear
+# up again by the time anyone looks. Without this, that ENOSPC went straight
+# to a needs-input gate parked for a human, twice on the same project within a
+# day, each time fixed by hand with nothing more than `docker system prune -f`
+# (client-e's WFI-019). So: on that specific failure, prune once and retry,
+# bounded, before surfacing anything.
+#
+# `dockerRetry.maxAttempts` in claude-workflow.yml overrides the default (2);
+# the default keeps a client that has never set it self-healing from day one.
+max_attempts=$(wf_cfg dockerRetry.maxAttempts 2)
+attempt=1
+while :; do
+  if compose_out=$(FEATURE_PORT=$FEATURE_PORT docker compose \
+       -f docker/docker-compose.yml \
+       -p "$COMPOSE_PROJECT_NAME" \
+       up --build -d 2>&1); then
+    printf '%s\n' "$compose_out" >&2
+    break
+  fi
+  printf '%s\n' "$compose_out" >&2
+  case "$compose_out" in
+    *"no space left on device"*)
+      if [ "$attempt" -ge "$max_attempts" ]; then
+        echo "wf-docker-up: 'no space left on device' persisted after $attempt attempt(s) — pruning did not recover enough room" >&2
+        exit 1
+      fi
+      echo "wf-docker-up: 'no space left on device' — pruning and retrying ($attempt/$max_attempts)" >&2
+      docker system prune -f >&2 || true
+      docker builder prune -f >&2 || true
+      attempt=$((attempt + 1))
+      ;;
+    *) exit 1 ;;
+  esac
+done
 
 # Wait for health
 "$SCRIPT_DIR/wf-wait-healthy.sh" >&2

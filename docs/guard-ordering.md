@@ -101,6 +101,38 @@ the claim naming this session's own PID — see "Which PID a claim records" in `
 A stranger's claim is still a hard stop. The daemon's sweep remains the safety net behind
 both — the marker is a low-latency nudge, never the only path.
 
+## The one exception: a gate that GATES the transition itself
+
+The rule above assumes closing the gate is a downstream *record* of a decision the transition
+already carried out. `spec-approval` on a gating-tagged **replan** is not that shape: closing
+it is not a record of the transition, it is a *precondition* `wf-replan-target.sh` checks
+before it will perform the transition at all (added for WFI-178, so a widened replan cannot
+transition on a stale approval). Transition-then-close is impossible there by construction —
+`wf-replan-target.sh --apply` refuses with exit 2 until the gate reads `GATE_ANSWERED=true`,
+and the ordinary way to make it read that is to close it, which the rule above says to do only
+*after* a transition that cannot happen yet. client-c hit exactly this deadlock (WFI-021),
+worked around by chaining `wf-gate-close.sh && wf-replan-target.sh --apply` in one shell call
+to shrink the unguarded window as far as a shell invocation allows — which is not the same as
+closing it.
+
+**The actual fix is not a different order, it's the guard the order exists to approximate.**
+Nothing above requires the transition-first order for its own sake; it requires that no
+window exist in which the plan is both unguarded (no open gate, no claim) and stale. A claim
+guards that window exactly as well as an open gate does — "a gate **or a claim** is absolute"
+above — so for this one case, hold the claim across both calls instead of ordering around them:
+
+```
+1. wf-claim.sh <plan-name>                       ← guard up before anything moves
+2. wf-gate-close.sh <PLN-ID> "approved" …          ← now safe: the claim, not the gate, covers the gap
+3. wf-replan-target.sh <PLN-ID> --apply            ← the transition the close unblocked, committed
+4. wf-unclaim.sh <plan-name>                       ← guard down last, as always
+```
+
+This is not a license to reorder anything else. It applies only where a script's own
+precondition makes transition-then-close impossible to satisfy — today that is `spec-approval`
+checked by `wf-replan-target.sh` on the replan path, and nothing else. Everywhere the general
+rule *can* be followed, follow it.
+
 ## Reviewing a change
 
 When a skill's exit path is edited, check that the last three commands are still in this

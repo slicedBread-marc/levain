@@ -94,10 +94,19 @@ The plan is drafted, **already reviewed**, and committed in `draft` state. The o
    **A stale verdict is the dangerous one, because it reads as done.** client-a had two plans at this gate whose only reviews were `Blocked` on the pre-amendment draft; the amendment then resolved every finding and nothing re-reviewed it, so plans carrying six resolved Criticals were presented as reviewed and approved (WFI-046).
 2. Then display the plan's Goal, the step count, the Tests table, and the Human Test Criteria split (Chrome-Assisted vs Manual).
 3. Ask: `approve / edit / reject?`
-4. On **approve** — hand off to `/wf-spec` to write the registry row and transition `draft → ready`. Do not set the state by hand, and do not re-run a review step 1 already found current.
+4. On **approve**:
+   - **A brand-new plan (no worktree yet)** — hand off to `/wf-spec` to write the registry row and transition `draft → ready`, then close the gate last, as below. Do not set the state by hand, and do not re-run a review step 1 already found current.
+   - **A replan on a gating-tagged plan (a live worktree already exists — the target is `active`, applied through `wf-replan-target.sh`)** — this is the ONE case that inverts the usual order. `wf-replan-target.sh --apply` refuses the transition until this very gate reads answered, so transition-then-close is impossible here by construction (WFI-021). Claim first, close the gate, transition, unclaim — the claim covers the window the closed gate no longer does. See [`docs/guard-ordering.md` § The one exception](../../docs/guard-ordering.md#the-one-exception-a-gate-that-gates-the-transition-itself) for why this is still race-safe:
+     ```bash
+     scripts/wf-exec.sh wf-claim.sh <plan-name>
+     scripts/wf-exec.sh wf-gate-close.sh <PLN-ID> "approved"
+     scripts/wf-exec.sh wf-replan-target.sh <PLN-ID> --apply
+     scripts/wf-exec.sh wf-unclaim.sh <plan-name>
+     ```
+     Skip step 7 below for this branch — the gate is already closed.
 5. On **edit** — capture what they want changed, then hand to `/wf-spec` to revise and re-review.
 6. On **reject** — ask why, append the reason to the plan's `findings.md` as an ESCALATED item, and leave the state at `draft`.
-7. Close the gate with the outcome:
+7. **New-plan approve only** (the replan branch above already closed it) — close the gate with the outcome:
    ```bash
    scripts/wf-exec.sh wf-gate-close.sh <PLN-ID> "approved"
    ```

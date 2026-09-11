@@ -78,6 +78,31 @@ if [ -z "$artifact" ] || [ -z "$gate_name" ] || [ -z "$question" ]; then
   exit 1
 fi
 
+# ── A URL with an empty port is not a question, it's a bash-substitution bug ──
+#
+# A caller composes `http://localhost:$FEATURE_PORT` in one Bash tool call and
+# the gate-open call in a LATER one — the Bash tool's shell state does not
+# persist between calls, so `$FEATURE_PORT` is unset there and expands to
+# nothing before this script ever sees the argument. client-c's WFI-020:
+# PLN-020's manual-test gate read "App is running on http://localhost:. Ready
+# for manual verification." — the port silently dropped, and a human handed
+# only this cannot reach the app without going and reading the plan. Nothing
+# catches this class of bug at the point it is written, only at the point a
+# human is confused by it, unless it is caught here.
+#
+# Written to catch host:PORT generally, not just localhost — a bash-side
+# empty-var artifact leaves the same trailing colon whatever the host is.
+for text in "$question" "$context"; do
+  if printf '%s' "$text" | grep -qE '://[A-Za-z0-9.-]+:([[:space:].,;)]|$)'; then
+    echo "Error: gate question/context names a URL with an empty port — a variable substitution likely landed empty:" >&2
+    echo "  $text" >&2
+    echo "  The Bash tool does not carry shell variables between calls. Capture the port's actual" >&2
+    echo "  VALUE (e.g. from wf-docker-up.sh's own output) and write it as a literal number here," >&2
+    echo "  not as \$FEATURE_PORT in a call made after the one that set it." >&2
+    exit 1
+  fi
+done
+
 # Accept PLN-004 or PLN-004-slug; the gate is keyed by bare ID.
 id=$(printf '%s' "$artifact" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
 if [ -z "$id" ]; then

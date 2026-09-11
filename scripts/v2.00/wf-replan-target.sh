@@ -87,6 +87,7 @@ if [ "$target" = "active" ]; then
   plan_dir="plans/${plan_id}-${slug}"
   findings="$plan_dir/findings.md"
   progress="$plan_dir/progress.md"
+  plan_md="$plan_dir/plan.md"
   if [ -f "$findings" ] \
      && ! grep -q '^- \[ \]' "$findings" \
      && [ "$(grep -E '^## (Human Test|Verify|Implement|Consistency)' "$findings" \
@@ -100,7 +101,26 @@ if [ "$target" = "active" ]; then
         END { print n + 0 }
       ' "$progress")
     fi
-    [ "$steps_open" = "0" ] && target="testing"
+    # plan.md's own Verification Checklist, EXCLUDING Human Test Criteria —
+    # those are the tester's to check off, and that is the whole reason this
+    # branch is about to hand the plan back to them. Build & Tests, Code
+    # Quality and Regression Scope are the builder's, same as progress.md's
+    # Steps checklist above, and an amendment can add an unchecked item to
+    # any of them (a plan.md edit, not a findings.md one) without this
+    # narrowing ever seeing it — client-e's PLN-104 routed draft -> testing
+    # with Amendment A-1's new Code Quality item still unchecked (WFI-021).
+    plan_open=0
+    if [ -f "$plan_md" ]; then
+      plan_open=$(awk '
+        /^## Verification Checklist/ { inside = 1; next }
+        /^## / && inside          { inside = 0 }
+        inside && /^### Human Test Criteria/ { human = 1; next }
+        inside && /^### /         { human = 0 }
+        inside && !human && /^- \[ \]/ { n++ }
+        END { print n + 0 }
+      ' "$plan_md")
+    fi
+    [ "$steps_open" = "0" ] && [ "$plan_open" = "0" ] && target="testing"
   fi
 fi
 

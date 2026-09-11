@@ -125,13 +125,26 @@ Do not re-spawn the agent to "finish" — there is nothing to finish; the run it
 started is unattached to any turn. Kill any stray runner first
 (`pkill -f '<test runner>'`) so two suites are not writing one log.
 
-```
-# Launch all in parallel:
-Agent(model: haiku, prompt: "Run `{{build_command}} < /dev/null` in feature-branches/PLN-NNN-<slug>/. 
-  Report: success/failure, any errors or warnings. Response under 1000 chars.")
+**Build and test are ONE agent, run sequentially inside it — never two agents launched in
+parallel against the same worktree.** They both invoke the same toolchain (`dotnet build` /
+`dotnet test`, etc.) against the same `feature-branches/PLN-NNN-<slug>/`, and MSBuild's
+incremental state under `obj/` (StaticWebAssets in particular) is not safe for two concurrent
+writers on one worktree. client-a's WFI-023: a `dotnet test` invocation failed with
+`StaticWebAssets.targets: No file exists for the asset at ... review.json` — a file that had
+never existed in the worktree — while a sibling `dotnet build` ran at the same moment; the
+identical command, alone and sequential, then passed cleanly with 0 errors. The build step buys
+nothing `dotnet test` doesn't already do itself (it builds first), so folding it into the same
+agent removes the redundant run as well as the corruption.
 
-Agent(model: haiku, prompt: "Run the test command in feature-branches/PLN-NNN-<slug>/,
-  tee'd to a log: append ` 2>&1 | tee /tmp/wf-tests-PLN-NNN.log` to whichever command you run.
+```
+# Launch all in parallel — build+test is ONE of these agents, run sequentially inside it:
+Agent(model: haiku, prompt: "In feature-branches/PLN-NNN-<slug>/, run these ONE AFTER THE OTHER
+  in the SAME Bash call (the second only if the first succeeds) — never as two separate agents,
+  and never concurrently with anything else that touches this worktree's build output:
+
+  1. `{{build_command}} < /dev/null` — report success/failure, any errors or warnings.
+  2. Then the test command, tee'd to a log: append ` 2>&1 | tee /tmp/wf-tests-PLN-NNN.log` to
+     whichever command you run.
   If TEST_ARGS is non-empty: `eval \"{{test_command}} $TEST_ARGS < /dev/null\"`
   Otherwise (full-suite fallback): `{{test_command}} {{test_exclude_e2e}} < /dev/null`
   The `< /dev/null` is not optional: a single test that reads stdin blocks forever without it (WFI-240).
@@ -147,7 +160,8 @@ Agent(model: haiku, prompt: "Run the test command in feature-branches/PLN-NNN-<s
   For each failure, quote the runner's own failure line VERBATIM — copy it from the
   output, do not paraphrase it, do not reconstruct the test name or the expected
   value from memory. If you cannot quote a line, do not report the failure.
-  End with the log path. Response under 1500 chars.")
+  Report BOTH steps: build success/failure and warnings, then the test counts.
+  End with the log path. Response under 1800 chars.")
 
 Agent(model: haiku, prompt: "Read [file] in feature-branches/PLN-NNN-<slug>/. 
   Check: project conventions, TODO/HACK markers, hardcoded values. Response under 1000 chars.")
@@ -394,6 +408,12 @@ route=$(scripts/wf-exec.sh wf-findings-route.sh plans/PLN-NNN-<slug>)
 **The transition commits before the claim is released, on every route — never the other way round.** The claim is what keeps the dispatcher off this plan. Unclaim first and there is a window in which the plan is unclaimed, ungated and still reading `verify`: a sweep landing in it launches a second verify worker onto work you have already finished. Uncommitted, the transition does not exist to any other session, so the only safe order is commit, then release (client-a WFI-079).
 
 After each route, run `scripts/wf-exec.sh wf-check-reboot-flag.sh` and append any output to your completion message.
+
+**Then push develop.** Nothing else in the normal routing path above does — every commit lands locally and stays there until something pushes, and this is an unattended agent with no session boundary that would otherwise force it. client-c's WFI-012: `origin/develop` sat 38 commits behind local develop across a whole session's worth of bug closures, DC resolutions and a full spec/implement/verify/test cycle, because no automated step ever ran `git push`. Best-effort, never a routing failure — the route above already committed and is the outcome that matters:
+```bash
+scripts/wf-exec.sh wf-retry.sh --label "push develop" -- git push origin develop \
+  || echo "wf-verify: push to origin/develop failed after retries — local commits are ahead; push by hand" >&2
+```
 
 ### Broad-scope security bugs
 

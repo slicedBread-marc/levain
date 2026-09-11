@@ -83,6 +83,26 @@ own orchestrator — not something a script acting on a dependency's behalf
 should decide. The reporting agent's job ends at telling the user a bug landed
 in `<host>` at a given path and still needs a push from over there.
 
+## Filing is the terminal action for the reporting session
+
+"The reporting agent's job ends at telling the user a bug landed in `<host>`" above is not a
+detail about pushing — it is the general rule. Once the bug exists in the host's `bugs/open/`,
+everything downstream of it — claiming, writing a plan, updating the host's registry, reviewing —
+belongs to a session actually rooted in the host project (its own `/wf-spec`, its own
+`/wf-implement`, its own orchestrator), never to the session that filed the report. This holds
+whether the filing went through `wf-dep-bug.sh` or a human/agent `cd`'d into the host by hand and
+ran its `wf-bug-new.sh` directly — the mechanism doesn't change who owns what happens next.
+
+client-e's WFI-025 crossed this line: it filed a client-c bug correctly (by hand, since
+`wf-dep-bug.sh` wasn't used), then continued — claimed it, hand-authored `plan.md`/`findings.md`/
+`progress.md` in client-c's `plans/`, ran `wf-registry-add.sh`, and spawned a review agent —
+effectively running client-c's own `/wf-spec` from a session with no standing role in that
+project's pipeline. Everything past the filing had to be reverted. Nothing refused it: a session
+is not confined to the project it's rooted in by anything at the tool level, only by this
+convention. See [skills/wf-bug/SKILL.md § Filing against a dependency, not this
+project](../skills/wf-bug/SKILL.md#filing-against-a-dependency-not-this-project) for the same
+rule stated where the filing actually happens.
+
 ## Why WF_UNATTENDED is forced
 
 `wf-branch-check.sh`'s attended path (a human running a skill in their own

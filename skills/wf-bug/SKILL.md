@@ -107,6 +107,18 @@ somewhere of their own. When that happens nothing is written — say so and stop
 `$DEP_BUG_PATH/$DEP_BUG_DIR`, and that project's `develop` still needs a `git push` from over
 there — that push is that project's call, not something to do from here.
 
+**FILING IS THE LAST ACT, whether it went through `wf-dep-bug.sh` or you `cd`'d into the
+dependency by hand.** A session rooted in this project has no standing role in the host's own
+pipeline — that project's `/wf-spec` is what turns its bug into a plan, its own `/wf-implement`
+builds it, its own registry tracks it. Do not follow the filed bug with a claim, a hand-authored
+`plan.md`/`findings.md`/`progress.md`, a `wf-registry-add.sh`, or a review agent run against the
+host's checkout — every one of those is that project's own workflow loop, dispatched from a
+session actually rooted there (or its own orchestrator), not from here. client-e's WFI-025 did
+exactly this against client-c — filed the bug correctly, then kept going and had to revert
+three commits' worth of hand-run spec work. The Skill tool cannot even see the host's `wf-spec`
+from a session rooted elsewhere, which is likely *why* it happened by hand instead of being
+refused outright — there is no tool-level guardrail past the filing call, only this one.
+
 **If the dependency isn't listed**, or its local path doesn't exist, fall back to filing it in
 *this* project's own `bugs/open/` (step 2), with `--links` naming the real dependency and
 `--notes` explaining it belongs elsewhere, then tell the user to add a `dependencies:` entry so

@@ -85,8 +85,32 @@ for d in bugs/open/${bug_id}*/; do
   fi
 done
 
+# ── Already in triaged/, but never actually linked ────────────────────────
+#
+# `triaged/` normally means "wf-bug-consume.sh already ran" — but a bug can
+# land there another way: an unrelated commit moves it (a different plan's
+# housekeeping, a hand-authored fix) without ever writing Status/Plan into
+# bug.md. client-e's BUG-054 hit exactly this — moved open→triaged by a
+# commit that had nothing to do with consuming it — and the bug then had no
+# documented path to being linked to the plan that actually consumes it
+# (WFI-015). Refusing outright is wrong: the bug IS triaged, it is just
+# missing the record of why.
+#
+# So: fall back to triaged/ when open/ has nothing, and skip the move below
+# (there is nothing left to move) but still write Status/Plan and commit that.
+already_triaged=false
 if [ -z "$bug_dir" ]; then
-  echo "Error: $bug_id not found in bugs/open/" >&2
+  for d in bugs/triaged/${bug_id}*/; do
+    if [ -d "$d" ]; then
+      bug_dir="${d%/}"
+      already_triaged=true
+      break
+    fi
+  done
+fi
+
+if [ -z "$bug_dir" ]; then
+  echo "Error: $bug_id not found in bugs/open/ or bugs/triaged/" >&2
   exit 1
 fi
 
@@ -173,6 +197,18 @@ if [ -f "$bug_dir/bug.md" ]; then
     echo "Error: could not record Status/Plan in $bug_dir/bug.md — not moving the bug" >&2
     exit 1
   fi
+fi
+
+if $already_triaged; then
+  # Already in triaged/ — nothing to move, only the record was missing.
+  echo "$bug_id already in bugs/triaged/ — linked to $plan_id"
+  if $do_commit; then
+    if ! "$SELF_DIR/wf-commit.sh" "bug($bug_id): linked to $plan_id (was already triaged)" \
+          --add "bugs/triaged/$bug_slug"; then
+      echo "wf-bug-consume: the link is staged but could not be committed — commit it before another worker does" >&2
+    fi
+  fi
+  exit 0
 fi
 
 # Move to triaged.

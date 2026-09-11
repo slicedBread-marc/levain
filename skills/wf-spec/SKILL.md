@@ -726,6 +726,8 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
 
     `wf-replan-target.sh --apply` refuses this itself with **exit 2** rather than transitioning. That refusal is the backstop, not the plan: reaching it means step 6d was skipped.
 
+    The gate this opens gets closed by `/wf-attend`, not by a later run of this skill — and closing it is a *precondition* for step 7's `wf-replan-target.sh --apply`, not a record of a transition step 7 already made, so the usual transition-then-close order is inverted there under a claim instead. See `docs/guard-ordering.md` § The one exception (WFI-021).
+
 7. **Update REGISTRY.md — the target state depends on whether a worktree exists:**
    ```bash
    scripts/wf-exec.sh wf-replan-target.sh PLN-NNN --apply
