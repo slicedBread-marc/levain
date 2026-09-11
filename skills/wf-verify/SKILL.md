@@ -313,6 +313,7 @@ Rules:
 - Use `**Security**:` for vulnerabilities or insecure patterns — append a scope tag (see below)
 - Use `**Design**:` for fundamental approach problems — always append `← ESCALATED`
 - Include file path and line number when possible
+- **Every finding starts at column 0.** `wf-findings-route.sh` only opens a finding block on a checkbox line beginning `- [ ]`/`- [x]` at the very start of the line — an indented checkbox (nested under a paragraph, inside a sub-list) is never treated as a finding at all, no matter how it is tagged, and the plan routes as if it did not exist. A finding that wraps across multiple physical lines is fine (the continuation lines are folded back onto the block), but the opening `- [ ]` itself must never be indented. client-e's WFI-024: a finding written 2 spaces in, matching the surrounding prose's continuation style, was silently invisible to the router, which reported `clean` on a plan with a real open finding.
 
 ### Security finding scope tags
 

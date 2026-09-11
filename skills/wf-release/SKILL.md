@@ -55,12 +55,13 @@ release-branches/release → release's own permanent worktree — staging enviro
    | `2` | The grant is malformed — it is not a refusal, it is a broken config | **[GATE]** `release-approval`, and put the script's stderr in the question verbatim so the next human fixes the file |
 
    Never treat exit 2 as "proceed". A grant nobody can parse authorized nothing.
-5. **Merge `develop` into `release`** to bring plan files and REGISTRY state:
+5. **Push local `develop`, then merge it into `release`** to bring plan files and REGISTRY state. Nothing in the pipeline pushes `develop` mid-cycle — only `/wf-deploy`'s back-merge does, right at the end — so `origin/develop` is routinely behind the local branch every other skill has been committing to. Merging `origin/develop` without pushing first silently drops everything committed since the last deploy: client-a's WFI-250 merged 39 commits behind, picked up only the bookkeeping paths that happened to already be pushed, and the omission of a whole plan's code and tests was caught only by noticing its plan folder absent from the release worktree afterward — the full test suite passed regardless, because it never contained the missing plan's tests to fail.
    ```bash
+   git push origin develop
    git pull origin release
    git merge origin/develop --no-edit
    ```
-   If this fails with non-trivial conflicts, inform the user and stop — do not proceed to E2E.
+   A push rejected as non-fast-forward means another session pushed `develop` from elsewhere between your read of it and now — pull and reconcile there before retrying; never force. If the merge fails with non-trivial conflicts, inform the user and stop — do not proceed to E2E.
 
 5a. **Check the harness survived the merge** — run this immediately, before anything else:
    ```bash

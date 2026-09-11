@@ -72,6 +72,21 @@ for rel in .claude/workflow.md scripts/wf-exec.sh; do
   fi
 done
 
+# docker/.env: a project-local secret (a staging API key, a signing cert
+# passphrase) that `docker-compose.yml`'s `env_file:` requires to bring the
+# container up at all. Gitignored for the same reason .plan-ref is — it must
+# never travel with a branch — so `git worktree add` never materialises it,
+# and every feature worktree wf-docker-up.sh touches started life without one.
+# client-c hit this on five separate plans (WFI-013 through WFI-023)
+# before anyone traced it back to the worktree, not the container: each was
+# worked around by hand-copying develop's copy in. Same rule as everything
+# else in this file — gitignored-but-needed arrives by being copied from the
+# main worktree, not by a human noticing the failure each time.
+if [ -f "$MAIN/docker/.env" ] && [ ! -e docker/.env ]; then
+  mkdir -p docker
+  cp -p "$MAIN/docker/.env" docker/.env 2>/dev/null && copied=$((copied + 1)) || true
+fi
+
 # ── Permissions for the session that will work here ───────────────────────
 #
 # A worker in a fresh worktree cannot edit its own files without a local

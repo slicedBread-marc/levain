@@ -178,6 +178,8 @@ Routing rules:
 - Any unchecked non-escalated → state goes to `active`
 - All checked or no findings → state advances
 
+Every finding's opening `- [ ]`/`- [x]` must start at column 0 — `wf-findings-route.sh` never treats an indented checkbox as a finding, so one nested under a paragraph or sub-list is invisible to routing regardless of its tag (client-e WFI-024).
+
 ## Goal Stack (v5)
 
 Plans track goal overrides during fix cycles via `### Goal History` in `plan.md`:

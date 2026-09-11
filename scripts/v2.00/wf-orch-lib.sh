@@ -268,6 +268,21 @@ wf_cfg() {
         sub(/[ \t]+#.*$/, "", rest)                 # trailing comment
         gsub(/^[ \t]+|[ \t]+$/, "", rest)
         gsub(/^"|"$/, "", rest); gsub(/^'"'"'|'"'"'$/, "", rest)
+        # A bare ">" or "|" (optionally with a chomping/indent modifier) is a
+        # YAML block-scalar opener, not a value -- this parser is single-line-
+        # per-key only (scalars only, see wf_cfg_list) and has no continuation
+        # logic. Returning the literal indicator character as if it were the
+        # configured value is worse than returning nothing: client-c set
+        # test_account_command to a ">" followed by wrapped continuation
+        # lines and this silently answered the bare string ">", which then
+        # ran verbatim as the account-provisioning command and did nothing,
+        # with no error anywhere (WFI-016). So: warn once, loudly, and answer
+        # as if the key were unset -- the default the caller passed in
+        # applies instead of a one-character command.
+        if (rest ~ /^[|>][+-]?[0-9]*$/) {
+          print "wf_cfg: " path " uses YAML block-scalar syntax which claude-workflow.yml cannot express (scalars only, one line per key) -- flatten it to a single line using a semicolon as the statement separator. Treating it as unset." > "/dev/stderr"
+          exit
+        }
         print rest; exit
       }
       level++
