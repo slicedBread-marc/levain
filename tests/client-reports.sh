@@ -1500,7 +1500,7 @@ assert_eq "the report names the reporting project, not a generic source" "true" 
   "$(grep -q '\*\*Source:\*\* cross-project:dep-caller' "$DEPB/$DEP_BUG_DIR/bug.md" && echo true || echo false)"
 assert_eq "the HOST's own commit recorded it" "true" \
   "$(cd "$DEPB" && git log -1 --format=%s | grep -q "^bug($DEP_BUG_ID)" && echo true || echo false)"
-assert_eq "the host was left back on develop" "develop" \
+assert_eq "the host's branch was never touched" "develop" \
   "$(cd "$DEPB" && git branch --show-current)"
 
 # A request (not a defect) is tagged as such, distinctly from the default.
@@ -1520,21 +1520,41 @@ assert_eq "an unknown --host is refused" "true" \
 assert_eq "and it names what IS configured" "true" \
   "$(printf '%s' "$unknown_err" | grep -q 'Configured dependencies: dep-host' && echo true || echo false)"
 
-# A host a human has parked on their own branch is left alone — same
-# protection wf-bug gets locally, extended across the repo boundary. Without
-# WF_UNATTENDED=1 forced on the host-side branch check, the attended path
-# would just warn and switch anyway; that is right for a human but wrong for
-# a script reaching into a checkout that is not its own.
+# A host a human has parked on their own branch is left alone — it is NEVER
+# switched, no matter what it's on. wf-dep-bug.sh used to force the host onto
+# develop (wf-branch-check.sh, WF_UNATTENDED=1), file, then switch back — and
+# that switch was silent, not refused, for any `feature/*` branch, since the
+# branch-check treated `feature/*` as a pipeline branch safe to move away
+# from without comment. That moved a host's own in-progress feature work out
+# from under it for the duration of a cross-project filing. Now there is no
+# switch at all: the host's checkout is read, never written to, so a bug can
+# land only when it is already on develop.
 ( cd "$DEPB" && git checkout -qb someones-feature-branch ) >/dev/null 2>&1
 before_bugs=$(ls "$DEPB/bugs/open" | wc -l | tr -d ' ')
 dep_refused_out=$(cd "$DEPA" && scripts/wf-exec.sh wf-dep-bug.sh --host dep-host 'should not land' 2>/dev/null)
 dep_refused_exit=$?
 after_bugs=$(ls "$DEPB/bugs/open" | wc -l | tr -d ' ')
-assert_eq "a host parked on a foreign branch is refused with exit 2" "2" "$dep_refused_exit"
+assert_eq "a host not on develop is refused with exit 2" "2" "$dep_refused_exit"
 assert_eq "nothing is written when refused" "$before_bugs" "$after_bugs"
 assert_eq "the host's branch is untouched" "someones-feature-branch" \
   "$(cd "$DEPB" && git branch --show-current)"
 ( cd "$DEPB" && git checkout -q develop && git branch -D someones-feature-branch ) >/dev/null 2>&1
+
+# The same refusal applies to an ACTUAL feature/* branch — the case the old
+# switch-and-restore silently moved without comment (see above). This is the
+# regression this fix closes: a plan mid-implementation on the host must be
+# just as untouchable as any other branch a human or the host's own
+# orchestrator is using.
+( cd "$DEPB" && git checkout -qb feature/PLN-020-host-work ) >/dev/null 2>&1
+before_bugs=$(ls "$DEPB/bugs/open" | wc -l | tr -d ' ')
+dep_refused_feature_out=$(cd "$DEPA" && scripts/wf-exec.sh wf-dep-bug.sh --host dep-host 'should not land either' 2>/dev/null)
+dep_refused_feature_exit=$?
+after_bugs=$(ls "$DEPB/bugs/open" | wc -l | tr -d ' ')
+assert_eq "a host on feature/* is ALSO refused, not silently switched" "2" "$dep_refused_feature_exit"
+assert_eq "nothing is written when refused" "$before_bugs" "$after_bugs"
+assert_eq "the host's feature branch is untouched" "feature/PLN-020-host-work" \
+  "$(cd "$DEPB" && git branch --show-current)"
+( cd "$DEPB" && git checkout -q develop && git branch -D feature/PLN-020-host-work ) >/dev/null 2>&1
 
 assert_eq "wf-bug documents the dependency path, not just the local one" "true" \
   "$(grep -q 'wf-dep-bug.sh' "$LIB_ROOT/skills/wf-bug/SKILL.md" && echo true || echo false)"

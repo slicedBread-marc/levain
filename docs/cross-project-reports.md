@@ -62,12 +62,12 @@ host's own `/wf-spec` the same way.
 1. Resolves `--host` against the reporting project's own `dependencies:` list.
 2. Confirms the path exists and has `scripts/wf-exec.sh` — a local checkout
    actually running this harness, not a stale clone or a typo.
-3. `cd`s into it and runs `scripts/wf-exec.sh wf-branch-check.sh develop true`,
-   **with `WF_UNATTENDED=1` forced** — see [Why WF_UNATTENDED](#why-wf_unattended-is-forced).
+3. Reads (never writes) the host's current branch. If it isn't `develop`,
+   refuses outright (exit 2, nothing written) — see
+   [Why the host's branch is never touched](#why-the-hosts-branch-is-never-touched).
 4. Runs `scripts/wf-exec.sh wf-bug-new.sh` there, exactly as that project's
    own `/wf-bug` would, with `--source cross-project:<reporting-slug>` so the
    origin is always on the record.
-5. Restores whatever branch the host was on before switching.
 
 Every one of those calls is the **host's own** deployed copy of the script,
 resolved through the **host's own** `wf-exec.sh` — so a host on an older
@@ -103,18 +103,45 @@ convention. See [skills/wf-bug/SKILL.md § Filing against a dependency, not this
 project](../skills/wf-bug/SKILL.md#filing-against-a-dependency-not-this-project) for the same
 rule stated where the filing actually happens.
 
-## Why WF_UNATTENDED is forced
+## Why the host's branch is never touched
 
-`wf-branch-check.sh`'s attended path (a human running a skill in their own
-project) *warns* about a shared checkout parked on a branch the pipeline
-didn't create, then switches anyway — right for a human who owns the mistake
-they're about to make. `wf-dep-bug.sh` is never that human: the session
-running it is working in the *reporting* project, and the checkout it's about
-to switch belongs to someone else's session in the *host* project. Forcing
-`WF_UNATTENDED=1` for that one call makes the same condition **refuse** (exit
-2, nothing written) instead of warn-and-proceed. A report that can't land
-right now is a no-op; a report that silently moved a stranger's branch out
-from under them is a WFI-123 in a different project's name.
+This used to `cd` into the host, run `wf-branch-check.sh develop true` with
+`WF_UNATTENDED=1` forced to switch the host onto `develop`, file, then switch
+back to whatever branch it found. `WF_UNATTENDED=1` made that call refuse
+(exit 2) rather than warn-and-switch for a checkout parked on a branch the
+pipeline didn't create or on `release`/`main` — right, since the session
+running `wf-dep-bug.sh` is working in the *reporting* project, and the
+checkout it was about to move belongs to someone else's session in the
+*host* project entirely.
+
+But `wf-branch-check.sh`'s `develop|feature/*` case was — and still is, for
+its normal, local callers — a silent no-op switch: exactly the branches a
+human's own in-progress work sits on. A cross-project filer landed there
+too, so the one case that most needed refusing was the one case that wasn't.
+`wf-dep-bug.sh` moved a host's own feature branch out from under it for the
+duration of a filing that had nothing to do with that work.
+
+The fix isn't a stricter switch-and-restore — any switch, even a restored
+one, is a window where something else looking at the host's checkout (a
+human, the host's own orchestrator) sees the wrong branch. So there is no
+switch at all: `wf-dep-bug.sh` reads the host's current branch and proceeds
+only if it is already `develop`, its stated permanent home for the shared
+checkout (`docs/release-worktrees.md`). Anything else refuses (exit 2,
+nothing written), unconditionally, feature work included. A report that
+can't land right now is a no-op; a report that silently moved a stranger's
+branch out from under them is a WFI-123 in a different project's name.
+
+A dedicated worktree for incoming reports — the same fix
+`release-branches/{release,main}` got for the analogous problem
+(`docs/release-worktrees.md`) — does not generalize to this case. `develop`
+is the shared checkout's own home branch, so pinning a second worktree to it
+fails outright in the host's normal state (git refuses to check the same
+branch out twice). And `wf-bug-new.sh`'s counter allocation
+(`wf-counter-next.sh`) resolves `plans/REGISTRY.md` via `wf_develop_root()` —
+always the host's main worktree, never wherever `wf-bug-new.sh` itself is
+invoked from — so a second worktree would not even decouple the write from
+the shared checkout's state. Refusing cleanly is the fix actually available
+without redefining what `wf_develop_root()` means project-wide.
 
 ## Limitation: no local checkout
 

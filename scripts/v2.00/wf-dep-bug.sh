@@ -17,17 +17,34 @@
 #
 # HOW IT WORKS
 #
-# This does not write into the dependency's files directly. It cd's into the
-# dependency's own worktree and runs ITS OWN scripts/wf-exec.sh wf-bug-new.sh,
-# so the bug is allocated through THAT project's own counter and registry —
-# not this one's — landing exactly where a human on that project would have
+# This does not write into the dependency's files directly. It runs the
+# host's own scripts/wf-exec.sh wf-bug-new.sh in the host's own checkout, so
+# the bug is allocated through THAT project's own counter and registry — not
+# this one's — landing exactly where a human on that project would have
 # filed it by hand. Their own /wf-spec picks it up like any other bug; there
 # is no second triage path for the host to learn.
 #
-# It goes through the host's own wf-branch-check.sh first, so it inherits the
-# same protection wf-bug gets locally: a shared checkout a human parked on
-# some other branch is left alone (exit 2), and nothing is written. Try again
-# once the host is idle or on develop.
+# It NEVER switches the host's branch. A host whose shared checkout is
+# already on `develop` — its permanent home, docs/release-worktrees.md:
+# "Never leaves develop. Ever." — files normally. Anything else (a human's
+# feature/* work included) is refused outright (exit 2, nothing written)
+# rather than displaced.
+#
+# This used to force the host onto `develop` first (wf-branch-check.sh),
+# file, then switch back — and it silently did so even when the host was on
+# a feature/* branch, moving a human's or the host's own orchestrator's work
+# out from under them for the duration. Giving the filer its own worktree
+# (the release-branches/{release,main} fix for the analogous shared-checkout
+# problem, docs/release-worktrees.md) does NOT generalize here: `develop` is
+# the shared checkout's own home branch, so a second worktree pinned to it
+# fails outright whenever the host is in its normal state ("already checked
+# out" — git refuses the same branch in two worktrees at once). Worse,
+# wf-counter-next.sh — what actually allocates the bug ID — resolves
+# plans/REGISTRY.md via wf_develop_root(), always the host's MAIN worktree,
+# never wherever wf-bug-new.sh itself runs from; a second worktree would not
+# even decouple the write. Refusing cleanly, rather than moving the host's
+# branch, is the fix that's actually available without changing what
+# wf_develop_root() means project-wide.
 #
 # It commits in the host but does NOT push — same as wf-bug-new.sh does
 # locally. Pushing another project's branch is that project's call, made by a
@@ -52,8 +69,8 @@
 # Everything else goes to stderr.
 #
 # Exit 0 on success. Exit 1 on bad usage, missing config, or a host that
-# isn't a harness-enabled local checkout. Exit 2 when the host refused
-# because a human has its checkout parked elsewhere — nothing was written.
+# isn't a harness-enabled local checkout. Exit 2 when the host's checkout
+# isn't on develop right now — nothing was written; try again once it is.
 
 set -euo pipefail
 
@@ -139,20 +156,30 @@ source_tag="cross-project:$caller_slug"
 kind_note=""
 [ "$kind" = "request" ] && kind_note="This is a capability request from $caller_slug, not a defect found locally in $host_name."
 
-branch_out=""
-# WF_UNATTENDED=1: this call is not a human sitting at the host's own
-# terminal — it is another project reaching in uninvited. wf-branch-check.sh
-# only REFUSES a checkout parked on a foreign branch under this flag; without
-# it, the attended path merely warns and switches anyway (right for a human
-# who owns the mistake, wrong for a script that does not).
-if branch_out=$(cd "$host_path" && WF_UNATTENDED=1 scripts/wf-exec.sh wf-branch-check.sh develop true); then
-  eval "$branch_out"
-else
-  # `!` before a command substitution clobbers $? with the negation's own
-  # status, not the command's — read it here, in the branch where it is
-  # still the real one.
-  status=$?
-  echo "Error: $host_name's checkout could not be switched to develop (exit $status) — a human likely has it parked elsewhere. Nothing was written." >&2
+# The host's shared checkout is the ONLY place this can write: wf-bug-new.sh
+# allocates through wf-counter-next.sh, which resolves plans/REGISTRY.md via
+# wf_develop_root() — always the host's main worktree, never wherever this
+# script itself is invoked from. Pointing wf-bug-new.sh at a different
+# worktree would still update the counter back at the shared checkout, so a
+# separate worktree does not actually decouple filing from the host's branch
+# — it would just add a second place to go wrong.
+#
+# So: proceed only when the shared checkout is ALREADY on develop — its
+# stated permanent home (docs/release-worktrees.md: "Never leaves develop.
+# Ever."). That is the normal state and nothing needs to move. When it's
+# anything else — a human's feature/* work included — refuse (exit 2)
+# instead of the silent switch-file-switch-back this used to do. That old
+# behavior moved a stranger's checkout out from under them whenever it
+# happened to be parked on a feature/* branch (the `develop|feature/*)` ;;
+# no-op case below wf-branch-check.sh's foreign-branch guard, which only
+# ever covered non-pipeline branches, release and main — never feature/*).
+# A report that can't land right now is a no-op; one that silently moved
+# someone else's branch is not.
+host_branch=$(cd "$host_path" && git branch --show-current)
+if [ "$host_branch" != "develop" ]; then
+  echo "Error: $host_name's checkout is on '$host_branch', not 'develop'. Nothing was written." >&2
+  echo "       Filing a cross-project report never switches the host's branch — that already" >&2
+  echo "       belongs to whoever has it parked there. Try again once $host_name is back on develop." >&2
   exit 2
 fi
 
@@ -167,14 +194,9 @@ if ! bug_out=$(cd "$host_path" && scripts/wf-exec.sh wf-bug-new.sh "$title" \
     --actual "${actual:-TBD}" \
     --notes "${kind_note}${kind_note:+$'\n\n'}${notes:-—}"); then
   echo "Error: filing in $host_name failed — see output above" >&2
-  [ -n "${SWITCHED_FROM:-}" ] && (cd "$host_path" && git checkout "$SWITCHED_FROM") >/dev/null 2>&1
   exit 1
 fi
 eval "$bug_out"
-
-if [ -n "${SWITCHED_FROM:-}" ]; then
-  (cd "$host_path" && git checkout "$SWITCHED_FROM") >&2
-fi
 
 echo "$BUG_ID filed in $host_name → $host_path/$BUG_DIR" >&2
 echo "Not pushed — push $host_name's develop from that project (or let its own orchestrator do it) before anyone there can act on it." >&2
