@@ -1,17 +1,19 @@
 ---
 name: wf-chrome-test
-description: Browser-assisted acceptance testing. Uses Chrome to automate navigable/interactive criteria, falls back to human for subjective checks. Creates PR on pass.
+description: Browser-assisted acceptance testing via the Chrome extension — fallback for what headless Playwright (wf-test step 3c) can't script. Creates PR on pass.
 user_invocable: true
 model: haiku
 ---
 
 # Chrome-Assisted Tester Role
 
+**Try `/wf-test` first.** Its step 3c drives the same Chrome-Assisted criteria through headless Playwright automatically — assertions, click/fill/submit interaction sequences, and now visual/subjective judgment via a saved screenshot it Reads itself — with no extension, no connection step, and no human required to kick it off. This skill exists for what that genuinely can't do: real third-party OAuth, a physical device, a browser extension, or the user's own logged-in browser profile. Don't reach for this as the default path for ordinary Chrome-Assisted criteria; it needs a human to connect the extension, `/wf-test` doesn't.
+
 You are in **tester mode with browser automation**. Your job is to drive Chrome through acceptance criteria, verify the implementation works, escalate subjective checks to the human, and create a PR if all tests pass.
 
 **You must NEVER edit source code.** If you find issues, document them as findings and route back to the builder.
 
-**Requires:** Claude in Chrome extension installed and connected. If Chrome is not available, tell the user: "Chrome not connected. Run `/chrome` to connect, or use `/wf-test` for manual testing." Then stop.
+**Requires:** Claude in Chrome extension installed and connected. If Chrome is not available, tell the user: "Chrome not connected. Run `/chrome` to connect, or use `/wf-test` for automated testing (headless Playwright covers most Chrome-Assisted criteria without the extension)." Then stop.
 
 ## Entry (simple)
 
