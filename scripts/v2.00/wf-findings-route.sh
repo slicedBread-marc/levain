@@ -85,9 +85,17 @@ fi
 # Markdown does not promise that a list item is one line, so the parser stops
 # assuming it. Each finding is flattened to a single line before any tag test
 # runs: a block opens at `- [ ]` / `- [x]` and closes at the next such line, at
-# a heading, or at EOF. Blank lines inside it are dropped rather than treated
-# as terminators — a wrapped paragraph has none, and an item with two
-# paragraphs is still one finding.
+# a heading, at a blank line, or at EOF. WFI-142's own case — a hard-wrapped
+# paragraph, 25 physical lines — had continuations on consecutive
+# non-blank lines, so closing on blank is enough to fix it without also
+# swallowing whatever comes after the checklist. An earlier version of this
+# script instead kept the block open across blank lines too, on the
+# speculative case of a finding written as two blank-line-separated
+# paragraphs; no producer in this repo writes findings that way, and it had
+# a real cost — a plain narrative sentence appended after the last finding,
+# separated only by a blank line, got folded into that finding's block and
+# pushed its trailing routing tag off the end of the line, un-tagging it
+# (client-f WFI-001).
 #
 # The tags therefore keep their exact meaning: a tag ends the FINDING. What
 # changes is that a finding may now be as long, and as wrapped, as its author
@@ -108,6 +116,7 @@ awk '
     next
   }
   /^[[:space:]]*#{1,6}[[:space:]]/ { flush(); next }
+  /^[[:space:]]*$/ { flush(); next }
   {
     if (!open) next
     line = $0

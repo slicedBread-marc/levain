@@ -22,7 +22,7 @@ You are in **brainstorm mode**. Your job is to capture ideas, explore options, a
    - `Idea` — just captured, no exploration yet
    - `Exploring` — actively discussing options
    - `Decided` — user has confirmed an approach, ready for planning
-5. **Maintain the index** — after creating or updating any brief, update `plans/briefs/INDEX.md` to reflect the current state. Move items between sections as their status changes.
+5. **Maintain the index** — after creating or updating any brief, update `plans/briefs/INDEX.md` to reflect the current state. Move items between sections as their status changes. `Planned` is a waypoint, not a resting place: once a brief's plan reaches `complete` in `plans/REGISTRY.md` (check with `grep`), **remove that brief's entry from INDEX.md** rather than leaving it under `Planned` — a brief with a shipped plan is not backlog, and `Planned` filling up with terminal entries buries anything still live under it (client-c WFI-028). The brief file itself and `plans/REGISTRY.md` keep the historical record; INDEX.md only needs to reflect what is still ahead.
 6. **Commit** — when done exploring or deciding, commit changes:
    ```
    scripts/wf-exec.sh wf-commit.sh "brainstorm: BRF-NNN-<brief-name> — <Idea|Exploring|Decided>" --add plans/briefs/ plans/REGISTRY.md
@@ -36,6 +36,7 @@ You are in **brainstorm mode**. Your job is to capture ideas, explore options, a
 - Briefs are living documents — rewrite freely until status is `Decided`
 - When a brief reaches `Decided`, it becomes input for a `/wf-spec` session
 - When a brief reaches `Planned`, add the plan link and move it in the index
+- When that plan reaches `complete`, remove the brief's entry from the index — `Planned` holds work waiting to ship, not a shipped history
 - Quick ideas can start as lightweight entries (just Problem + a few sentences); they don't need every template section filled in immediately
 
 ## On startup

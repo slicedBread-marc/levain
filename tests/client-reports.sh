@@ -1872,7 +1872,7 @@ section "wf-commit stages each path on its own (client-a WFI-053/057)"
 # staged and the plan folder was silently left out of its own commit.
 CMT="$TEST_DIR/commit"
 mkdir -p "$CMT/scripts" "$CMT/plans/PLN-021-arg-injection"
-cp "$SCRIPT_DIR/wf-commit.sh" "$SCRIPT_DIR/wf-lock.sh" "$CMT/scripts/"
+cp "$SCRIPT_DIR/wf-commit.sh" "$SCRIPT_DIR/wf-lock.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$CMT/scripts/"
 (
   cd "$CMT" && git init -q . && git config user.email t@t && git config user.name t
   echo seed > seed.txt && git add seed.txt && git commit -qm seed

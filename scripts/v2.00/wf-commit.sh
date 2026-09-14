@@ -80,6 +80,8 @@ set -euo pipefail
 
 # shellcheck source=wf-lock.sh
 source "$(dirname "$0")/wf-lock.sh"
+# shellcheck source=wf-orch-lib.sh
+source "$(dirname "$0")/wf-orch-lib.sh"
 
 message="${1:-}"
 shift || true
@@ -120,6 +122,27 @@ fi
 
 # Env fallback — an explicit --branch always wins.
 [ -n "$want_branch" ] || want_branch="${WF_REQUIRE_BRANCH:-}"
+
+# Plan content (plans/, bugs/, briefs/) lives only on the develop worktree —
+# by design, a feature worktree never carries it (docs/worktrees.md). But
+# wf-implement invokes this script as
+# `$DEVELOP_ROOT/scripts/wf-exec.sh wf-commit.sh ... --add plans/...` while
+# the calling shell's CWD is still the feature worktree, and `git add` runs
+# against CWD, not against the path of the script it happens to be running.
+# A feature worktree's sparse-checkout excludes plans/, so that `git add`
+# fails outright: "matched paths that exist outside of your sparse-checkout
+# definition." wf-progress-tick.sh and wf-registry-update.sh both avoid this
+# by `cd`-ing to the develop root themselves before touching plans/ — do the
+# same here rather than trust the caller's CWD (WFI-026).
+for p in "${paths[@]+"${paths[@]}"}"; do
+  case "$p" in
+    plans/*|plans|bugs/*|bugs|briefs/*|briefs)
+      develop_root="$(wf_develop_root)"
+      [ "$PWD" = "$develop_root" ] || cd "$develop_root"
+      break
+      ;;
+  esac
+done
 
 # assert_branch <path>... — refuse the commit if this branch may not carry it.
 #

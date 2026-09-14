@@ -429,6 +429,8 @@ and must be discarded, not reported.
 
 ## Phase 3: Exit (complex) — return to develop
 
+**A criterion is accepted only in `testing`, by `/wf-test` — never by holding the plan at `active` for an out-of-band human look.** When step 22's checklist passes, advance to `verify` (step 25); do not stay at `active` waiting for a human to eyeball the running container and accept criteria there instead. That acceptance happens outside every gate this pipeline has: it is not written to `findings.md`, not visible to `wf-list-*` or the orchestrator, and its only record is whatever prose the builder happens to put in `progress.md` — unauditable, and invisible to anyone who did not read that file (client-f WFI-002). If a criterion is genuinely subjective and likely to take a few rounds of human judgment (a visual layout, a wording call), that is exactly what the `verify → testing → active` fix cycle is for: tag it `← MANUAL-TEST` if it has no code-level finding, exit to `verify` as normal, and let `/wf-test` record PASS/FAIL. Iterating through the full cycle for a subjective judgment costs a round trip, not a redesign.
+
 **IMPORTANT:** All commands in this phase must run from the develop root (`DEVELOP_ROOT`). Set this once and use it for every command:
 ```bash
 DEVELOP_ROOT=$(git worktree list | head -1 | awk '{print $1}')

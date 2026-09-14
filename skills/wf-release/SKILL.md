@@ -26,14 +26,16 @@ release-branches/release → release's own permanent worktree — staging enviro
    `release-branches/release` is `release`'s permanent home — created once, reused forever, never the shared develop checkout. Before this, `/wf-release` moved the shared main worktree onto `release` for the duration of the run: the orchestrator reads `plans/REGISTRY.md` from that worktree, and on `release` that file is whatever release last merged, so every plan whose state advanced since then read stale — client-a's PLN-051 read `active` there while develop had it `complete`, and two unattended builders were dispatched at a finished plan (WFI-135, WFI-134, WFI-157). Pinning `release` to its own path removes the borrowing: develop's worktree never leaves develop, so there is nothing to hand back at the end and nothing for a parallel session to catch mid-move. See [`docs/release-worktrees.md`](../../docs/release-worktrees.md).
 
    Everything from here through step 8 runs **in `release-branches/release`**, not the project root — every command below assumes that cwd.
-2. **Check if release has unreleased commits:**
+2. **Check if develop has unreleased commits.** Fetch first — this worktree is pinned and long-lived, so the local `release` ref can be stale relative to `origin/release` if another session pushed since this worktree last touched it (WFI-024, WFI-027):
    ```bash
-   git log main..release --oneline | head -10
+   git fetch origin release
+   git log origin/release..develop --oneline | head -10
    ```
-3. **If no new commits on release vs main**: inform the user ("Release is up to date with main — nothing to release.") and exit. Next step: work on a plan with `/wf-implement`, test it with `/wf-test`, then return here.
+   This must compare `release` against `develop`, never against `main`. Right after every `/wf-deploy`, `release` and `main` are identical by construction, so `main..release` is always empty and would report "nothing to release" even when develop has a full backlog of completed plans waiting to ship (WFI-024).
+3. **If that range is empty**: inform the user ("Release is up to date with develop — nothing to release.") and exit. Next step: work on a plan with `/wf-implement`, test it with `/wf-test`, then return here.
 3a. **Check for open deferred criteria on the plans being staged:**
    ```bash
-   scripts/wf-exec.sh wf-deferred-check.sh $(git log main..release --oneline | grep -oE 'PLN-[0-9]+' | sort -u)
+   scripts/wf-exec.sh wf-deferred-check.sh $(git log origin/release..develop --oneline | grep -oE 'PLN-[0-9]+' | sort -u)
    ```
    Exit `1` — show its output to the user alongside the commit list in the next step. These are
    `external`/`soak`/`unbuilt` criteria read from `plans/deferred-criteria.md` that a plan shipped

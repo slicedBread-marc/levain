@@ -39,6 +39,18 @@ eval "$("$SCRIPT_DIR/wf-plan-port.sh" "$plan_folder")"
 echo "FEATURE_PORT=$FEATURE_PORT"
 echo "COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME"
 
+# ASP.NET Core (and similar) host filtering rejects any request whose Host
+# header isn't in AllowedHosts — the tunnel origin and a LAN IP alike, since
+# neither is 'localhost' nor a production hostname. A tunnel is pointless if
+# the app 400s every request that reaches it through it, so --tunnel asks
+# for a permissive value here. A project's docker-compose.yml opts in with
+# e.g. `environment: - AllowedHosts=${FEATURE_ALLOWED_HOSTS:-}` (WFI-007).
+if $want_tunnel; then
+  FEATURE_ALLOWED_HOSTS="*"
+else
+  FEATURE_ALLOWED_HOSTS=""
+fi
+
 # Start the container (stderr so eval callers only get KEY=VALUE on stdout)
 #
 # ── Self-healing on 'no space left on device' ──────────────────────────────
@@ -57,7 +69,7 @@ echo "COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME"
 max_attempts=$(wf_cfg dockerRetry.maxAttempts 2)
 attempt=1
 while :; do
-  if compose_out=$(FEATURE_PORT=$FEATURE_PORT docker compose \
+  if compose_out=$(FEATURE_PORT=$FEATURE_PORT FEATURE_ALLOWED_HOSTS=$FEATURE_ALLOWED_HOSTS docker compose \
        -f docker/docker-compose.yml \
        -p "$COMPOSE_PROJECT_NAME" \
        up --build -d 2>&1); then
@@ -166,10 +178,20 @@ if $want_tunnel; then
     echo $! > "$tunnel_pidfile"
 
     # Quick tunnels print their hostname a second or two after start.
+    #
+    # The exclusion below must anchor on the whole host, not do a plain
+    # substring match: cloudflared also prints a Terms-of-Service link to
+    # cloudflare.com itself before the tunnel URL, and a naive
+    # `grep -v 'cloudflare.com'` matches that AND the real tunnel host,
+    # because "trycloudflare.com" contains "cloudflare.com" as a substring.
+    # That silently discarded every quick-tunnel URL and made this loop
+    # report "no URL within 30s" even though the URL was in the log the
+    # whole time (WFI-005, WFI-006).
     public_url=""
     for _ in $(seq 1 30); do
       public_url=$(grep -oE 'https://[a-zA-Z0-9.-]+\.[a-z]+' "$tunnel_log" 2>/dev/null \
-                     | grep -v 'cloudflare.com\|argotunnel.com' | head -1 || true)
+                     | grep -vE '^https://([a-zA-Z0-9-]+\.)*(cloudflare|argotunnel)\.com$' \
+                     | head -1 || true)
       [ -n "$public_url" ] && break
       sleep 1
     done
