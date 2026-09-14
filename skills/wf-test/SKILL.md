@@ -41,7 +41,7 @@ Order of work:
    (`… && {{test_command}} < /dev/null`): your shell's stdin is not at EOF, so
    a single test that reads it blocks forever with no failure and no output to
    say why (WFI-240).
-3. Work every `#### Chrome-Assisted` criterion — these are scripted navigations and assertions, so run them and record PASS/FAIL yourself. **Every one of them ends at PASS, FAIL or a recorded reason it could not run** — leaving them at `—` and then gating for "one Manual criterion" misreports what is actually left, and the gate question is the only thing a human reads (WFI-070).
+3. Work every `#### Chrome-Assisted` criterion — these are scripted navigations and assertions, so run them and record PASS/FAIL yourself. When a criterion reduces to a literal DOM/JS assertion, [step 3c](#testing) runs it through a headless browser automatically, with no Chrome extension and no separate `/wf-chrome-test` invocation. **Every one of them ends at PASS, FAIL or a recorded reason it could not run** — leaving them at `—` and then gating for "one Manual criterion" misreports what is actually left, and the gate question is the only thing a human reads (WFI-070).
 4. For every criterion where the mode menu applies, take `[a]` (auto-test) whenever the criterion matches a recurring auto-testable shape. On auto-test FAIL, record it as a Candidate as normal — do **not** fall through to the manual flow.
 5. Dispose of the criteria that never need a human, whatever remains untested:
    - `(external)` and `(soak)` — defer each and check it off. They cannot be satisfied at gate time by anyone, so they never gate:
@@ -73,7 +73,7 @@ Order of work:
 | Entry | Plan selection menu | [AUTO] | Use the plan named in your instructions |
 | Step 2 | Goal missing | **[GATE]** | `goal-missing` |
 | Step 7.2 | Mode menu | [AUTO] | `[a]` when the criterion matches a recurring shape, otherwise defer it to the `manual-test` gate |
-| Step 7.3 | "What do you see?" | [AUTO] | Chrome-Assisted: determine it yourself. `#### Manual`: leave for step 5/6 above |
+| Step 7.3 | "What do you see?" | [AUTO] | Chrome-Assisted reaching here already failed step 3c's auto-check (not a literal assertion, or a low-confidence disagreement) — leave it at `—` with the recorded reason for step 5/6's gate, same as `#### Manual` |
 | Step 7.3 | FAIL classification | [AUTO] | Write the finding and route to spec as normal — that is a state transition, not a question. An `(eyes:cosmetic)` failure files a bug and checks off instead |
 | Step 7.3 | Deferring a criterion | [AUTO] | Defer `(external)` and `(soak)` criteria — that is mechanical. Never defer anything else unattended |
 | Step 6 | Whether to open `manual-test` | [AUTO] | `wf-manual-gate.sh` decides. Do not second-guess it in either direction |
@@ -187,11 +187,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
 1. **Read the plan** — from develop worktree: `../../plans/PLN-NNN-<slug>/plan.md`
    - Read Goal and Verification Checklist sections
    - **Only present `### Human Test Criteria` items** (combine `#### Chrome-Assisted` and `#### Manual` into a single flat list) — Build & Tests and Code Quality were already handled by the verify agent
-   - **Chrome-assisted detection:** If the plan contains a `#### Chrome-Assisted` subsection with criteria, display a one-line suggestion before the criteria list:
-     ```
-     💡 This plan has Chrome-assisted criteria. Run /wf-chrome-test for automated browser checks.
-     ```
-     Then continue normally — wf-test treats all criteria as manual regardless.
+   - **Chrome-assisted detection:** If the plan contains a `#### Chrome-Assisted` subsection with criteria, note it — [step 3c](#testing) below auto-checks what it can, once the container is up. Do not display the `/wf-chrome-test` suggestion for criteria step 3c already resolved; only mention `/wf-chrome-test` for ones it left untested and that would benefit from a real browser + a human in the loop (visual/subjective checks, or any criterion left over because no headless browser could be installed on this machine — see step 3c).
 2. **Check for prior test progress** — look for `../../plans/PLN-NNN-<slug>/test-progress.md`. If it exists, read it to get per-criterion results and build identifiers.
 3. **Deploy to local container and capture build identifier** (single bash call — already inside feature branch):
    ```bash
@@ -241,6 +237,17 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    After editing, restart the container: ../../scripts/wf-exec.sh wf-docker-up.sh
    ```
    When presenting or walking through individual criteria, if a criterion tests behavior that appears controlled by one of these parameters, remind the user which parameter to set and to what value before testing that criterion.
+3c. **Auto-check Chrome-Assisted criteria with a headless browser** — for every `#### Chrome-Assisted` criterion not already `PASS`/`FAIL` on the current build in `test-progress.md`:
+
+   - **Only attempt this for a criterion that reduces to one literal, deterministic DOM/JS assertion** — an element's geometry (`getBoundingClientRect`, `scrollWidth`/`innerWidth`), a computed style, a cookie attribute, a meta tag's presence or content, absence of console errors, a redirect's resulting URL, text/element presence after an action. If the criterion's pass condition is subjective ("looks right", "feels natural") or needs an interaction sequence more involved than "navigate, maybe click, then assert", do not attempt it here — leave it for the criteria loop below, same as any `#### Manual` criterion.
+   - Formulate the JS boolean expression yourself from the criterion text, and run:
+     ```bash
+     ../../scripts/wf-exec.sh wf-headless-eval.sh "http://localhost:$FEATURE_PORT<route>" "<js-boolean-expression>"
+     ```
+     `consoleErrors` (an array of strings) is in scope for "no console errors" style criteria — see the script's header comment for the full contract.
+   - **Exit 0 or 1 (`PASS`/`FAIL` on stdout) is a real, high-confidence result — record it and move on. Do not gate on it and do not also route it through the manual criteria loop.** This is what makes automation here different from `/wf-chrome-test`: a criterion this precise does not need a human, an extension, or even asking — the result goes straight into `test-progress.md` against the current `$BUILD`, same as any other recorded PASS/FAIL.
+   - **Exit 2 (`ERROR` on stdout) is "a recorded reason it could not run", never a FAIL.** Leave the criterion at `—` with that reason noted in session memory (it surfaces in test-progress.md's Notes on exit) and let it fall through to the criteria loop / gate below like any other untested Chrome-Assisted criterion. A missing headless browser on this machine (no network on first use) is the ordinary case of this, not a defect to work around.
+   - **A headless PASS or FAIL that contradicts a result already recorded for this same assertion on a prior build — attended human testing included — is low-confidence, whatever the headless run says.** Do not overwrite the existing record with the automated verdict in either direction. Instead: leave the criterion at `—`, note both readings ("headless: FAIL (scrollWidth 464 > innerWidth 390), prior human PASS on build <sha>"), and let it reach the gate as a named disagreement — the gate question should say what conflicts, not just that a criterion is untested. client-f's PLN-004 criterion 6 is the worked example: a real-device human PASS and a 390px-CSS-viewport headless FAIL on the same "no horizontal scroll" assertion disagreed, and the disagreement — not either individual reading — is what needed a human's eyes (WFI-008). A criterion with no prior recorded result has nothing to disagree with, so an unambiguous headless PASS/FAIL there is not low-confidence merely for being the first result.
 4. **Run e2e tests** (app is now running):
 
    First, extract the plan's e2e scope (may be blank):
@@ -575,18 +582,20 @@ Test progress is saved once at exit, not during testing. The LLM holds in-memory
 
 TREE feature-branches/PLN-NNN-slug @ feature/PLN-NNN-slug a1b2c3d (2026-08-17T15:14:51Z)
 
-| # | Criterion | Build | Result |
-|-|-|-|-|
-| 1 | criterion one text | Apr 07 09:15 (a1b2c3d) | PASS |
-| 2 | criterion two text | Apr 07 09:15 (a1b2c3d) | PASS |
-| 3 | criterion three text | Apr 08 14:32 (f4e5d6c) | FAIL |
-| 4 | criterion four text | — | — |
+| # | Criterion | Build | Result | Notes |
+|-|-|-|-|-|
+| 1 | criterion one text | Apr 07 09:15 (a1b2c3d) | PASS | |
+| 2 | criterion two text | Apr 07 09:15 (a1b2c3d) | PASS | auto: EXISTS Handoff_SetsCookieAndRedirects |
+| 3 | criterion three text | Apr 08 14:32 (f4e5d6c) | FAIL | |
+| 4 | criterion four text | — | — | headless: no browser installed on this machine (no network) |
+| 5 | criterion five text | — | — | headless FAIL (scrollWidth 464 > innerWidth 390) vs prior human PASS on build a1b2c3d — disagreement, needs eyes |
 
 Last failure: #3 on build Apr 08 14:32 (f4e5d6c)
 ```
 
 - The `TREE` line is the one `wf-test-tree.sh` printed, pasted. If you are writing this file without one in your tool output, you have no provenance for the results below it — re-run the command in the plan's worktree and paste what it prints.
 - One row per criterion, always present. Result: `PASS`, `FAIL`, `SKIP`, or `—` (untested).
+- **Notes is where an untested (`—`) row's reason ends up at exit.** Held in session memory like every other result until then (see above), but write it here rather than dropping it: the auto-test agent's outcome (`EXISTS`/`PASS` name, or a `FAIL` reason) and step 3c's headless-eval outcome (why it couldn't run, or what it disagreed with) both belong in this column. A reason that never reaches the file does not survive a compaction or a different session resuming the plan — this file is the only thing either reads (WFI-070's own lesson, applied to the reason column, not just the verdict column).
 - Only the most recent result per criterion is stored — overwrite on retest.
 - "Last failure" line records the resume point for the next session.
 - **Start from the file that is already there, and never write `—` over a result you did not retest.** This file is the only record that a criterion was ever executed; a session that regenerates it from scratch erases whatever an earlier session — or a human sitting at the app right now — established. client-a lost a completed 15/15 run to a rewrite exactly like that (WFI-070). Carry forward every row you did not test yourself, build identifier included.
