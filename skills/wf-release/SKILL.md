@@ -47,8 +47,17 @@ release-branches/release → release's own permanent worktree — staging enviro
 3. **Check if develop has unreleased commits.** Fetch first — this worktree is pinned and long-lived, so the local `release` ref can be stale relative to `origin/release` if another session pushed since this worktree last touched it (WFI-024, WFI-027):
    ```bash
    git fetch origin release
+   TOTAL=$(git rev-list --count origin/release..develop)
    git log origin/release..develop --oneline | head -10
+   if [ "$TOTAL" -gt 10 ]; then echo "…and $((TOTAL - 10)) more ($TOTAL commits total)"; fi
    ```
+   **Always carry the total with the list.** `head -10` is a display convenience, not the
+   promotion — everything in the range ships whether or not it was printed. A bare truncated
+   list reads as the whole batch, both to the user at step 5 and to whoever later answers the
+   `release-approval` gate that quotes it (client-b WFI-003/WFI-004), so the count and the
+   `…and N more` line are part of the list from here on: wherever a step below says "the commit
+   list from step 3", it means the list *plus* that marker.
+
    This must compare `release` against `develop`, never against `main`. Right after every `/wf-deploy`, `release` and `main` are identical by construction, so `main..release` is always empty and would report "nothing to release" even when develop has a full backlog of completed plans waiting to ship (WFI-024).
 
    **Filter out `/wf-deploy`'s own bookkeeping commits before deciding whether there's anything

@@ -234,6 +234,20 @@ The plan burned its attempt budget without changing state — a retry will not h
 An unattended `/wf-release` or `/wf-deploy` reached its promotion prompt with nobody to prompt, asked `wf-autonomy.sh`, and was told no. The question holds the commit list; read it out.
 
 1. Show the commits and ask the plain question — "promote these to `release`?" / "…to `main`?"
+
+   **If you check the gate's list against the repository, fetch first and compare against the
+   remote ref** — never a bare local `release` or `main`:
+   ```bash
+   git fetch origin release main
+   git log origin/release..develop --oneline   # release-approval
+   git log origin/main..origin/release --oneline   # deploy-approval
+   ```
+   `release` and `main` live in pinned, long-lived worktrees this session never touches, so their
+   local refs are routinely behind whatever the last `/wf-release` or `/wf-deploy` pushed. client-b
+   WFI-003 was filed as a harness bug — "the gate listed 10 commits, `git log release..develop`
+   shows 145, plans are missing from the promotion" — off a stale local `release`; against
+   `origin/release` the gate's list was exactly right, and WFI-004 withdrew it. A gate's list
+   disagreeing with a local range is first evidence of a stale ref, not of a broken gate.
 2. **You do not promote anything here.** Close the gate with the answer as the resolution — then
    check whether a daemon is live before saying what happens next:
    ```bash

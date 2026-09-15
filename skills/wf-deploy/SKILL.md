@@ -47,8 +47,16 @@ Before starting, confirm E2E passed on release:
    Steps 3 and 4 read `release` and `main` as refs too, which resolve from any worktree in the repository.
 3. **Show recent release commits** so the user can confirm what's being promoted:
    ```bash
+   TOTAL=$(git rev-list --count release --not main)
    git log --oneline release --not main -n 20
+   if [ "$TOTAL" -gt 20 ]; then echo "…and $((TOTAL - 20)) more ($TOTAL commits total)"; fi
    ```
+   **Always carry the total with the list.** `-n 20` is a display convenience, not the
+   promotion — everything in the range ships whether or not it was printed. A bare truncated
+   list reads as the whole batch, both to the user here and to whoever later answers the
+   `deploy-approval` gate that quotes it (client-b WFI-003/WFI-004), so the count and the
+   `…and N more` line are part of the list from here on: wherever a step below says "the commit
+   list from step 3", it means the list *plus* that marker.
 4. **If no new commits on release vs main**: inform the user there is nothing to deploy. **If this is an attended run** (`WF_UNATTENDED` unset), also close a stale `deploy-approval` gate before unclaiming — nothing being left to deploy means whatever that gate asked about was already promoted or abandoned by some other path, and a human running this attended is exactly the moment to clear it rather than leave it for `/wf-attend` to notice later (client-c WFI-031: an unattended dispatch kept reopening `deploy-approval` for a commit already the tip of `main`, because nothing ever told the gate the promotion had happened — this closes that gap the next time a human is actually here to answer for it):
    ```bash
    if [ "${WF_UNATTENDED:-0}" != "1" ] \
