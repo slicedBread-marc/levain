@@ -90,10 +90,12 @@ The verify agent runs autonomously and auto-routes:
 
 | Source | Eligible when |
 |-|-|
-| local `release` branch, diffed against `develop` | `git rev-list release..develop -1` is non-empty |
+| local `release` branch, diffed against `develop` | `git rev-list release..develop -1` is non-empty **and** at least one changed path falls outside `plans/` and `bugs/` |
 
 **Not eligible:** `release` branch doesn't exist yet (bootstrapping the first release is left to a
-human). `release` and `develop` already in sync.
+human). `release` and `develop` already in sync. `develop` is only ahead by planning commits —
+T2 commits spec drafts and review rounds straight to `plans/` on `develop`, outside any feature
+branch, and reviewing a spec is not releasing one (WFI-001, client-d).
 
 Not REGISTRY-keyed — `release`/`deploy` aren't plans, they're a fixed singleton pipeline stage
 (artifact id `RELEASE`, capped at 1 in flight). Local-ref only, deliberately cheap: this is a
