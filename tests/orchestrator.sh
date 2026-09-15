@@ -1876,12 +1876,12 @@ assert_eq "a payload carrying no path allows" "0" \
 rm -f "$claim_dir/.wf-claim"
 
 # ═══════════════════════════════════════════════════════════════════════
-section "The promote guard refuses a push behind an open gate (WFI-004, WFI-005)"
+section "The promote guard refuses a push or merge behind an open gate (WFI-004, WFI-005, WFI-034)"
 
-# Three separate runs — client-c WFI-032, client-d WFI-004 and WFI-005 —
-# each opened its own release-approval/deploy-approval gate on a refusal and
-# pushed release or main anyway. A "STOP" sentence in the skill did not hold;
-# this hook is the mechanical version.
+# Four separate runs — client-c WFI-032, client-d WFI-004 and WFI-005,
+# client-c WFI-034 — each opened its own release-approval/deploy-approval
+# gate on a refusal and promoted release or main anyway. A "STOP" sentence in
+# the skill did not hold; this hook is the mechanical version.
 promote_guard() {
   printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$1" \
     | "$SCRIPT_DIR/wf-guard-promote.sh" 2>&1
@@ -1921,7 +1921,23 @@ assert_eq "deploy-approval open: push main blocked" "2" \
   "$(promote_guard_rc 'git push origin main')"
 assert_eq "deploy-approval open: push release is unaffected (different gate)" "0" \
   "$(promote_guard_rc 'git push origin release')"
+
+# WFI-034: the push to main was correctly refused, but the LOCAL merge that
+# promotes release into main (step 7) and the back-merge that carries it into
+# develop (step 12) are not pushes at all — and it's the second of those that
+# actually reached origin, via the develop push this guard deliberately never
+# gates. Blocking both merges closes the leak at its source.
+assert_eq "deploy-approval open: local release→main merge blocked (step 7)" "2" \
+  "$(promote_guard_rc "git merge -X theirs --no-ff release -m release-promote-to-main")"
+assert_eq "deploy-approval open: back-merge main→develop blocked (step 12)" "2" \
+  "$(promote_guard_rc "git merge -X ours main -m sync-bring-completed-plans-back-to-develop")"
+assert_eq "deploy-approval open: wf-release's own develop→release merge is unaffected" "0" \
+  "$(promote_guard_rc 'git merge origin/develop --no-edit')"
+assert_eq "deploy-approval open: a feature-branch merge naming neither ref is unaffected" "0" \
+  "$(promote_guard_rc 'git merge feature/PLN-030-happy --no-edit')"
 "$SCRIPT_DIR/wf-gate-close.sh" DEPLOY "approved" >/dev/null 2>&1
+assert_eq "closed: both merges allowed again" "0" \
+  "$(promote_guard_rc "git merge -X theirs --no-ff release -m release-promote-to-main")"
 
 # Fail open on anything it cannot read.
 assert_eq "malformed payload allows" "0" \

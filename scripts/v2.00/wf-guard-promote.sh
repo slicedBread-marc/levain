@@ -1,54 +1,74 @@
 #!/usr/bin/env bash
-# wf-guard-promote.sh — PreToolUse guard: refuse a `git push` of `release` or
-# `main` while that branch's own promotion gate is still open.
+# wf-guard-promote.sh — PreToolUse guard: refuse the git actions that promote
+# `release` or `main` while that branch's own promotion gate is still open.
 #
 # Wired to PreToolUse on Bash by templates/hooks/settings-merge.py. Reads the
-# hook payload on stdin, and exits 2 (block, message to the model) when the
-# command pushes to `origin release` while `RELEASE.gate` exists, or to
-# `origin main` while `DEPLOY.gate` exists. Exits 0 in every other case.
+# hook payload on stdin and exits 2 (block, message to the model) for four
+# specific commands, each identified with the exact branch/ref it names:
+#
+#   git push origin release                    while RELEASE.gate exists
+#   git push origin main                        while DEPLOY.gate exists
+#   git merge ... release ...   (wf-deploy §7)   while DEPLOY.gate exists
+#   git merge ... main ...      (wf-deploy §12)  while DEPLOY.gate exists
+#
+# Exits 0 in every other case.
 #
 # WHY A HOOK, AND NOT A LOUDER "STOP" IN THE SKILL
 #
 # /wf-release and /wf-deploy already say, in so many words, that a refused
 # autonomy check ends the run at the gate-open call — "STOP. Do not merge,
 # push, or run step 6 or anything after it." That sentence has now been
-# ignored three times by three different unattended (and once attended) runs,
-# each of which opened the gate it was refused at and then pushed anyway
-# (client-c WFI-032, client-d WFI-004, WFI-005). A model under a refusal
-# is, structurally, the model least likely to also honour the paragraph
-# telling it to stop — same shape of gap wf-guard-write.sh was built to close
-# for claims, and the same fix applies: the thing about to run the command is
-# the only thing positioned to check it.
+# ignored four times across three different runs, each of which opened the
+# gate it was refused at and then acted anyway (client-c WFI-032,
+# client-d WFI-004, WFI-005, WFI-034). A model under a refusal is,
+# structurally, the model least likely to also honour the paragraph telling it
+# to stop — same shape of gap wf-guard-write.sh was built to close for claims,
+# and the same fix applies: the thing about to run the command is the only
+# thing positioned to check it.
 #
-# WHY THIS AND NOT `develop`
+# WHY BOTH THE PUSH *AND* THE MERGE
+#
+# The first cut of this guard only blocked the push. WFI-034 (client-c)
+# showed why that was not enough: a deploy worker refused `deploy`, opened
+# `deploy-approval`, then ran step 7's LOCAL merge of `release` into `main`
+# (never pushed — `main` isn't pushed automatically by design) and step 12's
+# back-merge of that now-corrupted `main` into `develop` — which IS pushed,
+# routinely, by design. The bad promotion never touched `origin/main`, but it
+# reached `origin/develop` anyway, through the one branch this guard
+# deliberately never gates. Blocking the two merges themselves closes that
+# path at its source instead of trying to catch it downstream on a branch
+# this guard cannot afford to gate broadly.
+#
+# WHY NOT `develop` ITSELF
 #
 # `origin develop` is pushed constantly, by design, by work with nothing to do
 # with a release or deploy in flight — /wf-verify, /wf-test and step 6 of
 # /wf-release itself all push it as a routine, load-bearing step. Gating it on
 # RELEASE.gate/DEPLOY.gate being open would stall every unrelated plan moving
-# through the pipeline for as long as a human takes to answer one gate. Only
-# `release` and `main` are pushed by anything this guard needs to stop, and
-# only by /wf-release and /wf-deploy.
+# through the pipeline for as long as a human takes to answer one gate. The
+# four commands above are the actual leak points; `develop` itself is not one
+# of them once those four are closed.
 #
 # THE INVARIANT THIS RELIES ON
 #
-# No LEGITIMATE path pushes `release` or `main` while its own approval gate is
-# open: unattended-and-authorized never opens the gate at all, and attended
-# closes any stale gate of its own name before proceeding past its y/n prompt
-# (see wf-release/SKILL.md and wf-deploy/SKILL.md, "the attended path closes
-# a stale gate before continuing"). Only a refused run — which is supposed to
-# stop — leaves the gate open and reaches a push. If that invariant is ever
-# broken by a future skill change, this guard starts blocking a real release;
-# read both skills' gate-close ordering before touching either one.
+# No LEGITIMATE path pushes `release`/`main` or runs either merge while its
+# own approval gate is open: unattended-and-authorized never opens the gate at
+# all, and attended closes any stale gate of its own name before proceeding
+# past its y/n prompt (see wf-release/SKILL.md and wf-deploy/SKILL.md, step 5,
+# "close a stale gate before continuing"). Only a refused run — which is
+# supposed to stop — leaves the gate open and reaches one of these four. If
+# that invariant is ever broken by a future skill change, this guard starts
+# blocking a real release; read both skills' gate-close ordering before
+# touching either one.
 #
 # FAIL OPEN, ALWAYS
 #
 # Same posture as wf-guard-write.sh: the only path to exit 2 is a positively
-# identified push of `release` or `main` while that exact branch's gate file
-# is on disk. No payload, unparseable JSON, no `git push`, a push of anything
-# else, no orch dir, not a repo, missing wf-orch-lib.sh — every one of those
-# exits 0 and says nothing. A missed block costs a repeat of WFI-004/WFI-005,
-# recoverable by hand; a wrong block costs every legitimate release.
+# identified instance of one of the four commands above while that exact
+# gate's file is on disk. No payload, unparseable JSON, no matching command,
+# no orch dir, not a repo, missing wf-orch-lib.sh — every one of those exits 0
+# and says nothing. A missed block costs a repeat of a known WFI; a wrong
+# block costs every legitimate release.
 
 set -uo pipefail   # deliberately NOT -e: a failing probe must allow, not block
 
@@ -56,18 +76,17 @@ payload=$(cat 2>/dev/null || true)
 [ -n "$payload" ] || exit 0
 
 # Cheap pre-filter before python3 forks: the overwhelming majority of Bash
-# calls are not `git push` at all, and this is a hot path — it runs before
-# every Bash tool call in the repo.
-printf '%s' "$payload" | grep -q 'push' || exit 0
+# calls are neither `git push` nor `git merge` — this is a hot path, running
+# before every Bash tool call in the repo.
+printf '%s' "$payload" | grep -qE 'push|merge' || exit 0
 
-# Which protected branch (if any) this command pushes to `origin`. Splits the
-# command on shell separators and tokenizes each piece with shlex rather than
-# a hand-rolled regex — good enough for the fixed handful of push invocations
-# these two skills ever write (`git push origin release`, `git push origin
-# main`, each with an optional `-u`/leading flag), not a general shell parser.
-# Any command this cannot confidently classify as one of those two pushes
-# prints nothing, which is the same as not matching.
-branch=$(printf '%s' "$payload" | python3 -c '
+# Classify the command as one of the four protected actions, if it is one.
+# Splits on shell separators and tokenizes each piece with shlex rather than a
+# hand-rolled regex, then walks positional args past `-X theirs`/`-m "…"`
+# style flag+value pairs — good enough for the fixed handful of push/merge
+# invocations these two skills ever write, not a general shell parser. Prints
+# "<action>:<ref>" (e.g. "push:release", "merge:main") or nothing.
+action=$(printf '%s' "$payload" | python3 -c '
 import json, re, shlex, sys
 try:
     d = json.load(sys.stdin)
@@ -80,25 +99,53 @@ cmd = ti.get("command") or ""
 if not isinstance(cmd, str) or not cmd:
     sys.exit(0)
 
+# Flags that consume the following token as their own value, so it is never
+# mistaken for the ref being pushed or merged — `-X theirs`, `-m "message"`.
+VALUE_FLAGS = {"-X", "-s", "-m", "-F", "--strategy", "--strategy-option"}
+
+def first_positional(toks):
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if t in VALUE_FLAGS:
+            i += 2
+            continue
+        if t.startswith("-"):
+            i += 1
+            continue
+        return t
+    return None
+
 for piece in re.split(r"&&|\|\||;|\n", cmd):
     try:
         toks = shlex.split(piece)
     except ValueError:
         continue
-    if len(toks) < 2 or toks[0] != "git" or toks[1] != "push":
+    if len(toks) < 2 or toks[0] != "git":
         continue
-    args = [t for t in toks[2:] if not t.startswith("-")]
-    if "origin" not in args:
-        continue
-    i = args.index("origin")
-    if i + 1 >= len(args):
-        continue
-    ref = args[i + 1].split(":")[-1]
-    if ref in ("release", "main"):
-        print(ref)
-        break
+
+    if toks[1] == "push":
+        args = [t for t in toks[2:] if not t.startswith("-")]
+        if "origin" not in args:
+            continue
+        i = args.index("origin")
+        if i + 1 >= len(args):
+            continue
+        ref = args[i + 1].split(":")[-1]
+        if ref in ("release", "main"):
+            print(f"push:{ref}")
+            break
+
+    elif toks[1] == "merge":
+        ref = first_positional(toks[2:])
+        if ref in ("release", "main"):
+            print(f"merge:{ref}")
+            break
 ' 2>/dev/null) || exit 0
-[ -n "$branch" ] || exit 0
+[ -n "$action" ] || exit 0
+
+kind="${action%%:*}"
+ref="${action#*:}"
 
 lib="$(dirname "$0")/wf-orch-lib.sh"
 [ -f "$lib" ] || exit 0
@@ -107,9 +154,14 @@ source "$lib" 2>/dev/null || exit 0
 
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
-case "$branch" in
-  release) gate_id="RELEASE"; gate_name="release-approval" ;;
-  main)    gate_id="DEPLOY";  gate_name="deploy-approval" ;;
+# Both merges belong to /wf-deploy alone (step 7: release→main, step 12's
+# back-merge: main→develop) — wf-release never merges a ref literally named
+# `release` or `main`, only `origin/develop` into `release`. Only the push
+# side depends on which branch is being pushed.
+case "$kind:$ref" in
+  push:release) gate_id="RELEASE"; gate_name="release-approval" ;;
+  push:main)    gate_id="DEPLOY";  gate_name="deploy-approval" ;;
+  merge:*)      gate_id="DEPLOY";  gate_name="deploy-approval" ;;
 esac
 
 gate_file=$(wf_gate_file "$gate_id" 2>/dev/null); rc=$?
@@ -123,19 +175,24 @@ existing_name=$(wf_gate_field "$gate_file" GATE_NAME 2>/dev/null || true)
 
 question=$(wf_gate_field "$gate_file" GATE_QUESTION --unescape 2>/dev/null || true)
 
+case "$kind" in
+  push)  what="Pushing '$ref' now" ;;
+  merge) what="Merging '$ref' now" ;;
+esac
+
 cat >&2 <<EOF
 Refusing: this run's own '$gate_name' gate on $gate_id is still open — it was
 refused (or not yet answered) and asked:
 
   $question
 
-Pushing '$branch' now is the exact failure this gate exists to prevent
-(WFI-004, WFI-005): a refusal that gets ignored. The run ends at
-wf-gate-open.sh / wf-unclaim.sh, not here. If this gate DID get a real "yes"
-from a human in this session, close it first:
+$what is the exact failure this gate exists to prevent (WFI-004, WFI-005,
+WFI-034): a refusal that gets ignored. The run ends at wf-gate-open.sh /
+wf-unclaim.sh, not here. If this gate DID get a real "yes" from a human in
+this session, close it first:
 
   scripts/wf-exec.sh wf-gate-close.sh $gate_id "<their answer>"
 
-then retry the push.
+then retry.
 EOF
 exit 2
