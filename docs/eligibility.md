@@ -84,6 +84,44 @@ The verify agent runs autonomously and auto-routes:
 
 ---
 
+## wf-release (T-any, or daemon)
+
+**Script:** `scripts/wf-list-release.sh`
+
+| Source | Eligible when |
+|-|-|
+| local `release` branch, diffed against `develop` | `git rev-list release..develop -1` is non-empty |
+
+**Not eligible:** `release` branch doesn't exist yet (bootstrapping the first release is left to a
+human). `release` and `develop` already in sync.
+
+Not REGISTRY-keyed — `release`/`deploy` aren't plans, they're a fixed singleton pipeline stage
+(artifact id `RELEASE`, capped at 1 in flight). Local-ref only, deliberately cheap: this is a
+candidacy check for the dispatcher, not a source of truth — `/wf-release` itself fetches and
+re-verifies before doing anything. Eligibility here says nothing about *authorization*; a
+dispatched worker still checks `wf-autonomy.sh release` and opens `release-approval` if nothing
+covers it (see [`autonomy.md`](autonomy.md)).
+
+---
+
+## wf-deploy (T-any, or daemon)
+
+**Script:** `scripts/wf-list-deploy.sh`
+
+| Source | Eligible when |
+|-|-|
+| local `main` branch, diffed against `release` | `git rev-list main..release -1` is non-empty |
+
+**Not eligible:** `main` and `release` already in sync.
+
+Artifact id `DEPLOY`, capped at 1 in flight, same shape as `wf-list-release.sh` above. This
+signal is only safe because `/wf-release` pushes `release` *after* its local E2E run passes, not
+before — so "release is ahead of main" already means "these commits passed E2E," for both
+attended and unattended runs. See `skills/wf-release/SKILL.md` steps 7-8. Eligibility here is not
+authorization either — `/wf-deploy` checks `wf-autonomy.sh deploy` itself.
+
+---
+
 ## Summary: State Routing
 
 | REGISTRY State | Who acts | Skill/Agent |

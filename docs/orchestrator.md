@@ -42,13 +42,36 @@ Three properties worth stating, because they're the reason it's cheap and safe:
 | `ready`, `active` | implement | sonnet | Bulk of the work |
 | `verify` | verify | sonnet | Already autonomous before this existed |
 | `testing` | test | haiku | Guided by the plan's criteria |
+| — (`release` has commits `main` doesn't) | release | haiku | Merge/E2E, no judgment once authorized |
+| — (`main` has commits `release` doesn't) | deploy | haiku | Promotion, no judgment once authorized |
 
-Sweep order is **verify → test → consistency → implement → spec**: drain the
-furthest-along work first so WIP doesn't pile up behind freshly specced plans.
-`consistency` sits immediately ahead of `implement`, and a plan still owing a
-pass is filtered out of the implement candidates — a cross-plan contradiction
-caught while both plans are still documents is an amendment; caught after one is
-built, it is a migration.
+Sweep order is **release → deploy → verify → test → consistency → implement →
+spec**: drain the furthest-along work first so WIP doesn't pile up behind
+freshly specced plans, and release/deploy are logically past `complete` — a
+plan can finish and be promoted within the same sweep. `consistency` sits
+immediately ahead of `implement`, and a plan still owing a pass is filtered out
+of the implement candidates — a cross-plan contradiction caught while both
+plans are still documents is an amendment; caught after one is built, it is a
+migration.
+
+`release` and `deploy` aren't plans — there is no REGISTRY row keyed by
+number, just a singleton fixed id (`RELEASE`/`DEPLOY`, capped at 1 in flight
+each) whose eligibility comes from `wf-list-release.sh`/`wf-list-deploy.sh`
+diffing branches directly (see [`eligibility.md`](eligibility.md)). Dispatch
+is unconditional the moment there's something to promote — **authorization is
+not**: the spawned `/wf-release`/`/wf-deploy` worker still checks
+`wf-autonomy.sh` itself and opens a `release-approval`/`deploy-approval` gate
+if nothing covers it (see [`autonomy.md`](autonomy.md)). The dispatcher never
+consults a grant; it only decides "is there a diff to look at."
+
+`progress_sig()` (the attempt-budget loop breaker, below) needs a real case
+for these two ids rather than its normal registry-row read, which doesn't
+exist for them: it hashes the relevant branch's HEAD
+(`release:$(git rev-parse release)` / `deploy:$(git rev-parse main)`) instead,
+so the signature only changes on an actual successful promotion. Skipping this
+case would mean the signature never changes between dispatches, and three
+lifetime release attempts — successes included — would permanently trip
+`stuck`.
 
 ### The consistency pass
 

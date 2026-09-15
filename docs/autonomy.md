@@ -173,10 +173,14 @@ Suppress with `--quiet` when a caller wants the exit code alone.
 
 ## What this does *not* do
 
-- **The daemon does not run releases.** `wf-orchestrate.sh` drives `draft → complete` and
-  stops, exactly as before. A standing grant is honoured by the `/wf-release` and
-  `/wf-deploy` **skills** when a run of one of them is already under way with
-  `WF_UNATTENDED=1`. Nothing new is dispatched.
+- **The daemon does not decide policy — it only dispatches.** `wf-orchestrate.sh`'s sweep
+  includes `release`/`deploy` in `SWEEP_ROLES` and will spawn a `WF_UNATTENDED=1` worker
+  for either the moment `wf-list-release.sh`/`wf-list-deploy.sh` says one is eligible — see
+  [`orchestrator.md`](orchestrator.md). Whether that worker actually promotes anything is
+  still decided entirely inside the `/wf-release`/`/wf-deploy` **skills**, by consulting a
+  standing grant exactly as described above: no grant, or one that doesn't cover the
+  action, opens a `release-approval`/`deploy-approval` gate and exits — the dispatch alone
+  authorizes nothing.
 - **It does not answer judgment gates.** `spec-approval`, `manual-test`, `needs-input`,
   `scope-reduction`, `stuck` are untouched and still exit 20.
 - **It grants nothing retroactively.** A grant written today does not legitimise a

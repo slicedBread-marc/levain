@@ -147,8 +147,11 @@ blocked_by() {
 
 # Single-artifact probe
 if [ -n "$query" ]; then
-  id=$(printf '%s' "$query" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
-  [ -n "$id" ] || { echo "Error: '$query' is not a PLN/BUG/BRF id" >&2; exit 2; }
+  case "$query" in
+    RELEASE|DEPLOY) id="$query" ;;
+    *) id=$(printf '%s' "$query" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true) ;;
+  esac
+  [ -n "$id" ] || { echo "Error: '$query' is not a PLN/BUG/BRF id, or RELEASE/DEPLOY" >&2; exit 2; }
   # By NUMBER, not by name: wf-spec opens `spec-approval` on the plan it just
   # wrote, and the dispatcher asks under the brief it dispatched (WFI-187).
   gate_file=$(wf_gate_file "$id") || exit 1

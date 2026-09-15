@@ -154,9 +154,15 @@ scripts/wf-exec.sh wf-orchestrate.sh PLN-097 --json     # machine-readable
 ```
 
 `autonomy` reports how far this project has authorized the harness to go **after**
-`complete` — the `/wf-release`, `/wf-deploy` and production-push promotions the
-orchestrator never dispatches. `"mode": "attended"` (the default, and what you get with no
-config at all) means every one of them stops for a person.
+`complete` — the `/wf-release`, `/wf-deploy` and production-push promotions. The
+orchestrator's sweep *does* dispatch `/wf-release` and `/wf-deploy` today, the moment
+`release`/`main` has something to promote — but dispatch is not authorization: the
+dispatched worker still checks this same grant itself, and with `"mode": "attended"`
+(the default, and what you get with no config at all) it opens a
+`release-approval`/`deploy-approval` gate and stops for a person, same as an attended run
+that got no confirmation. Only `production-push` is never dispatched by the sweep at
+all — pushing `main` is a human-initiated step even when the local promotion is
+unattended.
 
 It is a **ceiling report, not a permission**. Exit 20 is still a hard stop whatever it
 says: the field exists so a caller can tell "nobody has authorized anything here" from

@@ -9,8 +9,10 @@
 # orchestrator daemon both call it, which is what stops them double-launching
 # the same plan — the pidfile guard lives here, not in each caller.
 #
-#   role      spec | implement | verify | test | consistency
-#   artifact  PLN-NNN[-slug], or BUG-NNN / BRF-NNN for the spec role
+#   role      spec | implement | verify | test | consistency | release | deploy
+#   artifact  PLN-NNN[-slug], or BUG-NNN / BRF-NNN for the spec role.
+#             release/deploy take the fixed literal RELEASE / DEPLOY instead —
+#             they promote a batch across plans, not one artifact.
 #
 # Options:
 #   --foreground   run inline and block (drive-one mode); default is nohup+disown
@@ -50,12 +52,27 @@ while [ $# -gt 0 ]; do
 done
 
 case "$role" in
-  spec|implement|verify|test|consistency) ;;
-  *) echo "Usage: $0 <spec|implement|verify|test|consistency> <artifact> [--foreground] [--dry-run] [--model NAME]" >&2; exit 1 ;;
+  spec|implement|verify|test|consistency|release|deploy) ;;
+  *) echo "Usage: $0 <spec|implement|verify|test|consistency|release|deploy> <artifact> [--foreground] [--dry-run] [--model NAME]" >&2; exit 1 ;;
 esac
 
-id=$(printf '%s' "$artifact" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
-[ -n "$id" ] || { echo "Error: '$artifact' is not a PLN/BUG/BRF id" >&2; exit 1; }
+# release/deploy carry the fixed literal (RELEASE/DEPLOY) as their own id —
+# they promote a batch across plans, not one artifact, so there is no
+# PLN/BUG/BRF number to extract. Everything below this point (pidfile, claim,
+# pending-spawn naming) already works unchanged once id/num are set this way:
+# `${id#*-}` on a dash-less string returns the string itself, so num becomes
+# RELEASE/DEPLOY too, which reads fine in a filename.
+case "$role" in
+  release) id="RELEASE" ;;
+  deploy)  id="DEPLOY" ;;
+  *)
+    id=$(printf '%s' "$artifact" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
+    [ -n "$id" ] || { echo "Error: '$artifact' is not a PLN/BUG/BRF id" >&2; exit 1; }
+    ;;
+esac
+if [ "$role" = "release" ] || [ "$role" = "deploy" ]; then
+  [ "$artifact" = "$id" ] || { echo "Error: role '$role' takes artifact '$id', not '$artifact'" >&2; exit 1; }
+fi
 
 # The artifact NUMBER, which is what identity actually turns on: the counter is
 # global and a bug keeps its number when it becomes a plan (BUG-022 → PLN-022).
@@ -108,6 +125,8 @@ default_model() {
     verify)      echo "sonnet" ;;
     test)        echo "haiku" ;;
     consistency) echo "sonnet" ;;
+    release)     echo "haiku" ;;
+    deploy)      echo "haiku" ;;
   esac
 }
 model="${model_override:-$(wf_cfg "orchestrator.models.$role" "$(default_model "$role")")}"
@@ -301,10 +320,14 @@ fi
 
 # ── Worker prompt ─────────────────────────────────────────────────────────
 # Skills live at .claude/skills/wf-<role>/SKILL.md on a client checkout.
+case "$role" in
+  release|deploy) target_desc="$id" ;;
+  *)              target_desc="$id (full artifact name: ${artifact})" ;;
+esac
 read -r -d '' prompt <<PROMPT || true
 You are running UNATTENDED as part of the workflow orchestrator. WF_UNATTENDED=1 is set in your environment. There is no human reading your output — a question you ask will hang the pipeline.
 
-Read .claude/skills/wf-${role}/SKILL.md in full, INCLUDING its "Unattended mode" section, then execute it for ${id} (full artifact name: ${artifact}).
+Read .claude/skills/wf-${role}/SKILL.md in full, INCLUDING its "Unattended mode" section, then execute it for ${target_desc}.
 
 Follow the Unattended mode rules exactly:
 - Skip any work-selection menu; ${id} is your assigned artifact.
@@ -319,7 +342,10 @@ if $dry_run; then
 fi
 
 ts=$(date +%Y%m%d-%H%M%S)
-log="$ORCH/logs/${artifact}-${role}-${ts}.log"
+case "$role" in
+  release|deploy) log="$ORCH/logs/${id}-${ts}.log" ;;
+  *)              log="$ORCH/logs/${artifact}-${role}-${ts}.log" ;;
+esac
 
 # ── Foreground: block, stream, propagate the worker's status ──────────────
 if $foreground; then

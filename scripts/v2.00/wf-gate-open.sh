@@ -103,10 +103,16 @@ for text in "$question" "$context"; do
   fi
 done
 
-# Accept PLN-004 or PLN-004-slug; the gate is keyed by bare ID.
-id=$(printf '%s' "$artifact" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
+# Accept PLN-004 or PLN-004-slug, or the fixed pipeline-stage literals
+# RELEASE / DEPLOY (release and deploy are batches across plans, not one
+# artifact, so they gate under a fixed name rather than a counter-allocated
+# number — see wf_claim_dir in wf-orch-lib.sh for the same distinction).
+case "$artifact" in
+  RELEASE|DEPLOY) id="$artifact" ;;
+  *) id=$(printf '%s' "$artifact" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true) ;;
+esac
 if [ -z "$id" ]; then
-  echo "Error: '$artifact' is not a PLN/BUG/BRF id" >&2
+  echo "Error: '$artifact' is not a PLN/BUG/BRF id, or RELEASE/DEPLOY" >&2
   exit 1
 fi
 

@@ -105,6 +105,13 @@ cfg_cap_implement=$(wf_cfg orchestrator.max_concurrent.implement 2)
 cfg_cap_verify=$(wf_cfg orchestrator.max_concurrent.verify 2)
 cfg_cap_test=$(wf_cfg orchestrator.max_concurrent.test 1)
 cfg_cap_consistency=$(wf_cfg orchestrator.max_concurrent.consistency 1)
+# release/deploy are singletons by construction — one promotion pipeline, one
+# worktree each (release-branches/release, release-branches/main) — so this is
+# fixed rather than a claude-workflow.yml knob. A higher cap would be a
+# footgun the per-role claim (RELEASE/DEPLOY) doesn't protect against: it
+# stops two CONCURRENT release runs, not two the dispatcher was told to allow.
+cfg_cap_release=1
+cfg_cap_deploy=1
 
 # Indirect lookup, not a case arm per role: the five cfg_cap_* reads above are
 # the only place role names are enumerated, so adding a role means adding one
@@ -125,7 +132,15 @@ require_enabled() {
 
 # ── State helpers ─────────────────────────────────────────────────────────
 
-bare_id() { printf '%s' "$1" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true; }
+# RELEASE / DEPLOY are the two fixed pipeline-stage literals — release and
+# deploy are batches across plans, not one artifact, so they carry a fixed
+# name instead of a counter-allocated number (see wf_claim_dir).
+bare_id() {
+  case "$1" in
+    RELEASE|DEPLOY) printf '%s' "$1" ;;
+    *) printf '%s' "$1" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true ;;
+  esac
+}
 
 # Plan state from the registry, empty if the plan has no row.
 plan_state() {
@@ -193,6 +208,17 @@ launch_fails_reset() { rm -f "$ORCH/launch-fails" 2>/dev/null || true; }
 # reads as what it claims to be: N launches with NO forward progress.
 progress_sig() {
   local id="$1" st cnt con="-"
+  # RELEASE/DEPLOY have no registry row or step checklist to read — the
+  # default path below would return the SAME signature on every dispatch, so
+  # the attempt budget would never reset and three lifetime releases would
+  # permanently trip `stuck`, no matter how many succeeded in between. The
+  # branch each promotes IS the forward-progress signal: it only moves on an
+  # actual successful promotion, so a gate or a failure (which move nothing)
+  # still counts against the budget as intended, and a real success resets it.
+  case "$id" in
+    RELEASE) printf 'release:%s' "$(git rev-parse release 2>/dev/null || echo none)"; return 0 ;;
+    DEPLOY)  printf 'deploy:%s'  "$(git rev-parse main    2>/dev/null || echo none)"; return 0 ;;
+  esac
   st=$(plan_state "$id")
   cnt=$("$SELF_DIR/wf-progress-count.sh" "$id" 2>/dev/null || echo "0/0")
   # A finished consistency pass moves nothing else — the plan stays `ready` —
@@ -488,6 +514,14 @@ candidates_implement() {
       done || true
 }
 
+candidates_release() {
+  "$SELF_DIR/wf-list-release.sh" 2>/dev/null || true
+}
+
+candidates_deploy() {
+  "$SELF_DIR/wf-list-deploy.sh" 2>/dev/null || true
+}
+
 candidates_spec() {
   # Sectioned output: "# replanning" rows are plan names, "# bugs" and
   # "# briefs" rows lead with BUG-NNN / BRF-NNN.
@@ -500,10 +534,15 @@ candidates_spec() {
 # ── Sweep ─────────────────────────────────────────────────────────────────
 # Order matters: drain the furthest-along work first so WIP does not pile up
 # behind a queue of freshly specced plans.
+# `release`/`deploy` sit ahead of everything else: they are logically PAST
+# `complete` — a plan that finished testing days ago and is sitting on develop
+# is further along than one just reaching verify. Only dispatched when a
+# grant covers them (release-approval/deploy-approval gate otherwise); see
+# docs/autonomy.md and skills/wf-release, wf-deploy's "Unattended mode".
 # `consistency` sits ahead of `implement`: a cross-plan contradiction caught
 # while both plans are still documents is an amendment; caught after one is
 # built, it is a migration.
-SWEEP_ROLES="verify test consistency implement spec"
+SWEEP_ROLES="release deploy verify test consistency implement spec"
 
 # sweep() reports its count in SWEPT, not on stdout.
 #

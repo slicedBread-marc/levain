@@ -691,10 +691,21 @@ wf_session_pid() {
 # wf-spawn.sh's already-running pidfile guard uses, and for the same reason — a
 # name-keyed claim cannot see its own other name.
 #
-# Accepts any of PLN-NNN, PLN-NNN-slug, BUG-NNN, BRF-NNN. Prints nothing and
-# returns 1 for a string carrying no artifact id.
+# Accepts any of PLN-NNN, PLN-NNN-slug, BUG-NNN, BRF-NNN, or the two fixed
+# pipeline-stage literals RELEASE / DEPLOY (release and deploy are batches
+# across plans, not one artifact, so they claim under a fixed name rather than
+# a counter-allocated number). Prints nothing and returns 1 for a string
+# carrying none of these.
 wf_claim_dir() {
   local artifact="$1" num d
+  case "$artifact" in
+    RELEASE|DEPLOY)
+      d="$(wf_orch_dir)/claims/$artifact"
+      mkdir -p "$d"
+      printf '%s' "$d"
+      return 0
+      ;;
+  esac
   num=$(printf '%s' "$artifact" | grep -oE '(PLN|BUG|BRF)-[0-9]+' | head -1 | sed 's/.*-//')
   [ -n "$num" ] || return 1
   # 10# strips the padding, so PLN-002 and PLN-2 name one claim rather than two.
@@ -896,11 +907,15 @@ wf_gate_field() {
 # else.
 wf_gate_file() {
   local artifact="$1" id num dir exact f fid
-  id=$(printf '%s' "$artifact" | grep -oE '(PLN|BUG|BRF)-[0-9]+' | head -1)
+  case "$artifact" in
+    RELEASE|DEPLOY) id="$artifact" ;;
+    *) id=$(printf '%s' "$artifact" | grep -oE '(PLN|BUG|BRF)-[0-9]+' | head -1) ;;
+  esac
   [ -n "$id" ] || return 1
   dir="$(wf_orch_dir)/gates"
   exact="$dir/${id}.gate"
   if [ -f "$exact" ]; then printf '%s' "$exact"; return 0; fi
+  case "$id" in RELEASE|DEPLOY) return 1 ;; esac
 
   num=$((10#${id##*-}))
   for f in "$dir"/*.gate; do

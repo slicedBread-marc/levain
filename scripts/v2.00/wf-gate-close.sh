@@ -113,9 +113,14 @@ done
 [ -n "$artifact" ] || { echo "Usage: $0 <artifact-id> [resolution] [--gate <name>] [--basis <basis>]" >&2; exit 1; }
 resolution="${resolution:-resolved}"
 
-id=$(printf '%s' "$artifact" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
+# Accept PLN-004 / PLN-004-slug, or the fixed pipeline-stage literals
+# RELEASE / DEPLOY — see the matching comment in wf-gate-open.sh.
+case "$artifact" in
+  RELEASE|DEPLOY) id="$artifact" ;;
+  *) id=$(printf '%s' "$artifact" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true) ;;
+esac
 if [ -z "$id" ]; then
-  echo "Error: '$artifact' is not a PLN/BUG/BRF id" >&2
+  echo "Error: '$artifact' is not a PLN/BUG/BRF id, or RELEASE/DEPLOY" >&2
   exit 1
 fi
 
