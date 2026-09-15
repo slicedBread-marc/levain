@@ -91,7 +91,21 @@ scripts/wf-exec.sh wf-profile.sh --check    # drift against the recommendation t
 ```
 
 `--check` exits 0 clean, 1 on drift, 2 if no tier is declared or the declared
-tier isn't in the closed vocabulary above. Across every client:
+tier isn't in the closed vocabulary above.
+
+**A `pre-launch` project with a non-blank `production_url` is checked against
+the full autonomy recommendation** — `orchestrator.autonomy.mode: standing`
+with `standing_for` covering `release`, `deploy` and `production-push` —
+not just `specApproval.mode` and `manualTestGate.blockOnCosmetic`. A blank
+`production_url` (no deploy configured yet, e.g. `client-i`, `client-b`)
+exempts a project from this half of the check entirely: there is no push path
+to be autonomous about, and demanding a grant for one would be a rubber stamp
+`docs/autonomy.md` already warns against. This is the direction that let
+`client-c` go unchecked for a period even though its own grant was
+already in place — `--check` only compared the *over*-permissive case
+(`governed` still holding `production-push`) until this was added.
+
+Across every client:
 
 ```bash
 ./check-profiles.sh              # tier + drift per client, deployments.txt order

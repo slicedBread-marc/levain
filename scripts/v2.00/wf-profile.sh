@@ -56,6 +56,8 @@ case "$mode" in
 
     spec_mode=$(wf_cfg specApproval.mode gate)
     block_cosmetic=$(wf_cfg manualTestGate.blockOnCosmetic true)
+    autonomy_mode=$(wf_cfg orchestrator.autonomy.mode attended)
+    production_url=$(wf_cfg production_url "")
     standing_for=$(wf_cfg_list orchestrator.autonomy.standing_for 2>/dev/null | tr '\n' ',' | sed 's/,$//')
 
     drift=0
@@ -73,6 +75,25 @@ case "$mode" in
     if [ "$tier" = "governed" ] && printf '%s' "$standing_for" | grep -q "production-push"; then
       echo "DRIFT orchestrator.autonomy.standing_for includes production-push under a governed tier — review whether that grant should still stand"
       drift=1
+    fi
+
+    # A pre-launch project with a real production_url has somewhere to push
+    # to — the recommendation table says "standing, through production-push".
+    # A blank production_url (client-i, client-b) means there is nothing
+    # to be autonomous about yet, so this check stays silent rather than
+    # demanding a grant for a push path that doesn't exist.
+    if [ "$tier" = "pre-launch" ] && [ -n "$production_url" ]; then
+      if [ "$autonomy_mode" != "standing" ]; then
+        echo "DRIFT orchestrator.autonomy.mode: ${autonomy_mode:-(unset)} (tier '$tier' with production_url set recommends standing, through production-push)"
+        drift=1
+      else
+        for want_action in release deploy production-push; do
+          if ! printf '%s' "$standing_for" | tr ',' '\n' | grep -qx "$want_action"; then
+            echo "DRIFT orchestrator.autonomy.standing_for is missing '$want_action' (tier '$tier' with production_url set recommends release, deploy, production-push)"
+            drift=1
+          fi
+        done
+      fi
     fi
 
     [ "$drift" -eq 0 ] && echo "OK — '$tier' tier, no drift ($set_by, $set_on)"
