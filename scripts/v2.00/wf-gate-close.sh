@@ -48,6 +48,25 @@
 #                Without it, an unchecked finding surviving the close is
 #                reported on stderr rather than silently left to route.
 #
+# --decision <d> `approve` or `reject` — the ANSWER, as a value rather than as
+#                prose. Only `release-approval` and `deploy-approval` read it,
+#                and for those it is what makes the answer act.
+#
+#                A resolution is free text, and free text is the one thing no
+#                later worker can act on: client-b WFI-005 had a human approve
+#                a release twice through /wf-attend, and both times the next
+#                unattended /wf-release asked wf-autonomy.sh (which knows only
+#                about STANDING grants, not about this answer), was told no, and
+#                re-opened the gate it had just been let through. The approval
+#                had nowhere to live. `--decision approve` is where it lives:
+#                wf-promote-approval.sh reads it back, scoped to the commit set
+#                it was given for, and the unattended run proceeds on it.
+#
+#                Omitting it on a promotion gate closes the gate and records the
+#                prose, exactly as before — and authorizes nothing, so the next
+#                dispatch asks again. Fail closed: an unrecorded decision is not
+#                an approval.
+#
 # --basis <b>    WHAT answered this gate. Required when WF_UNATTENDED=1 — see
 #                below. The vocabulary is closed and each value is checked:
 #
@@ -97,11 +116,20 @@ forced_gate=""
 basis=""
 resolves=""
 plan_body_fp_at_open=""
+promote_tip=""
+decision=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --gate)  forced_gate="${2:?--gate requires a gate name}"; shift 2 ;;
     --basis) basis="${2:?--basis requires a value}"; shift 2 ;;
+    --decision)
+      decision="${2:?--decision requires approve or reject}"
+      case "$decision" in
+        approve|reject) ;;
+        *) echo "Error: --decision takes 'approve' or 'reject', not '$decision'" >&2; exit 1 ;;
+      esac
+      shift 2 ;;
     --resolves) resolves="${2:?--resolves requires a finding substring, or 'all'}"; shift 2 ;;
     -*)      echo "Unknown option: $1" >&2; exit 1 ;;
     *)
@@ -165,6 +193,10 @@ if [ -f "$gate_file" ]; then
   # This is the plan's fingerprint as of when the question was ASKED — see the
   # comment above `record=` for why the close-time one cannot stand alone.
   plan_body_fp_at_open=$(wf_gate_field "$gate_file" GATE_PLAN_BODY_FP_AT_OPEN)
+  # The commit set a promotion gate was asked about — the scope of any approval
+  # recorded below. Read here with the rest, because the gate file is gone by
+  # the time the record is written.
+  promote_tip=$(wf_gate_field "$gate_file" GATE_PROMOTE_TIP)
 else
   gate_name="$forced_gate"
 fi
@@ -307,6 +339,23 @@ if [ -n "$plan_body_fp_at_open" ] && [ -n "$plan_body_fp" ] \
   echo "        The answer is recorded against the text the human saw; work committed since is NOT covered by it." >&2
 fi
 
+# ── A promotion answered in prose alone authorizes nothing ────────────────
+#
+# client-b WFI-005: two /wf-attend approvals, two unattended /wf-release runs
+# that re-opened the same gate, because nothing they could read said "approved".
+# The tip is recorded even on a backfill (`--gate release-approval` with no gate
+# file), where the batch being approved can only be the one standing now.
+if [ -n "$(wf_promote_tip_ref "$gate_name")" ]; then
+  if [ -n "$decision" ] && [ -z "$promote_tip" ]; then
+    promote_tip=$(wf_promote_tip "$gate_name" || true)
+  fi
+  if [ -z "$decision" ]; then
+    echo "wf-gate-close: '$gate_name' closed without --decision — the promotion is NOT authorized." >&2
+    echo "  The next unattended run reads the decision, not the resolution text, and will ask again." >&2
+    echo "  Re-run with --decision approve (or reject) to record the answer where a worker can act on it." >&2
+  fi
+fi
+
 record=$(
   wf_emit GATE_ID           "$id"
   wf_emit GATE_NAME         "$gate_name"
@@ -323,6 +372,15 @@ record=$(
   # before the record is ever written.
   if [ -n "$plan_body_fp_at_open" ]; then
     wf_emit GATE_PLAN_BODY_FP_AT_OPEN "$plan_body_fp_at_open"
+  fi
+  # The answer as a VALUE, and the commit set it is an answer about. Both only
+  # exist for the promotion gates; everywhere else the prose resolution is the
+  # whole record, as it always was.
+  if [ -n "$decision" ]; then
+    wf_emit GATE_DECISION "$decision"
+  fi
+  if [ -n "$promote_tip" ]; then
+    wf_emit GATE_PROMOTE_TIP "$promote_tip"
   fi
   wf_emit GATE_PLAN_FP      "$plan_fp"
   wf_emit GATE_PLAN_BODY_FP "$plan_body_fp"

@@ -418,19 +418,29 @@ dispatch() {
   # worker can fix. Only `deploy` is checked for the deploy role, never
   # `production-push` — step 14 not being granted is the designed default, not
   # a blocked state, and a deploy with no push grant is still a useful deploy.
+  #
+  # A standing grant is not the only thing that can authorize this. A human who
+  # answered the approval gate at /wf-attend authorized exactly this batch, and
+  # that answer has to be able to reach a worker — client-b WFI-005 is the
+  # daemon refusing to act on it: approved at 19:25:49Z, a worker dispatched a
+  # minute later on the strength of the gate being closed, and refused by this
+  # very pre-flight's logic downstream, which re-opened the gate. So the
+  # one-off approval is asked about first, and it dispatches on its own.
   case "$role" in
     release|deploy)
       local arc=0 awhy
-      awhy=$("$SELF_DIR/wf-autonomy.sh" "$role" --check 2>&1 >/dev/null) || arc=$?
-      if [ "$arc" -ne 0 ]; then
-        awhy=$(printf '%s' "$awhy" | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g; s/[[:space:]]*$//')
-        [ -n "$awhy" ] || awhy="wf-autonomy.sh exited $arc without a reason"
-        # The reason text is what skip_note latches on, so this stays silent
-        # while the situation holds and speaks again the moment it changes —
-        # a grant written, an expiry passed, a ceiling rolling over at UTC
-        # midnight.
-        skip_note "$role" "$id" "not authorized unattended — $awhy" autonomy
-        return 1
+      if ! "$SELF_DIR/wf-promote-approval.sh" "$role" --quiet 2>/dev/null; then
+        awhy=$("$SELF_DIR/wf-autonomy.sh" "$role" --check 2>&1 >/dev/null) || arc=$?
+        if [ "$arc" -ne 0 ]; then
+          awhy=$(printf '%s' "$awhy" | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g; s/[[:space:]]*$//')
+          [ -n "$awhy" ] || awhy="wf-autonomy.sh exited $arc without a reason"
+          # The reason text is what skip_note latches on, so this stays silent
+          # while the situation holds and speaks again the moment it changes —
+          # a grant written, an approval answered, an expiry passed, a ceiling
+          # rolling over at UTC midnight.
+          skip_note "$role" "$id" "not authorized unattended — $awhy" autonomy
+          return 1
+        fi
       fi
       ;;
   esac

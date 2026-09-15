@@ -248,8 +248,26 @@ An unattended `/wf-release` or `/wf-deploy` reached its promotion prompt with no
    shows 145, plans are missing from the promotion" — off a stale local `release`; against
    `origin/release` the gate's list was exactly right, and WFI-004 withdrew it. A gate's list
    disagreeing with a local range is first evidence of a stale ref, not of a broken gate.
-2. **You do not promote anything here.** Close the gate with the answer as the resolution — then
-   check whether a daemon is live before saying what happens next:
+2. **You do not promote anything here.** Close the gate with the answer as the resolution **and
+   with `--decision`** — the flag is what the next unattended run reads, and the resolution text
+   is not:
+   ```bash
+   scripts/wf-exec.sh wf-gate-close.sh RELEASE "approved — <what they said>" --decision approve
+   scripts/wf-exec.sh wf-gate-close.sh DEPLOY  "declined — <why>"          --decision reject
+   ```
+   **Never omit `--decision` on these two gates.** An approval recorded only as prose authorizes
+   nothing: client-b WFI-005 had a human approve the same release twice here, and both times the
+   daemon's next `/wf-release` asked `wf-autonomy.sh` (which knows only about standing grants),
+   was told no, and re-opened the gate it had just been let through — each re-opening quoting a
+   longer commit list, so dedup saw a fresh question every time. `--decision approve` records the
+   answer against the commit set it was given for, and `wf-promote-approval.sh` is what the next
+   run reads it back with. `wf-gate-close.sh` warns on stderr when one of these closes without it.
+
+   The approval covers **that batch**. If more commits land on `develop` (or `release`) before the
+   promotion runs, the gate re-opens by design — the human is being asked about new work, not
+   asked again about work they already cleared.
+
+   Then check whether a daemon is live before saying what happens next:
    ```bash
    scripts/wf-exec.sh wf-orchestrate.sh --daemon-status
    ```

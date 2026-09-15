@@ -193,17 +193,54 @@ Suppress with `--quiet` when a caller wants the exit code alone.
 
 ---
 
+## The other way a promotion gets authorized: the answer at the gate
+
+A standing grant is policy written in advance. It is not the only authorization that exists,
+and for a long time it was the only one the harness could *read* — which is client-b WFI-005.
+A human answered `release-approval` at `/wf-attend` with an approval; the daemon dispatched
+`/wf-release` a minute later; that run asked `wf-autonomy.sh`, which knows nothing about gate
+answers, was told no, and re-opened the gate it had just been let through. Twice, each
+re-opening quoting a longer commit list so gate dedup saw a fresh question every time. The
+approval was in the ledger and nothing between it and the merge could act on it.
+
+So a promotion gate's answer is now recorded as a **value**, not as prose:
+
+```bash
+scripts/wf-exec.sh wf-gate-close.sh RELEASE "approved — ship it" --decision approve
+scripts/wf-exec.sh wf-promote-approval.sh release   # 0 authorized · 1 no answer · 2 answer aged out
+```
+
+Three properties make this a one-off approval rather than a grant by the back door:
+
+- **It is scoped to a commit set.** `wf-gate-open.sh` records the source branch's tip when the
+  question is asked, `wf-gate-close.sh` carries it into the record, and
+  `wf-promote-approval.sh` refuses (exit 2) once the branch has moved. A human approves *these
+  commits*, exactly as a spec approval covers *that revision* of the plan.
+- **It is spent by the promotion it authorizes.** Once the merge lands there is nothing left in
+  the range, so the next dispatch has nothing to promote; once new work lands the tip has moved
+  and the question is genuinely new.
+- **It fails closed.** No `--decision`, a rejection, or a record from before this existed all
+  read as "not authorized", and the gate re-opens exactly as it did before.
+
+`wf-autonomy.sh` is unchanged by this: it still answers only about standing grants, and it is
+still what `--show` reports. Both the dispatcher's pre-flight and the `/wf-release` and
+`/wf-deploy` skills ask for the one-off approval **first**, and fall through to the grant.
+
+---
+
 ## What this does *not* do
 
 - **The daemon does not decide policy — it only dispatches.** `wf-orchestrate.sh`'s sweep
   includes `release`/`deploy` in `SWEEP_ROLES` and spawns a `WF_UNATTENDED=1` worker for
-  either when `wf-list-release.sh`/`wf-list-deploy.sh` says one is eligible **and** a
-  standing grant covers the action — see [`orchestrator.md`](orchestrator.md). Whether that
+  either when `wf-list-release.sh`/`wf-list-deploy.sh` says one is eligible **and** the action
+  is authorized — by a standing grant, or by the answer at the gate (above) — see
+  [`orchestrator.md`](orchestrator.md). Whether that
   worker actually promotes anything is still decided entirely inside the
   `/wf-release`/`/wf-deploy` **skills**, which ask again for real: the dispatch alone
   authorizes nothing, and a grant that lapses between the two is caught by the skill.
 
-  The dispatcher's pre-flight is `wf-autonomy.sh <action> --check`, and it exists because
+  The dispatcher's pre-flight asks `wf-promote-approval.sh <action>` first and
+  `wf-autonomy.sh <action> --check` second, and it exists because
   spawning a worker that can only refuse is not free. It burns a worker, an hourly spawn
   slot and an attempt, and reopens a gate a human has often just answered; worse, a refused
   worker is structurally the one most likely to promote anyway — WFI-004, WFI-005, WFI-007,

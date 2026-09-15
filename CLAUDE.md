@@ -137,6 +137,12 @@ one place a human's standing authorization can be recorded rather than re-asked 
 is closed, and a grant carries an author, a date and a required expiry. Also ships **off**. Read
 [`docs/autonomy.md`](docs/autonomy.md) before adding a key.
 
+A standing grant is not the only authorization. The answer a human gives at a `release-approval`
+/ `deploy-approval` gate is recorded by `wf-gate-close.sh --decision approve`, scoped to the
+commit set it was given for, and read back by `wf-promote-approval.sh` — which both the
+dispatcher and the two skills consult **before** the grant. Without it an approval could not
+reach the merge at all (client-b WFI-005).
+
 Each client also gets a generated `WORKFLOW.md` at its project root (from `templates/WORKFLOW.md`) — the entry-point contract for any agent or script that lands in that repo cold: pipeline shape, hooks that fire automatically, and the `wf-orchestrate.sh` exit codes.
 
 ---

@@ -504,6 +504,64 @@ assert_eq "the resolver never hands back the .log" "false" \
      f=\$(wf_gate_resolved_file PLN-019 manual-test || true)
      case \"\$f\" in *.log) echo true ;; *) echo false ;; esac")"
 
+# ── A promotion approved at the gate authorizes the promotion (WFI-005) ───
+#
+# client-b: /wf-attend closed `release-approval` with an approval, the daemon
+# dispatched /wf-release a minute later, that run asked wf-autonomy.sh (which
+# knows only about STANDING grants), was told no, and re-opened the gate it had
+# just been let through — twice, each time quoting a longer commit list so
+# dedup saw a new question. The answer existed and nothing on the path from it
+# to the merge could read it.
+section "Promotion approvals"
+
+PROMO_ORIG_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+git checkout -q -b develop
+git commit -q --allow-empty -m "a commit to promote"
+DEV_TIP=$(git rev-parse refs/heads/develop)
+
+assert_fails "no approval of record refuses the promotion" \
+  "$SCRIPT_DIR/wf-promote-approval.sh" release
+
+"$SCRIPT_DIR/wf-gate-open.sh" RELEASE release-approval "promote 1 commit?" --skill wf-release >/dev/null 2>&1
+assert_eq "the open gate records the commit set it asks about" "$DEV_TIP" \
+  "$(grep "^GATE_PROMOTE_TIP=" "$(git rev-parse --show-toplevel)/.claude/orchestrator/gates/RELEASE.gate" | cut -d"'" -f2)"
+assert_eq "an open gate is not an answer" "1" \
+  "$("$SCRIPT_DIR/wf-promote-approval.sh" release --quiet; echo $?)"
+
+# Prose alone is what WFI-005 had, and it authorizes nothing.
+"$SCRIPT_DIR/wf-gate-close.sh" RELEASE "approved" >/dev/null 2>&1
+assert_eq "a close with no --decision authorizes nothing" "1" \
+  "$("$SCRIPT_DIR/wf-promote-approval.sh" release --quiet; echo $?)"
+assert_eq "and says so on stderr when it happens" "true" \
+  "$("$SCRIPT_DIR/wf-gate-open.sh" RELEASE release-approval "again?" >/dev/null 2>&1
+     "$SCRIPT_DIR/wf-gate-close.sh" RELEASE "approved" 2>&1 >/dev/null \
+       | grep -q 'NOT authorized' && echo true || echo false)"
+
+"$SCRIPT_DIR/wf-gate-open.sh" RELEASE release-approval "promote 1 commit?" --skill wf-release >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" RELEASE "approved — ship it" --decision approve >/dev/null 2>&1
+assert_ok "--decision approve authorizes the batch it was given for" \
+  "$SCRIPT_DIR/wf-promote-approval.sh" release
+assert_eq "the decision is in the record a reader can audit" "approve" \
+  "$("$SCRIPT_DIR/wf-gate-status.sh" RELEASE release-approval | grep '^GATE_DECISION=' | cut -d"'" -f2)"
+
+# An approval is for a batch, not for the branch forever.
+git commit -q --allow-empty -m "work that landed after the answer"
+assert_eq "new commits after the answer make it stale, not authorized" "2" \
+  "$("$SCRIPT_DIR/wf-promote-approval.sh" release --quiet; echo $?)"
+
+# A rejection is an answer too, and it is not an approval.
+"$SCRIPT_DIR/wf-gate-open.sh" RELEASE release-approval "now?" --skill wf-release >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" RELEASE "not yet — staging is down" --decision reject >/dev/null 2>&1
+assert_eq "a rejection refuses the promotion" "1" \
+  "$("$SCRIPT_DIR/wf-promote-approval.sh" release --quiet; echo $?)"
+assert_fails "--decision takes only approve or reject" \
+  "$SCRIPT_DIR/wf-gate-close.sh" RELEASE "maybe" --decision perhaps
+
+# Leave the fixture exactly as it was found — later sections make their own
+# `develop`, and the empty commits above belong to this one.
+git checkout -q "$PROMO_ORIG_BRANCH"
+git branch -q -D develop
+
 section "Events"
 
 log_for() { "$SCRIPT_DIR/wf-event.sh" --for "$1" 2>/dev/null; }
@@ -2188,6 +2246,25 @@ assert_eq "and the dispatcher's probe spent none of the grant" "0" \
   "$(auth_log_count 'autonomy-use')"
 assert_eq "nor recorded a refusal no skill acted on" "0" \
   "$(auth_log_count 'autonomy-refuse')"
+
+# ── …but an approval at the gate IS something that can authorize it ────────
+#
+# The pre-flight above reads as "no grant, so nothing to dispatch". client-b
+# WFI-005 is what that costs when a human has just answered the gate: the
+# approval exists, the dispatcher cannot see it, and the only way it ever
+# reaches a worker is the loop of re-opened gates the approval was meant to end.
+auth_cfg attended
+( cd "$AUTH" && "$SCRIPT_DIR/wf-gate-open.sh" RELEASE release-approval "promote this?" ) >/dev/null 2>&1
+assert_eq "an open approval gate does not dispatch" "false" "$(auth_dispatches_release)"
+( cd "$AUTH" && "$SCRIPT_DIR/wf-gate-close.sh" RELEASE "approved" ) >/dev/null 2>&1
+assert_eq "closing it with prose alone still does not dispatch" "false" "$(auth_dispatches_release)"
+( cd "$AUTH" && "$SCRIPT_DIR/wf-gate-open.sh" RELEASE release-approval "promote this?" \
+  && "$SCRIPT_DIR/wf-gate-close.sh" RELEASE "approved — ship it" --decision approve ) >/dev/null 2>&1
+assert_eq "an approval recorded at the gate dispatches with no grant at all" "true" \
+  "$(auth_dispatches_release)"
+( cd "$AUTH" && git commit -q --allow-empty -m "work that landed after the answer" ) >/dev/null 2>&1
+assert_eq "and stops dispatching once the batch it approved has moved on" "false" \
+  "$(auth_dispatches_release)"
 
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n══════════════════════════════════════════════════════════════\n'

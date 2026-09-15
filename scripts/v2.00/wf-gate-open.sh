@@ -301,6 +301,17 @@ fi
   # Empty for a bug or brief with no plan folder yet, which is fine: those
   # gates fall back to the close-time comparison.
   wf_emit GATE_PLAN_BODY_FP_AT_OPEN "$(wf_plan_body_fingerprint "$id" || true)"
+  # ── What a promotion approval is an approval OF ────────────────────────
+  #
+  # RELEASE and DEPLOY have no plan.md, so the fingerprint above is empty and
+  # nothing scopes their answer to anything. The commit set is their revision:
+  # "promote these commits" is a question about a source branch at one tip.
+  # Recording it here is what lets wf-promote-approval.sh tell an answer that
+  # still covers the promotion in front of it from one given about an older
+  # batch (client-b WFI-005).
+  if [ -n "$(wf_promote_tip_ref "$gate_name")" ]; then
+    wf_emit GATE_PROMOTE_TIP "$(wf_promote_tip "$gate_name" || true)"
+  fi
   if [ -n "$prior_res" ]; then
     wf_emit GATE_PRIOR_QUESTION   "$prior_q"
     wf_emit GATE_PRIOR_RESOLUTION "$prior_res"

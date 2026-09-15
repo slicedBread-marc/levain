@@ -1034,6 +1034,46 @@ wf_gate_revision_scoped() {
   return 1
 }
 
+# ── Promotion gates are scoped to a commit set, not to a plan revision ─────
+#
+# `release-approval` and `deploy-approval` ask about a batch of commits, and
+# their answer has to be scoped to that batch the way a spec approval is scoped
+# to a plan revision. The source branch's tip IS that scope: same tip, same
+# promotion; moved tip, a different question.
+#
+# wf_promote_tip_ref names the ref whose tip the gate is about, and is empty for
+# every other gate name — callers use that emptiness as "this is not a promotion
+# gate". wf_promote_tip resolves it, preferring the remote ref where one exists,
+# because `release` and `main` live in pinned worktrees this checkout never
+# moves and their local refs are routinely behind (WFI-024, WFI-027).
+wf_promote_tip_ref() {
+  case "${1:-}" in
+    release-approval) printf 'develop' ;;
+    deploy-approval)  printf 'release' ;;
+    *) printf '' ;;
+  esac
+}
+
+wf_promote_tip() {
+  local ref sha root
+  ref=$(wf_promote_tip_ref "${1:-}")
+  [ -n "$ref" ] || return 1
+  root="$(wf_develop_root)"
+  # develop is the branch every skill commits to locally, and /wf-release
+  # pushes it as part of the promotion — so the LOCAL tip is what the commit
+  # list was taken from. release is only ever advanced by a push, so its remote
+  # ref is the authoritative one.
+  case "$ref" in
+    develop)
+      sha=$(git -C "$root" rev-parse --verify -q refs/heads/develop 2>/dev/null || true) ;;
+    *)
+      sha=$(git -C "$root" rev-parse --verify -q "refs/remotes/origin/$ref" 2>/dev/null || true)
+      [ -n "$sha" ] || sha=$(git -C "$root" rev-parse --verify -q "refs/heads/$ref" 2>/dev/null || true) ;;
+  esac
+  [ -n "$sha" ] || return 1
+  printf '%s' "$sha"
+}
+
 # ── Events ────────────────────────────────────────────────────────────────
 
 # wf_event <type> <artifact> <message>

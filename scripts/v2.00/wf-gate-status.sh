@@ -51,6 +51,13 @@
 #                                errors of fact on client-a (WFI-184)
 #   GATE_RESOLVED_AT=<iso8601>   when (empty if never closed)
 #   GATE_STALE=true|false        closed, but plan.md has changed since
+#   GATE_DECISION=approve|reject the answer to a `release-approval` /
+#                                `deploy-approval` gate as a value. Empty on
+#                                every other gate, and on a promotion gate
+#                                closed without `--decision`.
+#   GATE_PROMOTE_TIP='<sha>'     the source-branch tip that approval was given
+#                                for. Empty likewise. wf-promote-approval.sh is
+#                                what compares it; this only reports it.
 #
 # GATE_ANSWERED=true is the "do not re-open" signal. GATE_STALE=true means the
 # plan moved after approval, so asking again is correct.
@@ -65,9 +72,17 @@ source "$(dirname "$0")/wf-orch-lib.sh"
 artifact="${1:?Usage: $0 <artifact-id> <gate-name>}"
 gate_name="${2:?Usage: $0 <artifact-id> <gate-name>}"
 
-id=$(printf '%s' "$artifact" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true)
+# RELEASE and DEPLOY are ids here too, as they are everywhere else gates are
+# handled (wf-gate-open.sh, wf-gate-close.sh, wf_gate_resolved_file). They carry
+# no plan.md, so the fingerprints below find nothing and the answer reads
+# `assumed` — GATE_PROMOTE_TIP is what scopes those two, and
+# wf-promote-approval.sh is what reads it.
+case "$artifact" in
+  RELEASE|DEPLOY) id="$artifact" ;;
+  *) id=$(printf '%s' "$artifact" | grep -oE '^(PLN|BUG|BRF)-[0-9]+' || true) ;;
+esac
 if [ -z "$id" ]; then
-  echo "Error: '$artifact' is not a PLN/BUG/BRF id" >&2
+  echo "Error: '$artifact' is not a PLN/BUG/BRF id, or RELEASE/DEPLOY" >&2
   exit 1
 fi
 
@@ -94,6 +109,8 @@ resolution=""
 question=""
 resolved_at=""
 fp_at_open=""
+decision=""
+promote_tip=""
 
 if [ -f "$resolved_file" ]; then
   resolution=$(wf_gate_field "$resolved_file" GATE_RESOLUTION)
@@ -109,6 +126,11 @@ if [ -f "$resolved_file" ]; then
   # commit, so the close-time fingerprint below can include work the human
   # never saw (WFI-198).
   fp_at_open=$(wf_gate_field "$resolved_file" GATE_PLAN_BODY_FP_AT_OPEN)
+  # The promotion gates' answer: a value, and the commit set it was given for.
+  # Empty on every other gate. Reported only — wf-promote-approval.sh is what
+  # decides whether a promotion is authorized by them.
+  decision=$(wf_gate_field "$resolved_file" GATE_DECISION)
+  promote_tip=$(wf_gate_field "$resolved_file" GATE_PROMOTE_TIP)
   # The body fingerprint decides when the record carries one: it normalises the
   # regions that move under machine control while the specification stands still
   # — ticked checkboxes above all. A tester ticking a deferred criterion, as
@@ -153,3 +175,5 @@ wf_emit GATE_QUESTION    "$question"
 wf_emit GATE_RESOLVED_AT "$resolved_at"
 wf_emit GATE_STALE       "$stale"
 wf_emit GATE_PLAN_BODY_FP_AT_OPEN "$fp_at_open"
+wf_emit GATE_DECISION    "$decision"
+wf_emit GATE_PROMOTE_TIP "$promote_tip"

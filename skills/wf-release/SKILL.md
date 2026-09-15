@@ -107,7 +107,7 @@ release-branches/release → release's own permanent worktree — staging enviro
    earlier unattended run may have been refused and parked one:
    ```bash
    if scripts/wf-exec.sh wf-list-gates.sh RELEASE 2>/dev/null | grep -q "$(printf '\t')release-approval$(printf '\t')"; then
-     scripts/wf-exec.sh wf-gate-close.sh RELEASE "approved attended by the human running this /wf-release"
+     scripts/wf-exec.sh wf-gate-close.sh RELEASE "approved attended by the human running this /wf-release" --decision approve
    fi
    ```
    **This is not optional.** `wf-guard-promote.sh` (a PreToolUse hook) refuses `git push origin
@@ -229,7 +229,27 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   ```
   Exit `2` → print nothing but a log line and exit 0. A human or another worker already holds
   `RELEASE`; this is not a failure, just a lost race.
-- **Skip step 5's confirmation prompt.** In its place, check for standing authorization:
+- **Skip step 5's confirmation prompt.** In its place, check the two things that can authorize
+  this promotion without a human present. **Ask for the one-off approval first** — it is an
+  answer a human actually gave about *these* commits, where a standing grant is a policy written
+  in advance:
+  ```bash
+  scripts/wf-exec.sh wf-promote-approval.sh release
+  ```
+  | Exit | What it means | What you do |
+  |-|-|-|
+  | `0` | A human approved this exact batch at the `release-approval` gate, and `develop` has not moved since | Quote the script's line and continue at step 6 — **do not** ask `wf-autonomy.sh`, and do not open a gate |
+  | `1` | No answer of record, or it was a rejection, or it was closed without a recorded decision | Fall through to the autonomy check below |
+  | `2` | An approval exists, but `develop` has moved on — it covered a different batch | Fall through to the autonomy check below, and if that also refuses, say so in the gate question: the human should know they are being asked again because new commits landed, not because their answer was lost |
+
+  A gate approval reaching the merge is what closes client-b WFI-005: `/wf-attend` closed the
+  `release-approval` gate with an approval at 19:25:49Z, the daemon dispatched this skill a
+  minute later, the run asked `wf-autonomy.sh`, was told no — and re-opened the gate it had just
+  been let through. Twice. `wf-autonomy.sh` knows only about standing grants; it has never known
+  anything about the answer a human just gave, so asking it alone can only ever produce that
+  loop.
+
+  Then, only if the above did not authorize it, check for standing authorization:
   ```bash
   scripts/wf-exec.sh wf-autonomy.sh release
   ```

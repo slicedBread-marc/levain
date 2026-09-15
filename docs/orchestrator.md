@@ -437,8 +437,18 @@ performs none of them; `/wf-release` and `/wf-deploy` call it at the point where
 they would otherwise prompt, and park a `release-approval` / `deploy-approval`
 gate on a no.
 
-The dispatcher asks the same question first, through `--check`, which answers
-identically and records nothing — so a promotion no grant covers is skipped
+A grant is not the only authorization. A human who answered the
+`release-approval` / `deploy-approval` gate at `/wf-attend` authorized that
+batch, and `wf-gate-close.sh --decision approve` is where that answer is
+recorded — scoped to the source branch's tip, so it lapses the moment new work
+lands. `wf-promote-approval.sh` reads it back, and both the dispatcher and the
+skills ask it **before** the grant. Without it the approval could not reach the
+merge at all: client-b WFI-005 had two approvals produce two more gates, each
+worker asking `wf-autonomy.sh`, being told no, and re-opening the gate it had
+just been let through. See [`autonomy.md`](autonomy.md).
+
+The dispatcher asks the grant question first, through `--check`, which answers
+identically and records nothing — so a promotion nothing covers is skipped
 rather than spawned only to refuse itself. `--check` and not the recording form
 because the daily ceiling counts `autonomy-use` lines: a recording probe would
 spend the budget the worker it clears the way for then needs.

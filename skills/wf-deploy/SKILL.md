@@ -85,7 +85,7 @@ Before starting, confirm E2E passed on release:
    earlier unattended run may have been refused and parked one:
    ```bash
    if scripts/wf-exec.sh wf-list-gates.sh DEPLOY 2>/dev/null | grep -q "$(printf '\t')deploy-approval$(printf '\t')"; then
-     scripts/wf-exec.sh wf-gate-close.sh DEPLOY "approved attended by the human running this /wf-deploy"
+     scripts/wf-exec.sh wf-gate-close.sh DEPLOY "approved attended by the human running this /wf-deploy" --decision approve
    fi
    ```
    **This is not optional.** `wf-guard-promote.sh` (a PreToolUse hook) refuses `git push origin
@@ -221,7 +221,23 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   ```
   Exit `2` → print nothing but a log line and exit 0. A human or another worker already holds
   `DEPLOY`; this is not a failure, just a lost race.
-- **Skip step 5's confirmation prompt.** In its place, check for standing authorization:
+- **Skip step 5's confirmation prompt.** In its place, check the two things that can authorize
+  this promotion with nobody present. **The one-off approval first** — it is an answer a human
+  gave about *these* commits, where a grant is policy written in advance:
+  ```bash
+  scripts/wf-exec.sh wf-promote-approval.sh deploy
+  ```
+  | Exit | What it means | What you do |
+  |-|-|-|
+  | `0` | A human approved this exact batch at the `deploy-approval` gate, and `release` has not moved since | Quote the script's line and continue at step 6 — do not ask `wf-autonomy.sh`, do not open a gate |
+  | `1` | No answer of record, a rejection, or a close with no recorded decision | Fall through to the autonomy check below |
+  | `2` | An approval exists but `release` has moved on — it covered a different batch | Fall through, and if the autonomy check also refuses, say in the gate question that new commits landed after the answer |
+
+  Without this, an approval given at `/wf-attend` cannot reach the merge: `wf-autonomy.sh` only
+  ever knew about standing grants, so every dispatch after an approval re-opened the gate it had
+  just been let through (client-b WFI-005, filed against `/wf-release` — the same shape here).
+
+  Then, only if that did not authorize it, check for standing authorization:
   ```bash
   scripts/wf-exec.sh wf-autonomy.sh deploy
   ```
