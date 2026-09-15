@@ -1882,12 +1882,37 @@ section "The promote guard refuses a push or merge behind an open gate (WFI-004,
 # client-c WFI-034 — each opened its own release-approval/deploy-approval
 # gate on a refusal and promoted release or main anyway. A "STOP" sentence in
 # the skill did not hold; this hook is the mechanical version.
+# The payload's `cwd` is what the guard probes for the current branch, so it
+# decides which arm of the merge detection runs. It must be explicit here.
+# Without it the guard fell back to "." — the fixture repo, which `git init`
+# puts on whatever `init.defaultBranch` says, `main` on the machine this was
+# written on. Every `git merge` in the suite therefore read as "a merge
+# advancing main", two assertions about unrelated merges failed for a reason
+# that had nothing to do with the merges, and the ref-text fallback arm — the
+# one that actually had the bug — was never reached by any test at all.
+#
+# Note the gate files still resolve from the *process* cwd (TEST_DIR), not
+# from this, so a probe cwd can point anywhere without disturbing them.
+PROMOTE_CWD_DEVELOP="$TEST_DIR/promote-cwd/develop"
+PROMOTE_CWD_RELEASE="$TEST_DIR/promote-cwd/release"
+PROMOTE_CWD_MAIN="$TEST_DIR/promote-cwd/main"
+for b in develop release main; do
+  mkdir -p "$TEST_DIR/promote-cwd/$b"
+  ( cd "$TEST_DIR/promote-cwd/$b" \
+    && git init -qb "$b" . \
+    && git config user.email t@t && git config user.name t \
+    && git commit -q --allow-empty -m init ) >/dev/null 2>&1
+done
+
+# promote_guard <command> [probe-cwd]   — defaults to the develop checkout,
+# which is where /wf-deploy steps 6 and 12 genuinely run from.
 promote_guard() {
-  printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$1" \
+  printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"%s"}}' \
+    "${2:-$PROMOTE_CWD_DEVELOP}" "$1" \
     | "$SCRIPT_DIR/wf-guard-promote.sh" 2>&1
   printf 'rc=%s' "$?"
 }
-promote_guard_rc() { promote_guard "$1" | sed -n 's/.*rc=\([0-9]*\)$/\1/p'; }
+promote_guard_rc() { promote_guard "$1" "${2:-}" | sed -n 's/.*rc=\([0-9]*\)$/\1/p'; }
 
 assert_eq "no gate open: push release allowed" "0" \
   "$(promote_guard_rc 'git push origin release')"
@@ -1912,6 +1937,28 @@ assert_eq "release-approval open: a chained command still trips it" "2" \
 assert_eq "release-approval open: an unrelated push is unaffected" "0" \
   "$(promote_guard_rc 'git push origin feature/PLN-010-alpha')"
 
+# The false positive that made an approved deploy unrunnable.
+#
+# /wf-deploy step 7 is `git merge -X theirs --no-ff release` — a DEPLOY action,
+# owned by DEPLOY.gate. The ref-text fallback used to read the word "release"
+# there as a RELEASE action, so with a release-approval gate parked (the normal
+# resting state after any refused release worker) the deploy's merge into main
+# was refused by a gate that has nothing to do with it. Reproduced live against
+# client-c, whose release-approval gate had been open since the previous
+# afternoon while its deploy was separately approved.
+assert_eq "release-approval open: deploy's step-7 release→main merge is unaffected" "0" \
+  "$(promote_guard_rc "git merge -X theirs --no-ff release -m release-promote-to-main")"
+assert_eq "release-approval open: deploy's step-12 back-merge is unaffected" "0" \
+  "$(promote_guard_rc "git merge -X ours main -m sync-bring-completed-plans-back-to-develop")"
+
+# The current-branch arm, which the ref text cannot express: /wf-release step 6
+# is `git merge origin/develop` run while checked out on release (WFI-005,
+# WFI-007). Nothing on that command line names `release` at all.
+assert_eq "release-approval open: step-6 merge in the release checkout blocked" "2" \
+  "$(promote_guard_rc 'git merge origin/develop --no-edit' "$PROMOTE_CWD_RELEASE")"
+assert_eq "release-approval open: the same merge in the main checkout is unaffected" "0" \
+  "$(promote_guard_rc 'git merge origin/develop --no-edit' "$PROMOTE_CWD_MAIN")"
+
 "$SCRIPT_DIR/wf-gate-close.sh" RELEASE "approved" >/dev/null 2>&1
 assert_eq "closed: push release allowed again" "0" \
   "$(promote_guard_rc 'git push origin release')"
@@ -1932,9 +1979,11 @@ assert_eq "deploy-approval open: local release→main merge blocked (step 7)" "2
 assert_eq "deploy-approval open: back-merge main→develop blocked (step 12)" "2" \
   "$(promote_guard_rc "git merge -X ours main -m sync-bring-completed-plans-back-to-develop")"
 assert_eq "deploy-approval open: wf-release's own develop→release merge is unaffected" "0" \
-  "$(promote_guard_rc 'git merge origin/develop --no-edit')"
+  "$(promote_guard_rc 'git merge origin/develop --no-edit' "$PROMOTE_CWD_RELEASE")"
 assert_eq "deploy-approval open: a feature-branch merge naming neither ref is unaffected" "0" \
   "$(promote_guard_rc 'git merge feature/PLN-030-happy --no-edit')"
+assert_eq "deploy-approval open: step-7 merge in the main checkout blocked (current-branch arm)" "2" \
+  "$(promote_guard_rc "git merge -X theirs --no-ff release -m release-promote-to-main" "$PROMOTE_CWD_MAIN")"
 "$SCRIPT_DIR/wf-gate-close.sh" DEPLOY "approved" >/dev/null 2>&1
 assert_eq "closed: both merges allowed again" "0" \
   "$(promote_guard_rc "git merge -X theirs --no-ff release -m release-promote-to-main")"

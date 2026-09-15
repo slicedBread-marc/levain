@@ -101,13 +101,26 @@
 #      The fix is the general form of the invariant this guard already
 #      relies on: a merge advances whatever branch is CURRENTLY CHECKED OUT,
 #      never the ref named on the command line — that ref is only ever the
-#      thing being merged in. So merge detection no longer reads the ref
-#      text at all; it asks git which branch is checked out at the resolved
-#      cwd and gates on THAT: `release` maps to RELEASE.gate, `main` to
-#      DEPLOY.gate, anything else is untouched. This also covers /wf-deploy's
-#      two merges without needing their literal ref text, and does not touch
-#      `git pull`, which never appears in either skill's promotion path and
-#      cannot advance a branch past what a gate already approved on origin.
+#      thing being merged in. So merge detection asks git which branch is
+#      checked out at the resolved cwd and gates on THAT: `release` maps to
+#      RELEASE.gate, `main` to DEPLOY.gate, anything else is untouched. This
+#      also covers /wf-deploy's two merges without needing their literal ref
+#      text, and does not touch `git pull`, which never appears in either
+#      skill's promotion path and cannot advance a branch past what a gate
+#      already approved on origin.
+#
+# THE FALLBACK ARM AND THE ONE FALSE POSITIVE IT CAUSED
+#
+# The ref-text fallback below stayed, for the merges the checkout probe cannot
+# see, and its mapping was wrong: it read `git merge ... release ...` as a
+# RELEASE action. That command is /wf-deploy STEP 7 — release promoted into
+# main — which is a DEPLOY action, and the probe misses it whenever the hook
+# payload's cwd is still the project root rather than `release-branches/main`
+# (the skill `cd`s there in step 6, a separate tool call). So an approved
+# deploy's merge into `main` was refused by whatever release-approval gate
+# happened to be parked — and one is parked most of the time, because a
+# refused release worker leaves one behind. Both fallback arms are DEPLOY now;
+# see the mapping note further down for why nothing is lost.
 #
 # The git lookups this adds (current branch, upstream ref) fail closed to
 # "cannot tell" the same way everything else here does — an error or timeout
@@ -261,16 +274,15 @@ for piece in re.split(r"&&|\|\||;|\n", cmd):
         # /wf-deploy'"'"'s release-into-main step the same way.
         b = branch_at(effective_dir)
         if b in ("release", "main"):
-            print(f"merge:{b}")
+            print(f"merge-into:{b}")
             break
-        # Fallback: the ref text itself names a protected branch. Needed for
-        # /wf-deploy'"'"'s OTHER merge — main back-merged into develop, step 12 —
-        # where the branch being advanced is develop, not main, so the check
-        # above cannot see it; the danger there is pulling an unapproved
-        # `main` INTO develop, which the literal ref name does catch.
+        # Fallback: the ref text itself names a protected branch, for the two
+        # /wf-deploy merges whose advanced branch this cannot see — step 7 when
+        # the cwd probe misses, and step 12'"'"'s back-merge, which lands on
+        # develop. Both are DEPLOY actions; see the mapping note below.
         ref = first_positional(rest)
         if ref in ("release", "main"):
-            print(f"merge:{ref}")
+            print(f"merge-ref:{ref}")
             break
 ' 2>/dev/null) || exit 0
 [ -n "$action" ] || exit 0
@@ -285,18 +297,39 @@ source "$lib" 2>/dev/null || exit 0
 
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
-# `ref` for a push is the pushed ref, named on the command line. `ref` for a
-# merge is either the CURRENT branch (a merge advances that branch regardless
-# of what it names as the ref being merged in — catches /wf-release's step 6
-# and /wf-deploy's step 7) or, when neither the current branch nor the merged
-# ref names one directly, the literal ref text (catches /wf-deploy's step 12
-# back-merge, which lands on develop but pulls in a `main` that must not be
-# unapproved).
+# WHICH GATE OWNS WHICH COMMAND
+#
+# `push:<ref>` is the pushed ref, named on the command line: `release` is
+# /wf-release's promotion, `main` is /wf-deploy's production push.
+#
+# `merge-into:<branch>` is the branch a merge ACTUALLY advances, read from the
+# checkout. Advancing `release` is /wf-release step 6; advancing `main` is
+# /wf-deploy step 7. Those are the two skills' own promotions, so each maps to
+# its own gate.
+#
+# `merge-ref:<ref>` is the fallback — the ref text, used only when the
+# current-branch probe could not name a protected branch. BOTH arms are DEPLOY
+# actions, and getting that wrong is what this mapping was fixed for:
+#
+#   · `git merge -X theirs --no-ff release` is /wf-deploy STEP 7, promoting
+#     release into main. Nothing in the harness ever merges `release` into
+#     anything else. The old table read that as a RELEASE action and gated it
+#     on RELEASE.gate — so with a release-approval gate parked (the normal
+#     resting state whenever a release worker is refused), an already-approved
+#     deploy's merge into `main` was refused by an unrelated gate. There is no
+#     true positive on that arm to lose: a merge that advances `release`
+#     itself is /wf-release step 6, which `merge-into:release` above already
+#     catches by the checkout, never by this ref text.
+#   · `git merge -X ours main` is /wf-deploy STEP 12's back-merge. It lands on
+#     develop, so no `merge-into` arm can see it; the danger is pulling an
+#     unapproved `main` INTO develop, which the literal ref name does catch.
 case "$kind:$ref" in
-  push:release)  gate_id="RELEASE"; gate_name="release-approval" ;;
-  push:main)     gate_id="DEPLOY";  gate_name="deploy-approval" ;;
-  merge:release) gate_id="RELEASE"; gate_name="release-approval" ;;
-  merge:main)    gate_id="DEPLOY";  gate_name="deploy-approval" ;;
+  push:release)       gate_id="RELEASE"; gate_name="release-approval" ;;
+  push:main)          gate_id="DEPLOY";  gate_name="deploy-approval" ;;
+  merge-into:release) gate_id="RELEASE"; gate_name="release-approval" ;;
+  merge-into:main)    gate_id="DEPLOY";  gate_name="deploy-approval" ;;
+  merge-ref:release)  gate_id="DEPLOY";  gate_name="deploy-approval" ;;
+  merge-ref:main)     gate_id="DEPLOY";  gate_name="deploy-approval" ;;
 esac
 
 gate_file=$(wf_gate_file "$gate_id" 2>/dev/null); rc=$?
@@ -311,8 +344,9 @@ existing_name=$(wf_gate_field "$gate_file" GATE_NAME 2>/dev/null || true)
 question=$(wf_gate_field "$gate_file" GATE_QUESTION --unescape 2>/dev/null || true)
 
 case "$kind" in
-  push)  what="Pushing '$ref' now" ;;
-  merge) what="Merging into '$ref' now" ;;
+  push)       what="Pushing '$ref' now" ;;
+  merge-into) what="Merging into '$ref' now" ;;
+  merge-ref)  what="Merging '$ref' now" ;;
 esac
 
 cat >&2 <<EOF
