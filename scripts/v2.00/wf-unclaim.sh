@@ -21,11 +21,16 @@ plan_name="${1:?Usage: wf-unclaim.sh <plan-name>}"
 # a guard nobody is looking at any more (WFI-206). So the one thing that IS
 # checkable — that the argument is shaped like an artifact ID at all — is
 # checked here. It catches every flag typo and every letter-for-digit slip.
-if ! printf '%s' "$plan_name" | grep -qE '^(PLN|BUG|BRF)-[0-9]+'; then
-  echo "Usage: wf-unclaim.sh <plan-name>" >&2
-  echo "Error: '$plan_name' is not an artifact ID — expected PLN-NNN, BUG-NNN or BRF-NNN, optionally followed by -<slug>." >&2
-  exit 2
-fi
+case "$plan_name" in
+  RELEASE|DEPLOY) : ;;
+  *)
+    if ! printf '%s' "$plan_name" | grep -qE '^(PLN|BUG|BRF)-[0-9]+'; then
+      echo "Usage: wf-unclaim.sh <plan-name>" >&2
+      echo "Error: '$plan_name' is not an artifact ID — expected PLN-NNN, BUG-NNN or BRF-NNN, optionally followed by -<slug>, or RELEASE/DEPLOY." >&2
+      exit 2
+    fi
+    ;;
+esac
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=wf-orch-lib.sh
@@ -41,6 +46,12 @@ if claim_dir=$(wf_claim_dir "$plan_name"); then
 fi
 rm -f "$develop_root/plans/${plan_name}/.wf-claim"
 echo "Released $plan_name"
+
+# RELEASE/DEPLOY are singleton pseudo-artifacts, not plans — there is no
+# numeric marker to extract and no deferred-spawn queue keyed on them.
+case "$plan_name" in
+  RELEASE|DEPLOY) exit 0 ;;
+esac
 
 # ── Flush any spawn deferred behind that claim ────────────────────────────
 #
