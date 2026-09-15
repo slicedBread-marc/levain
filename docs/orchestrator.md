@@ -490,6 +490,25 @@ saw no state change, and reported a stall while the real worker ran healthily be
 (client-c WFI-002). A caller obeying the contract would have retried, burning one of
 `max_attempts_per_plan` for a non-fault.
 
+### Known limitation: a soak-gated tail step blocks the whole plan
+
+`drive` treats a plan as one unit through `active → verify → testing → complete`.
+A `(soak)`-tagged *acceptance criterion* has a way out — `wf-defer-criterion.sh`
+lets the plan complete and release with the criterion tracked separately in
+`plans/deferred-criteria.md`. But a plan can also have a soak-gated
+**implementation step** — real work that cannot run until real calendar time has
+passed (e.g. "wait 72h of production traffic, then `fly apps destroy` the old
+app"). That is not a criterion to defer; it is a step the plan is not done
+without. `drive` correctly refuses to fast-forward it, but then has no way to
+release the already-implemented, tested steps that precede it — the plan sits at
+`active` with no progress until the clock runs out (client-e WFI-027).
+
+There is no orchestrator mechanism for this today. Work around it by hand: build
+and test the feature branch as usual, open the PR straight to `release`, merge,
+run the release/main suites, promote and back-merge — without transitioning the
+plan's registry row. Leave it `active`; it completes for real once the soak step
+runs. This has come up once; revisit only if it recurs.
+
 ## Safety
 
 Everything below is configurable in `claude-workflow.yml → orchestrator`:
