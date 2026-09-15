@@ -5,6 +5,15 @@
 # Detection hints are in the comments for each field.
 # After filling in values, confirm with the user before writing the file.
 
+# What this project is to the harness.
+#
+#   client       (default) runs the pipeline — plans, registry, bugs, worktrees.
+#   coordinator  runs NO pipeline of its own. It oversees projects that do, and
+#                gets one capability: filing work into theirs. Declaring this
+#                changes what install.sh writes here — see docs/coordinator.md
+#                before setting it, and list the projects under `coordinates:`.
+role: "client"
+
 # Build command — run to compile/build the project.
 # Detect from: package.json "scripts.build", Makefile targets, *.csproj / *.slnx (use "dotnet build <file>"), CMakeLists.txt
 build_command: ""
@@ -362,6 +371,32 @@ priorWork:
   ignorePaths: []
     # - "drive/exchange/"   # relayed messages about a bug, not a fix for one
     # - "docs/decisions/"   # an ADR naming a plan is a record, not an implementation
+
+# ── Cross-project reports ───────────────────────────────────────────────────
+# Who this project can file into, and who can file into it. Each entry is
+# "name:absolute-path" — the path is a LOCAL checkout of a project running this
+# harness, because filing runs that project's own wf-bug-new.sh so the ID comes
+# from its counter and the report lands where its own /wf-spec already looks.
+# Nothing scans for these; a human declares them. See
+# docs/cross-project-reports.md and docs/coordinator.md.
+#
+# All three are optional and all default to empty.
+#
+#   dependencies:  projects THIS one builds against. wf-dep-bug.sh files a bug
+#                  or capability request INTO one of them.
+#   dependents:    projects that build against THIS one. wf-dep-notify.sh
+#                  announces a change here OUT to them.
+#   coordinates:   projects this one oversees (role: coordinator only).
+#                  wf-dep-notify.sh --kind request files work DOWN into them.
+#                  Read together with dependents:, so a project that is both
+#                  depended upon and a coordinator keeps all of its targets.
+#
+# dependencies: []
+#   - "client-c:/Users/you/dev/client-c"
+# dependents: []
+#   - "client-e:/Users/you/dev/client-e"
+# coordinates: []
+#   - "client-f:/Users/you/dev/client-f"
 
 # ── Orchestrator ────────────────────────────────────────────────────────────
 # Dispatches unattended workers by REGISTRY state so the pipeline runs from one

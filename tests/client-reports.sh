@@ -1560,6 +1560,116 @@ assert_eq "wf-bug documents the dependency path, not just the local one" "true" 
   "$(grep -q 'wf-dep-bug.sh' "$LIB_ROOT/skills/wf-bug/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A coordinator files work DOWN without deriving an artifact number"
+
+# ~/dev/coordinator oversees the portfolio, owns no application code, and had no
+# formalized way to put work into a project's pipeline. Its own instruction
+# said to write plans/briefs/ plus a REGISTRY row into the target — which
+# means allocating an artifact number by hand from a counter it may not
+# touch. That is the WFI-025 shape: a session with no standing in a pipeline
+# writing into it directly, which had to be reverted wholesale once already.
+COORD="$TEST_DIR/coord"
+mkdir -p "$COORD"
+cat > "$COORD/claude-workflow.yml" <<YML
+role: "coordinator"
+project_slug: "coord"
+coordinates:
+  - "dep-host:$DEPB"
+YML
+( cd "$COORD" && git init -qb main . && git config user.email t@t && git config user.name t \
+  && git add -A && git commit -qm seed ) >/dev/null 2>&1
+
+coord_install=$(WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" 2>&1)
+assert_eq "install.sh recognises the coordinator role" "true" \
+  "$(printf '%s' "$coord_install" | grep -q 'Role: coordinator' && echo true || echo false)"
+
+# No pipeline. Every one of these is something a coordinator has no use for
+# and every pipeline skill would start by reading.
+assert_eq "no REGISTRY is seeded" "true" \
+  "$([ -f "$COORD/plans/REGISTRY.md" ] && echo false || echo true)"
+assert_eq "no bugs/ inbox of its own" "true" \
+  "$([ -d "$COORD/bugs" ] && echo false || echo true)"
+assert_eq "no orchestrator runtime" "true" \
+  "$([ -d "$COORD/.claude/orchestrator" ] && echo false || echo true)"
+assert_eq "no pipeline skills — only the filing one" "wf-dep-notify" \
+  "$(ls "$COORD/.claude/skills")"
+
+# The slice is an allowlist, not "whatever the library ships". A pipeline
+# script on a coordinator's disk looks current and is one wf-exec.sh call from
+# running.
+coord_scripts=$(ls "$COORD/scripts/$SCRIPT_FOLDER_LIVE" | sort | tr '\n' ' ')
+assert_eq "scripts/ is pruned to the filing slice" \
+  "wf-dep-bug.sh wf-dep-notify.sh wf-issue.sh wf-lock.sh wf-orch-lib.sh " "$coord_scripts"
+assert_eq "wf-implement's scripts are not installed" "true" \
+  "$([ -f "$COORD/scripts/$SCRIPT_FOLDER_LIVE/wf-worktree-sparse.sh" ] && echo false || echo true)"
+
+# The entry contract explains the pipelines it files INTO, and where its own
+# authority stops — the only part of this that a convention, not a script,
+# has to enforce.
+assert_eq "WORKFLOW.md is the coordinator contract, not the client one" "true" \
+  "$(grep -q 'does not run the pipeline' "$COORD/WORKFLOW.md" && echo true || echo false)"
+assert_eq "and states that filing is the terminal action" "true" \
+  "$(grep -q 'Filing is the last thing you do' "$COORD/WORKFLOW.md" && echo true || echo false)"
+
+# The point of all of it: the ID comes from the TARGET's own counter.
+before_counter=$(grep -o 'Counter: [0-9]*' "$DEPB/plans/REGISTRY.md" | grep -o '[0-9]*')
+coord_out=$(cd "$COORD" && scripts/wf-exec.sh wf-dep-notify.sh 'Add a logout link to the nav' \
+  --to dep-host --kind request \
+  --description 'initiative 007 needs a visible logout' \
+  --expected 'a logout link for signed-in users' --actual 'no way to sign out' 2>/dev/null)
+assert_eq "the filing reports one NOTIFIED target" "true" \
+  "$(printf '%s' "$coord_out" | grep -q '^NOTIFIED dep-host BUG-' && echo true || echo false)"
+coord_bug=$(printf '%s' "$coord_out" | awk '/^NOTIFIED/ {print $3}')
+assert_eq "the ID is the target's next number, not one the coordinator computed" \
+  "BUG-$(printf '%03d' "$before_counter")" "$coord_bug"
+coord_bug_md=$(ls "$DEPB/bugs/open/$coord_bug"*/bug.md)
+assert_eq "--kind request survives to the target's own bug.md" "true" \
+  "$(grep -q '\*\*Kind:\*\* Request' "$coord_bug_md" && echo true || echo false)"
+assert_eq "the coordinator is named as the source" "true" \
+  "$(grep -q '\*\*Source:\*\* cross-project:coord' "$coord_bug_md" && echo true || echo false)"
+assert_eq "the note tells the target the coordinator will NOT plan it" "true" \
+  "$(grep -q 'does not plan, claim or implement it' "$coord_bug_md" && echo true || echo false)"
+assert_eq "nothing was written in the coordinator itself" "true" \
+  "$(cd "$COORD" && git status --short | grep -qv '^?? ' && echo false || echo true)"
+
+# `coordinates:` exists because `dependents:` would be false in the one file a
+# human maintains by hand — the arrow points the other way.
+#
+# Captured into a variable before grepping, never piped: the script exits 1 on
+# a refusal and `set -o pipefail` above would take that as the pipeline's
+# status, so `refused | grep -q` reports failure no matter what grep matched.
+coord_to_err=$(cd "$COORD" && scripts/wf-exec.sh wf-dep-notify.sh 'x' --to nope 2>&1 >/dev/null)
+assert_eq "an unknown --to lists the configured targets" "true" \
+  "$(printf '%s' "$coord_to_err" | grep -q 'Configured targets: dep-host' && echo true || echo false)"
+coord_kind_err=$(cd "$COORD" && scripts/wf-exec.sh wf-dep-notify.sh 'x' --kind plan 2>&1 >/dev/null)
+assert_eq "a bad --kind is refused rather than filed as something else" "true" \
+  "$(printf '%s' "$coord_kind_err" | grep -q "must be 'notice', 'request' or 'bug'" && echo true || echo false)"
+
+# A client that later becomes a coordinator must not keep a live pipeline on
+# disk — but its plans/ and bugs/ are a human's tracked work and are reported,
+# never deleted.
+sed -i.bak 's/^role: "coordinator"/role: "client"/' "$COORD/claude-workflow.yml" && rm -f "$COORD/claude-workflow.yml.bak"
+WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" >/dev/null 2>&1
+assert_eq "as a client it gets the full harness" "true" \
+  "$([ -f "$COORD/scripts/$SCRIPT_FOLDER_LIVE/wf-worktree-sparse.sh" ] && echo true || echo false)"
+sed -i.bak 's/^role: "client"/role: "coordinator"/' "$COORD/claude-workflow.yml" && rm -f "$COORD/claude-workflow.yml.bak"
+coord_reinstall=$(WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" 2>&1)
+assert_eq "switching back prunes the pipeline scripts" "true" \
+  "$([ -f "$COORD/scripts/$SCRIPT_FOLDER_LIVE/wf-worktree-sparse.sh" ] && echo false || echo true)"
+assert_eq "and the pipeline skills" "wf-dep-notify" "$(ls "$COORD/.claude/skills")"
+assert_eq "the client install's plans/ is reported, not deleted" "true" \
+  "$([ -f "$COORD/plans/REGISTRY.md" ] && echo true || echo false)"
+assert_eq "and the deploy says so rather than staying silent" "true" \
+  "$(printf '%s' "$coord_reinstall" | grep -q 'runs no pipeline now' && echo true || echo false)"
+
+# An unknown role is a typo, and a typo that falls back to `client` would
+# install a whole pipeline into a repo that asked for none.
+role_rc=0
+sed -i.bak 's/^role: "coordinator"/role: "coordnator"/' "$COORD/claude-workflow.yml" && rm -f "$COORD/claude-workflow.yml.bak"
+WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" >/dev/null 2>&1 || role_rc=$?
+assert_eq "a misspelled role is refused, not defaulted" "1" "$role_rc"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "client-c's first three reports (WFI-001/002/003)"
 
 # WFI-001 — wf-spec cited templates/plans/TEMPLATE.md, a path that exists in

@@ -49,6 +49,9 @@
 #
 #   --to <name>             optional — restrict to one entry in dependents:
 #                            (default: every declared dependent)
+#   --kind notice|request|bug   default: notice. A COORDINATOR (see below)
+#                            files `request` — it is asking for work, not
+#                            announcing a change it already made.
 #   --severity Critical|High|Medium|Low   default: Medium — how urgently a
 #                            dependent should act; Critical/High for a
 #                            breaking change, Low for a heads-up with no
@@ -64,8 +67,23 @@
 #   --notes        <text>   deploy reference, migration guide, timeline
 #
 # This project's identity is recorded automatically: --source is stamped
-# "cross-project:<this project's slug>" on each dependent's side, and the
-# notice is filed with --kind notice.
+# "cross-project:<this project's slug>" on each dependent's side.
+#
+# COORDINATORS
+#
+# A coordinator (role: coordinator — ~/dev/coordinator, docs/coordinator.md) oversees
+# projects rather than depending on them, and uses this same script to file
+# work down into them. The mechanism is identical; only the config key and the
+# default kind differ. A coordinator declares its targets under `coordinates:`,
+# because calling the projects it directs its "dependents" would be false in
+# the one file a human maintains by hand — the arrow points the other way.
+# A coordinator passes --kind request; nothing enforces that,
+# because a coordinator reporting a defect it actually observed is a `bug`,
+# and one relaying an upstream change is a `notice`.
+#
+# Both keys are read the same way and both may be present; entries are
+# concatenated, so a project that both coordinates others and is depended upon
+# does not have to choose.
 #
 # Output (one summary line per dependent, to stdout):
 #   NOTIFIED <name> <bug-id> <path> <dir>
@@ -85,6 +103,7 @@ source "$SELF_DIR/wf-orch-lib.sh"
 
 to_name=""
 title=""
+kind="notice"
 severity="Medium"
 description=""
 steps=""
@@ -95,13 +114,14 @@ notes=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --to)          to_name="${2:?--to requires a value}"; shift 2 ;;
+    --kind)        kind="${2:?--kind requires a value}"; shift 2 ;;
     --severity)    severity="${2:?--severity requires a value}"; shift 2 ;;
     --description) description="${2:?--description requires a value}"; shift 2 ;;
     --steps)       steps="${2:?--steps requires a value}"; shift 2 ;;
     --expected)    expected="${2:?--expected requires a value}"; shift 2 ;;
     --actual)      actual="${2:?--actual requires a value}"; shift 2 ;;
     --notes)       notes="${2:?--notes requires a value}"; shift 2 ;;
-    -h|--help)     sed -n '2,75p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)     sed -n '2,96p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "wf-dep-notify.sh: unknown option '$1'" >&2; exit 1 ;;
     *)  if [ -z "$title" ]; then title="$1"; else
           echo "Error: unexpected argument '$1' — the title is one argument, quote it" >&2; exit 1
@@ -119,23 +139,39 @@ case "$severity" in
   *) echo "Error: --severity must be Critical, High, Medium or Low (got '$severity')" >&2; exit 1 ;;
 esac
 
+case "$kind" in
+  notice|request|bug) ;;
+  *) echo "Error: --kind must be 'notice', 'request' or 'bug' (got '$kind')" >&2; exit 1 ;;
+esac
+
 # ── Resolve targets from THIS project's own config ─────────────────────────
 caller_root="$(wf_develop_root)"
 caller_slug=$(wf_cfg project_slug "$(basename "$caller_root")")
 
 declare -a target_names=()
 declare -a target_paths=()
-while IFS= read -r entry; do
-  [ -n "$entry" ] || continue
-  name="${entry%%:*}"
-  path="${entry#*:}"
-  target_names+=("$name")
-  target_paths+=("$path")
-done < <(wf_cfg_list dependents)
+
+# `dependents:` and `coordinates:` are the same list under two names, because
+# the relationship they describe runs in opposite directions and only one of
+# the two words is ever true of a given project. Both are read: a project can
+# be depended upon AND coordinate others, and making it pick one word would
+# cost it half its targets silently.
+for cfg_key in dependents coordinates; do
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    name="${entry%%:*}"
+    path="${entry#*:}"
+    target_names+=("$name")
+    target_paths+=("$path")
+  done < <(wf_cfg_list "$cfg_key")
+done
+
+target_key="dependents"
+[ "$(wf_cfg role client)" = "coordinator" ] && target_key="coordinates"
 
 if [ "${#target_names[@]}" -eq 0 ]; then
-  echo "Error: no 'dependents:' key in $caller_root/claude-workflow.yml — nothing to notify. Add one, e.g.:" >&2
-  echo "  dependents:" >&2
+  echo "Error: no '$target_key:' key in $caller_root/claude-workflow.yml — nothing to notify. Add one, e.g.:" >&2
+  echo "  $target_key:" >&2
   echo "    - \"<name>:/absolute/path/to/<name>\"" >&2
   exit 1
 fi
@@ -144,14 +180,18 @@ if [ -n "$to_name" ]; then
   found=false
   for n in "${target_names[@]}"; do [ "$n" = "$to_name" ] && found=true && break; done
   if ! $found; then
-    echo "Error: no dependent named '$to_name' in $caller_root/claude-workflow.yml" >&2
-    printf 'Configured dependents: %s\n' "$(IFS=,; echo "${target_names[*]}")" >&2
+    echo "Error: no target named '$to_name' in $caller_root/claude-workflow.yml" >&2
+    printf 'Configured targets: %s\n' "$(IFS=,; echo "${target_names[*]}")" >&2
     exit 1
   fi
 fi
 
 source_tag="cross-project:$caller_slug"
-kind_note="This is a change notice from $caller_slug — an upstream dependency change this project's integration may need to account for."
+case "$kind" in
+  notice)  kind_note="This is a change notice from $caller_slug — an upstream dependency change this project's integration may need to account for." ;;
+  request) kind_note="This is a work request from $caller_slug, which coordinates this project. It is a capability ask, not a defect found here — triage it through this project's own /wf-spec like any other request. $caller_slug does not plan, claim or implement it." ;;
+  bug)     kind_note="This is a defect reported by $caller_slug, observed from outside this project. $caller_slug does not plan, claim or implement it — it goes through this project's own /wf-spec like any other bug." ;;
+esac
 
 notified=0
 skipped=0
@@ -185,11 +225,11 @@ for i in "${!target_names[@]}"; do
 
   bug_out=""
   if ! bug_out=$(cd "$path" && scripts/wf-exec.sh wf-bug-new.sh "$title" \
-      --kind notice \
+      --kind "$kind" \
       --severity "$severity" \
       --source "$source_tag" \
       --description "${description:-TBD}" \
-      --steps "${steps:-N/A — this is a change notice, not a reproducible defect.}" \
+      --steps "${steps:-N/A — this is a $kind, not a reproducible defect.}" \
       --expected "${expected:-TBD}" \
       --actual "${actual:-TBD}" \
       --notes "${kind_note}${notes:+$'\n\n'}${notes}"); then

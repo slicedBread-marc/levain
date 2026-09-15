@@ -25,6 +25,21 @@ counter, picked up by its own `/wf-spec`. Declared per-client in that client's o
 `claude-workflow.yml` under `dependencies:`, never in this repo. See
 [`docs/cross-project-reports.md`](docs/cross-project-reports.md).
 
+### Coordinators: a client that runs no pipeline
+
+`~/dev/coordinator` oversees the portfolio and owns no application code. It declares
+`role: coordinator` in its own `claude-workflow.yml` and gets a deliberately small slice of the
+harness: the dispatcher, `wf-dep-notify.sh`/`wf-dep-bug.sh`/`wf-issue.sh` and their lib, the
+`/wf-dep-notify` skill, and a `WORKFLOW.md` rendered from `templates/WORKFLOW-coordinator.md`
+that explains the pipelines it files into and where its authority stops. No `plans/`, no
+registry, no `bugs/`, no worktrees, no orchestrator, no hooks, no pipeline skills — and the
+install is subtractive, so a former client is pruned back to that slice on every deploy.
+
+It files work down with `wf-dep-notify.sh --kind request`, resolving targets from
+`coordinates:` — the same mechanism as a dependent notice, so the ID still comes from the target
+project's own counter and the report still lands in its own `bugs/open/`. Read
+[`docs/coordinator.md`](docs/coordinator.md) before declaring another one.
+
 ### The client copy of the harness is generated
 
 Everything `deploy-all.sh` writes into a client — `scripts/v*/`, `.claude/skills/wf-*/`,

@@ -72,6 +72,16 @@ LOCAL_STOP=$(get_config "local_stop_command")
 PROJECT_SLUG=$(get_config "project_slug")
 PRODUCTION_LOGS_URL=$(get_config "production_logs_url")
 PRODUCTION_URL=$(get_config "production_url")
+ROLE=$(get_config "role")
+ROLE="${ROLE:-client}"
+
+case "$ROLE" in
+    client|coordinator) ;;
+    *)  RED='\033[0;31m'
+        echo -e "${RED}ERROR: role must be 'client' or 'coordinator' (got '$ROLE').${NC}"
+        echo "See docs/coordinator.md."
+        exit 1 ;;
+esac
 
 # project_slug is required as of workflow v1.33.0 — it namespaces Docker
 # compose projects so multiple clients can coexist on one Docker daemon.
@@ -87,6 +97,196 @@ if [ -z "$PROJECT_SLUG" ]; then
     echo "This namespaces Docker compose projects (e.g., <slug>-pln004) so"
     echo "multiple clients on one machine don't collide on container names."
     exit 1
+fi
+
+# ── Coordinator installs ─────────────────────────────────────────────────────
+#
+# A coordinator (role: coordinator) oversees several projects that DO run the
+# pipeline, and files work into theirs. It runs none of its own: no plans/, no
+# REGISTRY, no bugs/, no worktrees, no orchestrator, no pipeline skills, and
+# none of the git or session hooks that drive them. ~/dev/coordinator is the case this
+# exists for.
+#
+# It still needs the harness on disk, for two reasons that pull in the same
+# direction. First, filing has to go through the TARGET's own wf-bug-new.sh —
+# that is what makes the ID come from the target's own counter and the file land
+# where the target's own /wf-spec already looks (docs/cross-project-reports.md).
+# Reaching that requires wf-dep-notify.sh here. Second, a coordinator that has
+# to reason about work in five pipelines needs an accurate description of how
+# those pipelines behave, and the only description that cannot drift is one the
+# library regenerates on every deploy. Hence WORKFLOW-coordinator.md.
+#
+# This is a self-contained early exit rather than conditionals threaded through
+# the client install below. The two paths share almost nothing, and interleaving
+# them would put a `[ "$ROLE" = client ]` guard on forty blocks whose failure
+# mode is silent — writing a pipeline artifact into a repo with no pipeline.
+if [ "$ROLE" = "coordinator" ]; then
+    echo -e "${GREEN}Role: coordinator${NC} — filing capability only, no pipeline"
+    echo ""
+
+    WORKFLOW_VERSION=$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+    mkdir -p "$TARGET_DIR/.claude" "$TARGET_DIR/scripts"
+
+    # The slice a coordinator gets. Everything here is either a filing path or
+    # something a filing path sources. Anything absent is absent DELIBERATELY:
+    # a pipeline script sitting on a coordinator's disk looks current, is on
+    # PATH-adjacent disk, and the only reason to withhold it is that running it
+    # here is a bad idea — the same argument install.sh already makes for
+    # pruning stale scripts out of a client.
+    COORD_SCRIPTS="wf-orch-lib.sh wf-lock.sh wf-dep-notify.sh wf-dep-bug.sh wf-issue.sh"
+
+    echo "Installing scripts..."
+    COORD_FOLDERS=""
+    for version_dir in "$SCRIPT_DIR/scripts"/v*/; do
+        [ -d "$version_dir" ] || continue
+        # Only a generation that actually ships the filing path. An older
+        # folder without it would install as an empty directory that wf-exec.sh
+        # could still resolve to, and then fail with "missing or not
+        # executable" on every call.
+        [ -f "$version_dir/wf-dep-notify.sh" ] || continue
+        folder_name=$(basename "$version_dir")
+        COORD_FOLDERS="$COORD_FOLDERS $folder_name"
+        DEST_VDIR="$TARGET_DIR/scripts/$folder_name"
+        mkdir -p "$DEST_VDIR"
+        for name in $COORD_SCRIPTS; do
+            [ -f "$version_dir/$name" ] || continue
+            sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
+                -e "s|{{production_logs_url}}|$PRODUCTION_LOGS_URL|g" \
+                -e "s|{{production_url}}|$PRODUCTION_URL|g" \
+                "$version_dir/$name" > "$DEST_VDIR/$name"
+        done
+        chmod +x "$DEST_VDIR"/*.sh 2>/dev/null || true
+
+        # Prune anything outside the slice — including the full harness left
+        # behind by a client install that was later re-declared a coordinator.
+        for existing in "$DEST_VDIR"/wf-*.sh; do
+            [ -f "$existing" ] || continue
+            base="${existing##*/}"
+            case " $COORD_SCRIPTS " in *" $base "*) continue ;; esac
+            rm -f "$existing"
+            echo -e "${YELLOW}  Removed scripts/$folder_name/$base — not part of a coordinator install${NC}"
+        done
+        echo -e "${GREEN}  Installed scripts/$folder_name/ ($(ls "$DEST_VDIR" | wc -l | tr -d ' ') scripts)${NC}"
+    done
+
+    if [ -z "$COORD_FOLDERS" ]; then
+        RED='\033[0;31m'
+        echo -e "${RED}ERROR: no script generation in the library ships wf-dep-notify.sh${NC}"
+        exit 1
+    fi
+
+    # Whole generations the coordinator slice does not use.
+    for existing_dir in "$TARGET_DIR/scripts"/v*/; do
+        [ -d "$existing_dir" ] || continue
+        base=$(basename "$existing_dir")
+        case " $COORD_FOLDERS " in *" $base "*) continue ;; esac
+        rm -rf "$existing_dir"
+        echo -e "${YELLOW}  Removed scripts/$base/ — no filing path in that generation${NC}"
+    done
+
+    for f in wf-exec.sh wf-prune-versions.sh; do
+        cp "$SCRIPT_DIR/scripts/$f" "$TARGET_DIR/scripts/$f"
+        chmod +x "$TARGET_DIR/scripts/$f"
+    done
+    cp "$SCRIPT_DIR/scripts/version-map.txt" "$TARGET_DIR/scripts/version-map.txt"
+    echo -e "${GREEN}  Installed scripts/wf-exec.sh + version-map.txt${NC}"
+
+    # The one skill: how to file into the projects this one coordinates.
+    echo "Installing skills..."
+    COORD_SKILL_DIR="$TARGET_DIR/.claude/skills/wf-dep-notify"
+    mkdir -p "$COORD_SKILL_DIR"
+    sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
+        "$SCRIPT_DIR/skills/wf-dep-notify/SKILL.md" > "$COORD_SKILL_DIR/SKILL.md"
+    echo -e "${GREEN}  Installed /wf-dep-notify${NC}"
+
+    # Pipeline skills from a former client install. Left in place they are
+    # invocable, and every one of them starts by grepping a REGISTRY.md that
+    # does not exist here.
+    for stale in "$TARGET_DIR/.claude/skills"/wf-*/; do
+        [ -d "$stale" ] || continue
+        [ "$(basename "$stale")" = "wf-dep-notify" ] && continue
+        rm -rf "$stale"
+        echo -e "${YELLOW}  Removed /$(basename "$stale") — pipeline skill, not installed on a coordinator${NC}"
+    done
+
+    echo "$WORKFLOW_VERSION" > "$TARGET_DIR/.claude/workflow-version"
+    echo "$SCRIPT_DIR" > "$TARGET_DIR/.claude/workflow-source"
+    echo -e "${GREEN}  Stamped workflow version $WORKFLOW_VERSION → .claude/workflow-version${NC}"
+
+    # The entry contract. A coordinator's version describes the pipelines it
+    # files into and where its own authority stops — regenerated every deploy,
+    # so it cannot drift from the harness the coordinated projects are running.
+    sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
+        -e "s|{{workflow_version}}|$WORKFLOW_VERSION|g" \
+        "$SCRIPT_DIR/templates/WORKFLOW-coordinator.md" > "$TARGET_DIR/WORKFLOW.md"
+    echo -e "${GREEN}  Installed WORKFLOW.md (coordinator entry point)${NC}"
+
+    if [ ! -f "$TARGET_DIR/WORKFLOW-ISSUES.md" ]; then
+        ( cd "$TARGET_DIR" && ./scripts/wf-exec.sh wf-issue.sh --count >/dev/null 2>&1 ) || true
+        [ -f "$TARGET_DIR/WORKFLOW-ISSUES.md" ] \
+          && echo -e "${GREEN}  Seeded WORKFLOW-ISSUES.md (harness problems get reported here)${NC}"
+    fi
+
+    # Same rule as a client: what deploy writes, git does not track. The list is
+    # shorter because the install is.
+    GITIGNORE="$TARGET_DIR/.gitignore"
+    COORD_IGNORED=0
+    for pattern in \
+        ".claude/skills/wf-*/" \
+        ".claude/workflow-source" \
+        "scripts/wf-exec.sh" \
+        "scripts/version-map.txt" \
+        "scripts/wf-prune-versions.sh" \
+        "scripts/v*/" ; do
+        if ! grep -qxF "$pattern" "$GITIGNORE" 2>/dev/null; then
+            echo "$pattern" >> "$GITIGNORE"
+            COORD_IGNORED=$((COORD_IGNORED + 1))
+        fi
+    done
+    [ "$COORD_IGNORED" -gt 0 ] && \
+      echo -e "${GREEN}  Added $COORD_IGNORED generated-harness pattern(s) to .gitignore${NC}"
+
+    # Pipeline DATA is never removed, only reported. Scripts and skills are
+    # generated and the library owns them; plans/ and bugs/ are tracked work
+    # that a human wrote, and a role typo must not be able to delete it.
+    if [ -f "$TARGET_DIR/plans/REGISTRY.md" ] || [ -d "$TARGET_DIR/bugs" ]; then
+        echo -e "${YELLOW}  This project still has plans/ or bugs/ on disk, but runs no pipeline now.${NC}"
+        echo -e "${YELLOW}    Left untouched — deploy does not delete tracked work. If role: coordinator${NC}"
+        echo -e "${YELLOW}    is correct, drain or archive them by hand; if it is a typo, set role: client.${NC}"
+    fi
+
+    if ! grep -q "WORKFLOW.md" "$TARGET_DIR/CLAUDE.md" 2>/dev/null; then
+        echo -e "${YELLOW}  CLAUDE.md does not mention WORKFLOW.md — point at it, or a session${NC}"
+        echo -e "${YELLOW}    here will never learn what it may and may not do to a coordinated project.${NC}"
+    fi
+
+    # The deploy owns its own tracked changes, same as the client path below.
+    if $INSTALL_COMMIT && git -C "$TARGET_DIR" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+        COORD_PATHS=()
+        for p in claude-workflow.yml WORKFLOW.md .claude/workflow-version .gitignore; do
+            git -C "$TARGET_DIR" ls-files --error-unmatch -- "$p" >/dev/null 2>&1 || continue
+            git -C "$TARGET_DIR" diff --quiet -- "$p" 2>/dev/null || COORD_PATHS+=("$p")
+        done
+        if [ ${#COORD_PATHS[@]} -gt 0 ]; then
+            if git -C "$TARGET_DIR" commit --quiet \
+                 -m "chore: sync workflow harness to v$WORKFLOW_VERSION" \
+                 -- "${COORD_PATHS[@]}" 2>/dev/null; then
+                echo -e "${GREEN}  Committed ${#COORD_PATHS[@]} tracked path(s) — tree left clean${NC}"
+            else
+                echo -e "${YELLOW}  Could not commit ${COORD_PATHS[*]} — commit them by hand${NC}"
+            fi
+        fi
+    fi
+
+    echo ""
+    echo -e "${GREEN}Coordinator installation complete!${NC}"
+    echo ""
+    echo "Available skill:"
+    echo "  /wf-dep-notify  — file a request, bug or notice into a coordinated project"
+    echo ""
+    echo "This project runs no pipeline of its own. See WORKFLOW.md for what it may"
+    echo "and may not do to a project it coordinates."
+    exit 0
 fi
 
 # Read source_dirs as comma-separated string.

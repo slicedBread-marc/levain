@@ -1,6 +1,6 @@
 ---
 name: wf-dep-notify
-description: Announce a change in this project to the projects that depend on it. Use after shipping a change here (a contract change, a breaking API shift, a migration) that other declared projects need to react to — not for reporting a bug or asking for a capability in a dependency, that's /wf-bug.
+description: File a notice, request or bug into another project's own pipeline. Use after shipping a change here that declared dependents need to react to, or — from a coordinator project — to ask a coordinated project to build something. Not for reporting a bug or asking for a capability in a dependency this project builds against, that's /wf-bug.
 user_invocable: true
 model: haiku
 ---
@@ -37,6 +37,24 @@ One name, one absolute local path, joined by the first `:` — the same shape as
 reverse. If it's missing or empty, tell the user which projects they'd need to add and stop —
 never invent a path.
 
+## If this project is a coordinator, the shape changes slightly
+
+A project with `role: coordinator` in its `claude-workflow.yml` (see `docs/coordinator.md`) runs
+no pipeline of its own and oversees ones that do. This skill is its **only** way to put work into
+them, and three things differ:
+
+- **Targets come from `coordinates:`**, not `dependents:`. Both keys are read, so check whichever
+  the project declares; the error message names the right one.
+- **Pass `--kind request`.** A coordinator is asking for work, not announcing a change it already
+  made. Use `--kind bug` only for a defect you actually observed in that project, and
+  `--kind notice` only when relaying a change made somewhere else.
+- **Write the fields as an ask, not a diff.** `--description` is what is needed and why;
+  `--expected` is what "done" looks like from the coordinator's side; `--actual` is what is true
+  today. The reader is a planner in that project with no view of the initiative that prompted it.
+
+Everything below applies unchanged, the terminal-action rule most of all: a coordinator has no
+standing in the target's pipeline beyond the moment the report lands.
+
 ## What you do
 
 1. **Confirm scope with the user first** if it wasn't already explicit — which dependents does
@@ -49,6 +67,7 @@ never invent a path.
    ```bash
    scripts/wf-exec.sh wf-dep-notify.sh "<title>" \
      [--to <name>] \
+     [--kind notice|request|bug] \
      --severity Critical|High|Medium|Low \
      --description "<what changed, written for the DEPENDENT's reader>" \
      --expected "<what their integration should do now — the new contract>" \

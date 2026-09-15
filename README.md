@@ -118,6 +118,21 @@ entry points for an agent arriving cold. The contract is the exit code:
 | 30 | Worker ran, state unchanged |
 | 1 | Error |
 
+### Coordinators — a project that oversees pipelines without running one
+
+A project can declare `role: coordinator` in its `claude-workflow.yml`. It gets
+the dispatcher, the cross-project filing scripts and a generated `WORKFLOW.md`
+explaining the pipelines it files into — and no pipeline of its own: no plans,
+no registry, no bugs, no worktrees, no hooks, no pipeline skills.
+
+It files work down with `wf-dep-notify.sh --kind request`, resolving targets
+from `coordinates:`. That runs the *target's* own `wf-bug-new.sh`, so the ID
+comes from the target's counter and the request lands in its own `bugs/open/` —
+the coordinator never derives an artifact number, and never writes into another
+project's pipeline beyond that filing.
+
+See [`docs/coordinator.md`](docs/coordinator.md).
+
 ## Workflow Issues — the feedback loop
 
 The harness will sometimes be wrong. When a skill or script behaves in a way its

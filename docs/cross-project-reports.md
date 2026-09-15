@@ -274,6 +274,25 @@ attempted, whether or not all of them landed. The caller — `/wf-dep-notify`
 or whoever invoked the script — is responsible for reading which dependents
 were skipped and telling the user, since nothing else retries them.
 
+### Coordinators file the same way, downward
+
+A third direction reuses this identical mechanism: a **coordinator** — a project
+with `role: coordinator` that oversees others and runs no pipeline of its own
+(`~/dev/coordinator`) — files work *down* into the projects it directs.
+
+`wf-dep-notify.sh` is the script for that too. It resolves targets from
+`coordinates:` as well as `dependents:` (both keys are read and concatenated),
+and takes `--kind request` — a coordinator is asking for work, not announcing a
+change it already shipped. Everything else holds unchanged: the target's own
+`wf-bug-new.sh` allocates the ID, the report lands in the target's own
+`bugs/open/`, the target's branch is read and never written, the filing is
+committed but not pushed, and **filing is the terminal action** — the section
+above applies to a coordinator with more force than to anyone, since it has no
+standing in any of those pipelines at all.
+
+See [`docs/coordinator.md`](coordinator.md) for what a coordinator install
+contains and why it needs the harness at all.
+
 ### Why this isn't `/wf-bug`
 
 `/wf-bug`'s dependency section files a report about *this* project's problem

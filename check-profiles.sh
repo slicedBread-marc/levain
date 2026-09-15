@@ -36,6 +36,17 @@ while IFS= read -r client; do
   [ -d "$client" ] || { echo -e "${YELLOW}  skip: $client (not found)${NC}" >&2; continue; }
 
   name=$(basename "$client")
+
+  # Coordinators have no pipeline, so no specApproval, manualTestGate or
+  # autonomy scope for a tier to be in step with — and no wf-profile.sh to ask.
+  # Counting them as "undeclared" would make this exit 1 forever on a project
+  # that cannot be made clean.
+  if grep -qE '^role:[[:space:]]*"?coordinator"?' "$client/claude-workflow.yml" 2>/dev/null; then
+    [ "$mode" = "count" ] && printf '%s: coordinator n/a\n' "$name"
+    [ "$mode" = "list" ] && echo -e "${DIM}== $name — coordinator, no pipeline (skipped) ==${NC}"
+    continue
+  fi
+
   clients=$((clients + 1))
 
   out=$( cd "$client" && ./scripts/wf-exec.sh wf-profile.sh --check 2>&1 )
