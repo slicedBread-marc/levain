@@ -285,6 +285,26 @@ fi
 # WF_ALLOW_UNMERGED=1 for the genuine exceptions: work that landed under
 # another branch name, or a plan completed by hand. To drop a plan whose work
 # will never land, use wf-abandon.sh — that is what `abandoned` is for.
+#
+# The branch check above only fires when the row HAS a branch. It skipped one
+# entirely for client-d's WFI-003: an unattended deploy worker ran this on a
+# PLN-001 whose branch column read `—` because it was a never-implemented
+# `draft` — plan.md had reached the release branch on its own through a
+# planning-only commit (WFI-001), and step 9's "for each plan that was on the
+# release branch, verify state is complete" caught it. There is no branch to
+# check for merge-ancestry on a plan nothing ever built, so the fix is
+# upstream of that check: every documented caller reaches `complete` from
+# `testing`, and no other transition legitimately does, so require it here
+# too — an empty branch column can no longer read as "already merged
+# elsewhere" for a plan that was never on a branch at all.
+if [ "$to_state" = "complete" ] && [ "$from_state" != "testing" ] && [ "${WF_ALLOW_UNMERGED:-}" != "1" ]; then
+  echo "Error: refusing $plan_id '$from_state' -> 'complete' — complete is only ever reached" >&2
+  echo "       from 'testing' (WFI-003). A draft/ready/active plan has no shipped work to" >&2
+  echo "       close over." >&2
+  echo "       Nothing was changed. WF_ALLOW_UNMERGED=1 overrides for a plan completed by hand." >&2
+  exit 1
+fi
+
 if [ "$to_state" = "complete" ] && [ "${WF_ALLOW_UNMERGED:-}" != "1" ]; then
   row_branch=$(wf_registry_field "$plan_id" branch "$REGISTRY")
   case "$row_branch" in ""|"—"|"-"|"–") row_branch="" ;; esac

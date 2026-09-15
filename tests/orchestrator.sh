@@ -281,6 +281,28 @@ assert_ok "testing→complete allowed for a plan with no branch" \
 
 git branch -D develop feature/PLN-015-unmerged feature/PLN-016-merged >/dev/null 2>&1 || true
 
+section "'complete' is only ever reached from 'testing' (client-d WFI-003)"
+
+# The WFI-165 branch-merge guard above only fires when the row HAS a branch.
+# A never-implemented draft has none, so it slipped through untouched — an
+# unattended deploy worker did exactly this to a plan whose plan.md had
+# reached the release branch on its own via a planning-only commit (WFI-001).
+registry_add_row PLN-026 neverbuilt draft
+assert_fails "draft→complete refused even with no branch to check" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-026 draft complete -
+assert_eq "row left in draft" "draft" "$(registry_col PLN-026 4)"
+
+assert_ok "WF_ALLOW_UNMERGED=1 still overrides (a plan completed by hand)" \
+  env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-026 draft complete -
+
+registry_add_row PLN-027 midbuild active
+assert_fails "active→complete refused" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-027 active complete -
+
+registry_add_row PLN-028 reviewed ready
+assert_fails "ready→complete refused" \
+  "$SCRIPT_DIR/wf-registry-update.sh" PLN-028 ready complete -
+
 section "Code that reached develop outside the pipeline is reported (WFI-155)"
 
 registry_add_row PLN-019 prior ready

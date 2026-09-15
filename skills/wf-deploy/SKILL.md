@@ -112,10 +112,16 @@ Before starting, confirm E2E passed on release:
     git branch --show-current    # must print: main
     ```
     `release-branches/main` is pinned — nothing else in this pipeline ever checks it out to anything else, so this should always pass. If it doesn't, a human touched this worktree by hand; stop and sort that out before continuing rather than guess.
-9. **Update REGISTRY.md** — for each plan that was on the release branch, verify state is `complete`. If not:
+9. **Update REGISTRY.md** — for each plan **in state `testing`** whose folder is on the release branch, transition it to `complete`:
    ```bash
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete -
    ```
+   **Select by registry state, not by folder presence.** A plan's `plan.md` can reach the release
+   branch on its own through a planning-only commit while the plan itself is still `draft` or
+   `ready` (WFI-001) — "every plan folder on release" and "every plan this deploy shipped" are not
+   the same set. Running this on a plan that isn't `testing` is refused anyway
+   (`wf-registry-update.sh` requires `testing → complete`, WFI-003), but a refused command from an
+   unattended worker still logs an error and interrupts the run; select the right set going in.
 10. **Close linked bugs** — for each completed plan, check `plan.md` Goal for `**Bug:**` line:
    ```bash
    scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
