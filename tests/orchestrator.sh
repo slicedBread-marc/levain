@@ -1876,6 +1876,62 @@ assert_eq "a payload carrying no path allows" "0" \
 rm -f "$claim_dir/.wf-claim"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "The promote guard refuses a push behind an open gate (WFI-004, WFI-005)"
+
+# Three separate runs — client-c WFI-032, client-d WFI-004 and WFI-005 —
+# each opened its own release-approval/deploy-approval gate on a refusal and
+# pushed release or main anyway. A "STOP" sentence in the skill did not hold;
+# this hook is the mechanical version.
+promote_guard() {
+  printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$1" \
+    | "$SCRIPT_DIR/wf-guard-promote.sh" 2>&1
+  printf 'rc=%s' "$?"
+}
+promote_guard_rc() { promote_guard "$1" | sed -n 's/.*rc=\([0-9]*\)$/\1/p'; }
+
+assert_eq "no gate open: push release allowed" "0" \
+  "$(promote_guard_rc 'git push origin release')"
+assert_eq "no gate open: push main allowed" "0" \
+  "$(promote_guard_rc 'git push origin main')"
+
+"$SCRIPT_DIR/wf-gate-open.sh" RELEASE release-approval "promote 3 commits?" >/dev/null 2>&1
+out=$(promote_guard 'git push origin release')
+assert_eq "release-approval open: push release blocked" "2" \
+  "$(printf '%s' "$out" | sed -n 's/.*rc=\([0-9]*\)$/\1/p')"
+case "$out" in *"promote 3 commits?"*) ok_pg=1 ;; *) ok_pg=0 ;; esac
+assert_eq "and the message quotes the gate's own question" "1" "$ok_pg"
+case "$out" in *"wf-gate-close.sh RELEASE"*) ok_pg=1 ;; *) ok_pg=0 ;; esac
+assert_eq "and names the way out" "1" "$ok_pg"
+
+assert_eq "release-approval open: push main is unaffected (different gate)" "0" \
+  "$(promote_guard_rc 'git push origin main')"
+assert_eq "release-approval open: push develop is unaffected — routine, unrelated traffic" "0" \
+  "$(promote_guard_rc 'git push origin develop')"
+assert_eq "release-approval open: a chained command still trips it" "2" \
+  "$(promote_guard_rc 'cd release-branches/release && git push origin release')"
+assert_eq "release-approval open: an unrelated push is unaffected" "0" \
+  "$(promote_guard_rc 'git push origin feature/PLN-010-alpha')"
+
+"$SCRIPT_DIR/wf-gate-close.sh" RELEASE "approved" >/dev/null 2>&1
+assert_eq "closed: push release allowed again" "0" \
+  "$(promote_guard_rc 'git push origin release')"
+
+"$SCRIPT_DIR/wf-gate-open.sh" DEPLOY deploy-approval "promote to main?" >/dev/null 2>&1
+assert_eq "deploy-approval open: push main blocked" "2" \
+  "$(promote_guard_rc 'git push origin main')"
+assert_eq "deploy-approval open: push release is unaffected (different gate)" "0" \
+  "$(promote_guard_rc 'git push origin release')"
+"$SCRIPT_DIR/wf-gate-close.sh" DEPLOY "approved" >/dev/null 2>&1
+
+# Fail open on anything it cannot read.
+assert_eq "malformed payload allows" "0" \
+  "$(printf 'not json at all' | "$SCRIPT_DIR/wf-guard-promote.sh" >/dev/null 2>&1; echo $?)"
+assert_eq "empty payload allows" "0" \
+  "$(printf '' | "$SCRIPT_DIR/wf-guard-promote.sh" >/dev/null 2>&1; echo $?)"
+assert_eq "a command with no push allows" "0" \
+  "$(promote_guard_rc 'git log --oneline release --not main')"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "A plan ID collision has a procedure (WFI-011)"
 
 # client-e: BRF-091 would inherit PLN-091, already held by an unrelated

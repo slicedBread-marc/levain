@@ -92,7 +92,19 @@ release-branches/release → release's own permanent worktree — staging enviro
    before that dependency exists (WFI-011). Surfacing here gives `/wf-deploy` a second, earlier
    read of the same list.
 5. **Show commits to user** — display the commit list from step 3. Tell the user: "Run `/model haiku` if not already on it, then confirm to proceed." Then prompt: "These commits are staged for E2E. Proceed? (y/n)"
-   Wait for explicit confirmation before continuing.
+   Wait for explicit confirmation before continuing. If they decline, stop here — do not proceed to step 6.
+
+   On "yes", **close a stale `release-approval` gate before continuing**, if one is open — an
+   earlier unattended run may have been refused and parked one:
+   ```bash
+   if scripts/wf-exec.sh wf-list-gates.sh RELEASE 2>/dev/null | grep -q "$(printf '\t')release-approval$(printf '\t')"; then
+     scripts/wf-exec.sh wf-gate-close.sh RELEASE "approved attended by the human running this /wf-release"
+   fi
+   ```
+   **This is not optional.** `wf-guard-promote.sh` (a PreToolUse hook) refuses `git push origin
+   release` while `RELEASE.gate` exists — step 6's push would otherwise be blocked by the same
+   mechanism that stops an unattended run from pushing past a refusal (WFI-004, WFI-005). Closing
+   it here, on a real "yes" from a human, is what tells that hook this promotion is authorized.
 
    **Under `WF_UNATTENDED=1` there is nobody to prompt.** See "Unattended mode" below — it replaces this confirmation with a standing-grant check and a concrete `release-approval` gate, then either continues at step 6 or exits.
 6. **Push local `develop`, then merge it into `release`** to bring plan files and REGISTRY state. Nothing in the pipeline pushes `develop` mid-cycle — only `/wf-deploy`'s back-merge does, right at the end — so `origin/develop` is routinely behind the local branch every other skill has been committing to. Merging `origin/develop` without pushing first silently drops everything committed since the last deploy: client-a's WFI-250 merged 39 commits behind, picked up only the bookkeeping paths that happened to already be pushed, and the omission of a whole plan's code and tests was caught only by noticing its plan folder absent from the release worktree afterward — the full test suite passed regardless, because it never contained the missing plan's tests to fail.

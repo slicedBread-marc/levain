@@ -20,35 +20,34 @@ second entry running the same script twice on every compaction.
 Writes nothing when the result is byte-identical to what is already there — a
 deploy that dirties a clean tree is a deploy nobody can verify afterwards.
 
-Usage: SETTINGS_PATH=... REHYDRATE_CMD=... GUARD_CMD=... settings-merge.py
+Usage: SETTINGS_PATH=... REHYDRATE_CMD=... GUARD_CMD=... PROMOTE_GUARD_CMD=... settings-merge.py
 """
 
 import json
 import os
 import sys
 
-# SessionStart matches on the SOURCE. These three are the ways a session ends up
-# holding less than it had: compaction, /clear, and a resume whose transcript
-# already carries a summary written for a different moment.
+# Each entry is one hook block appended under `hooks.<event>`. Multiple specs
+# may share an event (PreToolUse does, below) with different matchers — they
+# accumulate into that event's array rather than replacing one another.
+#
+# SessionStart matches on the SOURCE. These three are the ways a session ends
+# up holding less than it had: compaction, /clear, and a resume whose
+# transcript already carries a summary written for a different moment.
 #
 # Deliberately NOT "startup": a fresh session reaches the registry through its
 # skill's entry grep anyway, so the block would be pure cost on every launch.
 #
-# PreToolUse matches on the TOOL. The three that write a file in place are the
-# three that can land a second writer on a claimed artifact.
-MATCHERS = {
-    "SessionStart": "compact|clear|resume",
-    "PostCompact": "manual|auto",
-    "PreToolUse": "Edit|Write|NotebookEdit",
-}
-
-# The argument each event passes to wf-rehydrate.sh. SessionStart gets the
-# state block as additionalContext because it is the only one of the two whose
-# output reaches the model; PostCompact gets the one-line human receipt.
-ARGS = {
-    "SessionStart": "session-start",
-    "PostCompact": "post-compact",
-}
+# PreToolUse matches on the TOOL. Edit|Write|NotebookEdit are the three that
+# write a file in place, and the three that can land a second writer on a
+# claimed artifact. Bash is separate: wf-guard-promote.sh only cares about one
+# shape of one command (`git push origin release|main`), never about writes.
+HOOK_SPECS = [
+    {"event": "SessionStart", "matcher": "compact|clear|resume", "kind": "rehydrate", "arg": "session-start"},
+    {"event": "PostCompact", "matcher": "manual|auto", "kind": "rehydrate", "arg": "post-compact"},
+    {"event": "PreToolUse", "matcher": "Edit|Write|NotebookEdit", "kind": "guard", "env": "GUARD_CMD", "script": "wf-guard-write.sh"},
+    {"event": "PreToolUse", "matcher": "Bash", "kind": "guard", "env": "PROMOTE_GUARD_CMD", "script": "wf-guard-promote.sh"},
+]
 
 # Silence and a zero exit if the harness is not on disk.
 #
@@ -62,12 +61,11 @@ ARGS = {
 #   scripts/wf-exec.sh wf-rehydrate.sh
 TOLERATE_MISSING = " 2>/dev/null || true"
 
-# The write guard tolerates a missing harness the same way, but it CANNOT use
+# The guard hooks tolerate a missing harness the same way, but they CANNOT use
 # the suffix above: `|| true` rewrites every exit to 0, and exit 2 is the whole
 # mechanism — it is how PreToolUse blocks. A guard installed with TOLERATE_MISSING
-# is a guard that reports the collision and permits the write anyway. So absence
-# is tested up front instead, leaving the exit status untouched.
-GUARD_EVENT = "PreToolUse"
+# is a guard that reports the collision and permits the write (or push) anyway.
+# So absence is tested up front instead, leaving the exit status untouched.
 
 
 def guard_command(cmd):
@@ -77,7 +75,7 @@ def guard_command(cmd):
 
 # Every script this file installs. Entries are matched by script NAME so a
 # matcher or wrapper change updates in place rather than stacking a duplicate.
-OURS = ("wf-rehydrate.sh", "wf-guard-write.sh")
+OURS = ("wf-rehydrate.sh", "wf-guard-write.sh", "wf-guard-promote.sh")
 
 
 def is_ours(entry):
@@ -92,6 +90,8 @@ def main():
     path = os.environ["SETTINGS_PATH"]
     cmd = os.environ["REHYDRATE_CMD"]
     guard = os.environ.get("GUARD_CMD", "")
+    promote_guard = os.environ.get("PROMOTE_GUARD_CMD", "")
+    guard_by_env = {"GUARD_CMD": guard, "PROMOTE_GUARD_CMD": promote_guard}
 
     try:
         with open(path) as fh:
@@ -115,29 +115,41 @@ def main():
         print("unparseable:'hooks' is not an object")
         return
 
-    for event, matcher in MATCHERS.items():
+    # Strip our own entries from every event we touch, once, before
+    # re-appending — an event with two of our specs (PreToolUse) must not have
+    # the second spec's strip pass remove the first spec's freshly-added entry.
+    touched_events = {spec["event"] for spec in HOOK_SPECS}
+    for event in touched_events:
         existing = hooks.get(event, [])
         if not isinstance(existing, list):
             print(f"unparseable:'hooks.{event}' is not an array")
             return
-        entries = [e for e in existing if not is_ours(e)]
-        if event == GUARD_EVENT:
-            # No GUARD_CMD — leave the event as the project had it. An older
-            # install.sh must not install a half-configured blocking hook.
-            if not guard:
-                if entries or event in hooks:
-                    hooks[event] = entries
+        hooks[event] = [e for e in existing if not is_ours(e)]
+
+    for spec in HOOK_SPECS:
+        event, matcher = spec["event"], spec["matcher"]
+        if spec["kind"] == "guard":
+            # No command configured for this guard — leave the event as the
+            # project had it (minus our own stale entries, stripped above). An
+            # older install.sh must not install a half-configured blocking hook.
+            g = guard_by_env[spec["env"]]
+            if not g:
                 continue
-            command, timeout = guard_command(guard), 10
+            command, timeout = guard_command(g), 10
         else:
-            command, timeout = f"{cmd} {ARGS[event]}{TOLERATE_MISSING}", 10
-        entries.append(
+            command, timeout = f"{cmd} {spec['arg']}{TOLERATE_MISSING}", 10
+        hooks[event].append(
             {
                 "matcher": matcher,
                 "hooks": [{"type": "command", "command": command, "timeout": timeout}],
             }
         )
-        hooks[event] = entries
+
+    # Drop any event this pass left empty (a guard event that started with
+    # only our own entry, and had no command configured to replace it).
+    for event in touched_events:
+        if event in hooks and not hooks[event]:
+            del hooks[event]
 
     updated = json.dumps(data, indent=2) + "\n"
     if original is not None and original == updated:

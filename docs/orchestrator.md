@@ -550,6 +550,35 @@ Everything below is configurable in `claude-workflow.yml → orchestrator`:
 - `--stop` ends the daemon; `--kill-all` also terminates live workers.
 - `events.log` is the audit trail: every spawn, exit, gate, skip and sweep.
 
+### A refused release/deploy is enforced, not just instructed
+
+`wf-release`'s and `wf-deploy`'s unattended paths tell a worker refused by
+`wf-autonomy.sh` to stop at the gate it just opened — in as many words, "STOP.
+Do not merge, push, or run step 6 or anything after it." That sentence has
+been ignored three times by three different runs, each of which opened its
+`release-approval`/`deploy-approval` gate and then merged and pushed anyway
+(client-c WFI-032, client-d WFI-004, WFI-005 — the last of those in
+*attended* mode, refused, and still pushed).
+
+`wf-guard-promote.sh` is the mechanical backstop: a `PreToolUse` hook on
+`Bash`, wired alongside `wf-guard-write.sh`, that refuses `git push origin
+release` while `RELEASE.gate` exists and `git push origin main` while
+`DEPLOY.gate` exists — regardless of what the model believes it is authorized
+to do. It never touches `develop`; that branch is pushed constantly by
+unrelated, legitimate pipeline traffic (`/wf-verify`, `/wf-test`, step 6 of
+`/wf-release` itself), and gating it on either promotion gate would stall
+every plan in flight for as long as a human takes to answer one question.
+
+The invariant it relies on: no legitimate path pushes `release` or `main`
+while its own approval gate is open. Unattended-and-authorized never opens the
+gate at all. Attended closes any stale gate of its own name — left behind by
+an earlier refused unattended run — right after the human's own "yes",
+*before* continuing to the push (`wf-release`/`wf-deploy` SKILL.md, step 5).
+Only a refused run, which is supposed to stop, reaches a push with the gate
+still open. Changing either skill's gate-close ordering breaks that invariant
+and turns this guard against a real release — read it before touching either
+skill's step 5 or step 6+.
+
 ## Testing
 
 `tests/orchestrator.sh` puts a **stub `claude` first on `PATH`** that records its

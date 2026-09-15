@@ -70,7 +70,20 @@ Before starting, confirm E2E passed on release:
    the dangerous kind and went unread straight into a production crash-loop (WFI-011) — don't
    let this step become the same silent skip.
 5. **Prompt user**: "These commits will be promoted to main. Proceed? (y/n)"
-   Wait for explicit confirmation before continuing.
+   Wait for explicit confirmation before continuing. If they decline, stop here — do not proceed
+   to step 6.
+
+   On "yes", **close a stale `deploy-approval` gate before continuing**, if one is open — an
+   earlier unattended run may have been refused and parked one:
+   ```bash
+   if scripts/wf-exec.sh wf-list-gates.sh DEPLOY 2>/dev/null | grep -q "$(printf '\t')deploy-approval$(printf '\t')"; then
+     scripts/wf-exec.sh wf-gate-close.sh DEPLOY "approved attended by the human running this /wf-deploy"
+   fi
+   ```
+   **This is not optional.** `wf-guard-promote.sh` (a PreToolUse hook) refuses `git push origin
+   main` while `DEPLOY.gate` exists — step 14's push would otherwise be blocked by the same
+   mechanism that stops an unattended run from pushing past a refusal (WFI-004, WFI-005). Closing
+   it here, on a real "yes" from a human, is what tells that hook this promotion is authorized.
 
    **Under `WF_UNATTENDED=1`**, see "Unattended mode" below — it replaces this confirmation with
    a standing-grant check and a concrete `deploy-approval` gate, then either continues at step 6

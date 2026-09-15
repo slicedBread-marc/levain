@@ -571,27 +571,31 @@ fi
 SETTINGS="$TARGET_DIR/.claude/settings.json"
 REHYDRATE_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-rehydrate.sh --hook"
 GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-guard-write.sh"
+PROMOTE_GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-guard-promote.sh"
 GUARD_LINE="    PreToolUse    matcher Edit|Write|NotebookEdit  → $GUARD_CMD"
+PROMOTE_GUARD_LINE="    PreToolUse    matcher Bash                    → $PROMOTE_GUARD_CMD"
 if command -v python3 >/dev/null 2>&1; then
     # `|| true` for the same reason the git hook above is non-fatal (WFI-191):
     # a merge that dies must not abort the install before scripts/wf-exec.sh is
     # written. An empty result falls through to the catch-all below and warns.
     SETTINGS_RESULT=$(SETTINGS_PATH="$SETTINGS" REHYDRATE_CMD="$REHYDRATE_CMD" \
-        GUARD_CMD="$GUARD_CMD" \
+        GUARD_CMD="$GUARD_CMD" PROMOTE_GUARD_CMD="$PROMOTE_GUARD_CMD" \
         python3 "$SCRIPT_DIR/templates/hooks/settings-merge.py") || true
     case "$SETTINGS_RESULT" in
-        created)      echo -e "${GREEN}  Created .claude/settings.json with the rehydration and write-guard hooks${NC}" ;;
-        updated)      echo -e "${GREEN}  Updated .claude/settings.json rehydration and write-guard hooks${NC}" ;;
+        created)      echo -e "${GREEN}  Created .claude/settings.json with the rehydration and guard hooks${NC}" ;;
+        updated)      echo -e "${GREEN}  Updated .claude/settings.json rehydration and guard hooks${NC}" ;;
         unchanged)    echo -e "${YELLOW}  .claude/settings.json hooks already up to date — skipping${NC}" ;;
         unparseable:*)
             echo -e "${YELLOW}  .claude/settings.json is not valid JSON (${SETTINGS_RESULT#unparseable:})${NC}"
             echo -e "${YELLOW}  Left untouched. Fix it and re-run, or add the hooks by hand:${NC}"
             echo "    SessionStart  matcher compact|clear|resume  → $REHYDRATE_CMD session-start 2>/dev/null || true"
             echo "    PostCompact   matcher manual|auto           → $REHYDRATE_CMD post-compact 2>/dev/null || true"
-            echo "$GUARD_LINE" ;;
+            echo "$GUARD_LINE"
+            echo "$PROMOTE_GUARD_LINE" ;;
         "")           echo -e "${YELLOW}  .claude/settings.json merge failed (see the error above) — hooks NOT installed${NC}"
                       echo -e "${YELLOW}  Continuing; add them by hand (see docs/rehydration.md):${NC}"
-                      echo "$GUARD_LINE" ;;
+                      echo "$GUARD_LINE"
+                      echo "$PROMOTE_GUARD_LINE" ;;
         *)            echo -e "${YELLOW}  .claude/settings.json: unexpected result '$SETTINGS_RESULT'${NC}" ;;
     esac
 else
@@ -600,6 +604,7 @@ else
     echo "    SessionStart  matcher compact|clear|resume  → $REHYDRATE_CMD session-start 2>/dev/null || true"
     echo "    PostCompact   matcher manual|auto           → $REHYDRATE_CMD post-compact 2>/dev/null || true"
     echo "$GUARD_LINE"
+    echo "$PROMOTE_GUARD_LINE"
 fi
 
 # .claude/settings.json stays TRACKED, deliberately.
