@@ -49,7 +49,14 @@ Before starting, confirm E2E passed on release:
    ```bash
    git log --oneline release --not main -n 20
    ```
-4. **If no new commits on release vs main**: inform the user there is nothing to deploy, unclaim (`scripts/wf-exec.sh wf-unclaim.sh DEPLOY`), and exit.
+4. **If no new commits on release vs main**: inform the user there is nothing to deploy. **If this is an attended run** (`WF_UNATTENDED` unset), also close a stale `deploy-approval` gate before unclaiming — nothing being left to deploy means whatever that gate asked about was already promoted or abandoned by some other path, and a human running this attended is exactly the moment to clear it rather than leave it for `/wf-attend` to notice later (client-c WFI-031: an unattended dispatch kept reopening `deploy-approval` for a commit already the tip of `main`, because nothing ever told the gate the promotion had happened — this closes that gap the next time a human is actually here to answer for it):
+   ```bash
+   if [ "${WF_UNATTENDED:-0}" != "1" ] \
+      && scripts/wf-exec.sh wf-list-gates.sh DEPLOY 2>/dev/null | grep -q "$(printf '\t')deploy-approval$(printf '\t')"; then
+     scripts/wf-exec.sh wf-gate-close.sh DEPLOY "nothing left to deploy — already up to date"
+   fi
+   ```
+   Then unclaim (`scripts/wf-exec.sh wf-unclaim.sh DEPLOY`) and exit.
 4a. **Check for open deferred criteria on the plans being promoted:**
    ```bash
    scripts/wf-exec.sh wf-deferred-check.sh $(git log --oneline release --not main | grep -oE 'PLN-[0-9]+' | sort -u)
@@ -194,7 +201,7 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   | Exit | What it means | What you do |
   |-|-|-|
   | `0` | A dated, unexpired grant covers `deploy` | Name the grant, continue at step 6 |
-  | `1` or `2` | No grant, or malformed | Open the gate below (exit 2: include the script's stderr verbatim — a malformed grant is a broken file, not a refusal), then unclaim and exit 0 |
+  | `1` or `2` | No grant, or malformed | Open the gate below (exit 2: include the script's stderr verbatim — a malformed grant is a broken file, not a refusal), then unclaim and exit 0 — **STOP. Do not merge, push, or run step 6 or anything after it.** |
 
   ```bash
   scripts/wf-exec.sh wf-gate-open.sh DEPLOY deploy-approval "<commit list from step 3>" --skill wf-deploy
@@ -202,6 +209,13 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   ```
   `wf-gate-open.sh` exiting 3 means `deploy-approval` already has an answer of record — act on it
   rather than re-asking, per the standing gate-reopening rule.
+
+  **This run is finished the moment `wf-unclaim.sh DEPLOY` above returns — nothing else in this
+  document is a next step for exit `1` or `2`.** client-c's WFI-032 saw a RELEASE worker do
+  exactly this wrong at the matching check in `/wf-release`: refuse, open the gate, then continue
+  on to merge and push anyway before exiting `rc=0`. Refusing here and then promoting `release` to
+  `main` regardless makes the gate theater — a refusal ends the run at the `wf-unclaim.sh` call
+  above, full stop, never at step 6 or anywhere past it.
 
   This authorizes promoting `release` to `main` **locally only**. It never authorizes step 14's
   push to the production remote — that step still looks up `production-push` separately, and an

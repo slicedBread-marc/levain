@@ -73,7 +73,14 @@ release-branches/release → release's own permanent worktree — staging enviro
    indefinitely, each answered one freeing a dispatch that reopened the other). If the filtered
    list is non-empty, proceed with the FULL unfiltered range from step 3 below — real work present
    makes the bookkeeping commits harmless to include alongside it.
-4. **If that range is empty** (or filters down to empty, above): inform the user ("Release is up to date with develop — nothing to release."), unclaim (`scripts/wf-exec.sh wf-unclaim.sh RELEASE`), and exit. Next step: work on a plan with `/wf-implement`, test it with `/wf-test`, then return here.
+4. **If that range is empty** (or filters down to empty, above): inform the user ("Release is up to date with develop — nothing to release."). **If this is an attended run** (`WF_UNATTENDED` unset), also close a stale `release-approval` gate before unclaiming — nothing being left to release means whatever that gate asked about was already promoted or abandoned by some other path, and a human running this attended is exactly the moment to clear it rather than leave it for `/wf-attend` to notice later (client-c WFI-031: an unattended dispatch kept reopening `release-approval` for commits a human had already promoted by hand, because nothing ever told the gate the promotion had happened — this closes that gap the next time a human is actually here to answer for it):
+   ```bash
+   if [ "${WF_UNATTENDED:-0}" != "1" ] \
+      && scripts/wf-exec.sh wf-list-gates.sh RELEASE 2>/dev/null | grep -q "$(printf '\t')release-approval$(printf '\t')"; then
+     scripts/wf-exec.sh wf-gate-close.sh RELEASE "nothing left to release — already up to date"
+   fi
+   ```
+   Then unclaim (`scripts/wf-exec.sh wf-unclaim.sh RELEASE`) and exit. Next step: work on a plan with `/wf-implement`, test it with `/wf-test`, then return here.
 4a. **Check for open deferred criteria on the plans being staged:**
    ```bash
    scripts/wf-exec.sh wf-deferred-check.sh $(git log origin/release..develop --oneline | grep -oE 'PLN-[0-9]+' | sort -u)
@@ -208,8 +215,8 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   | Exit | What it means | What you do |
   |-|-|-|
   | `0` | A dated, unexpired, human-authored grant covers `release` | Say which grant authorized it, quoting the script's line, and continue at step 6 |
-  | `1` | No grant, or it does not cover `release`, or it has expired or hit its daily ceiling | Open the gate below, then unclaim and exit 0 |
-  | `2` | The grant is malformed — it is not a refusal, it is a broken config | Open the gate below with the script's stderr in the question verbatim, then unclaim and exit 0 |
+  | `1` | No grant, or it does not cover `release`, or it has expired or hit its daily ceiling | Open the gate below, then unclaim and exit 0 — **STOP. Do not merge, push, or run step 6 or anything after it.** |
+  | `2` | The grant is malformed — it is not a refusal, it is a broken config | Open the gate below with the script's stderr in the question verbatim, then unclaim and exit 0 — **STOP, same as exit 1.** |
 
   Never treat exit 2 as "proceed" — a grant nobody can parse authorized nothing.
   ```bash
@@ -218,6 +225,14 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   ```
   `wf-gate-open.sh` exiting 3 means `release-approval` already has an answer of record — act on
   it (it names the resolution) rather than re-asking, per the standing gate-reopening rule.
+
+  **This run is finished the moment `wf-unclaim.sh RELEASE` above returns — nothing else in this
+  document is a next step.** client-c's WFI-032: a worker refused at this exact check,
+  opened the gate, and then went on to merge `develop` into `release` and push it anyway before
+  exiting `rc=0` — the run continued into step 6 after the refusal instead of ending here. The
+  gate exists so that a refused promotion never happens; opening it and then doing the thing it
+  refused makes the gate theater. Exit `1` and exit `2` both end the run at the `wf-unclaim.sh`
+  call above, full stop — never at step 6, step 7, or anywhere past it.
 - **Resolve every other `[GATE]` or would-ask-a-human point in the steps above the same way** —
   open a gate naming the question, unclaim, and exit 0. Never guess, never hang.
 - **On every exit path** — grant found and the run proceeds to completion, gate opened, or an
