@@ -50,7 +50,30 @@ release-branches/release → release's own permanent worktree — staging enviro
    git log origin/release..develop --oneline | head -10
    ```
    This must compare `release` against `develop`, never against `main`. Right after every `/wf-deploy`, `release` and `main` are identical by construction, so `main..release` is always empty and would report "nothing to release" even when develop has a full backlog of completed plans waiting to ship (WFI-024).
-4. **If that range is empty**: inform the user ("Release is up to date with develop — nothing to release."), unclaim (`scripts/wf-exec.sh wf-unclaim.sh RELEASE`), and exit. Next step: work on a plan with `/wf-implement`, test it with `/wf-test`, then return here.
+
+   **Filter out `/wf-deploy`'s own bookkeeping commits before deciding whether there's anything
+   here.** `/wf-deploy` never advances `release` itself (nothing but `/wf-release` and
+   `/wf-deploy` may touch `release-branches/*`, and neither reaches into the other's —
+   `docs/release-worktrees.md`); instead it commits registry transitions, plan-completion state
+   and bug closes directly to `main` (steps 9–11) and back-merges `main` into `develop` (step
+   12). All of that lands on `develop` as commits `release` has never seen, so it shows up here
+   as "unreleased" every time — even though none of it is new work, just the record of a deploy
+   that already shipped:
+   ```bash
+   git log origin/release..develop --format=%s \
+     | grep -vE '^(release: promote to main$|release: complete |sync: bring completed plans back to develop$|registry\(|bug\()'
+   ```
+   If this filtered list is EMPTY (every commit in range matches one of those patterns),
+   treat it exactly like step 4's "nothing to release" — the next real batch of work will carry
+   this bookkeeping into `release` as a side effect of merging in step 6, so there's no reason to
+   run E2E or ask for approval over content with no user-facing change. Skipping here is what
+   stops it from being asked again: a real /wf-release run only happens once real work exists to
+   filter down to, so the next unattended dispatch has nothing left to loop on (client-c
+   WFI-030 — this cycle, unfixed, alternated `release-approval` and `deploy-approval` gates
+   indefinitely, each answered one freeing a dispatch that reopened the other). If the filtered
+   list is non-empty, proceed with the FULL unfiltered range from step 3 below — real work present
+   makes the bookkeeping commits harmless to include alongside it.
+4. **If that range is empty** (or filters down to empty, above): inform the user ("Release is up to date with develop — nothing to release."), unclaim (`scripts/wf-exec.sh wf-unclaim.sh RELEASE`), and exit. Next step: work on a plan with `/wf-implement`, test it with `/wf-test`, then return here.
 4a. **Check for open deferred criteria on the plans being staged:**
    ```bash
    scripts/wf-exec.sh wf-deferred-check.sh $(git log origin/release..develop --oneline | grep -oE 'PLN-[0-9]+' | sort -u)

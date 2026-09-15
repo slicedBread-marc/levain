@@ -207,6 +207,18 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   push to the production remote — that step still looks up `production-push` separately, and an
   unattended run that gets `0` there pushes and says so; anything else, it leaves `main` unpushed
   and reports that in the completion message, same as an attended run.
+
+  **Step 14 never opens a gate, in either outcome.** A deploy that reaches step 14 has already
+  succeeded — `deploy-approval` (or a standing `deploy` grant) already covers everything this run
+  did. The production push is deliberately a *second*, separate grant (`production-push`), not a
+  second approval of the same work, and "no grant for it" is not a blocked or parked state — it's
+  the designed default: finish normally, report the deploy as complete, and say the push is still
+  manual. Re-opening `deploy-approval` here — reusing its name, or replaying its original
+  step-3 commit list as the question — parks a *finished* deploy behind a gate that describes
+  work already done, and the next `deploy-approval` answer frees a dispatch that finds nothing
+  left to do but hit this same non-gate again (client-c WFI-029). Nothing in the "resolve
+  every other gate" bullet below applies to step 14; it is not a would-ask-a-human point, it is a
+  documented no-op.
 - **Resolve every other `[GATE]` or would-ask-a-human point in the steps above the same way** —
   open a gate naming the question, unclaim, and exit 0. Never guess, never hang.
 - **On every exit path** — grant found and the run proceeds to completion, gate opened, or an

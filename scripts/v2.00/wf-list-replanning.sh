@@ -18,9 +18,9 @@ while IFS=$'\037' read -r id slug state _rest; do
   plan_dir="plans/${id}-${slug}"
   findings="$plan_dir/findings.md"
 
-  [ -f "$findings" ] && grep -q "ESCALATED" "$findings" 2>/dev/null || continue
+  escalated=$(wf_escalated_count "$findings")
+  [ "$escalated" -gt 0 ] || continue
 
-  escalated=$(grep -c "ESCALATED" "$findings" 2>/dev/null || echo 0)
   goal=$(wf_goal_text "$plan_dir/plan.md")
   printf "%s\t%s\t%s\n" "${id}-${slug}" "$escalated" "$goal"
   found=1

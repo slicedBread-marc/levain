@@ -123,6 +123,14 @@ max_concurrent() {
 }
 
 require_enabled() {
+  # --dry-run is a pure read — no worker, no gate, nothing written to
+  # events.log (see the --dry-run contract above) — so it carries none of the
+  # risk `enabled: false` guards against. Docs and the claude-workflow.yml
+  # comment both tell a client to preview with `--sweep --dry-run` BEFORE
+  # flipping the flag on; requiring --force to do that made the documented
+  # preview path unsatisfiable without also granting the thing it exists to
+  # let you evaluate first (client-b WFI-002).
+  if $dry_run; then return 0; fi
   if [ "$cfg_enabled" != "true" ] && ! $force; then
     echo "wf-orchestrate: disabled (set orchestrator.enabled: true in claude-workflow.yml, or pass --force)" >&2
     return 1

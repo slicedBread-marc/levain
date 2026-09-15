@@ -239,6 +239,28 @@ wf_step_counts() {
   ' "$1"
 }
 
+# wf_escalated_count <findings.md> — how many UNCHECKED items mention
+# ESCALATED. Display-only (worklist counts in wf-list-specable.sh,
+# wf-list-verify.sh, wf-list-replanning.sh) — NOT the routing test. A finding
+# is free to write the word either as a leading label (`- [ ] ESCALATED:
+# ...`, the older convention these lists were built and tested against) or as
+# schema.md's trailing tag (`- [ ] ... ← ESCALATED`); either marks it here.
+# wf_tagged() in wf-findings-route.sh is the stricter, trailing-tag-only test
+# that actually decides whether a plan routes to draft — that one has to
+# reject a bare mention, because a finding's prose is allowed to explain why
+# a tag does NOT apply. This one only has to stop counting text that was
+# never a finding at all.
+#
+# `grep -c ESCALATED` — the plain substring count three callers each
+# open-coded — counted the word anywhere in the file: the schema-convention
+# note in the findings.md header, an already-checked ("- [x]") item's own
+# hint text. A plan with one live escalation read as "4 escalated
+# finding(s)" (WFI-026). Scoped to unchecked checkbox lines only.
+wf_escalated_count() {
+  [ -f "$1" ] || { printf '0'; return 0; }
+  grep -cE '^- \[ \].*ESCALATED' "$1" 2>/dev/null || true
+}
+
 wf_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # ── Config ────────────────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ while IFS=$'\037' read -r id slug state _rest; do
   findings="$plan_dir/findings.md"
   if [ -f "$findings" ]; then
     unchecked=$(grep -c '^\- \[ \]' "$findings" 2>/dev/null || true)
-    escalated=$(grep -c 'ESCALATED' "$findings" 2>/dev/null || true)
+    escalated=$(wf_escalated_count "$findings")
   fi
 
   goal=$(wf_goal_text "$plan_dir/plan.md")

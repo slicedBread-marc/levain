@@ -57,7 +57,7 @@ while IFS=$'\037' read -r id slug state priority _rest; do
 
   findings="$plan_dir/findings.md"
   if [ -f "$findings" ] && grep -q '^\- \[ \]' "$findings" 2>/dev/null; then
-    esc_count=$(grep -c "ESCALATED" "$findings" 2>/dev/null || true)
+    esc_count=$(wf_escalated_count "$findings")
     bhv_count=$(grep -c "Behavior" "$findings" 2>/dev/null || true)
     parts=()
     [ "$esc_count" -gt 0 ] && parts+=("$esc_count escalated")

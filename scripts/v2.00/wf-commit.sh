@@ -134,11 +134,31 @@ fi
 # definition." wf-progress-tick.sh and wf-registry-update.sh both avoid this
 # by `cd`-ing to the develop root themselves before touching plans/ — do the
 # same here rather than trust the caller's CWD (WFI-026).
+#
+# But release-branches/release and release-branches/main are NOT sparse —
+# wf-worktree-pin.sh deliberately gives them the real plans/**, because
+# /wf-release and /wf-deploy commit plan-state transitions there on purpose
+# (assert_branch below exempts exactly these branches for the same reason).
+# The unconditional cd sent their commits to develop instead: wf-bug-close.sh
+# staged a rename in release-branches/main, this block cd'd to develop before
+# the commit ran, `git commit -- plans/...` found nothing staged THERE and
+# printed "nothing to commit — skipped", and the bug still reported closed —
+# with the rename left dangling, staged-but-uncommitted, in the worktree the
+# caller was actually standing in. A later `--branch main` from that same
+# worktree then failed too, because the cd had switched `git branch
+# --show-current` out from under it. (client-f WFI-012.) So: cd only when the
+# caller is NOT already on one of the branches that legitimately carries this
+# content in place.
 for p in "${paths[@]+"${paths[@]}"}"; do
   case "$p" in
     plans/*|plans|bugs/*|bugs|briefs/*|briefs)
-      develop_root="$(wf_develop_root)"
-      [ "$PWD" = "$develop_root" ] || cd "$develop_root"
+      case "$(git branch --show-current 2>/dev/null || true)" in
+        develop|release|main) ;;
+        *)
+          develop_root="$(wf_develop_root)"
+          [ "$PWD" = "$develop_root" ] || cd "$develop_root"
+          ;;
+      esac
       break
       ;;
   esac

@@ -1182,7 +1182,7 @@ assert_ok "but it can be revived to draft" \
 assert_eq "which is where revival lands" "draft" "$(registry_state PLN-035)"
 
 assert_eq "the orchestrator routes abandoned instead of hard-failing" "true" \
-  "$(grep -q 'abandoned)      result="abandoned"' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+  "$(grep -qE 'abandoned\|rolled-back\) *result="abandoned"' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
 assert_eq "and gives it its own exit code" "true" \
   "$(grep -q 'exit 40' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
 
