@@ -1259,6 +1259,26 @@ assert_eq "shutdown is logged exactly once" "1" \
 assert_eq "the pidfile is cleared" "false" \
   "$([ -f "$ORCH/daemon.pid" ] && echo true || echo false)"
 
+section "--daemon-status is a read-only query (client-c WFI-033)"
+
+rc=0; out=$("$SCRIPT_DIR/wf-orchestrate.sh" --daemon-status 2>&1) || rc=$?
+assert_eq "no daemon → exit 1" "1" "$rc"
+assert_eq "and says so" "true" "$(printf '%s' "$out" | grep -q 'not running' && echo true || echo false)"
+
+"$SCRIPT_DIR/wf-orchestrate.sh" --daemon --interval 30 >daemon2.log 2>&1 &
+daemon2_wrapper=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  [ -f "$ORCH/daemon.pid" ] && break
+  sleep 0.5
+done
+rc=0; out=$("$SCRIPT_DIR/wf-orchestrate.sh" --daemon-status 2>&1) || rc=$?
+assert_eq "live daemon → exit 0" "0" "$rc"
+assert_eq "and names the pid" "true" \
+  "$(printf '%s' "$out" | grep -q "running (pid $(cat "$ORCH/daemon.pid"))" && echo true || echo false)"
+
+"$SCRIPT_DIR/wf-orchestrate.sh" --stop >/dev/null 2>&1
+wait "$daemon2_wrapper" 2>/dev/null || true
+
 # An outgoing daemon must not delete a pidfile it no longer owns.
 echo 999999 > "$ORCH/daemon.pid"
 "$SCRIPT_DIR/wf-orchestrate.sh" --stop >/dev/null 2>&1

@@ -9,6 +9,7 @@
 #   --daemon               sweep / sleep / repeat until stopped
 #   --stop                 stop a running daemon (workers finish on their own)
 #   --kill-all             stop the daemon AND terminate every live worker
+#   --daemon-status        exit 0 if a daemon is live, 1 otherwise (read-only)
 #   <ID> [--until STATE]   drive ONE artifact as far through the pipeline as
 #                          it will go, in the foreground. This is the hook for
 #                          an agent in another repo.
@@ -64,6 +65,7 @@ while [ $# -gt 0 ]; do
     --daemon)   mode="daemon"; shift ;;
     --stop)     mode="stop"; shift ;;
     --kill-all) mode="kill-all"; shift ;;
+    --daemon-status) mode="daemon-status"; shift ;;
     --until)    until_state="${2:?--until requires a state}"; shift 2 ;;
     --interval) interval_override="${2:?--interval requires seconds}"; shift 2 ;;
     --dry-run)  dry_run=true; shift ;;
@@ -641,6 +643,26 @@ workers_live() {
 DAEMON_PID="$ORCH/daemon.pid"
 
 case "$mode" in
+
+  daemon-status)
+    # Read-only, no lock, no `require_enabled` — a caller asking "is anyone
+    # dispatching right now" needs an answer regardless of the config flag,
+    # and must never mutate anything to get it. Same pidfile check wf-board.sh
+    # renders; kept here too rather than only in wf-board's output because a
+    # SKILL.md step needs an exit code, not a rendered table (client-c
+    # WFI-033: wf-attend told a human to run a promotion by hand right after
+    # closing the gate the daemon was itself waiting on, and the daemon won
+    # the race every time).
+    if [ -f "$DAEMON_PID" ]; then
+      dpid=$(cat "$DAEMON_PID" 2>/dev/null || echo "")
+      if [ -n "$dpid" ] && kill -0 "$dpid" 2>/dev/null; then
+        echo "running (pid $dpid)"
+        exit 0
+      fi
+    fi
+    echo "not running"
+    exit 1
+    ;;
 
   sweep)
     require_enabled || exit 1

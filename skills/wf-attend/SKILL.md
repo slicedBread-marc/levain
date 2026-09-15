@@ -234,7 +234,17 @@ The plan burned its attempt budget without changing state — a retry will not h
 An unattended `/wf-release` or `/wf-deploy` reached its promotion prompt with nobody to prompt, asked `wf-autonomy.sh`, and was told no. The question holds the commit list; read it out.
 
 1. Show the commits and ask the plain question — "promote these to `release`?" / "…to `main`?"
-2. **You do not promote anything here.** Close the gate with the answer as the resolution and tell the user to run `/wf-release` or `/wf-deploy` themselves. This skill drains queues; it does not run releases.
+2. **You do not promote anything here.** Close the gate with the answer as the resolution — then
+   check whether a daemon is live before saying what happens next:
+   ```bash
+   scripts/wf-exec.sh wf-orchestrate.sh --daemon-status
+   ```
+   | Exit | Tell the user |
+   |-|-|
+   | `0` | Nothing to do — the daemon will dispatch it on its next sweep. **Do not also tell them to run `/wf-release`/`/wf-deploy` by hand**: it would race the daemon for the `RELEASE`/`DEPLOY` claim and lose, since the daemon sweeps within seconds of a gate closing (client-c WFI-033). |
+   | `1` | Run `/wf-release` or `/wf-deploy` themselves — nothing else will pick this up. |
+
+   This skill drains queues; it does not run releases either way.
 3. If the gate's question carries `wf-autonomy.sh` stderr, the project's grant is **malformed** — that is a broken config, not a refusal. Show the problems verbatim and offer to fix `claude-workflow.yml`.
 
 **If the user says "stop asking me — you're authorized from now on", that is a real answer and it has a home.** Do not accept it as conversation; it dies at the session boundary, which is the whole of WFI-159. Write it down:
