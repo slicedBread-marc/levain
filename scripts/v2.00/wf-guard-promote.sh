@@ -69,6 +69,51 @@
 # no orch dir, not a repo, missing wf-orch-lib.sh — every one of those exits 0
 # and says nothing. A missed block costs a repeat of a known WFI; a wrong
 # block costs every legitimate release.
+#
+# WFI-006: THREE MORE LEAK POINTS, ONE OF THEM WITH NO GUARD AT ALL
+#
+# client-d probed the first cut of this guard with variants of its own
+# blocked commands and found three gaps:
+#
+#   1. `git -C <dir> push origin release` was allowed, because the parser
+#      only ever looked at the token right after `git` for "push"/"merge" —
+#      `-C` sits there instead. Fixed by walking past git's own global
+#      options (tracking any `-C` override) to find the real subcommand,
+#      wherever it lands.
+#   2. Bare `git push` (current branch to its configured upstream) and
+#      `git push origin HEAD` (current branch, by name, to a same-named ref)
+#      were both allowed, because neither literally spells "release" or
+#      "main" in the command line. Fixed by asking git itself — at the
+#      resolved cwd, honouring any `-C`/`cd` in the same command — what the
+#      upstream or current branch actually is, and matching on that.
+#   3. RELEASE.gate had no merge protection at all. /wf-deploy's two merges
+#      are always named `git merge ... release ...` / `git merge ... main
+#      ...`, so matching the literal ref text happened to work for DEPLOY.
+#      But /wf-release's own promoting step is `git merge origin/develop
+#      --no-edit` run *while checked out on release* — the ref being merged
+#      IN is `origin/develop`, never "release", so the old text match could
+#      never have caught it. A refused release worker that ran this step
+#      anyway advanced local `release` without ever touching a push, which
+#      wf-guard-promote had no way to see (client-d WFI-005) — and a
+#      dispatcher that reads the pinned release worktree's own branch state
+#      then finds a deploy newly eligible, despite the refusal.
+#
+#      The fix is the general form of the invariant this guard already
+#      relies on: a merge advances whatever branch is CURRENTLY CHECKED OUT,
+#      never the ref named on the command line — that ref is only ever the
+#      thing being merged in. So merge detection no longer reads the ref
+#      text at all; it asks git which branch is checked out at the resolved
+#      cwd and gates on THAT: `release` maps to RELEASE.gate, `main` to
+#      DEPLOY.gate, anything else is untouched. This also covers /wf-deploy's
+#      two merges without needing their literal ref text, and does not touch
+#      `git pull`, which never appears in either skill's promotion path and
+#      cannot advance a branch past what a gate already approved on origin.
+#
+# The git lookups this adds (current branch, upstream ref) fail closed to
+# "cannot tell" the same way everything else here does — an error or timeout
+# returns None, which matches nothing, which allows. They run at most once
+# per push/merge already found in a command already past the push|merge
+# grep prefilter, not on every Bash call.
 
 set -uo pipefail   # deliberately NOT -e: a failing probe must allow, not block
 
@@ -82,12 +127,14 @@ printf '%s' "$payload" | grep -qE 'push|merge' || exit 0
 
 # Classify the command as one of the four protected actions, if it is one.
 # Splits on shell separators and tokenizes each piece with shlex rather than a
-# hand-rolled regex, then walks positional args past `-X theirs`/`-m "…"`
-# style flag+value pairs — good enough for the fixed handful of push/merge
-# invocations these two skills ever write, not a general shell parser. Prints
-# "<action>:<ref>" (e.g. "push:release", "merge:main") or nothing.
+# hand-rolled regex — good enough for the fixed handful of push/merge
+# invocations these two skills ever write, not a general shell parser. Tracks
+# `cd` across pieces and `-C` within a git invocation to know where each git
+# call actually runs, and asks git itself for current-branch/upstream facts
+# it cannot get from the command line alone (WFI-006). Prints "<action>:<ref>"
+# (e.g. "push:release", "merge:main") or nothing.
 action=$(printf '%s' "$payload" | python3 -c '
-import json, re, shlex, sys
+import json, os, re, shlex, subprocess, sys
 try:
     d = json.load(sys.stdin)
 except Exception:
@@ -98,10 +145,15 @@ if not isinstance(ti, dict):
 cmd = ti.get("command") or ""
 if not isinstance(cmd, str) or not cmd:
     sys.exit(0)
+base_cwd = d.get("cwd")
+if not isinstance(base_cwd, str) or not base_cwd:
+    base_cwd = "."
 
 # Flags that consume the following token as their own value, so it is never
-# mistaken for the ref being pushed or merged — `-X theirs`, `-m "message"`.
+# mistaken for a positional arg — `-X theirs`, `-m "message"`.
 VALUE_FLAGS = {"-X", "-s", "-m", "-F", "--strategy", "--strategy-option"}
+# Global git options (before the subcommand) that also take a value.
+GLOBAL_VALUE_FLAGS = {"-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
 
 def first_positional(toks):
     i = 0
@@ -116,28 +168,107 @@ def first_positional(toks):
         return t
     return None
 
+def branch_at(path):
+    # Current branch checked out at `path`, or None on any failure — every
+    # caller treats None as "cannot tell", which allows rather than blocks.
+    try:
+        r = subprocess.run(["git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD"],
+                            capture_output=True, text=True, timeout=2)
+        return r.stdout.strip() or None if r.returncode == 0 else None
+    except Exception:
+        return None
+
+def upstream_at(path):
+    # "origin/release" etc for the branch checked out at `path`, or None.
+    try:
+        r = subprocess.run(["git", "-C", path, "rev-parse", "--abbrev-ref",
+                             "--symbolic-full-name", "@{u}"],
+                            capture_output=True, text=True, timeout=2)
+        return r.stdout.strip() or None if r.returncode == 0 else None
+    except Exception:
+        return None
+
+cur_dir = base_cwd
 for piece in re.split(r"&&|\|\||;|\n", cmd):
     try:
         toks = shlex.split(piece)
     except ValueError:
         continue
-    if len(toks) < 2 or toks[0] != "git":
+    if not toks:
         continue
 
-    if toks[1] == "push":
-        args = [t for t in toks[2:] if not t.startswith("-")]
-        if "origin" not in args:
+    if toks[0] == "cd":
+        target = next((t for t in toks[1:] if not t.startswith("-")), None)
+        if target and target != "-":
+            cur_dir = target if os.path.isabs(target) else os.path.join(cur_dir, target)
+        continue
+
+    if toks[0] != "git":
+        continue
+
+    # Walk past git'"'"'s own global options to find the real subcommand —
+    # `git -C foo push ...` has it at index 2, not 1 — tracking any `-C`
+    # override the same way git itself would apply it.
+    i, dir_override = 1, None
+    while i < len(toks):
+        t = toks[i]
+        if t == "-C":
+            if i + 1 < len(toks):
+                base = dir_override if dir_override is not None else cur_dir
+                nxt = toks[i + 1]
+                dir_override = nxt if os.path.isabs(nxt) else os.path.join(base, nxt)
+            i += 2
             continue
-        i = args.index("origin")
-        if i + 1 >= len(args):
+        if t in GLOBAL_VALUE_FLAGS:
+            i += 2
             continue
-        ref = args[i + 1].split(":")[-1]
+        if t.startswith("--") and "=" in t:
+            i += 1
+            continue
+        if t.startswith("-"):
+            i += 1
+            continue
+        break
+    if i >= len(toks):
+        continue
+    subcmd, rest = toks[i], toks[i + 1:]
+    effective_dir = dir_override if dir_override is not None else cur_dir
+
+    if subcmd == "push":
+        args = [t for t in rest if not t.startswith("-")]
+        ref = None
+        if "origin" in args:
+            j = args.index("origin")
+            if j + 1 < len(args):
+                ref = args[j + 1].split(":")[-1]
+        elif not args:
+            # Bare `git push` — goes to the current branch'"'"'s upstream.
+            u = upstream_at(effective_dir)
+            if u and "/" in u:
+                remote, _, branch = u.partition("/")
+                if remote == "origin":
+                    ref = branch
+        if ref == "HEAD":
+            ref = branch_at(effective_dir)
         if ref in ("release", "main"):
             print(f"push:{ref}")
             break
 
-    elif toks[1] == "merge":
-        ref = first_positional(toks[2:])
+    elif subcmd == "merge":
+        # A merge advances the CURRENT branch — catches /wf-release'"'"'s own
+        # promoting step (checked out on release, merging in origin/develop,
+        # which never names "release" on the command line at all) and
+        # /wf-deploy'"'"'s release-into-main step the same way.
+        b = branch_at(effective_dir)
+        if b in ("release", "main"):
+            print(f"merge:{b}")
+            break
+        # Fallback: the ref text itself names a protected branch. Needed for
+        # /wf-deploy'"'"'s OTHER merge — main back-merged into develop, step 12 —
+        # where the branch being advanced is develop, not main, so the check
+        # above cannot see it; the danger there is pulling an unapproved
+        # `main` INTO develop, which the literal ref name does catch.
+        ref = first_positional(rest)
         if ref in ("release", "main"):
             print(f"merge:{ref}")
             break
@@ -154,14 +285,18 @@ source "$lib" 2>/dev/null || exit 0
 
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
-# Both merges belong to /wf-deploy alone (step 7: release→main, step 12's
-# back-merge: main→develop) — wf-release never merges a ref literally named
-# `release` or `main`, only `origin/develop` into `release`. Only the push
-# side depends on which branch is being pushed.
+# `ref` for a push is the pushed ref, named on the command line. `ref` for a
+# merge is either the CURRENT branch (a merge advances that branch regardless
+# of what it names as the ref being merged in — catches /wf-release's step 6
+# and /wf-deploy's step 7) or, when neither the current branch nor the merged
+# ref names one directly, the literal ref text (catches /wf-deploy's step 12
+# back-merge, which lands on develop but pulls in a `main` that must not be
+# unapproved).
 case "$kind:$ref" in
-  push:release) gate_id="RELEASE"; gate_name="release-approval" ;;
-  push:main)    gate_id="DEPLOY";  gate_name="deploy-approval" ;;
-  merge:*)      gate_id="DEPLOY";  gate_name="deploy-approval" ;;
+  push:release)  gate_id="RELEASE"; gate_name="release-approval" ;;
+  push:main)     gate_id="DEPLOY";  gate_name="deploy-approval" ;;
+  merge:release) gate_id="RELEASE"; gate_name="release-approval" ;;
+  merge:main)    gate_id="DEPLOY";  gate_name="deploy-approval" ;;
 esac
 
 gate_file=$(wf_gate_file "$gate_id" 2>/dev/null); rc=$?
@@ -177,7 +312,7 @@ question=$(wf_gate_field "$gate_file" GATE_QUESTION --unescape 2>/dev/null || tr
 
 case "$kind" in
   push)  what="Pushing '$ref' now" ;;
-  merge) what="Merging '$ref' now" ;;
+  merge) what="Merging into '$ref' now" ;;
 esac
 
 cat >&2 <<EOF
