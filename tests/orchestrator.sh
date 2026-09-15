@@ -2105,6 +2105,91 @@ assert_eq "its tags" "infra" "$PLAN_TAGS"
 assert_eq "and its deps" "PLN-801" "$PLAN_DEPS"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A promotion nothing can authorize is never dispatched"
+
+# client-d and client-c, 2026-09-15: 34 release/deploy workers spawned
+# between them, 26 of the 37 autonomy questions they asked were refusals, and
+# 17 of those parked a gate. Every one of those workers did the same thing —
+# refuse, open an approval gate, unclaim, exit — and the dispatcher could have
+# known before spawning any of them. It matters beyond the waste: a refused
+# worker is the one most likely to promote anyway (WFI-004, WFI-005, WFI-007,
+# WFI-032, WFI-034 are five incidents and five refused workers).
+AUTH=$TEST_DIR/autonomy-dispatch
+mkdir -p "$AUTH/plans" "$AUTH/.claude"
+(
+  cd "$AUTH" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf '# Plan Registry\n\n| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n\n<!-- Counter: 1 -->\n' > plans/REGISTRY.md
+  printf 'x\n' > src.txt
+  git add -A && git commit -qm seed
+  git branch release
+  # Shippable work: a commit touching something outside plans/ and bugs/, which
+  # is what wf-list-release.sh requires before it calls a release eligible.
+  printf 'y\n' > src.txt && git commit -qam "real work"
+) >/dev/null 2>&1
+
+auth_cfg() {   # auth_cfg <mode> [standing_for...]
+  { printf 'project_slug: "auth-demo"\norchestrator:\n  enabled: true\n  autonomy:\n    mode: %s\n' "$1"
+    if [ "$1" = standing ]; then
+      printf '    granted_by: "A Tester"\n    granted_on: 2026-01-01\n    expires_on: 2099-01-01\n    max_per_day: 4\n    standing_for:\n'
+      shift; for a in "$@"; do printf '      - %s\n' "$a"; done
+    fi
+  } > "$AUTH/claude-workflow.yml"
+}
+
+# Captured and matched in-shell, never piped into `grep -q`: this file runs
+# under `pipefail`, and a -q grep exits on its first match, so the sweep takes
+# SIGPIPE and the pipeline reports 141 exactly when the thing being asserted
+# IS present. The negative cases would still have read correctly, which is what
+# makes the mistake worth naming — it fails only in the direction that matters.
+auth_dispatches_release() {
+  local out
+  out=$( cd "$AUTH" && "$SCRIPT_DIR/wf-orchestrate.sh" --sweep --dry-run 2>/dev/null )
+  case "$out" in *"would spawn: release RELEASE"*) echo true ;; *) echo false ;; esac
+}
+
+# attended is the default and the shipping posture — every promotion stops for
+# a human, so there is nothing for an unattended worker to do.
+auth_cfg attended
+assert_eq "attended: release is not dispatched" "false" "$(auth_dispatches_release)"
+
+# The grant is what makes it dispatchable — and only for the action it names.
+auth_cfg standing release
+assert_eq "a grant covering release dispatches it" "true" "$(auth_dispatches_release)"
+
+auth_cfg standing deploy
+assert_eq "a grant covering only deploy does not dispatch release" "false" "$(auth_dispatches_release)"
+
+# An expired grant is not a grant, and a malformed one authorizes nothing —
+# exit 2 is never "proceed", at the dispatcher as much as in the skill.
+auth_cfg standing release
+sed -i.bak 's/expires_on: 2099-01-01/expires_on: 2020-01-01/' "$AUTH/claude-workflow.yml"
+assert_eq "an expired grant does not dispatch" "false" "$(auth_dispatches_release)"
+auth_cfg standing release everything
+assert_eq "a malformed grant does not dispatch either" "false" "$(auth_dispatches_release)"
+
+# The skip is latched and named, so a real sweep says why once rather than
+# every 60 seconds forever — and the probe must not spend the budget it is
+# asking about, or the worker it clears the way for finds it gone.
+auth_cfg attended
+rm -rf "$AUTH/.claude/orchestrator"
+( cd "$AUTH" && "$SCRIPT_DIR/wf-orchestrate.sh" --sweep >/dev/null 2>&1 ) || true
+( cd "$AUTH" && "$SCRIPT_DIR/wf-orchestrate.sh" --sweep >/dev/null 2>&1 ) || true
+AUTH_LOG="$AUTH/.claude/orchestrator/events.log"
+# `grep -c` prints 0 and exits 1 on no match, so `|| echo 0` would emit a
+# second line and every "0" assertion would compare against "0\n0".
+auth_log_count() { awk -v pat="$1" 'index($0, pat) { n++ } END { print n + 0 }' "$AUTH_LOG" 2>/dev/null || echo 0; }
+assert_eq "the skip names autonomy as the reason" "true" \
+  "$([ "$(auth_log_count 'not authorized unattended')" -gt 0 ] && echo true || echo false)"
+assert_eq "and says it once across two sweeps, not once per sweep" "1" \
+  "$(auth_log_count 'not authorized unattended')"
+assert_eq "no release worker was spawned" "0" \
+  "$(auth_log_count "$(printf 'spawn\tRELEASE')")"
+assert_eq "and the dispatcher's probe spent none of the grant" "0" \
+  "$(auth_log_count 'autonomy-use')"
+assert_eq "nor recorded a refusal no skill acted on" "0" \
+  "$(auth_log_count 'autonomy-refuse')"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n══════════════════════════════════════════════════════════════\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[32mResults: %d/%d passed\033[0m\n' "$PASS" "$((PASS + FAIL))"

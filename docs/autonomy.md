@@ -196,13 +196,20 @@ Suppress with `--quiet` when a caller wants the exit code alone.
 ## What this does *not* do
 
 - **The daemon does not decide policy — it only dispatches.** `wf-orchestrate.sh`'s sweep
-  includes `release`/`deploy` in `SWEEP_ROLES` and will spawn a `WF_UNATTENDED=1` worker
-  for either the moment `wf-list-release.sh`/`wf-list-deploy.sh` says one is eligible — see
-  [`orchestrator.md`](orchestrator.md). Whether that worker actually promotes anything is
-  still decided entirely inside the `/wf-release`/`/wf-deploy` **skills**, by consulting a
-  standing grant exactly as described above: no grant, or one that doesn't cover the
-  action, opens a `release-approval`/`deploy-approval` gate and exits — the dispatch alone
-  authorizes nothing.
+  includes `release`/`deploy` in `SWEEP_ROLES` and spawns a `WF_UNATTENDED=1` worker for
+  either when `wf-list-release.sh`/`wf-list-deploy.sh` says one is eligible **and** a
+  standing grant covers the action — see [`orchestrator.md`](orchestrator.md). Whether that
+  worker actually promotes anything is still decided entirely inside the
+  `/wf-release`/`/wf-deploy` **skills**, which ask again for real: the dispatch alone
+  authorizes nothing, and a grant that lapses between the two is caught by the skill.
+
+  The dispatcher's pre-flight is `wf-autonomy.sh <action> --check`, and it exists because
+  spawning a worker that can only refuse is not free. It burns a worker, an hourly spawn
+  slot and an attempt, and reopens a gate a human has often just answered; worse, a refused
+  worker is structurally the one most likely to promote anyway — WFI-004, WFI-005, WFI-007,
+  WFI-032 and WFI-034 are five incidents and five refused workers. `wf-guard-promote.sh`
+  contains that class mechanically; not launching the worker removes the occasion for it.
+  The skip is latched, so a sweep says *why* once rather than once a minute forever.
 - **It does not answer judgment gates.** `spec-approval`, `manual-test`, `needs-input`,
   `scope-reduction`, `stuck` are untouched and still exit 20.
 - **It grants nothing retroactively.** A grant written today does not legitimise a

@@ -41,6 +41,7 @@
 #   · a gate is open on it            · its deps are not complete
 #   · another session holds its claim · its role is at max_concurrent
 #   · it is over its attempt budget   · the hourly spawn budget is spent
+#   · release/deploy only: no standing grant covers the promotion
 
 set -euo pipefail
 
@@ -389,6 +390,51 @@ dispatch() {
     return 1
   fi
 
+  # Don't dispatch a promotion nothing can authorize.
+  #
+  # `release` and `deploy` are the only roles whose worker consults a standing
+  # grant before doing its job. When that grant doesn't cover the action — the
+  # default `mode: attended`, an expired grant, a spent daily ceiling — the
+  # worker's whole run is: refuse, open an approval gate, unclaim, exit. The
+  # dispatcher can know that in advance, and spawning anyway is not free:
+  #
+  #   · It burns a worker, an hourly spawn slot and an attempt, and reopens a
+  #     gate a human has often just answered. client-d and client-c on
+  #     2026-09-15 spawned 34 release/deploy workers between them; 26 of the 37
+  #     autonomy questions those asked were refusals, and 17 parked gates.
+  #   · A refused worker is structurally the one most likely to go off-script
+  #     and promote anyway. WFI-004, WFI-005, WFI-007, WFI-032 and WFI-034 are
+  #     five incidents, and every one of them is a worker that had just been
+  #     refused. wf-guard-promote.sh contains that class mechanically; not
+  #     launching the worker removes the occasion for it.
+  #
+  # `--check` and not the plain form: the ceiling counts `autonomy-use` lines,
+  # so asking the recording way would spend the very budget the worker then
+  # needs, and stamp the log with a decision no skill ever acted on. The worker
+  # still asks for real when it runs — this is a pre-flight, not the decision.
+  #
+  # Exit 2 (a malformed grant) skips too, carrying the parse error as the
+  # reason: every consumer treats 2 as stop, and a broken file is not a thing a
+  # worker can fix. Only `deploy` is checked for the deploy role, never
+  # `production-push` — step 14 not being granted is the designed default, not
+  # a blocked state, and a deploy with no push grant is still a useful deploy.
+  case "$role" in
+    release|deploy)
+      local arc=0 awhy
+      awhy=$("$SELF_DIR/wf-autonomy.sh" "$role" --check 2>&1 >/dev/null) || arc=$?
+      if [ "$arc" -ne 0 ]; then
+        awhy=$(printf '%s' "$awhy" | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g; s/[[:space:]]*$//')
+        [ -n "$awhy" ] || awhy="wf-autonomy.sh exited $arc without a reason"
+        # The reason text is what skip_note latches on, so this stays silent
+        # while the situation holds and speaks again the moment it changes —
+        # a grant written, an expiry passed, a ceiling rolling over at UTC
+        # midnight.
+        skip_note "$role" "$id" "not authorized unattended — $awhy" autonomy
+        return 1
+      fi
+      ;;
+  esac
+
   # Did anything move since we last looked? If so the budget starts over.
   progress_check "$id"
 
@@ -547,7 +593,9 @@ candidates_spec() {
 # `release`/`deploy` sit ahead of everything else: they are logically PAST
 # `complete` — a plan that finished testing days ago and is sitting on develop
 # is further along than one just reaching verify. Only dispatched when a
-# grant covers them (release-approval/deploy-approval gate otherwise); see
+# standing grant actually covers them — dispatch() asks wf-autonomy.sh
+# --check first and skips otherwise, so the approval gate is parked by a human
+# running the skill attended, not by a worker spawned only to be refused. See
 # docs/autonomy.md and skills/wf-release, wf-deploy's "Unattended mode".
 # `consistency` sits ahead of `implement`: a cross-plan contradiction caught
 # while both plans are still documents is an amendment; caught after one is
