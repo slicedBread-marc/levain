@@ -15,13 +15,18 @@
 # over /wf-chrome-test wherever the criterion can be scripted at all — the
 # extension is the fallback, not the default.
 #
-# Usage: wf-headless-eval.sh <url> <js-boolean-expression> [actions-json]
+# Usage: wf-headless-eval.sh <url> <js-boolean-expression> [actions-json] [width] [height]
 #   The expression runs inside page.evaluate() after the page reaches
 #   'load', a short settle wait, and any actions-json steps, and must
 #   return something coercible to boolean. A `consoleErrors` array
 #   (strings, collected from console and page errors since navigation
 #   start, including any raised during the actions) is in scope for
 #   "no console errors" style criteria.
+#
+#   Default viewport is 390x844 (mobile), matching wf-headless-screenshot.sh
+#   — pass width/height to check a different breakpoint (e.g. 1280 800 for
+#   desktop). A criterion naming a specific width (client-f's WFI-009) could
+#   not be reproduced before this and had to carry forward a prior result.
 #
 #   actions-json (optional, default "[]"): a JSON array of steps run in
 #   order before the expression is evaluated, so a criterion needing
@@ -54,9 +59,11 @@ set -uo pipefail
 URL="${1:-}"
 EXPR="${2:-}"
 ACTIONS="${3:-[]}"
+WIDTH="${4:-390}"
+HEIGHT="${5:-844}"
 
 if [ -z "$URL" ] || [ -z "$EXPR" ]; then
-  echo "ERROR usage: wf-headless-eval.sh <url> <js-boolean-expression> [actions-json]"
+  echo "ERROR usage: wf-headless-eval.sh <url> <js-boolean-expression> [actions-json] [width] [height]"
   exit 2
 fi
 
@@ -70,12 +77,12 @@ cat > "$RUNNER" <<'NODE'
 import { chromium } from 'playwright';
 import { runActions } from './actions.mjs';
 
-const [, , url, expr, actionsJson] = process.argv;
+const [, , url, expr, actionsJson, width, height] = process.argv;
 
 let browser;
 try {
   browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const page = await browser.newPage({ viewport: { width: Number(width), height: Number(height) } });
   const consoleErrors = [];
   page.on('pageerror', (e) => consoleErrors.push(String(e)));
   page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
@@ -99,5 +106,5 @@ try {
 }
 NODE
 
-node "$RUNNER" "$URL" "$EXPR" "$ACTIONS"
+node "$RUNNER" "$URL" "$EXPR" "$ACTIONS" "$WIDTH" "$HEIGHT"
 exit $?

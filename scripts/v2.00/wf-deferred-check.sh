@@ -22,9 +22,16 @@
 # happens, the same way step 2/3 of /wf-release and /wf-deploy already show
 # the commit list before asking for confirmation.
 #
-# Exit 0: no open rows for any of the given plans (nothing to show).
+# Exit 0: no plan ids given, or no open rows for any of the given plans
+#         (nothing to show). Both callers (/wf-release, /wf-deploy) build
+#         the plan-id list via `git log ... | grep -oE 'PLN-[0-9]+'` on a
+#         commit range that is known non-empty but can still contain zero
+#         PLN-tagged commits — a release range whose only commit has no
+#         plan id in its subject, say. That is a legitimate "nothing to
+#         check" outcome, not a caller error (client-f's WFI-011: the empty
+#         command substitution used to hit the usage-error exit 2 below,
+#         which neither call site handled).
 # Exit 1: at least one open row found — printed to stdout, one per line.
-# Exit 2: usage error.
 
 set -euo pipefail
 
@@ -32,8 +39,7 @@ set -euo pipefail
 source "$(dirname "$0")/wf-orch-lib.sh"
 
 if [ "$#" -lt 1 ]; then
-  echo "usage: wf-deferred-check.sh <plan-id> [plan-id...]" >&2
-  exit 2
+  exit 0
 fi
 
 FILE="$(wf_develop_root)/plans/deferred-criteria.md"

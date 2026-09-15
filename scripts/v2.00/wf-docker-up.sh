@@ -160,6 +160,19 @@ fi
 #                   and must print a URL on stdout or stderr. Defaults to a
 #                   cloudflared quick tunnel, which needs no account.
 if $want_tunnel; then
+  # The permissive AllowedHosts value set above only reaches the app if the
+  # project's own compose file passes it through (WFI-007's opt-in line).
+  # Without it, --tunnel used to report a device URL that 400ed on every
+  # request with no warning anywhere — the tester had to root-cause ASP.NET
+  # host filtering by hand (client-f's WFI-010). This is a static check, not
+  # proof the app enforces host filtering at all (it may not, e.g. non-.NET
+  # stacks), so it warns rather than blocking the tunnel.
+  if ! grep -q 'FEATURE_ALLOWED_HOSTS' docker/docker-compose.yml 2>/dev/null; then
+    echo "wf-docker-up: docker/docker-compose.yml has no FEATURE_ALLOWED_HOSTS passthrough — if the app enforces host" >&2
+    echo "      filtering (e.g. ASP.NET's AllowedHosts), the tunnel origin will 400 on every request. Add e.g." >&2
+    echo "      'environment: - AllowedHosts=\${FEATURE_ALLOWED_HOSTS:-}' to docker/docker-compose.yml to opt in (WFI-007)." >&2
+  fi
+
   tunnel_cmd=$(wf_cfg tunnel_command "cloudflared tunnel --url http://localhost:\$FEATURE_PORT")
   tunnel_bin=$(printf '%s' "$tunnel_cmd" | awk '{print $1}')
 
