@@ -25,6 +25,12 @@ record of *what was done*.
 2  malformed       the grant is broken — also stop, and say why
 ```
 
+`--check` gives the same three answers and records none of them. A recorded question costs
+a slot against the very ceiling it is asking about, so a caller that wants to know *before*
+committing to the work — the dispatcher, deciding whether to spawn a release/deploy worker
+at all — must ask this way, or its probe eats the budget the worker then needs and stamps
+the log with a decision no skill ever acted on.
+
 **Exit 2 is never "proceed".** A grant nobody can parse authorized nothing.
 
 ---
@@ -84,9 +90,25 @@ While `mode: standing`, all of `granted_by`, `granted_on`, `expires_on` and a no
 and this is not a permissions system — it is a record of something a person said on a
 particular day, and it should stop being true.
 
-`max_per_day` (default 4) is counted from the event log across every action. It bounds the
-blast radius of a bad grant: a pipeline that has gone wrong otherwise spends the grant on
-forty artifacts before anyone looks at the board.
+`max_per_day` (default 4) is counted from the event log **per action, per day** — four
+releases, four deploys and four production pushes, not four in total. It bounds the blast
+radius of a bad grant: a pipeline that has gone wrong otherwise spends the grant on forty
+artifacts before anyone looks at the board.
+
+**It used to be one counter shared across all three actions, and that was a defect.**
+Shipping one batch costs three actions — `release`, then `deploy`, then `production-push` —
+so a shared ceiling of 4 was smaller than a single day's work. A project with a full standing
+grant got one shipment per day and then jammed, every promotion after it parking a gate for a
+human. client-c on 2026-09-15 is the whole failure in one log: four `autonomy-use` lines
+ending at 13:37 — one complete shipment plus one release — then twelve consecutive
+`daily ceiling 4 reached` refusals through 16:56. Each of those parked a gate, and a refused
+worker is structurally the one most likely to promote anyway (WFI-004, WFI-005, WFI-007,
+WFI-032 and WFI-034 were every one of them a refused worker). client-d hit the same wall and
+was worked around by raising `max_per_day` to 20 by hand mid-day — the tell that the knob was
+measuring the wrong thing.
+
+Per action, the runaway case the ceiling exists for is still caught: a role dispatching in a
+loop burns only its own budget, and burning it no longer disarms the other two.
 
 Audit it before trusting it:
 
@@ -111,9 +133,9 @@ Four channels. Nothing else is written.
 as an approval.
 
 ```
-2026-08-16T17:13:32Z  autonomy-use      PLN-103  release authorized by standing grant from Marc Blais (2026-08-16, expires 2026-09-16) — 1/4 today
+2026-08-16T17:13:32Z  autonomy-use      PLN-103  release authorized by standing grant from Marc Blais (2026-08-16, expires 2026-09-16) — 1/4 release today
 2026-08-16T17:13:32Z  autonomy-refuse   —        deploy: not in standing_for
-2026-08-16T17:14:01Z  autonomy-refuse   PLN-104  release: daily ceiling 4 reached
+2026-08-16T17:14:01Z  autonomy-refuse   PLN-104  release: daily release ceiling 4 reached
 ```
 
 The message carries the grant's **identity** — who, when, expiry, and the running count —
@@ -195,7 +217,8 @@ Suppress with `--quiet` when a caller wants the exit code alone.
 | A key that looks load-bearing and is read by nothing | Closed vocabulary; `--show` names unread entries and exits 2 |
 | A grant outliving the situation that justified it | `expires_on` required; expiry checked per call |
 | "I authorize deploys" silently covering the production push | Separate action, separate grant |
-| A broken pipeline spending a grant across the whole board | `max_per_day`, counted from the event log |
+| A broken pipeline spending a grant across the whole board | `max_per_day`, counted from the event log, per action |
+| One runaway role disarming the other two promotions | The ceiling is per action, so a loop burns only its own budget |
 | A malformed grant read as permission | Malformed is exit 2, and every consumer treats 2 as stop |
 | A typo answered as a deliberate refusal | An unknown action is exit 2, never exit 1 |
 | Nobody able to reconstruct who authorized what | Grant identity in every `autonomy-use` line |

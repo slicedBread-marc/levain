@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wf-autonomy.sh <action> [--artifact <ID>] [--quiet]
+# wf-autonomy.sh <action> [--artifact <ID>] [--quiet] [--check]
 # wf-autonomy.sh --show
 # wf-autonomy.sh --list
 #
@@ -84,6 +84,7 @@ today="${WF_AUTONOMY_TODAY:-$(date -u +%Y-%m-%d)}"
 action=""
 artifact=""
 quiet=false
+record=true
 mode="ask"
 
 while [ $# -gt 0 ]; do
@@ -92,6 +93,19 @@ while [ $# -gt 0 ]; do
     --list)     mode="list"; shift ;;
     --artifact) artifact="${2:?--artifact requires an ID}"; shift 2 ;;
     --quiet)    quiet=true; shift ;;
+    # --check: the same answer, recorded nowhere. Exit codes are identical; the
+    # difference is that neither `autonomy-use` nor `autonomy-refuse` is
+    # appended, and — because the ceiling counts `autonomy-use` lines — a check
+    # therefore does not spend the budget it is asking about.
+    #
+    # For a caller that wants to know the answer BEFORE committing to the work,
+    # which is the dispatcher's case: wf-orchestrate.sh asks this before
+    # spawning a release/deploy worker, so a promotion nothing can authorize is
+    # never dispatched at all. Asking with the recording form would have been
+    # worse than not asking — the dispatcher's probe would consume a grant the
+    # worker then needs, and stamp the log with a decision no skill ever acted
+    # on. The worker still asks for real when it runs; this is a pre-flight.
+    --check)    record=false; shift ;;
     -h|--help)  mode="list"; shift ;;
     -*)         echo "Unknown option: $1" >&2; exit 2 ;;
     *)          if [ -z "$action" ]; then action="$1"; else echo "Unexpected argument: $1" >&2; exit 2; fi; shift ;;
@@ -119,6 +133,7 @@ cfg_for=$(wf_cfg_list orchestrator.autonomy.standing_for | tr '\n' ' ')
 if [ "$mode" = "list" ]; then
   cat <<EOF
 wf-autonomy.sh <action> [--artifact ID]   0 = authorized, 1 = not, 2 = malformed
+wf-autonomy.sh <action> --check           same answer, recorded nowhere, spends nothing
 wf-autonomy.sh --show                     audit this project's grant
 
 Grantable actions (orchestrator.autonomy.standing_for):
@@ -183,7 +198,7 @@ if [ "$mode" = "show" ]; then
     echo "granted on:     ${cfg_on:-—}"
     echo "expires on:     ${cfg_exp:-—}$([ -n "$cfg_exp" ] && [ "$cfg_exp" \< "$today" ] && echo '   ← EXPIRED' || true)"
     echo "covers:         ${cfg_for:-—}"
-    echo "ceiling:        $cfg_max actions/day"
+    echo "ceiling:        $cfg_max/day for EACH action above, counted separately"
   fi
   echo "never grantable: $NEVER"
   if [ -n "$problems" ]; then
@@ -228,7 +243,10 @@ fi
 
 refuse() {
   say "$1"
-  wf_event autonomy-refuse "${artifact:-—}" "$action: $2"
+  # Written as an `if`, not `$record && wf_event`: under `set -e` the latter
+  # exits on the false branch, which happens to be right here and would be
+  # silently wrong anywhere else.
+  if $record; then wf_event autonomy-refuse "${artifact:-—}" "$action: $2"; fi
   exit 1
 }
 
@@ -243,22 +261,51 @@ in_list "$action" "$cfg_for" || \
 
 # ── Ceiling ────────────────────────────────────────────────────────────────
 #
-# Counted from the event log, per day, across every action. A standing grant is
-# for a normal day's promotions; a pipeline that has gone wrong can otherwise
-# spend it on forty artifacts before anyone looks at the board. The ceiling is
-# what makes the blast radius of a bad grant bounded rather than open.
+# Counted from the event log, per day, PER ACTION. A pipeline that has gone
+# wrong can otherwise spend a grant on forty artifacts before anyone looks at
+# the board; the ceiling is what keeps the blast radius of a bad grant bounded.
+#
+# WHY PER ACTION AND NOT ONE SHARED COUNTER
+#
+# It used to be one counter across all three actions, and that made the
+# documented default — 4, described as "a normal day's promotions" — smaller
+# than a single day's work. Shipping ONE batch costs three actions: `release`,
+# then `deploy`, then `production-push`. So a project with a full standing
+# grant got one shipment per day and then jammed, with every subsequent
+# promotion parking a gate for a human.
+#
+# client-c on 2026-09-15 is the whole failure in one log: four
+# `autonomy-use` lines ending at 13:37 — one complete shipment plus one
+# release — then twelve consecutive `daily ceiling 4 reached` refusals through
+# 16:56. Every one of those parked a gate, and each refused worker is the one
+# most likely to go off-script and promote anyway (WFI-004, WFI-005, WFI-007,
+# WFI-032, WFI-034 were all refused workers). client-d hit the same wall and
+# the operator worked around it by raising max_per_day to 20 by hand mid-day,
+# which is the tell that the knob was measuring the wrong thing.
+#
+# Per action, the same default 4 means four shipments a day and still refuses
+# the runaway case the ceiling exists for — a role dispatching in a loop burns
+# only its own budget, and burning it no longer disarms the other two.
+#
+# The count matches on the message this script itself writes below, anchored at
+# position 1 so `release` never matches a `production-push` line. Historical
+# lines carry the same wording, so an existing log counts correctly.
 log="$(wf_orch_dir)/events.log"
 used=0
 if [ -f "$log" ]; then
-  used=$(grep -c "^${today}T[^	]*	autonomy-use	" "$log" 2>/dev/null || true)
+  used=$(awk -F'\t' -v d="$today" -v a="$action" '
+    $1 ~ "^" d "T" && $2 == "autonomy-use" && index($4, a " authorized") == 1 { n++ }
+    END { print n + 0 }' "$log" 2>/dev/null || true)
   used=${used:-0}
 fi
 if [ "$used" -ge "$cfg_max" ]; then
-  refuse "the standing grant's ceiling of $cfg_max action(s)/day is spent ($used used today). Park a gate and stop." \
-         "daily ceiling $cfg_max reached"
+  refuse "the standing grant's ceiling of $cfg_max $action(s)/day is spent ($used used today). Park a gate and stop." \
+         "daily $action ceiling $cfg_max reached"
 fi
 
-wf_event autonomy-use "${artifact:-—}" \
-  "$action authorized by standing grant from ${cfg_by:-unknown} ($cfg_on, expires $cfg_exp) — $((used + 1))/$cfg_max today"
-say "$action authorized — standing grant from ${cfg_by:-unknown}, expires $cfg_exp ($((used + 1))/$cfg_max today)."
+if $record; then
+  wf_event autonomy-use "${artifact:-—}" \
+    "$action authorized by standing grant from ${cfg_by:-unknown} ($cfg_on, expires $cfg_exp) — $((used + 1))/$cfg_max $action today"
+fi
+say "$action authorized — standing grant from ${cfg_by:-unknown}, expires $cfg_exp ($((used + 1))/$cfg_max $action today)."
 exit 0

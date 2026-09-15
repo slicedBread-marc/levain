@@ -3740,6 +3740,45 @@ assert_eq "and an authorization carries the grant's identity, not just 'ok'" "tr
   "$(grep 'autonomy-use' .claude/orchestrator/events.log \
      | grep -q 'A Tester' && echo true || echo false)"
 
+# The ceiling is PER ACTION, and it has to be: shipping one batch costs three
+# actions — release, then deploy, then production-push. Counted together, the
+# documented default of 4 was smaller than a single day's work, so a project
+# with a full grant got one shipment and then jammed. client-c on
+# 2026-09-15: four autonomy-use lines by 13:37, then twelve consecutive
+# "daily ceiling 4 reached" refusals through 16:56, each parking a gate.
+rm -f .claude/orchestrator/events.log
+write_grant standing "A Tester" 2026-09-16 1 "release deploy production-push"
+assert_ok "spending the release budget..." \
+  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+assert_fails "...exhausts release" \
+  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+assert_ok "...and leaves deploy untouched" \
+  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" deploy --quiet
+assert_ok "...and production-push untouched" \
+  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" production-push --quiet
+assert_eq "the refusal names the action whose budget is spent" "true" \
+  "$(grep 'autonomy-refuse' .claude/orchestrator/events.log \
+     | grep -q 'daily release ceiling 1 reached' && echo true || echo false)"
+# `release` must not be counted against `production-push`, whose message ends
+# in the same word — the count anchors at position 1 for exactly this reason.
+assert_eq "a production-push line is not counted as a release" "true" \
+  "$(grep 'autonomy-use' .claude/orchestrator/events.log \
+     | grep -q '1/1 production-push today' && echo true || echo false)"
+
+# --check answers the same question and spends nothing, so the dispatcher can
+# ask before committing to a worker without consuming the grant that worker
+# then needs — or stamping the log with a decision no skill ever acted on.
+rm -f .claude/orchestrator/events.log
+write_grant standing "A Tester" 2026-09-16 1 "release"
+assert_ok "--check on an authorized action exits 0" \
+  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --check --quiet
+assert_fails "--check on an unauthorized action exits 1" \
+  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" deploy --check --quiet
+assert_eq "and neither wrote anything to the event log" "false" \
+  "$([ -s .claude/orchestrator/events.log ] && echo true || echo false)"
+assert_ok "so the real question still has its whole budget" \
+  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+
 [ -n "$AUTONOMY_CFG_BACKUP" ] && printf '%s\n' "$AUTONOMY_CFG_BACKUP" > claude-workflow.yml
 rm -f .claude/orchestrator/events.log
 
