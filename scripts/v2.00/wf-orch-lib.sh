@@ -915,7 +915,11 @@ wf_gate_file() {
   dir="$(wf_orch_dir)/gates"
   exact="$dir/${id}.gate"
   if [ -f "$exact" ]; then printf '%s' "$exact"; return 0; fi
-  case "$id" in RELEASE|DEPLOY) return 1 ;; esac
+  # No fuzzy number-match for these two — they were never counter-allocated,
+  # so there is no numeric suffix to compare. The exact name is where a new
+  # one belongs, same as the "none open" fallback below (WFI: caught in
+  # verification — omitting this printf left callers writing to `> ""`).
+  case "$id" in RELEASE|DEPLOY) printf '%s' "$exact"; return 1 ;; esac
 
   num=$((10#${id##*-}))
   for f in "$dir"/*.gate; do
@@ -944,11 +948,15 @@ wf_gate_file() {
 # because that is an invariant worth stating rather than inferring.
 wf_gate_resolved_file() {
   local artifact="$1" gate="$2" id num dir exact f base
-  id=$(printf '%s' "$artifact" | grep -oE '(PLN|BUG|BRF)-[0-9]+' | head -1)
+  case "$artifact" in
+    RELEASE|DEPLOY) id="$artifact" ;;
+    *) id=$(printf '%s' "$artifact" | grep -oE '(PLN|BUG|BRF)-[0-9]+' | head -1) ;;
+  esac
   [ -n "$id" ] || return 1
   dir="$(wf_orch_dir)/gates/resolved"
   exact="$dir/${id}.${gate}"
   if [ -f "$exact" ]; then printf '%s' "$exact"; return 0; fi
+  case "$id" in RELEASE|DEPLOY) printf '%s' "$exact"; return 1 ;; esac
 
   num=$((10#${id##*-}))
   for f in "$dir"/*."$gate"; do
