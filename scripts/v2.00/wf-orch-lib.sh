@@ -1158,10 +1158,31 @@ wf_brief_title() {
   t=$(grep -m1 -E '^#[ \t]' "$1" 2>/dev/null | sed 's/^#[[:space:]]*//; s/[[:space:]]*$//' || true)
   # Then a frontmatter `title:`, then the filename. "(untitled)" tells a reader
   # nothing and makes the row harder to act on than the path would have been.
-  [ -n "$t" ] || t=$(grep -m1 -E '^title:' "$1" 2>/dev/null \
-                     | sed -E 's/^title:[[:space:]]*//; s/^"//; s/"$//; s/[[:space:]]*$//' || true)
+  [ -n "$t" ] || t=$(grep -m1 -E '^(title|name):' "$1" 2>/dev/null \
+                     | sed -E 's/^(title|name):[[:space:]]*//; s/^"//; s/"$//; s/[[:space:]]*$//' || true)
   [ -n "$t" ] || t=$(basename "$1" .md | sed -E 's/^BRF-[0-9]+-//; s/-/ /g')
   printf '%s' "$t"
+}
+
+# wf_brief_status <brief.md> — the brief's status, whichever way it is written.
+#
+# TEMPLATE.md's header blockquote (`> **Status:** Exploring`) is the current
+# shape, but a run of briefs in the field carry YAML frontmatter instead
+# (`status: Decided` — client-e's BRF-066, 067, 068). Reading only the
+# blockquote called those "unknown" and filed them under Idea, which is how a
+# Decided brief ends up looking like an idea nobody has touched.
+#
+# Prints the empty string when neither is present, or when the template's
+# unedited vocabulary line ("Idea | Exploring | Decided | Planned") is all
+# there is — that says nothing about THIS brief.
+wf_brief_status() {
+  local s
+  s=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Status:\*\*' "$1" 2>/dev/null \
+      | sed -E 's/^.*\*\*Status:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
+  [ -n "$s" ] || s=$(grep -m1 -E '^status:' "$1" 2>/dev/null \
+                     | sed -E 's/^status:[[:space:]]*//; s/^"//; s/"$//; s/[[:space:]]*$//' || true)
+  case "$s" in *"|"*) s="" ;; esac
+  printf '%s' "$s"
 }
 
 # wf_brief_has_plan <brief.md> — true when a plan was written from this brief.

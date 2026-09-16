@@ -81,9 +81,7 @@ for brief_md in plans/briefs/*.md; do
   # 40 of client-e's 43 unlisted briefs are exactly this case.
   wf_brief_has_plan "$brief_md" && continue
 
-  status=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Status:\*\*' "$brief_md" 2>/dev/null \
-           | sed -E 's/^.*\*\*Status:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
-  case "$status" in *"|"*) status="" ;; esac
+  status=$(wf_brief_status "$brief_md")
   section=$(section_for "$status")
 
   title=$(wf_brief_title "$brief_md")

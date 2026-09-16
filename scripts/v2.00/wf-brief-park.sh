@@ -81,18 +81,27 @@ brief_field() {
     | sed -E "s/^.*\*\*$2:\*\*[[:space:]]*//; s/[[:space:]]*$//" || true
 }
 
-status=$(brief_field "$brief_md" "Status")
+status=$(wf_brief_status "$brief_md")
 parked_field=$(brief_field "$brief_md" "Parked")
 
 # ── Rewrite the header ─────────────────────────────────────────────────
 # set_status / drop_field keep the header a single blockquote: one Status
 # line, at most one Parked line, no stacking.
+#
+# Two header shapes exist in the field (see wf_brief_status): the template's
+# `> **Status:**` blockquote and YAML frontmatter `status:`. Rewrite whichever
+# this brief uses — writing the blockquote form into a frontmatter brief would
+# leave two statuses disagreeing, which is worse than either.
 set_status() {
   WF_ST="$1" awk '
     BEGIN { done = 0 }
     !done && /^[ \t]*>?[ \t]*\*\*Status:\*\*/ { print "> **Status:** " ENVIRON["WF_ST"]; done = 1; next }
+    !done && /^status:/ { print "status: " ENVIRON["WF_ST"]; done = 1; next }
     { print }
   ' "$brief_md" > "$brief_md.tmp" && mv "$brief_md.tmp" "$brief_md"
+  if ! grep -qE '^([ \t]*>?[ \t]*\*\*Status:\*\*|status:)' "$brief_md"; then
+    echo "note: $base carries no status field at all — its INDEX.md row is the only record" >&2
+  fi
 }
 
 drop_field() {
@@ -102,14 +111,23 @@ drop_field() {
 
 add_parked_note() {
   WF_NOTE="> **Parked:** $1" awk '
-    BEGIN { replaced = 0; last_quote = 0; body = 0 }
+    BEGIN { replaced = 0; last_quote = 0; body = 0; fm = 0; fm_end = 0 }
     {
       if (!replaced && $0 ~ /^[ \t]*>?[ \t]*\*\*Parked:\*\*/) { lines[NR] = ENVIRON["WF_NOTE"]; replaced = 1 }
       else lines[NR] = $0
+      # YAML frontmatter: opens on line 1, closes on the next `---`. The note
+      # goes AFTER that close — inside it, it would be invalid YAML.
+      if (NR == 1 && $0 ~ /^---[ \t]*$/) fm = 1
+      else if (fm == 1 && fm_end == 0 && $0 ~ /^---[ \t]*$/) fm_end = NR
       if ($0 ~ /^[ \t]*##[ \t]/) body = 1
       if (!body && $0 ~ /^[ \t]*>/) last_quote = NR
     }
     END {
+      # A frontmatter brief has no header blockquote at all (last_quote == 0),
+      # so the note would have gone nowhere and `--clear` would have lost the
+      # status it was parked from. Put it after the frontmatter close, or
+      # after the first line when there is no frontmatter either.
+      if (!replaced && last_quote == 0) last_quote = (fm_end > 0 ? fm_end : (NR > 0 ? 1 : 0))
       for (i = 1; i <= NR; i++) {
         print lines[i]
         if (!replaced && i == last_quote) print ENVIRON["WF_NOTE"]

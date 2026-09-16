@@ -982,6 +982,33 @@ assert_eq "and it counts again" "2" \
 assert_eq "INDEX.md never grows a duplicate row through all of that" "1" \
   "$(grep -c 'BRF-102-two.md](BRF-102-two.md)' plans/briefs/INDEX.md | tr -d ' ')"
 
+# A brief written with YAML frontmatter instead of the template blockquote —
+# client-e's BRF-066/067/068 are this shape. Read only the blockquote and its
+# status reads "unknown", which files a Decided brief under Idea.
+printf -- '---\nname: Frontmatter Brief\nstatus: Decided\nschema_version: 4\n---\n\nbody\n' \
+  > plans/briefs/BRF-104-frontmatter.md
+assert_eq "a frontmatter brief's status is read, not guessed" "true" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --drift 2>/dev/null | grep -q '^BRF-104	Decided' && echo true || echo false)"
+assert_eq "and its title comes from the frontmatter, not '---'" "true" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --drift 2>/dev/null | grep -q 'Frontmatter Brief' && echo true || echo false)"
+"$SCRIPT_DIR/wf-brainstorm-reindex.sh" --apply >/dev/null 2>&1
+assert_eq "it reindexes under Decided, not Idea" "true" \
+  "$(awk '/^## /{s=$2} /BRF-104-frontmatter/{print s}' plans/briefs/INDEX.md | grep -q Decided && echo true || echo false)"
+"$SCRIPT_DIR/wf-brief-park.sh" BRF-104 "example" >/dev/null 2>&1
+assert_eq "parking rewrites the frontmatter status in place" "true" \
+  "$(grep -q '^status: Parked$' plans/briefs/BRF-104-frontmatter.md && echo true || echo false)"
+assert_eq "and leaves the frontmatter block valid — note goes after it" "true" \
+  "$(awk 'NR==5 && /^---$/' plans/briefs/BRF-104-frontmatter.md | grep -q -- '---' && echo true || echo false)"
+"$SCRIPT_DIR/wf-brief-park.sh" BRF-104 --clear >/dev/null 2>&1
+assert_eq "--clear restores Decided from the recorded reason" "true" \
+  "$(grep -q '^status: Decided$' plans/briefs/BRF-104-frontmatter.md && echo true || echo false)"
+
+# Leave the fixture as this section found it: a Decided brief and an unclaimed
+# plan folder are both specable work, and the dispatcher sections below assert
+# on exactly how many skip lines a sweep writes.
+rm -rf plans/briefs/*.md plans/PLN-103-shipped
+git add -A >/dev/null 2>&1; git commit -qm "brainstorm fixtures removed" >/dev/null 2>&1
+
 section "Skills wired up"
 
 for s in wf-board wf-attend wf-orchestrate; do

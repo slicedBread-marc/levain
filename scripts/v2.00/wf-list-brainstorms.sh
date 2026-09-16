@@ -114,12 +114,8 @@ if [ -f "$INDEX" ]; then
     # A pre-ID brief (plans/briefs/hotspot-maps.md and friends) predates the
     # counter. Name it by its filename rather than dropping it.
     [ -n "$id" ] || id="${base%.md}"
-    status=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Status:\*\*' "$brief_md" 2>/dev/null \
-             | sed -E 's/^.*\*\*Status:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
-    # TEMPLATE prose left unedited ("Idea | Exploring | Decided | Planned")
-    # says nothing about this brief; report it as unknown rather than as a
-    # status it does not have.
-    case "$status" in ""|*"|"*) status="unknown" ;; esac
+    status=$(wf_brief_status "$brief_md")
+    [ -n "$status" ] || status="unknown"
     title=$(wf_brief_title "$brief_md")
     drift_rows="${drift_rows}${id}	${status}	${base}	${title}
 "
