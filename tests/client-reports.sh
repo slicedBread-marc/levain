@@ -5116,6 +5116,72 @@ assert_eq "both cross-project filers pass --links through" "true" \
   "$(grep -q 'link_args' "$SCRIPT_DIR/wf-dep-notify.sh" && grep -q 'link_args' "$SCRIPT_DIR/wf-dep-bug.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A deploy does not replace the harness under a running daemon (coordinator WFI-003, WFI-004)"
+
+# install.sh rewrites scripts/v*/ in place while a daemon sweeps out of it every
+# 60s, re-reading wf-orchestrate.sh and wf-orch-lib.sh as it goes. The 8.3.0 →
+# 8.6.0 deploy ran with client-b' daemon live and survived, which is luck: a
+# sweep landing inside the write window reads a half-replaced script folder, and
+# what that produces is confusing dispatch an hour later, not an error now.
+DEPD="$TEST_DIR/deployguard"
+mkdir -p "$DEPD/client-a/.claude/orchestrator" "$DEPD/client-b/.claude/orchestrator"
+printf '%s\n' "$DEPD/client-a" "$DEPD/client-b" > "$DEPD/deployments.txt"
+
+# client-a's daemon is live (a real process we own), client-b's pidfile is stale.
+sleep 120 &
+FAKE_DAEMON=$!
+echo "$FAKE_DAEMON" > "$DEPD/client-a/.claude/orchestrator/daemon.pid"
+echo "999999" > "$DEPD/client-b/.claude/orchestrator/daemon.pid"
+
+dep_rc=0
+dep_out=$(WF_DEPLOYMENTS="$DEPD/deployments.txt" WF_SUSPEND_STATE="$DEPD/state" \
+  bash "$LIB_ROOT/deploy-all.sh" 2>&1) || dep_rc=$?
+assert_eq "a live daemon refuses the deploy" "1" "$dep_rc"
+assert_eq "and the refusal names the client holding it" "true" \
+  "$(printf '%s' "$dep_out" | grep -q "client-a" && echo true || echo false)"
+assert_eq "a stale pidfile does not block anything" "false" \
+  "$(printf '%s' "$dep_out" | grep -q 'daemon live.*client-b' && echo true || echo false)"
+assert_eq "nothing was installed while it refused" "false" \
+  "$([ -d "$DEPD/client-a/scripts" ] && echo true || echo false)"
+
+kill "$FAKE_DAEMON" 2>/dev/null || true
+wait "$FAKE_DAEMON" 2>/dev/null || true
+
+dep_rc=0
+dep_out=$(WF_DEPLOYMENTS="$DEPD/deployments.txt" WF_SUSPEND_STATE="$DEPD/state" \
+  bash "$LIB_ROOT/deploy-all.sh" 2>&1) || dep_rc=$?
+assert_eq "with no daemon live, the deploy runs" "true" \
+  "$(printf '%s' "$dep_out" | grep -q 'Local: 2 updated' && echo true || echo false)"
+
+# The suspend record unions rather than overwrites: a retried --stop-daemons
+# would otherwise find nothing running, rewrite the record empty, and turn the
+# restore into a no-op that leaves every daemon off.
+assert_eq "the restore reads a recorded list, not a live scan" "true" \
+  "$(grep -q 'grep -qxF "\$p" "\$SUSPEND_STATE"' "$LIB_ROOT/deploy-all.sh" && echo true || echo false)"
+assert_eq "and it verifies the restart instead of trusting nohup" "true" \
+  "$(grep -q 'restart FAILED, it is NOT running' "$LIB_ROOT/deploy-all.sh" && echo true || echo false)"
+
+# A coordinator generates .claude/orchestrator/ at runtime (wf-issue.sh reaches
+# it through wf-orch-lib.sh) and the ignore rule for it was only appended on the
+# client path. coordinator carried `?? .claude/orchestrator/` in every git status since
+# the day it first filed an issue.
+COORDIG="$TEST_DIR/coord-ignore"
+mkdir -p "$COORDIG"
+(
+  cd "$COORDIG" && git init -qb main . && git config user.email t@t && git config user.name t
+  printf 'project_slug: coordig\nrole: coordinator\ncoordinates:\n  - "x:/tmp/x"\n' > claude-workflow.yml
+  printf '# coordig\n' > CLAUDE.md
+  git add -A && git commit -q -m seed
+) >/dev/null 2>&1
+bash "$LIB_ROOT/install.sh" "$COORDIG" >/dev/null 2>&1 || true
+assert_eq "a coordinator install ignores its runtime orchestrator dir" "true" \
+  "$(grep -qxF '.claude/orchestrator/' "$COORDIG/.gitignore" && echo true || echo false)"
+mkdir -p "$COORDIG/.claude/orchestrator"
+touch "$COORDIG/.claude/orchestrator/events.log"
+assert_eq "so a coordinator's git status stays clean after filing" "" \
+  "$(cd "$COORDIG" && git status --porcelain | grep 'orchestrator' || true)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

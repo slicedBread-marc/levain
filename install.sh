@@ -227,8 +227,15 @@ if [ "$ROLE" = "coordinator" ]; then
           && echo -e "${GREEN}  Seeded WORKFLOW-ISSUES.md (harness problems get reported here)${NC}"
     fi
 
-    # Same rule as a client: what deploy writes, git does not track. The list is
-    # shorter because the install is.
+    # Same rule as a client: what the harness generates, git does not track. The
+    # list is shorter because the install is — but not as short as it was:
+    # `.claude/orchestrator/` is created at RUNTIME in a coordinator checkout
+    # too (wf-issue.sh reaches it through wf-orch-lib.sh), and the rule for it
+    # was only appended on the client path, which a coordinator never reaches.
+    # coordinator carried `?? .claude/orchestrator/` in every git status from the day it
+    # first filed an issue — permanent noise, which trains an operator to skim
+    # past the untracked list where a genuinely unexpected file would appear
+    # (coordinator WFI-004).
     GITIGNORE="$TARGET_DIR/.gitignore"
     COORD_IGNORED=0
     for pattern in \
@@ -237,7 +244,8 @@ if [ "$ROLE" = "coordinator" ]; then
         "scripts/wf-exec.sh" \
         "scripts/version-map.txt" \
         "scripts/wf-prune-versions.sh" \
-        "scripts/v*/" ; do
+        "scripts/v*/" \
+        ".claude/orchestrator/" ; do
         if ! grep -qxF "$pattern" "$GITIGNORE" 2>/dev/null; then
             echo "$pattern" >> "$GITIGNORE"
             COORD_IGNORED=$((COORD_IGNORED + 1))
