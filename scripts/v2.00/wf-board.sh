@@ -34,6 +34,8 @@ set -uo pipefail
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=wf-orch-lib.sh
 source "$SELF_DIR/wf-orch-lib.sh"
+# shellcheck source=wf-states.sh
+source "$SELF_DIR/wf-states.sh"
 
 watch_mode=false
 watch_secs=10
@@ -150,29 +152,28 @@ render() {
   fi
 
   # ── Pipeline histogram ───────────────────────────────────────────────
-  # One pass, not one pass per state (see counts= below). The two terminal
-  # states are tracked too — an abandoned plan appearing in no column at all
-  # is how a project ends up with plan folders nobody can account for
-  # (WFI-009).
-  local st_draft=0 st_ready=0 st_active=0 st_verify=0 st_testing=0 st_complete=0 st_abandoned=0
+  # One pass, not one pass per state (see counts= below). The terminal states
+  # are tracked too — a plan appearing in no column at all is how a project
+  # ends up with plan folders nobody can account for (WFI-009).
+  #
+  # The list comes from wf-states.sh rather than being written out again here,
+  # because the copy that used to live here had already drifted: `rolled-back`
+  # was added to the pipeline and never to the board, so a rolled-back plan was
+  # in exactly the accounting hole WFI-009 describes.
+  local st_draft=0 st_ready=0 st_active=0 st_verify=0 st_testing=0
+  local st_complete=0 st_rolled_back=0 st_abandoned=0
   if [ -f "$REGISTRY" ]; then
-    local st n counts
+    local st n counts var
     counts=" $(awk -F'|' '
       function trim(x) { gsub(/^[ \t]+|[ \t]+$/, "", x); return x }
       /^\| PLN-/ { c[trim($4)]++ }
       END { for (s in c) printf "%s=%s ", s, c[s] }' "$REGISTRY")"
-    for st in draft ready active verify testing complete abandoned; do
+    for st in $WF_STATES; do
       n="${counts##* $st=}"
       if [ "$n" = "$counts" ]; then n=0; else n="${n%% *}"; fi
-      case "$st" in
-        draft)     st_draft="$n" ;;
-        ready)     st_ready="$n" ;;
-        active)    st_active="$n" ;;
-        verify)    st_verify="$n" ;;
-        testing)   st_testing="$n" ;;
-        complete)  st_complete="$n" ;;
-        abandoned) st_abandoned="$n" ;;
-      esac
+      # `rolled-back` is not a legal variable name; the rest map straight over.
+      var="st_${st//-/_}"
+      printf -v "$var" '%s' "$n"
     done
   fi
 
@@ -233,10 +234,11 @@ render() {
     [ "$release_field" -lt 0 ] 2>/dev/null && release_field="-"
     local deploy_field="$deploy_pending"
     [ "$deploy_field" -lt 0 ] 2>/dev/null && deploy_field="-"
-    printf 'daemon=%s\tenabled=%s\tspawns=%s/%s\trunning=%s\tgates=%s\tgates_stuck=%s\tgates_blocked=%s\tdraft=%s\tready=%s\tactive=%s\tverify=%s\ttesting=%s\tcomplete=%s\tabandoned=%s\tregistry=%s\tattn=%s\trelease_pending=%s\tdeploy_pending=%s\n' \
+    printf 'daemon=%s\tenabled=%s\tspawns=%s/%s\trunning=%s\tgates=%s\tgates_stuck=%s\tgates_blocked=%s\tdraft=%s\tready=%s\tactive=%s\tverify=%s\ttesting=%s\tcomplete=%s\trolled_back=%s\tabandoned=%s\tregistry=%s\tattn=%s\trelease_pending=%s\tdeploy_pending=%s\n' \
       "$daemon_raw" "$enabled" "$budget_used" "$budget_max" \
       "$running_n" "$gates_n" "$gates_stuck" "$gates_blocked" \
-      "$st_draft" "$st_ready" "$st_active" "$st_verify" "$st_testing" "$st_complete" "$st_abandoned" \
+      "$st_draft" "$st_ready" "$st_active" "$st_verify" "$st_testing" \
+      "$st_complete" "$st_rolled_back" "$st_abandoned" \
       "$registry_field" "$attn" "$release_field" "$deploy_field"
     return
   fi
@@ -298,13 +300,14 @@ render() {
   # ── Pipeline ────────────────────────────────────────────────────────
   printf '%s\n' "${B}PIPELINE${R}"
   if [ -f "$REGISTRY" ]; then
-    printf '  %-9s %s\n' "draft" "$st_draft"
-    printf '  %-9s %s\n' "ready" "$st_ready"
-    printf '  %-9s %s\n' "active" "$st_active"
-    printf '  %-9s %s\n' "verify" "$st_verify"
-    printf '  %-9s %s\n' "testing" "$st_testing"
-    printf '  %s%-9s %s%s\n' "$DIM" "complete" "$st_complete" "$R"
-    printf '  %s%-9s %s%s\n' "$DIM" "abandoned" "$st_abandoned" "$R"
+    printf '  %-11s %s\n' "draft" "$st_draft"
+    printf '  %-11s %s\n' "ready" "$st_ready"
+    printf '  %-11s %s\n' "active" "$st_active"
+    printf '  %-11s %s\n' "verify" "$st_verify"
+    printf '  %-11s %s\n' "testing" "$st_testing"
+    printf '  %s%-11s %s%s\n' "$DIM" "complete" "$st_complete" "$R"
+    printf '  %s%-11s %s%s\n' "$DIM" "rolled-back" "$st_rolled_back" "$R"
+    printf '  %s%-11s %s%s\n' "$DIM" "abandoned" "$st_abandoned" "$R"
     if [ "$release_pending" -ge 0 ] 2>/dev/null; then
       if [ "$release_pending" -gt 0 ]; then
         printf '  %s%-9s %s%s\n' "$YEL" "release" "$release_pending" "$R"
