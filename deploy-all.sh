@@ -162,6 +162,7 @@ fi
 # Exactly the ones recorded, and only after every client has been written —
 # restarting one early would put a fresh daemon back onto a harness the loop
 # has not finished replacing.
+RESTART_FRAGILE=false
 if [ -s "$SUSPEND_STATE" ]; then
     echo "Restarting the daemon(s) this deploy stopped:"
     while IFS= read -r p; do
@@ -171,7 +172,18 @@ if [ -s "$SUSPEND_STATE" ]; then
             continue
         fi
         log="$p/.claude/orchestrator/daemon.log"
-        (cd "$p" && nohup scripts/wf-exec.sh wf-orchestrate.sh --daemon >> "$log" 2>&1 &) || true
+        # A new SESSION where one can be had, not just nohup. nohup only blocks
+        # SIGHUP; the restarted daemon stays in this script's process group, so
+        # whatever tears that group down later takes the daemon with it. Running
+        # this deploy from an agent's shell is exactly that case — the daemon
+        # restored here was killed nine minutes on, when the tool call that ran
+        # the deploy was reaped, long after the check below had passed.
+        if command -v setsid >/dev/null 2>&1; then
+            (cd "$p" && setsid nohup scripts/wf-exec.sh wf-orchestrate.sh --daemon >> "$log" 2>&1 &) || true
+        else
+            (cd "$p" && nohup scripts/wf-exec.sh wf-orchestrate.sh --daemon >> "$log" 2>&1 &) || true
+            RESTART_FRAGILE=true
+        fi
         # Verify rather than trust: `nohup … &` returns 0 whether or not the
         # daemon survives its own startup checks (a disabled orchestrator, a
         # pidfile it refuses to take over). Reporting "restarted" over a daemon
@@ -185,6 +197,13 @@ if [ -s "$SUSPEND_STATE" ]; then
         fi
     done < "$SUSPEND_STATE"
     rm -f "$SUSPEND_STATE"
+    if $RESTART_FRAGILE; then
+        echo -e "  ${YELLOW}No setsid on this system: each restarted daemon is still in this${NC}"
+        echo -e "  ${YELLOW}script's process group. If you ran this deploy from an agent or a${NC}"
+        echo -e "  ${YELLOW}wrapper that reaps its process tree, the daemon dies with it —${NC}"
+        echo -e "  ${YELLOW}re-check with 'wf-orchestrate.sh --daemon-status' a few minutes on,${NC}"
+        echo -e "  ${YELLOW}and start it from your own terminal if it is gone.${NC}"
+    fi
     echo ""
 fi
 
