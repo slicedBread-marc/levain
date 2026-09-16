@@ -96,7 +96,7 @@ by name (`wf-*`), never all skills, so a project's own hand-written skills stay 
 | `.claude/workflow.md` | Generated from `claude-md/workflow-snippet.md` |
 | `.claude/workflow-source` | The library path this harness was installed from — a fact about this machine, not about the repo. Untracked also means no checkout can delete it, which is what makes it usable as a recovery route (WFI-119) |
 | `.claude/on-implement-commit.sh`, `.claude/on-verify-trigger.sh` | Generated, templated with project config |
-| `scripts/v*/` | Generated snapshots — the bulk of the churn |
+| `scripts/gen/`, `scripts/current` | Generated snapshots — the bulk of the churn. Was `scripts/v*/` until v9.0.0; see [`atomic-deploy.md`](atomic-deploy.md) |
 | `scripts/wf-exec.sh`, `scripts/version-map.txt`, `scripts/wf-prune-versions.sh` | Generated |
 
 **Still tracked (repo state, not build output):**

@@ -1,22 +1,37 @@
 #!/usr/bin/env bash
 # wf-prune-versions.sh [--dry-run | --list]
 #
-# Manages the scripts/v*/ snapshots deployed in this project.
+# Manages the script snapshots deployed in this project.
+#
+# TWO THINGS ACCUMULATE HERE, AND THEY ARE NOT THE SAME THING.
+#
+#   GENERATIONS (v1.x, v2.00)  — what a plan's WF stamp pins. A generation is
+#     retained while any non-complete plan resolves to it, so an in-flight
+#     plan keeps the script contract it was specced under.
+#
+#   BUILDS (scripts/gen/<version>-<timestamp>/) — what a DEPLOY produces. Each
+#     is an immutable copy of every generation, published by one rename; a
+#     deploy never writes into one anything is resolving (docs/atomic-deploy.md).
+#     install.sh already keeps only the current build and the one before it, so
+#     these rarely need pruning by hand — but a client that has taken a deploy
+#     interrupted before its retention pass will have more.
 #
 # Modes:
-#   --list      Print status only: current workflow version, current folder,
-#               and which snapshot folders are still referenced by non-complete
-#               plans. Read-only; safe to run from any skill.
-#   --dry-run   Enumerate folders that would be removed (in-use = retained);
-#               no changes written.
+#   --list      Print status only: current workflow version, current build,
+#               current generation, and which generations are still referenced
+#               by non-complete plans. Read-only; safe to run from any skill.
+#   --dry-run   Enumerate what would be removed (in-use = retained); no changes.
 #   (default)   Dry-run preview, then prompt before deleting.
 #
-# In-use set:
+# In-use set (generations):
 #   1. For each non-complete plan in plans/REGISTRY.md, resolve its WF stamp
-#      to a script_folder via scripts/version-map.txt (same algorithm as
+#      to a generation via scripts/version-map.txt (same algorithm as
 #      scripts/wf-exec.sh). Empty WF → v1.x (legacy baseline).
-#   2. Resolve .claude/workflow-version → its script_folder ("current").
+#   2. Resolve .claude/workflow-version → its generation ("current").
 #   3. Always retain v1.x (baseline floor for legacy app plans).
+#
+# In-use set (builds): the one scripts/current names, and nothing else. A build
+# other than the published one is resolved by no caller, by construction.
 #
 # Unversioned — safe to run under any workflow version.
 
@@ -42,6 +57,9 @@ ROOT="$(find_project_root)" || { echo "wf-prune-versions.sh: cannot locate scrip
 MAP="$ROOT/scripts/version-map.txt"
 REGISTRY="$ROOT/plans/REGISTRY.md"
 WF_FILE="$ROOT/.claude/workflow-version"
+GEN_ROOT="$ROOT/scripts/gen"
+CURRENT_BUILD=""
+[ -f "$ROOT/scripts/current" ] && CURRENT_BUILD=$(tr -d '[:space:]' < "$ROOT/scripts/current")
 
 # ── Resolve a workflow version → script folder (highest min ≤ version). ──
 resolve_folder() {
@@ -94,23 +112,50 @@ for f in "${in_use[@]}"; do
   [ "$found" -eq 0 ] && unique_in_use+=("$f")
 done
 
-# ── Enumerate folders on disk ───────────────────────────────────────────
+# ── Enumerate what is on disk ───────────────────────────────────────────
+#
+# Generations inside the published build, plus any legacy pre-gen folder still
+# sitting at scripts/<label>/. Both are removable by the same rule, and a
+# legacy folder that is no longer in use is exactly what the v9.0.0 migration
+# leaves behind for this script to collect.
+GEN_BASE=""
+if [ -n "$CURRENT_BUILD" ] && [ -d "$GEN_ROOT/$CURRENT_BUILD" ]; then
+  GEN_BASE="$GEN_ROOT/$CURRENT_BUILD"
+fi
+
 on_disk=()
-for d in "$ROOT/scripts"/v*/; do
+for d in ${GEN_BASE:+"$GEN_BASE"/v*/} "$ROOT/scripts"/v*/; do
   [ -d "$d" ] || continue
-  on_disk+=("$(basename "$d")")
+  base=$(basename "$d")
+  case " ${on_disk[*]+${on_disk[*]}} " in *" $base "*) continue ;; esac
+  on_disk+=("$base")
+done
+
+# Stale builds: anything under scripts/gen/ that scripts/current does not name.
+stale_builds=()
+for d in "$GEN_ROOT"/*/; do
+  [ -d "$d" ] || continue
+  base=$(basename "$d")
+  [ "$base" = "$CURRENT_BUILD" ] && continue
+  stale_builds+=("$base")
 done
 
 # ── --list mode: print state and exit ───────────────────────────────────
 if [ "$MODE" = "--list" ]; then
-  echo "Workflow version: ${current_wf:-<unset>}"
-  echo "Current script folder: ${current_folder:-<none>}"
-  echo "Folders on disk:       ${on_disk[*]:-<none>}"
-  echo "Folders in use:        ${unique_in_use[*]}"
+  echo "Workflow version:  ${current_wf:-<unset>}"
+  echo "Current build:     ${CURRENT_BUILD:-<none — pre-v9.0.0 layout>}"
+  echo "Current generation: ${current_folder:-<none>}"
+  echo "Generations on disk: ${on_disk[*]:-<none>}"
+  echo "Generations in use:  ${unique_in_use[*]}"
+  echo "Stale builds:       ${stale_builds[*]:-<none>}"
   exit 0
 fi
 
 # ── Compute removable set ───────────────────────────────────────────────
+#
+# A generation is removable when no non-complete plan resolves to it. It is
+# removed from BOTH places it can sit: inside the published build, and at the
+# legacy scripts/<label>/ path a pre-v9.0.0 deploy left behind.
 removable=()
 for f in "${on_disk[@]}"; do
   keep=0
@@ -120,27 +165,41 @@ for f in "${on_disk[@]}"; do
   [ "$keep" -eq 0 ] && removable+=("$f")
 done
 
-if [ "${#removable[@]}" -eq 0 ]; then
-  echo "Nothing to prune. All ${#on_disk[@]} folder(s) on disk are in use or retained."
+if [ "${#removable[@]}" -eq 0 ] && [ "${#stale_builds[@]}" -eq 0 ]; then
+  echo "Nothing to prune. All ${#on_disk[@]} generation(s) on disk are in use or retained,"
+  echo "and scripts/gen/ holds only the published build."
   exit 0
 fi
 
-echo "Script folders on disk: ${on_disk[*]}"
-echo "In use (retained):      ${unique_in_use[*]}"
-echo "Removable:              ${removable[*]}"
+echo "Generations on disk: ${on_disk[*]:-<none>}"
+echo "In use (retained):   ${unique_in_use[*]}"
+echo "Removable:           ${removable[*]:-<none>}"
+[ "${#stale_builds[@]}" -gt 0 ] && echo "Stale builds:        ${stale_builds[*]}"
 
 if [ "$MODE" = "--dry-run" ]; then
   echo "(dry-run — no changes written)"
   exit 0
 fi
 
-printf "Remove %d folder(s) listed above? [y/N] " "${#removable[@]}"
+printf "Remove %d generation(s) and %d stale build(s)? [y/N] " \
+  "${#removable[@]}" "${#stale_builds[@]}"
 read -r ans
 case "$ans" in
   y|Y|yes|YES)
-    for f in "${removable[@]}"; do
-      rm -rf "$ROOT/scripts/$f"
-      echo "  removed scripts/$f"
+    for f in "${removable[@]+"${removable[@]}"}"; do
+      if [ -n "$GEN_BASE" ] && [ -d "$GEN_BASE/$f" ]; then
+        rm -rf "$GEN_BASE/$f"
+        echo "  removed scripts/gen/$CURRENT_BUILD/$f"
+      fi
+      if [ -d "$ROOT/scripts/$f" ]; then
+        rm -rf "$ROOT/scripts/$f"
+        echo "  removed legacy scripts/$f"
+      fi
+    done
+    # Never the published build: it is the one thing every caller resolves.
+    for b in "${stale_builds[@]+"${stale_builds[@]}"}"; do
+      rm -rf "$GEN_ROOT/$b"
+      echo "  removed scripts/gen/$b"
     done
     echo "Done."
     ;;

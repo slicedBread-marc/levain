@@ -7,9 +7,14 @@
 #   2. WF column in plans/REGISTRY.md for the first PLN-looking arg
 #   3. .claude/workflow-version (current workflow)
 #
-# The resolved workflow version is mapped to a script folder via
+# The resolved workflow version is mapped to a generation label via
 # scripts/version-map.txt — the highest row whose min_workflow_version
 # is <= the effective version wins. Missing/empty version is treated as 0.00.
+#
+# The label is then resolved to a directory through scripts/current, which
+# names the published build under scripts/gen/. A deploy never writes into a
+# build anything is resolving; it builds elsewhere and rewrites that one line.
+# docs/atomic-deploy.md.
 #
 # This dispatcher is unversioned; it lives at scripts/wf-exec.sh on every
 # client. Changing it is a coordinated breaking change.
@@ -129,7 +134,36 @@ if [ -z "$script_folder" ]; then
   exit 1
 fi
 
-target="$ROOT/scripts/$script_folder/$script_name"
+# ── Resolve the generation label to a directory on disk ──────────────────
+#
+# The label (v2.00) is a GENERATION, not a path. Since v9.0.0 a deploy builds
+# into scripts/gen/<build id>/ — immutable from the moment it is named — and
+# publishes it by writing one line to scripts/current. So a caller mid-run
+# keeps resolving a complete, self-consistent harness while a deploy replaces
+# it, and the next caller gets the new one. Before that, deploy rewrote the
+# folder in place and a sweep landing inside the write window read a
+# half-replaced harness (coordinator WFI-003). See docs/atomic-deploy.md.
+#
+# The legacy fallback is not dead code. install.sh flips scripts/current
+# BEFORE it replaces this dispatcher, so on a client's first gen-era deploy an
+# old wf-exec.sh — which knows nothing of scripts/current — has to resolve the
+# legacy folder, and that folder is still the old harness, whole. It is also
+# what answers for a client that has not been redeployed at all.
+build=""
+[ -f "$ROOT/scripts/current" ] && build=$(tr -d '[:space:]' < "$ROOT/scripts/current")
+
+script_dir=""
+if [ -n "$build" ] && [ -d "$ROOT/scripts/gen/$build/$script_folder" ]; then
+  script_dir="$ROOT/scripts/gen/$build/$script_folder"
+elif [ -d "$ROOT/scripts/$script_folder" ]; then
+  script_dir="$ROOT/scripts/$script_folder"
+else
+  echo "wf-exec.sh: no directory on disk for generation '$script_folder'" >&2
+  echo "            (build '${build:-none}' in $ROOT/scripts) — run deploy-all.sh to reinstall" >&2
+  exit 1
+fi
+
+target="$script_dir/$script_name"
 if [ ! -x "$target" ]; then
   echo "wf-exec.sh: $target is missing or not executable — run deploy-all.sh to reinstall" >&2
   exit 1

@@ -1002,7 +1002,7 @@ section "Deployed entry-point contract"
 WF_TMPL="$LIB_ROOT/templates/WORKFLOW.md"
 assert_ok "templates/WORKFLOW.md exists" test -f "$WF_TMPL"
 assert_eq "install.sh generates it into the client root" "true" \
-  "$(grep -q 'templates/WORKFLOW.md" > "$TARGET_DIR/WORKFLOW.md"' "$LIB_ROOT/install.sh" && echo true || echo false)"
+  "$(grep -q 'templates/WORKFLOW.md" | atomic_write "$TARGET_DIR/WORKFLOW.md"' "$LIB_ROOT/install.sh" && echo true || echo false)"
 assert_eq "install.sh substitutes both placeholders" "true" \
   "$(grep -q '{{workflow_version}}' "$LIB_ROOT/install.sh" && grep -q '{{project_slug}}' "$LIB_ROOT/install.sh" && echo true || echo false)"
 

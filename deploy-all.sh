@@ -4,25 +4,33 @@
 #
 # Installs this library into every client listed in deployments.txt.
 #
-# A DEPLOY MUST NOT REPLACE THE HARNESS UNDER A RUNNING DAEMON
+# DEPLOYING UNDER A RUNNING DAEMON IS SAFE AS OF v9.0.0
 #
-# install.sh rewrites scripts/v*/ and .claude/skills/wf-*/ in place. An
-# orchestrator daemon sweeps out of those same directories every 60s and
-# re-reads wf-orchestrate.sh and wf-orch-lib.sh as it goes, so a sweep landing
-# inside the write window reads a half-replaced script folder. Nothing errors
-# at deploy time; what it produces is confusing dispatch behaviour an hour
-# later, attributed to anything but the deploy. The 8.3.0 → 8.6.0 deploy ran
-# with client-b' daemon live and survived, which is luck, not a guarantee
-# (coordinator WFI-003).
+# It was not before. install.sh rewrote scripts/v*/ and .claude/skills/wf-*/ in
+# place; an orchestrator daemon sweeps out of those same directories every 60s
+# and re-reads wf-orchestrate.sh and wf-orch-lib.sh as it goes, so a sweep
+# landing inside the write window read a half-replaced script folder. Nothing
+# errored at deploy time; what it produced was confusing dispatch behaviour an
+# hour later, attributed to anything but the deploy. The 8.3.0 → 8.6.0 deploy
+# ran with client-b' daemon live and survived, which was luck (coordinator WFI-003).
 #
-# So this checks first, using each client's own .claude/orchestrator/daemon.pid
-# rather than asking its harness anything — that stays truthful for a client
-# whose harness is broken, half-deployed, or too old to answer.
+# So this used to refuse. It no longer needs to: a deploy now builds into
+# scripts/gen/<build id>/ — a directory nothing resolves until it is complete —
+# and publishes it by rewriting one line in scripts/current. Every other
+# generated file is written through a temp-and-rename. A sweep sees either the
+# whole old harness or the whole new one. docs/atomic-deploy.md.
 #
-#   (default)         refuse while any daemon is live, naming them
+#   (default)         deploy, daemons and all
 #   --stop-daemons    stop them, deploy, then restart exactly the ones that
-#                     were stopped
-#   --force           deploy anyway, daemons and all. Says what it is doing.
+#                     were stopped. Nothing needs this for the script folder
+#                     any more; it remains for a change a daemon caches beyond
+#                     it, and for anyone who wants a cold start.
+#   --force           accepted, does nothing. It named the old default.
+#
+# The live-daemon scan below is kept as REPORTING. Knowing which clients were
+# dispatching during a deploy is worth a line of output even when it is safe —
+# and it stays truthful for a client whose harness is broken, half-deployed or
+# too old to answer, because it reads the pidfile rather than asking.
 #
 set -euo pipefail
 
@@ -42,7 +50,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --stop-daemons) stop_daemons=true; shift ;;
         --force)        force=true; shift ;;
-        -h|--help)      sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)      sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "deploy-all.sh: unknown option '$1' — see --help" >&2; exit 1 ;;
     esac
 done
@@ -91,12 +99,13 @@ done
 # turn the restore into a no-op that leaves every daemon off (coordinator WFI-003).
 SUSPEND_STATE="${WF_SUSPEND_STATE:-$SCRIPT_DIR/.deploy-suspended-daemons}"
 
+if $force; then
+    echo -e "${YELLOW}--force does nothing now — deploying under a live daemon is the default.${NC}"
+    echo ""
+fi
+
 if [ "${#LIVE[@]}" -gt 0 ]; then
-    if $force; then
-        echo -e "${RED}--force: deploying with ${#LIVE[@]} daemon(s) still sweeping.${NC}"
-        echo "        A sweep landing mid-write reads a half-replaced script folder."
-        echo ""
-    elif $stop_daemons; then
+    if $stop_daemons; then
         for p in "${LIVE[@]}"; do
             echo "  stopping daemon in $p"
             (cd "$p" && scripts/wf-exec.sh wf-orchestrate.sh --stop) || \
@@ -105,19 +114,10 @@ if [ "${#LIVE[@]}" -gt 0 ]; then
         done
         echo ""
     else
+        # Reported, not refused. Each of these keeps sweeping the build it
+        # already resolved, and takes the new one on its next dispatch.
+        echo "  ${#LIVE[@]} daemon(s) left running — they pick up the new build on their next sweep."
         echo ""
-        echo -e "${RED}Refusing to deploy while ${#LIVE[@]} orchestrator daemon(s) are running.${NC}"
-        echo "install.sh rewrites the script folder a daemon is sweeping out of; a sweep"
-        echo "landing inside that window reads a half-replaced harness (coordinator WFI-003)."
-        echo ""
-        echo "Either:"
-        echo "  ./deploy-all.sh --stop-daemons     stop them, deploy, restart exactly those"
-        echo "  ./deploy-all.sh --force            deploy anyway"
-        echo "Or stop them yourself:"
-        for p in "${LIVE[@]}"; do
-            echo "  (cd $p && scripts/wf-exec.sh wf-orchestrate.sh --stop)"
-        done
-        exit 1
     fi
 fi
 

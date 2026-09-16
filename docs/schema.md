@@ -109,7 +109,7 @@ Only develop carries it. `wf-worktree-sparse.sh` excludes `plans/**` from every 
 
 The `Priority` column is optional per-plan. Default value is `—` (normal). Set to `urgent` to surface plans at the top of workable item menus. Use `scripts/wf-set-priority.sh <plan-id> urgent` to mark a plan urgent, or `scripts/wf-set-priority.sh <plan-id> —` to clear it.
 
-The `WF` column stamps the workflow version the plan was spec'd against. `scripts/wf-exec.sh` uses it to dispatch to the matching `scripts/v*/` snapshot (see `scripts/version-map.txt`), so a plan keeps running the scripts it was built against. Empty WF routes to `v1.x` (pre-v2.00 baseline).
+The `WF` column stamps the workflow version the plan was spec'd against. `scripts/wf-exec.sh` uses it to dispatch to the matching generation (see `scripts/version-map.txt`, and `docs/atomic-deploy.md` for where that generation sits on disk), so a plan keeps running the scripts it was built against. Empty WF routes to `v1.x` (pre-v2.00 baseline).
 
 The `Tags` column holds comma-separated category tags (no spaces). Default `—`. Use `scripts/wf-set-tags.sh <plan-id> <tags>` to set, and `scripts/wf-list-tags.sh` to read the vocabulary.
 

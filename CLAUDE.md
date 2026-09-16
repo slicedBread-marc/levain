@@ -42,11 +42,22 @@ project's own counter and the report still lands in its own `bugs/open/`. Read
 
 ### The client copy of the harness is generated
 
-Everything `deploy-all.sh` writes into a client — `scripts/v*/`, `.claude/skills/wf-*/`,
+Everything `deploy-all.sh` writes into a client — `scripts/gen/`, `.claude/skills/wf-*/`,
 `.claude/workflow.md`, the hooks — is **gitignored there** as of v5.0.0. The library is the
 source of truth; the client copy is build output. A client's own config
 (`claude-workflow.yml`), its `WORKFLOW.md`, its `.claude/workflow-version` stamp and all of
 `plans/` + `bugs/` stay tracked. See [`docs/untracked-harness.md`](docs/untracked-harness.md).
+
+### A deploy never writes a path something is running
+
+As of v9.0.0 an install builds into `scripts/gen/<version>-<timestamp>/` — a directory
+nothing resolves until it is complete — and publishes it by rewriting one line in
+`scripts/current`. Every other generated file goes through a temp-and-rename. So a caller
+mid-run keeps a whole, self-consistent harness and the next call gets the new one, which is
+why `deploy-all.sh` no longer refuses to run while an orchestrator daemon is sweeping
+(coordinator WFI-003). Read [`docs/atomic-deploy.md`](docs/atomic-deploy.md) before changing the
+install's write order, the pointer, or the retention rule — the flip's position relative to
+the dispatcher replacement is load-bearing, and so is the legacy fallback in `wf-exec.sh`.
 
 ### Inbound: workflow issues from clients
 

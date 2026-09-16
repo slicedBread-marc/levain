@@ -22,6 +22,110 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# ── Atomic writes ────────────────────────────────────────────────────────────
+#
+# NO PATH A RUNNING PROCESS RESOLVES IS EVER WRITTEN TWICE.
+#
+# This installer used to render every generated file with a plain `>`, which
+# truncates the destination and then fills it. For the length of that loop the
+# client's script folder is a mixture of two harnesses and each file in it is
+# briefly zero bytes. An orchestrator daemon sweeps out of that same folder
+# every 60s; a sweep landing in the window reads a half-replaced harness, says
+# nothing, and misbehaves an hour later (coordinator WFI-003). Every guard in
+# deploy-all.sh existed to keep callers out of that window.
+#
+# A write to `$dest.wftmp.$$` followed by `mv` over `$dest` is a rename(2):
+# atomic, so a reader sees either the whole old file or the whole new one and
+# never a third thing. Same directory, so it never crosses a filesystem.
+#
+# This works because $dest is a REGULAR FILE. It would not work for a symlink —
+# BSD `mv` dereferences a destination that points at a directory and moves the
+# source *inside* it, silently. That is why scripts/current is a file and not a
+# symlink; see docs/atomic-deploy.md.
+atomic_write() {
+    # atomic_write <dest>   — content on stdin
+    local dest="$1" tmp="$1.wftmp.$$"
+    cat > "$tmp" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$dest"
+}
+
+atomic_install() {
+    # atomic_install <src> <dest> [mode]
+    local src="$1" dest="$2" mode="${3:-}" tmp="$2.wftmp.$$"
+    cp "$src" "$tmp" || { rm -f "$tmp"; return 1; }
+    [ -n "$mode" ] && chmod "$mode" "$tmp"
+    mv -f "$tmp" "$dest"
+}
+
+# ── Build identity ───────────────────────────────────────────────────────────
+#
+# Every deploy produces a directory name that has never existed, so the build
+# can be published by a single rename with no destination to displace. Without
+# the timestamp, re-deploying the same workflow version — the common case while
+# developing the library — would have to overwrite a live folder, which is the
+# exact thing this design removes.
+WORKFLOW_VERSION=$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+BUILD_ID="$WORKFLOW_VERSION-$(date -u +%Y%m%d%H%M%S)"
+
+GEN_ROOT="$TARGET_DIR/scripts/gen"
+GEN_STAGE="$GEN_ROOT/.building.$$"
+CURRENT_FILE="$TARGET_DIR/scripts/current"
+PREV_BUILD=""
+
+gen_stage_begin() {
+    # A staging directory nothing resolves. Torn down on any exit before the
+    # publish, so a failed install leaves no partial build behind for the
+    # retention pass to have an opinion about.
+    rm -rf "$GEN_STAGE"
+    mkdir -p "$GEN_STAGE"
+    trap 'rm -rf "$GEN_STAGE"' EXIT
+}
+
+gen_publish() {
+    # Publish the staged build, then flip the pointer. THE FLIP DELIBERATELY
+    # PRECEDES the replacement of wf-exec.sh and version-map.txt in both
+    # install paths — see docs/atomic-deploy.md, "Flip order". Reversing it
+    # pairs a new dispatcher with a pointer that still names the outgoing
+    # build, which is the one combination that does not resolve.
+    [ -e "$GEN_ROOT/$BUILD_ID" ] && rm -rf "$GEN_ROOT/$BUILD_ID"
+    mv "$GEN_STAGE" "$GEN_ROOT/$BUILD_ID"
+    trap - EXIT
+
+    [ -f "$CURRENT_FILE" ] && PREV_BUILD=$(tr -d '[:space:]' < "$CURRENT_FILE")
+    printf '%s\n' "$BUILD_ID" | atomic_write "$CURRENT_FILE"
+    echo -e "${GREEN}  Published scripts/gen/$BUILD_ID and flipped scripts/current${NC}"
+}
+
+gen_retire() {
+    # Keep the new build and the one it replaced, and nothing older. Two is
+    # ample: a daemon re-resolves through wf-exec.sh on every sweep, so the
+    # only thing holding a build open is a script subprocess already running,
+    # and those last seconds. Keeping the previous build removes the window
+    # where such a subprocess spawns a sibling out of a folder just deleted.
+    local d base
+    for d in "$GEN_ROOT"/*/; do
+        [ -d "$d" ] || continue
+        base=$(basename "$d")
+        [ "$base" = "$BUILD_ID" ] && continue
+        [ -n "$PREV_BUILD" ] && [ "$base" = "$PREV_BUILD" ] && continue
+        case "$base" in .building.*) ;; *) echo -e "${YELLOW}  Retired scripts/gen/$base${NC}" ;; esac
+        rm -rf "$d"
+    done
+
+    # Legacy pre-gen folders. NOT removed by the deploy that introduces gen/ —
+    # they are what an old dispatcher still mid-run resolves through, and a
+    # process that started before the flip may yet spawn a sibling out of one.
+    # A non-empty PREV_BUILD means this client was already gen-era before this
+    # install began, so by now nothing can be resolving them.
+    if [ -n "$PREV_BUILD" ]; then
+        for d in "$TARGET_DIR/scripts"/v*/; do
+            [ -d "$d" ] || continue
+            rm -rf "$d"
+            echo -e "${YELLOW}  Removed legacy scripts/$(basename "$d")/ — superseded by scripts/gen/${NC}"
+        done
+    fi
+}
+
 echo "claude-workflow installer"
 echo "========================"
 echo ""
@@ -124,7 +228,6 @@ if [ "$ROLE" = "coordinator" ]; then
     echo -e "${GREEN}Role: coordinator${NC} — filing capability only, no pipeline"
     echo ""
 
-    WORKFLOW_VERSION=$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
     mkdir -p "$TARGET_DIR/.claude" "$TARGET_DIR/scripts"
 
     # The slice a coordinator gets. Everything here is either a filing path or
@@ -136,6 +239,12 @@ if [ "$ROLE" = "coordinator" ]; then
     COORD_SCRIPTS="wf-orch-lib.sh wf-lock.sh wf-dep-notify.sh wf-dep-bug.sh wf-issue.sh"
 
     echo "Installing scripts..."
+    # Built into a staging directory nothing resolves, then published and
+    # flipped in one move. The slice is subtractive by construction now: a
+    # build starts empty, so a coordinator can no longer inherit a stale
+    # pipeline script from a former client install by the deploy simply
+    # failing to notice it.
+    gen_stage_begin
     COORD_FOLDERS=""
     for version_dir in "$SCRIPT_DIR/scripts"/v*/; do
         [ -d "$version_dir" ] || continue
@@ -146,7 +255,7 @@ if [ "$ROLE" = "coordinator" ]; then
         [ -f "$version_dir/wf-dep-notify.sh" ] || continue
         folder_name=$(basename "$version_dir")
         COORD_FOLDERS="$COORD_FOLDERS $folder_name"
-        DEST_VDIR="$TARGET_DIR/scripts/$folder_name"
+        DEST_VDIR="$GEN_STAGE/$folder_name"
         mkdir -p "$DEST_VDIR"
         for name in $COORD_SCRIPTS; do
             [ -f "$version_dir/$name" ] || continue
@@ -156,17 +265,7 @@ if [ "$ROLE" = "coordinator" ]; then
                 "$version_dir/$name" > "$DEST_VDIR/$name"
         done
         chmod +x "$DEST_VDIR"/*.sh 2>/dev/null || true
-
-        # Prune anything outside the slice — including the full harness left
-        # behind by a client install that was later re-declared a coordinator.
-        for existing in "$DEST_VDIR"/wf-*.sh; do
-            [ -f "$existing" ] || continue
-            base="${existing##*/}"
-            case " $COORD_SCRIPTS " in *" $base "*) continue ;; esac
-            rm -f "$existing"
-            echo -e "${YELLOW}  Removed scripts/$folder_name/$base — not part of a coordinator install${NC}"
-        done
-        echo -e "${GREEN}  Installed scripts/$folder_name/ ($(ls "$DEST_VDIR" | wc -l | tr -d ' ') scripts)${NC}"
+        echo -e "${GREEN}  Staged $folder_name/ ($(ls "$DEST_VDIR" | wc -l | tr -d ' ') scripts)${NC}"
     done
 
     if [ -z "$COORD_FOLDERS" ]; then
@@ -175,28 +274,40 @@ if [ "$ROLE" = "coordinator" ]; then
         exit 1
     fi
 
-    # Whole generations the coordinator slice does not use.
-    for existing_dir in "$TARGET_DIR/scripts"/v*/; do
-        [ -d "$existing_dir" ] || continue
-        base=$(basename "$existing_dir")
-        case " $COORD_FOLDERS " in *" $base "*) continue ;; esac
-        rm -rf "$existing_dir"
-        echo -e "${YELLOW}  Removed scripts/$base/ — no filing path in that generation${NC}"
-    done
+    gen_publish
 
     for f in wf-exec.sh wf-prune-versions.sh; do
-        cp "$SCRIPT_DIR/scripts/$f" "$TARGET_DIR/scripts/$f"
-        chmod +x "$TARGET_DIR/scripts/$f"
+        atomic_install "$SCRIPT_DIR/scripts/$f" "$TARGET_DIR/scripts/$f" +x
     done
-    cp "$SCRIPT_DIR/scripts/version-map.txt" "$TARGET_DIR/scripts/version-map.txt"
+    atomic_install "$SCRIPT_DIR/scripts/version-map.txt" "$TARGET_DIR/scripts/version-map.txt"
     echo -e "${GREEN}  Installed scripts/wf-exec.sh + version-map.txt${NC}"
+
+    gen_retire
+
+    # Legacy pre-gen folders that gen_retire deliberately leaves standing on the
+    # first gen-era deploy. A coordinator cannot be left carrying a full
+    # pipeline harness for a whole deploy cycle just because the fallback path
+    # wants those folders intact — "a pipeline script here looks current, and
+    # the only reason to withhold it is that running it is a bad idea" is the
+    # rule the whole coordinator slice is built on. So the folders stay and
+    # their contents are cut back to the slice.
+    for existing_dir in "$TARGET_DIR/scripts"/v*/; do
+        [ -d "$existing_dir" ] || continue
+        for existing in "$existing_dir"wf-*.sh; do
+            [ -f "$existing" ] || continue
+            base="${existing##*/}"
+            case " $COORD_SCRIPTS " in *" $base "*) continue ;; esac
+            rm -f "$existing"
+            echo -e "${YELLOW}  Removed legacy $(basename "$existing_dir")/$base — not part of a coordinator install${NC}"
+        done
+    done
 
     # The one skill: how to file into the projects this one coordinates.
     echo "Installing skills..."
     COORD_SKILL_DIR="$TARGET_DIR/.claude/skills/wf-dep-notify"
     mkdir -p "$COORD_SKILL_DIR"
     sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
-        "$SCRIPT_DIR/skills/wf-dep-notify/SKILL.md" > "$COORD_SKILL_DIR/SKILL.md"
+        "$SCRIPT_DIR/skills/wf-dep-notify/SKILL.md" | atomic_write "$COORD_SKILL_DIR/SKILL.md"
     echo -e "${GREEN}  Installed /wf-dep-notify${NC}"
 
     # Pipeline skills from a former client install. Left in place they are
@@ -209,8 +320,8 @@ if [ "$ROLE" = "coordinator" ]; then
         echo -e "${YELLOW}  Removed /$(basename "$stale") — pipeline skill, not installed on a coordinator${NC}"
     done
 
-    echo "$WORKFLOW_VERSION" > "$TARGET_DIR/.claude/workflow-version"
-    echo "$SCRIPT_DIR" > "$TARGET_DIR/.claude/workflow-source"
+    printf '%s\n' "$WORKFLOW_VERSION" | atomic_write "$TARGET_DIR/.claude/workflow-version"
+    printf '%s\n' "$SCRIPT_DIR" | atomic_write "$TARGET_DIR/.claude/workflow-source"
     echo -e "${GREEN}  Stamped workflow version $WORKFLOW_VERSION → .claude/workflow-version${NC}"
 
     # The entry contract. A coordinator's version describes the pipelines it
@@ -218,7 +329,7 @@ if [ "$ROLE" = "coordinator" ]; then
     # so it cannot drift from the harness the coordinated projects are running.
     sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
         -e "s|{{workflow_version}}|$WORKFLOW_VERSION|g" \
-        "$SCRIPT_DIR/templates/WORKFLOW-coordinator.md" > "$TARGET_DIR/WORKFLOW.md"
+        "$SCRIPT_DIR/templates/WORKFLOW-coordinator.md" | atomic_write "$TARGET_DIR/WORKFLOW.md"
     echo -e "${GREEN}  Installed WORKFLOW.md (coordinator entry point)${NC}"
 
     if [ ! -f "$TARGET_DIR/WORKFLOW-ISSUES.md" ]; then
@@ -245,6 +356,8 @@ if [ "$ROLE" = "coordinator" ]; then
         "scripts/version-map.txt" \
         "scripts/wf-prune-versions.sh" \
         "scripts/v*/" \
+        "scripts/gen/" \
+        "scripts/current" \
         ".claude/orchestrator/" ; do
         if ! grep -qxF "$pattern" "$GITIGNORE" 2>/dev/null; then
             echo "$pattern" >> "$GITIGNORE"
@@ -535,7 +648,7 @@ for skill_dir in "$SCRIPT_DIR/skills"/*/; do
         -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
         -e "s|{{production_logs_url}}|$PRODUCTION_LOGS_URL|g" \
         -e "s|{{production_url}}|$PRODUCTION_URL|g" \
-        "$skill_dir/SKILL.md" > "$DEST_DIR/SKILL.md"
+        "$skill_dir/SKILL.md" | atomic_write "$DEST_DIR/SKILL.md"
 
     echo -e "${GREEN}  Installed /$(basename "$skill_dir")${NC}"
 done
@@ -546,7 +659,7 @@ if [ -n "$LOCAL_DEPLOY" ]; then
         -e "s|{{local_deploy_command}}|$LOCAL_DEPLOY|g" \
         -e "s|{{local_stop_command}}|$LOCAL_STOP|g" \
         -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
-        "$SCRIPT_DIR/templates/on-implement-commit.sh" > "$TARGET_DIR/.claude/on-implement-commit.sh"
+        "$SCRIPT_DIR/templates/on-implement-commit.sh" | atomic_write "$TARGET_DIR/.claude/on-implement-commit.sh"
     chmod +x "$TARGET_DIR/.claude/on-implement-commit.sh"
     echo -e "${GREEN}  Installed .claude/on-implement-commit.sh${NC}"
 
@@ -563,8 +676,7 @@ else
 fi
 
 # Install verify trigger script (always — verify agent is core to the pipeline)
-cp "$SCRIPT_DIR/templates/on-verify-trigger.sh" "$TARGET_DIR/.claude/on-verify-trigger.sh"
-chmod +x "$TARGET_DIR/.claude/on-verify-trigger.sh"
+atomic_install "$SCRIPT_DIR/templates/on-verify-trigger.sh" "$TARGET_DIR/.claude/on-verify-trigger.sh" +x
 echo -e "${GREEN}  Installed .claude/on-verify-trigger.sh${NC}"
 
 # Gitignore verify runtime files
@@ -602,7 +714,9 @@ for pattern in \
     "scripts/wf-exec.sh" \
     "scripts/version-map.txt" \
     "scripts/wf-prune-versions.sh" \
-    "scripts/v*/" ; do
+    "scripts/v*/" \
+    "scripts/gen/" \
+    "scripts/current" ; do
     if ! grep -qxF "$pattern" "$GITIGNORE" 2>/dev/null; then
         echo "$pattern" >> "$GITIGNORE"
         HARNESS_IGNORED=$((HARNESS_IGNORED + 1))
@@ -619,7 +733,8 @@ if [ "$HARNESS_IGNORED" -gt 0 ]; then
         echo "    git rm -r --cached --quiet --ignore-unmatch \\"
         echo "      .claude/skills/wf-* .claude/workflow.md \\"
         echo "      .claude/on-implement-commit.sh .claude/on-verify-trigger.sh \\"
-        echo "      scripts/wf-exec.sh scripts/version-map.txt scripts/wf-prune-versions.sh scripts/v*"
+        echo "      scripts/wf-exec.sh scripts/version-map.txt scripts/wf-prune-versions.sh \\"
+        echo "      scripts/v* scripts/gen scripts/current"
         echo "    git commit -m 'chore: stop tracking the generated workflow harness'"
     fi
 fi
@@ -869,18 +984,23 @@ if [ -f "$REGISTRY_DEST" ] \
     echo "    git add plans/REGISTRY.md && git commit -m 'chore: track the plan registry'"
 fi
 
-# Install workflow scripts — versioned layout (v2.0+).
-# Each scripts/v*/ in the library is a complete, frozen snapshot. The
-# unversioned dispatcher (scripts/wf-exec.sh) routes plans to the right
-# snapshot via scripts/version-map.txt.
+# Install workflow scripts — immutable builds (v9.0+).
+#
+# Each scripts/v*/ in the library is a complete, frozen snapshot, and the
+# unversioned dispatcher (scripts/wf-exec.sh) routes plans to the right one via
+# scripts/version-map.txt. That much is unchanged. What changed in v9.0.0 is
+# WHERE the client's copy lands: a build directory named for this deploy, which
+# is published by one rename and then never written again. Nothing resolves it
+# until scripts/current is flipped. See docs/atomic-deploy.md.
 echo "Installing scripts..."
 mkdir -p "$TARGET_DIR/scripts"
+gen_stage_begin
 
-# Template each versioned snapshot.
+# Template each versioned snapshot into the staging build.
 for version_dir in "$SCRIPT_DIR/scripts"/v*/; do
     [ -d "$version_dir" ] || continue
     folder_name=$(basename "$version_dir")
-    DEST_VDIR="$TARGET_DIR/scripts/$folder_name"
+    DEST_VDIR="$GEN_STAGE/$folder_name"
     mkdir -p "$DEST_VDIR"
     for script in "$version_dir"/wf-*.sh; do
         [ -f "$script" ] || continue
@@ -894,35 +1014,30 @@ for version_dir in "$SCRIPT_DIR/scripts"/v*/; do
             "$script" > "$DEST"
     done
     chmod +x "$DEST_VDIR"/*.sh 2>/dev/null || true
-
-    # Prune scripts this version no longer ships.
-    #
-    # scripts/v*/ is generated — everything in it was written by this loop — so
-    # a wf-*.sh the source folder does not have is residue from an older
-    # harness, and deploy had no way to remove one. wf-infra-sync.sh was
-    # deleted from the library in v5.0.0 (its whole job was committing
-    # develop's own bytes onto a feature branch, the WFI-021 shape) and four
-    # clients were still carrying the August copy at v6.7.0. A stale script is
-    # not inert: it is on PATH-adjacent disk, it looks current, and the one
-    # thing anybody deletes a script for is that running it is a bad idea.
-    for existing in "$DEST_VDIR"/wf-*.sh; do
-        [ -f "$existing" ] || continue
-        base="${existing##*/}"
-        [ -f "$version_dir/$base" ] && continue
-        rm -f "$existing"
-        echo -e "${YELLOW}  Removed stale scripts/$folder_name/$base — no longer shipped${NC}"
-    done
-    echo -e "${GREEN}  Installed scripts/$folder_name/ ($(ls "$DEST_VDIR" | wc -l | tr -d ' ') scripts)${NC}"
+    echo -e "${GREEN}  Staged $folder_name/ ($(ls "$DEST_VDIR" | wc -l | tr -d ' ') scripts)${NC}"
 done
 
-# Dispatcher + pruning tool + version map — unversioned, copied verbatim.
+# No stale-script pruning pass any more, and none is possible: a build starts
+# empty, so a wf-*.sh the library no longer ships simply is not in it. That
+# pass existed because the old layout wrote into a folder it did not own the
+# whole contents of — four clients carried a deleted wf-infra-sync.sh from
+# August until v6.7.0 because deploy had no way to remove one. Residue is now
+# ruled out by construction rather than swept up afterwards.
+
+gen_publish
+
+# Dispatcher + pruning tool + version map — unversioned, and installed AFTER
+# the flip. An old dispatcher paired with a new pointer resolves correctly (it
+# ignores scripts/current and uses the legacy folder, which is still the old
+# harness); a new dispatcher paired with an old pointer would not.
 for f in wf-exec.sh wf-prune-versions.sh; do
-    cp "$SCRIPT_DIR/scripts/$f" "$TARGET_DIR/scripts/$f"
-    chmod +x "$TARGET_DIR/scripts/$f"
+    atomic_install "$SCRIPT_DIR/scripts/$f" "$TARGET_DIR/scripts/$f" +x
     echo -e "${GREEN}  Installed scripts/$f${NC}"
 done
-cp "$SCRIPT_DIR/scripts/version-map.txt" "$TARGET_DIR/scripts/version-map.txt"
+atomic_install "$SCRIPT_DIR/scripts/version-map.txt" "$TARGET_DIR/scripts/version-map.txt"
 echo -e "${GREEN}  Installed scripts/version-map.txt${NC}"
+
+gen_retire
 
 # Gitignore workflow runtime files
 GITIGNORE="$TARGET_DIR/.gitignore"
@@ -933,8 +1048,7 @@ for pattern in ".wf-claim"; do
 done
 
 # Stamp workflow version into the target project
-WORKFLOW_VERSION=$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
-echo "$WORKFLOW_VERSION" > "$TARGET_DIR/.claude/workflow-version"
+printf '%s\n' "$WORKFLOW_VERSION" | atomic_write "$TARGET_DIR/.claude/workflow-version"
 echo -e "${GREEN}  Stamped workflow version $WORKFLOW_VERSION → .claude/workflow-version${NC}"
 
 # Record where this harness came from, so a client that loses it can ask the
@@ -949,7 +1063,7 @@ echo -e "${GREEN}  Stamped workflow version $WORKFLOW_VERSION → .claude/workfl
 #
 # Untracked, like the rest of the generated harness: it is a local fact about
 # this machine, not something to carry to another clone.
-echo "$SCRIPT_DIR" > "$TARGET_DIR/.claude/workflow-source"
+printf '%s\n' "$SCRIPT_DIR" | atomic_write "$TARGET_DIR/.claude/workflow-source"
 
 # WORKFLOW.md at the project root — the entry-point contract for anyone (or
 # anything) that lands in this repo without prior context: how work enters the
@@ -958,7 +1072,7 @@ echo "$SCRIPT_DIR" > "$TARGET_DIR/.claude/workflow-source"
 # Regenerated on every install so it can't drift from the installed version.
 sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
     -e "s|{{workflow_version}}|$WORKFLOW_VERSION|g" \
-    "$SCRIPT_DIR/templates/WORKFLOW.md" > "$TARGET_DIR/WORKFLOW.md"
+    "$SCRIPT_DIR/templates/WORKFLOW.md" | atomic_write "$TARGET_DIR/WORKFLOW.md"
 echo -e "${GREEN}  Installed WORKFLOW.md (project-root entry point)${NC}"
 
 # Seed WORKFLOW-ISSUES.md so the reporting channel is discoverable before the
@@ -996,6 +1110,22 @@ resolve_script_folder() {
     echo "$folder"
 }
 
+# A label is not a path any more. Resolve one the same way wf-exec.sh does:
+# the published build first, the legacy folder as the fallback that carries a
+# client across its first gen-era deploy.
+resolve_script_dir() {
+    local label="$1" build=""
+    [ -n "$label" ] || { echo ""; return; }
+    [ -f "$TARGET_ABS/scripts/current" ] && build=$(tr -d '[:space:]' < "$TARGET_ABS/scripts/current")
+    if [ -n "$build" ] && [ -d "$TARGET_ABS/scripts/gen/$build/$label" ]; then
+        echo "$TARGET_ABS/scripts/gen/$build/$label"
+    elif [ -d "$TARGET_ABS/scripts/$label" ]; then
+        echo "$TARGET_ABS/scripts/$label"
+    else
+        echo ""
+    fi
+}
+
 if git -C "$TARGET_DIR" rev-parse --git-dir &>/dev/null; then
     echo "Updating feature worktrees..."
     # `pwd -P`, not `pwd`. This is compared against the paths `git worktree
@@ -1031,12 +1161,13 @@ if git -C "$TARGET_DIR" rev-parse --git-dir &>/dev/null; then
                     [ -n "$row" ] && wt_wf=$(echo "$row" | awk -F'|' '{print $8}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                 fi
                 wt_folder=$(resolve_script_folder "$wt_wf")
+                wt_dir=$(resolve_script_dir "$wt_folder")
 
                 # Re-run sparse configuration first: it repairs a worktree set
                 # up by an older pattern list, and clears the deploy copies
                 # this step used to leave behind.
-                if [ -n "$wt_folder" ] && [ -x "$TARGET_ABS/scripts/$wt_folder/wf-worktree-sparse.sh" ]; then
-                    "$TARGET_ABS/scripts/$wt_folder/wf-worktree-sparse.sh" "$wt_path" >/dev/null 2>&1 || true
+                if [ -n "$wt_dir" ] && [ -x "$wt_dir/wf-worktree-sparse.sh" ]; then
+                    "$wt_dir/wf-worktree-sparse.sh" "$wt_path" >/dev/null 2>&1 || true
                 fi
 
                 # Put the three must-exist paths on the worktree's disk.
@@ -1046,8 +1177,8 @@ if git -C "$TARGET_DIR" rev-parse --git-dir &>/dev/null; then
                 # them afterwards because an ignored file cannot be dirty,
                 # cannot conflict, and cannot abort a merge. Everything else
                 # workflow-owned resolves from the MAIN worktree.
-                if [ -x "$TARGET_ABS/scripts/$wt_folder/wf-worktree-harness.sh" ]; then
-                    "$TARGET_ABS/scripts/$wt_folder/wf-worktree-harness.sh" "$wt_path" >/dev/null 2>&1 || true
+                if [ -n "$wt_dir" ] && [ -x "$wt_dir/wf-worktree-harness.sh" ]; then
+                    "$wt_dir/wf-worktree-harness.sh" "$wt_path" >/dev/null 2>&1 || true
                 fi
 
                 echo -e "  ${GREEN}Updated $(basename "$wt_path") (skills + wf-exec.sh; scripts/${wt_folder:-none} resolved from develop, WF=${wt_wf:-0.00})${NC}"
@@ -1066,7 +1197,7 @@ WORKFLOW_MD="$TARGET_DIR/.claude/workflow.md"
 sed -e "s|{{build_command}}|$BUILD_CMD|g" \
     -e "s|{{test_command}}|$TEST_CMD|g" \
     -e "s|{{source_dirs}}|$SOURCE_DIRS|g" \
-    "$SCRIPT_DIR/claude-md/workflow-snippet.md" > "$WORKFLOW_MD"
+    "$SCRIPT_DIR/claude-md/workflow-snippet.md" | atomic_write "$WORKFLOW_MD"
 echo -e "${GREEN}  Installed .claude/workflow.md${NC}"
 
 # Add @import to CLAUDE.md once — never needs updating after that

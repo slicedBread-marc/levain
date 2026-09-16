@@ -16,6 +16,22 @@ LIB_SCRIPTS="$LIB_ROOT/scripts"
 SCRIPT_FOLDER=$(awk '{sub(/#.*/, "")} NF >= 2 {folder = $2} END {print folder}' "$LIB_SCRIPTS/version-map.txt")
 [ -n "$SCRIPT_FOLDER" ] || { echo "cannot resolve script folder from version-map.txt" >&2; exit 1; }
 SCRIPT_DIR="${WF_TEST_SCRIPT_DIR:-$LIB_SCRIPTS/$SCRIPT_FOLDER}"
+SCRIPT_FOLDER_LIVE=$(basename "$SCRIPT_DIR")
+
+# Where a real install.sh puts the live scripts. Since v9.0.0 that is inside
+# the published build, named by scripts/current — a deploy builds there and
+# flips one line rather than rewriting the folder a caller is resolving
+# (docs/atomic-deploy.md). The legacy branch answers for the hand-built
+# fixtures below, which still lay themselves out flat.
+live_script_dir() {
+  local root="$1" build=""
+  [ -f "$root/scripts/current" ] && build=$(tr -d '[:space:]' < "$root/scripts/current")
+  if [ -n "$build" ] && [ -d "$root/scripts/gen/$build/$SCRIPT_FOLDER_LIVE" ]; then
+    echo "$root/scripts/gen/$build/$SCRIPT_FOLDER_LIVE"
+  else
+    echo "$root/scripts/$SCRIPT_FOLDER_LIVE"
+  fi
+}
 
 TEST_DIR=""
 PASS=0
@@ -539,16 +555,27 @@ assert_eq "nor stamps the sparse-excluded workflow-version there" "false" \
 assert_eq "wf-infra-sync.sh no longer exists" "false" \
   "$([ -e "$SCRIPT_DIR/wf-infra-sync.sh" ] && echo true || echo false)"
 
-# Deleting it from the library was only half the job: deploy writes scripts and
+# Deleting it from the library was only half the job: deploy wrote scripts and
 # never removed one, so every client installed before v5.0.0 still had the
 # August copy of wf-infra-sync.sh sitting in scripts/v2.00/ at v6.7.0 — a
 # script deleted precisely because running it commits develop's own bytes onto
-# a feature branch. scripts/v*/ is generated, so anything there the library
-# does not ship is residue.
-assert_eq "deploy prunes a script the library no longer ships" "true" \
-  "$(grep -q 'Removed stale scripts/\$folder_name/\$base' "$LIB_ROOT/install.sh" && echo true || echo false)"
-assert_eq "and it prunes only inside the generated version folder" "true" \
-  "$(grep -q 'for existing in "\$DEST_VDIR"/wf-\*.sh' "$LIB_ROOT/install.sh" && echo true || echo false)"
+# a feature branch.
+#
+# v9.0.0 rules that out by construction instead of sweeping up after it: a
+# deploy builds into a NEW directory, so a script the library no longer ships
+# is simply not in it. The assertion is therefore about the build's contents,
+# not about a pruning pass — there is nothing left to prune.
+prune_client="$TEST_DIR/prune-client"
+rm -rf "$prune_client"; mkdir -p "$prune_client"
+git init -q "$prune_client"
+printf 'project_slug: "prune-client"\n' > "$prune_client/claude-workflow.yml"
+WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$prune_client" >/dev/null 2>&1
+printf 'residue\n' > "$(live_script_dir "$prune_client")/wf-gone-from-the-library.sh"
+WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$prune_client" >/dev/null 2>&1
+assert_eq "a script the library no longer ships is absent from the next build" "false" \
+  "$([ -f "$(live_script_dir "$prune_client")/wf-gone-from-the-library.sh" ] && echo true || echo false)"
+assert_eq "and the build it replaced still holds everything it shipped" "true" \
+  "$([ -f "$(live_script_dir "$prune_client")/wf-worktree-sparse.sh" ] && echo true || echo false)"
 assert_eq "and merge-develop restores the harness on every worktree instead" "true" \
   "$(grep -q 'wf-worktree-harness.sh' "$SCRIPT_DIR/wf-merge-develop.sh" && echo true || echo false)"
 
@@ -1457,7 +1484,7 @@ section "A dependency bug lands in the HOST's own pipeline, not the reporter's"
 # project's counter and lands where its own /wf-spec already looks.
 DEPA="$TEST_DIR/dep-caller"
 DEPB="$TEST_DIR/dep-host"
-SCRIPT_FOLDER_LIVE=$(basename "$SCRIPT_DIR")
+
 
 setup_dep_project() {
   local d="$1"
@@ -1597,11 +1624,11 @@ assert_eq "no pipeline skills — only the filing one" "wf-dep-notify" \
 # The slice is an allowlist, not "whatever the library ships". A pipeline
 # script on a coordinator's disk looks current and is one wf-exec.sh call from
 # running.
-coord_scripts=$(ls "$COORD/scripts/$SCRIPT_FOLDER_LIVE" | sort | tr '\n' ' ')
+coord_scripts=$(ls "$(live_script_dir "$COORD")" | sort | tr '\n' ' ')
 assert_eq "scripts/ is pruned to the filing slice" \
   "wf-dep-bug.sh wf-dep-notify.sh wf-issue.sh wf-lock.sh wf-orch-lib.sh " "$coord_scripts"
 assert_eq "wf-implement's scripts are not installed" "true" \
-  "$([ -f "$COORD/scripts/$SCRIPT_FOLDER_LIVE/wf-worktree-sparse.sh" ] && echo false || echo true)"
+  "$([ -f "$(live_script_dir "$COORD")/wf-worktree-sparse.sh" ] && echo false || echo true)"
 
 # The entry contract explains the pipelines it files INTO, and where its own
 # authority stops — the only part of this that a convention, not a script,
@@ -1651,11 +1678,11 @@ assert_eq "a bad --kind is refused rather than filed as something else" "true" \
 sed -i.bak 's/^role: "coordinator"/role: "client"/' "$COORD/claude-workflow.yml" && rm -f "$COORD/claude-workflow.yml.bak"
 WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" >/dev/null 2>&1
 assert_eq "as a client it gets the full harness" "true" \
-  "$([ -f "$COORD/scripts/$SCRIPT_FOLDER_LIVE/wf-worktree-sparse.sh" ] && echo true || echo false)"
+  "$([ -f "$(live_script_dir "$COORD")/wf-worktree-sparse.sh" ] && echo true || echo false)"
 sed -i.bak 's/^role: "client"/role: "coordinator"/' "$COORD/claude-workflow.yml" && rm -f "$COORD/claude-workflow.yml.bak"
 coord_reinstall=$(WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" 2>&1)
 assert_eq "switching back prunes the pipeline scripts" "true" \
-  "$([ -f "$COORD/scripts/$SCRIPT_FOLDER_LIVE/wf-worktree-sparse.sh" ] && echo false || echo true)"
+  "$([ -f "$(live_script_dir "$COORD")/wf-worktree-sparse.sh" ] && echo false || echo true)"
 assert_eq "and the pipeline skills" "wf-dep-notify" "$(ls "$COORD/.claude/skills")"
 assert_eq "the client install's plans/ is reported, not deleted" "true" \
   "$([ -f "$COORD/plans/REGISTRY.md" ] && echo true || echo false)"
@@ -5116,15 +5143,25 @@ assert_eq "both cross-project filers pass --links through" "true" \
   "$(grep -q 'link_args' "$SCRIPT_DIR/wf-dep-notify.sh" && grep -q 'link_args' "$SCRIPT_DIR/wf-dep-bug.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
-section "A deploy does not replace the harness under a running daemon (coordinator WFI-003, WFI-004)"
+section "A deploy no longer refuses a running daemon (coordinator WFI-003, WFI-004)"
 
-# install.sh rewrites scripts/v*/ in place while a daemon sweeps out of it every
-# 60s, re-reading wf-orchestrate.sh and wf-orch-lib.sh as it goes. The 8.3.0 →
-# 8.6.0 deploy ran with client-b' daemon live and survived, which is luck: a
-# sweep landing inside the write window reads a half-replaced script folder, and
-# what that produces is confusing dispatch an hour later, not an error now.
+# It used to, and had to. install.sh rewrote scripts/v*/ in place while a daemon
+# swept out of it every 60s, re-reading wf-orchestrate.sh and wf-orch-lib.sh as
+# it went. The 8.3.0 → 8.6.0 deploy ran with client-b' daemon live and
+# survived, which was luck: a sweep landing inside the write window read a
+# half-replaced script folder, and what that produces is confusing dispatch an
+# hour later, not an error now.
+#
+# v9.0.0 removed the window rather than the caller: a deploy builds into
+# scripts/gen/<build id>/ and publishes it by rewriting one line
+# (docs/atomic-deploy.md, and tests/atomic-deploy.sh for the invariant itself).
+# So the guard is now REPORTING — which client was dispatching is worth a line,
+# and a stale pidfile must still not be mistaken for one.
 DEPD="$TEST_DIR/deployguard"
 mkdir -p "$DEPD/client-a/.claude/orchestrator" "$DEPD/client-b/.claude/orchestrator"
+printf 'project_slug: "client-a"\n' > "$DEPD/client-a/claude-workflow.yml"
+printf 'project_slug: "client-b"\n' > "$DEPD/client-b/claude-workflow.yml"
+git init -q "$DEPD/client-a"; git init -q "$DEPD/client-b"
 printf '%s\n' "$DEPD/client-a" "$DEPD/client-b" > "$DEPD/deployments.txt"
 
 # client-a's daemon is live (a real process we own), client-b's pidfile is stale.
@@ -5135,23 +5172,32 @@ echo "999999" > "$DEPD/client-b/.claude/orchestrator/daemon.pid"
 
 dep_rc=0
 dep_out=$(WF_DEPLOYMENTS="$DEPD/deployments.txt" WF_SUSPEND_STATE="$DEPD/state" \
-  bash "$LIB_ROOT/deploy-all.sh" 2>&1) || dep_rc=$?
-assert_eq "a live daemon refuses the deploy" "1" "$dep_rc"
-assert_eq "and the refusal names the client holding it" "true" \
+  WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/deploy-all.sh" 2>&1) || dep_rc=$?
+assert_eq "a live daemon no longer refuses the deploy" "0" "$dep_rc"
+assert_eq "and the deploy actually ran" "true" \
+  "$(printf '%s' "$dep_out" | grep -q 'Local: 2 updated' && echo true || echo false)"
+assert_eq "the client holding it is still named" "true" \
   "$(printf '%s' "$dep_out" | grep -q "client-a" && echo true || echo false)"
-assert_eq "a stale pidfile does not block anything" "false" \
+assert_eq "a stale pidfile is not reported as live" "false" \
   "$(printf '%s' "$dep_out" | grep -q 'daemon live.*client-b' && echo true || echo false)"
-assert_eq "nothing was installed while it refused" "false" \
-  "$([ -d "$DEPD/client-a/scripts" ] && echo true || echo false)"
+assert_eq "the daemon was left running, not stopped" "true" \
+  "$(kill -0 "$FAKE_DAEMON" 2>/dev/null && echo true || echo false)"
+assert_eq "and nothing was recorded for a restore that is not owed" "false" \
+  "$([ -s "$DEPD/state" ] && echo true || echo false)"
+assert_eq "the client took the deploy through the pointer" "true" \
+  "$([ -f "$DEPD/client-a/scripts/current" ] && echo true || echo false)"
+
+# --force named the old default. Accepting it as a no-op keeps a habit and a
+# script from breaking; silently treating it as meaningful would not.
+dep_rc=0
+dep_out=$(WF_DEPLOYMENTS="$DEPD/deployments.txt" WF_SUSPEND_STATE="$DEPD/state" \
+  WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/deploy-all.sh" --force 2>&1) || dep_rc=$?
+assert_eq "--force is accepted" "0" "$dep_rc"
+assert_eq "and says it does nothing" "true" \
+  "$(printf '%s' "$dep_out" | grep -q 'force does nothing' && echo true || echo false)"
 
 kill "$FAKE_DAEMON" 2>/dev/null || true
 wait "$FAKE_DAEMON" 2>/dev/null || true
-
-dep_rc=0
-dep_out=$(WF_DEPLOYMENTS="$DEPD/deployments.txt" WF_SUSPEND_STATE="$DEPD/state" \
-  bash "$LIB_ROOT/deploy-all.sh" 2>&1) || dep_rc=$?
-assert_eq "with no daemon live, the deploy runs" "true" \
-  "$(printf '%s' "$dep_out" | grep -q 'Local: 2 updated' && echo true || echo false)"
 
 # The suspend record unions rather than overwrites: a retried --stop-daemons
 # would otherwise find nothing running, rewrite the record empty, and turn the
