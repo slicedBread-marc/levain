@@ -40,15 +40,9 @@ found=0
 # full file scan per plan plus one per declared dep, on a script that runs on
 # every /wf-status, every board render and every daemon tick.
 rows=$(wf_registry_rows "$REGISTRY")
-# "<id>=<state>" pairs, space-delimited and space-terminated, so a lookup is
-# parameter expansion rather than a grep. bash 3.2 (what macOS ships) has no
-# associative arrays.
-state_map=" $(printf '%s\n' "$rows" | awk -F'\037' 'NF { printf "%s=%s ", $1, $3 }')"
-state_of() {
-  local rest="${state_map##* $1=}"
-  [ "$rest" = "$state_map" ] && return 0
-  printf '%s' "${rest%% *}"
-}
+# Dep states come from wf_state_of, which builds the same "<id>=<state>" map
+# once per process and memoizes it — plus the PLN-alias fallback the local copy
+# that used to live here did not have.
 
 # Branches that already have a worktree checked out. Read once — `git worktree
 # list` is cheap but this loop runs per plan.
@@ -99,29 +93,6 @@ gate_on() {
   printf '%s\n' "$open_gates" | awk -F'\t' -v id="$1" '$1 == id { print $2; exit }'
 }
 
-# Helper: check if a plan's deps are all complete
-check_deps_blocked() {
-  local deps_raw="$1"
-  [ -n "$deps_raw" ] && [ "$deps_raw" != "—" ] || return 1
-  local blocking=""
-  local IFS=','
-  for dep_id in $deps_raw; do
-    dep_id="${dep_id#"${dep_id%%[![:space:]]*}"}"   # trim, without a subprocess
-    dep_id="${dep_id%"${dep_id##*[![:space:]]}"}"
-    local dep_state
-    dep_state=$(state_of "$dep_id")
-    if [ "$dep_state" != "complete" ]; then
-      # Mark an abandoned dep in the label itself: it is not late, it is gone,
-      # and the plan needs replanning rather than patience (WFI-008).
-      [ "$dep_state" = "abandoned" ] && dep_id="$dep_id (abandoned)"
-      [ -n "$blocking" ] && blocking="$blocking,$dep_id" || blocking="$dep_id"
-    fi
-  done
-  [ -n "$blocking" ] || return 1
-  echo "$blocking"
-  return 0
-}
-
 while IFS=$'\037' read -r id slug state priority branch _updated _wf _tags deps; do
   # Skip malformed or blank lines
   [ -n "$id" ] && [ -n "$state" ] || continue
@@ -143,7 +114,7 @@ while IFS=$'\037' read -r id slug state priority branch _updated _wf _tags deps;
   fi
 
   # Deps came off this row's own Deps column, above.
-  blocking=$(check_deps_blocked "$deps" 2>/dev/null) && {
+  blocking=$(wf_blocking_deps "$deps" "$REGISTRY" 2>/dev/null) && {
     blocked_lines+=("$(printf "blocked\t%s\t%s\t%s\t%s" "$plan_name" "$goal" "$priority" "$blocking")")
     found=1
     continue

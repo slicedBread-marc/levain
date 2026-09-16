@@ -35,7 +35,7 @@ while IFS= read -r proj; do
   plan_id="PLN-${padded}"
 
   # Check registry state
-  state=$(grep "^| ${plan_id} " "$REGISTRY" | awk -F'|' '{print $4}' | xargs 2>/dev/null) || true
+  state=$(wf_state_of "$plan_id" "$REGISTRY")
 
   # Keep containers for plans still in progress
   case "$state" in

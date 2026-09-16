@@ -185,7 +185,7 @@ assert_branch() {
   # The rule applies to the MAIN worktree only. A feature worktree that still
   # tracks plans/ (legacy, non-sparse) commits it deliberately, via wf-merge-*.sh.
   toplevel=$(git rev-parse --show-toplevel 2>/dev/null || true)
-  develop_root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+  develop_root=$(wf_develop_root)
   [ -n "$toplevel" ] && [ "$toplevel" = "$develop_root" ] || return 0
 
   # feature/* is exempt for the same reason: a client that works feature

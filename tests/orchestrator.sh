@@ -532,10 +532,16 @@ assert_eq "an open gate is not an answer" "1" \
 "$SCRIPT_DIR/wf-gate-close.sh" RELEASE "approved" >/dev/null 2>&1
 assert_eq "a close with no --decision authorizes nothing" "1" \
   "$("$SCRIPT_DIR/wf-promote-approval.sh" release --quiet; echo $?)"
+# The stderr is CAPTURED, then matched — not piped into `grep -q`. The suite
+# runs under `pipefail`, and grep -q exits on its first match, so wf-gate-close
+# takes SIGPIPE writing the second of its three warning lines: the pipeline's
+# status becomes 141 and the assertion reads `false` on a run where the message
+# was printed exactly as intended. It failed roughly one run in three, on timing
+# alone.
 assert_eq "and says so on stderr when it happens" "true" \
   "$("$SCRIPT_DIR/wf-gate-open.sh" RELEASE release-approval "again?" >/dev/null 2>&1
-     "$SCRIPT_DIR/wf-gate-close.sh" RELEASE "approved" 2>&1 >/dev/null \
-       | grep -q 'NOT authorized' && echo true || echo false)"
+     err=$("$SCRIPT_DIR/wf-gate-close.sh" RELEASE "approved" 2>&1 >/dev/null)
+     if printf '%s' "$err" | grep -q 'NOT authorized'; then echo true; else echo false; fi)"
 
 "$SCRIPT_DIR/wf-gate-open.sh" RELEASE release-approval "promote 1 commit?" --skill wf-release >/dev/null 2>&1
 "$SCRIPT_DIR/wf-gate-close.sh" RELEASE "approved — ship it" --decision approve >/dev/null 2>&1

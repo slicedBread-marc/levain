@@ -83,8 +83,7 @@ done
 # is the everyday case — and the whole "is this .plan-ref mine?" guard below
 # silently inverts, because every directory looks like a worktree.
 CWD=$(pwd -P)
-ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //') || true
-[ -n "$ROOT" ] || ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || true
+ROOT=$(wf_develop_root)
 [ -n "$ROOT" ] || ROOT="$CWD"
 ROOT=$(cd "$ROOT" 2>/dev/null && pwd -P) || ROOT="$CWD"
 REGISTRY="$ROOT/plans/REGISTRY.md"
@@ -112,24 +111,23 @@ fi
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
-# A registry row, by ID. Columns: ID Slug State Priority Branch Updated WF Tags Deps
-registry_row() {
-  [ -f "$REGISTRY" ] || return 1
-  grep -m1 "^|[[:space:]]*$1[[:space:]]*|" "$REGISTRY" 2>/dev/null
-}
-
-field() { printf '%s' "$1" | cut -d'|' -f"$2" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
+# One field of one plan's row, by NAME — wf_registry_field owns the column map,
+# so a registry schema change moves one index table in the lib rather than the
+# raw field numbers this script used to carry in seven places. An id with no
+# row reads as empty, which is also the "is there a row?" test.
+field() { wf_registry_field "$1" "$2" "$REGISTRY"; }
+has_row() { [ -n "$(field "$1" state)" ]; }
 
 # ── The state block ───────────────────────────────────────────────────────
 
 emit_plan_detail() {
-  local id="$1" row slug state priority branch wf tags deps
+  local id="$1" slug state priority branch wf tags deps
   local plan_dir plan_md progress goal
 
-  row=$(registry_row "$id") || return 1
-  slug=$(field "$row" 3);  state=$(field "$row" 4); priority=$(field "$row" 5)
-  branch=$(field "$row" 6); wf=$(field "$row" 8)
-  tags=$(field "$row" 9);  deps=$(field "$row" 10)
+  state=$(field "$id" state); [ -n "$state" ] || return 1
+  slug=$(field "$id" slug);     priority=$(field "$id" priority)
+  branch=$(field "$id" branch); wf=$(field "$id" wf)
+  tags=$(field "$id" tags);     deps=$(field "$id" deps)
 
   plan_dir="$ROOT/plans/${id}-${slug}"
   plan_md="$plan_dir/plan.md"
@@ -227,10 +225,12 @@ emit_plan_detail() {
 }
 
 emit_pipeline() {
-  local found=0 line id slug state priority plan_dir total done_count prog goal
-  while IFS= read -r line; do
-    id=$(field "$line" 2); slug=$(field "$line" 3)
-    state=$(field "$line" 4); priority=$(field "$line" 5)
+  local found=0 id slug state priority plan_dir total done_count prog goal
+  # wf_registry_rows is the one row walk: it drops the header, the separator and
+  # the counter comment itself, so `grep "^|" | tail -n +3` — which trusted the
+  # table to start on exactly line 3 — is not re-derived here. Four awk forks
+  # per row become none.
+  while IFS=$'\037' read -r id slug state priority _branch _updated _wf _tags _deps; do
     [ -n "$id" ] || continue
     wf_state_is_valid "$state" || continue
     wf_state_is_terminal "$state" && continue
@@ -254,7 +254,7 @@ emit_pipeline() {
     fi
     printf '  %-10s %-9s %-3s %-11s %s\n' \
       "$id" "$state" "${priority:-}" "$prog" "${goal:0:70}"
-  done < <(grep "^|" "$REGISTRY" 2>/dev/null | tail -n +3)
+  done < <(wf_registry_rows "$REGISTRY")
   return $((1 - found))
 }
 
@@ -271,12 +271,11 @@ emit_pipeline() {
 #   - the plan is not in a terminal state, and
 #   - we are in a linked worktree, OR HEAD is the branch the registry names.
 ref_is_live() {
-  local id="$1" row state branch_col
-  row=$(registry_row "$id") || return 1
-  state=$(field "$row" 4)
+  local id="$1" state branch_col
+  state=$(field "$id" state); [ -n "$state" ] || return 1
   wf_state_is_terminal "$state" && return 1
   [ "$CWD" != "$ROOT" ] && return 0
-  branch_col=$(field "$row" 6)
+  branch_col=$(field "$id" branch)
   [ -n "$BRANCH" ] && [ "$BRANCH" = "$branch_col" ]
 }
 
@@ -291,7 +290,7 @@ build_state() {
   # An id that IS in the registry but is not this session's work: drop it and
   # show the pipeline instead. An id the registry does not know at all is a
   # different problem, and emit_plan_detail reports it.
-  if [ -n "$plan_id" ] && registry_row "$plan_id" >/dev/null 2>&1 \
+  if [ -n "$plan_id" ] && has_row "$plan_id" \
      && ! ref_is_live "$plan_id"; then
     stale_ref="$plan_id"
     plan_id=""

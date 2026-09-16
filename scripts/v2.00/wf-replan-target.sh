@@ -65,12 +65,11 @@ plan_id=$(printf '%s' "$raw_id" | grep -oE '^PLN-[0-9]+' || true)
 [ -n "$plan_id" ] || { echo "Usage: $0 <PLN-NNN> [--apply]" >&2; exit 1; }
 [ -f "$REGISTRY" ] || { echo "Error: $REGISTRY not found" >&2; exit 1; }
 
-row=$(grep "^| $plan_id |" "$REGISTRY" | head -1 || true)
-[ -n "$row" ] || { echo "Error: $plan_id has no registry row" >&2; exit 1; }
+state=$(wf_registry_field "$plan_id" state "$REGISTRY")
+[ -n "$state" ] || { echo "Error: $plan_id has no registry row" >&2; exit 1; }
 
-state=$(printf '%s' "$row" | awk -F'|' '{print $4}' | xargs)
-slug=$(printf '%s' "$row" | awk -F'|' '{print $3}' | xargs)
-branch=$(printf '%s' "$row" | awk -F'|' '{print $6}' | xargs)
+slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
+branch=$(wf_registry_field "$plan_id" branch "$REGISTRY")
 
 target="ready"
 if [ -n "$branch" ] && [ "$branch" != "—" ]; then
@@ -158,7 +157,7 @@ if $apply; then
   # answering something they were never asked (WFI-182). The caller opens it.
   # Self-clearing — once the human's answer is recorded the check passes.
   if [ "$target" = "ready" ] || [ "$target" = "active" ]; then
-    tags=$(printf '%s' "$row" | awk -F'|' '{print $9}' | xargs || true)
+    tags=$(wf_registry_field "$plan_id" tags "$REGISTRY")
     gating=$("$SELF_DIR/wf-list-tags.sh" --gating 2>/dev/null || true)
     hit=""
     if [ -n "$gating" ] && [ -n "$tags" ] && [ "$tags" != "—" ]; then

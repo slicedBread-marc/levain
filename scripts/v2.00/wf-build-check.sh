@@ -22,7 +22,7 @@ if [ ! -f "$CFG" ]; then
   exit 0
 fi
 
-BUILD_CMD=$(awk '/^build_command:/{sub(/^build_command: */,""); gsub(/^"|"$/,""); print; exit}' "$CFG")
+BUILD_CMD=$(wf_cfg build_command)
 
 if [ -z "$BUILD_CMD" ]; then
   echo "Warning: no build_command in claude-workflow.yml — skipping build check" >&2

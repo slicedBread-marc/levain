@@ -55,11 +55,10 @@ cd "$(wf_develop_root)"   # plans/* is develop-root work — see wf-orch-lib.sh
 REGISTRY="plans/REGISTRY.md"
 [ -f "$REGISTRY" ] || { echo "Error: $REGISTRY not found" >&2; exit 1; }
 
-row=$(grep "^| $plan_id |" "$REGISTRY" | head -1 || true)
-[ -n "$row" ] || { echo "Error: $plan_id has no row in $REGISTRY" >&2; exit 1; }
+state=$(wf_registry_field "$plan_id" state "$REGISTRY")
+[ -n "$state" ] || { echo "Error: $plan_id has no row in $REGISTRY" >&2; exit 1; }
 
-state=$(printf '%s' "$row" | awk -F'|' '{print $4}' | xargs)
-slug=$(printf '%s' "$row" | awk -F'|' '{print $3}' | xargs)
+slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
 plan_dir="plans/${plan_id}-${slug}"
 
 if [ "$revive" = "true" ]; then

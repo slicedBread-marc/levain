@@ -322,8 +322,11 @@ plan_body_fp=$(wf_plan_body_fingerprint "$id")
 # had not gone there, because the text came from the PREVIOUS cycle. Writing
 # the state down is what makes that contradiction visible to the next reader
 # instead of leaving it to be reconstructed from commit times.
-gate_state=$(grep -m1 "^| $id |" "$(wf_develop_root)/plans/REGISTRY.md" 2>/dev/null \
-             | awk -F'|' '{print $4}' | xargs || true)
+#
+# wf_state_of, not a raw row grep: a gate opened under BUG-022 is closed
+# against the row that is now PLN-022, and only the lib's lookup carries that
+# alias fallback.
+gate_state=$(wf_state_of "$id")
 
 # The fingerprint of the plan AS THE QUESTION WAS ASKED, carried through from
 # the gate file. This close-time record is written after the exit contract's

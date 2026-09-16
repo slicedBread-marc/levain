@@ -169,6 +169,34 @@ wf_state_of() {
   printf '%s' "${s:-—}"
 }
 
+# wf_blocking_deps <deps-column> [registry-path] → the comma-separated deps
+# that are NOT complete, or empty when nothing blocks. Exit 0 when it printed
+# something, 1 when the plan is clear — so a caller reads as
+# `blocking=$(wf_blocking_deps "$deps") && { ...blocked... }`.
+#
+# An abandoned dep is labelled `<id> (abandoned)` in the output, because it is
+# not late, it is gone, and the plan needs replanning rather than patience
+# (WFI-008). That label is the whole reason this cannot be a plain state test:
+# it was written once in wf-list-implementable.sh, pasted into
+# wf-list-testable.sh, and the two are the same eligibility question asked at
+# two pipeline stages — a third stage asking it would have pasted it again.
+wf_blocking_deps() {
+  local deps_raw="$1" reg="${2:-}" blocking="" dep_id dep_state
+  [ -n "$deps_raw" ] && [ "$deps_raw" != "—" ] || return 1
+  local IFS=','
+  for dep_id in $deps_raw; do
+    dep_id="${dep_id#"${dep_id%%[![:space:]]*}"}"   # trim, without a subprocess
+    dep_id="${dep_id%"${dep_id##*[![:space:]]}"}"
+    [ -n "$dep_id" ] || continue
+    dep_state=$(wf_state_of "$dep_id" ${reg:+"$reg"})
+    [ "$dep_state" = "complete" ] && continue
+    [ "$dep_state" = "abandoned" ] && dep_id="$dep_id (abandoned)"
+    blocking="${blocking:+$blocking,}$dep_id"
+  done
+  [ -n "$blocking" ] || return 1
+  printf '%s' "$blocking"
+}
+
 # ── Artifacts ─────────────────────────────────────────────────────────────
 
 # wf_bug_id <path/to/bug.md> — which bug that file IS. Empty when undecidable.
