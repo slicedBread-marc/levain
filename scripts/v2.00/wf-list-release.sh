@@ -32,7 +32,29 @@ git rev-parse --verify --quiet release >/dev/null 2>&1 || exit 1
 
 [ -n "$(git rev-list release..develop -1 2>/dev/null)" ] || exit 1
 
+# Commits in range, but do any of them carry WORK? /wf-deploy's bookkeeping —
+# the promote marker, the completion and back-merge commits, registry
+# transitions and bug closes — lands on develop as commits `release` has never
+# seen, every single deploy. /wf-release itself filters these out by subject at
+# its step 3 and correctly reports "nothing to release"; this check did not,
+# so the daemon dispatched a worker for that no-op again and again. Three of
+# them in three minutes is what tripped client-c's attempt ceiling and
+# opened a `stuck` gate asserting "release has run 3 times with no forward
+# progress" — over three runs that were each right (WFI-035). Same subject list
+# as skills/wf-release/SKILL.md step 3; keep the two in step.
+if ! git log release..develop --format=%s 2>/dev/null \
+     | grep -qvE '^(release: promote to main$|release: complete |sync: bring completed plans back to develop$|registry\(|bug\()'; then
+  exit 1
+fi
+
 CHANGED="$(git diff --name-only release..develop 2>/dev/null)" || exit 1
+# An EMPTY diff is not "changes outside plans/ and bugs/" — but that is how it
+# read: `printf '%s\n' ""` emits one blank line, the blank line does not match
+# `^(plans|bugs)/`, `grep -qv` selects it, and a range whose net diff is
+# nothing reported as releasable work. An empty-marker commit (wf-commit.sh
+# --allow-empty, which is how the promote marker is written) produces exactly
+# that range — the other half of WFI-035.
+[ -n "$CHANGED" ] || exit 1
 if ! printf '%s\n' "$CHANGED" | grep -qvE '^(plans|bugs)/'; then
   exit 1
 fi

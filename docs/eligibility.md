@@ -90,12 +90,22 @@ The verify agent runs autonomously and auto-routes:
 
 | Source | Eligible when |
 |-|-|
-| local `release` branch, diffed against `develop` | `git rev-list release..develop -1` is non-empty **and** at least one changed path falls outside `plans/` and `bugs/` |
+| local `release` branch, diffed against `develop` | `git rev-list release..develop -1` is non-empty **and** at least one commit subject isn't `/wf-deploy` bookkeeping **and** the range's net diff is non-empty **and** at least one changed path falls outside `plans/` and `bugs/` |
 
 **Not eligible:** `release` branch doesn't exist yet (bootstrapping the first release is left to a
 human). `release` and `develop` already in sync. `develop` is only ahead by planning commits —
 T2 commits spec drafts and review rounds straight to `plans/` on `develop`, outside any feature
-branch, and reviewing a spec is not releasing one (WFI-001, client-d).
+branch, and reviewing a spec is not releasing one (WFI-001, client-d). `develop` is only ahead
+by `/wf-deploy`'s own bookkeeping (the promote marker, completion and back-merge commits,
+registry transitions, bug closes) — that lands on `develop` after every deploy and is not work
+to release; `/wf-release` step 3 filters the same subjects and reports "nothing to release".
+
+The net-diff check is not redundant with the path check: an empty range diff (an
+`--allow-empty` marker commit, which is how the promote marker is written) used to *pass* the
+path test, because the single blank line it produced didn't match `^(plans|bugs)/`. Together
+with the missing subject filter, that is what dispatched three no-op `/wf-release` runs in three
+minutes on client-c and tripped a `stuck` gate over three runs that were each correct
+(WFI-035).
 
 Not REGISTRY-keyed — `release`/`deploy` aren't plans, they're a fixed singleton pipeline stage
 (artifact id `RELEASE`, capped at 1 in flight). Local-ref only, deliberately cheap: this is a
@@ -112,14 +122,22 @@ covers it (see [`autonomy.md`](autonomy.md)).
 
 | Source | Eligible when |
 |-|-|
-| local `main` branch, diffed against `release` | `git rev-list main..release -1` is non-empty |
+| local `main` branch, diffed against `release` | `git rev-list main..release -1` is non-empty **and** `release` has no commits `origin/release` hasn't got |
 
-**Not eligible:** `main` and `release` already in sync.
+**Not eligible:** `main` and `release` already in sync. Local `release` holds unpushed commits.
 
 Artifact id `DEPLOY`, capped at 1 in flight, same shape as `wf-list-release.sh` above. This
 signal is only safe because `/wf-release` pushes `release` *after* its local E2E run passes, not
-before — so "release is ahead of main" already means "these commits passed E2E," for both
-attended and unattended runs. See `skills/wf-release/SKILL.md` steps 7-8. Eligibility here is not
+before — so "release is ahead of main" means "these commits passed E2E," for both attended and
+unattended runs. See `skills/wf-release/SKILL.md` steps 7-8.
+
+Which is why unpushed commits are part of the check rather than a nicety: they are, by
+construction, commits `/wf-release` did *not* push — a failed suite, or a worker killed mid-run.
+client-b WFI-007 is that state reaching production's doorstep: E2E failed 1/117, the run exited
+without resetting the local merge, this check counted 30 commits 71 seconds later, and the
+deploy worker it dispatched opened a `deploy-approval` gate quoting the whole red batch as ready
+to promote. `/wf-release` now rolls that merge back (`wf-release-rollback.sh`), and this check
+is the second line rather than the only one (coordinator WFI-002). Eligibility here is not
 authorization either — `/wf-deploy` checks `wf-autonomy.sh deploy` itself.
 
 ---

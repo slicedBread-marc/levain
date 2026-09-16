@@ -82,7 +82,7 @@ while [ $# -gt 0 ]; do
     --steal)   steal=true; shift ;;
     --list)    list=true; shift ;;
     --state)   want_states="${2:?--state requires a comma-separated state list}"; shift 2 ;;
-    -*)        echo "Unknown option: $1" >&2; exit 1 ;;
+    -*) wf_bad_option "$1" ;;
     *)         plan_name="$1"; shift ;;
   esac
 done

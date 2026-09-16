@@ -122,7 +122,7 @@ release-branches/release → release's own permanent worktree — staging enviro
    git pull origin release
    git merge origin/develop --no-edit
    ```
-   A push rejected as non-fast-forward means another session pushed `develop` from elsewhere between your read of it and now — pull and reconcile there before retrying; never force. If the merge fails with non-trivial conflicts, inform the user (and, under `WF_UNATTENDED=1`, unclaim) and stop — do not proceed to E2E.
+   A push rejected as non-fast-forward means another session pushed `develop` from elsewhere between your read of it and now — pull and reconcile there before retrying; never force. If the merge fails with non-trivial conflicts, `git merge --abort` first — a worktree left mid-merge is neither the old state nor the new one, and the next run inherits it — then inform the user (and, under `WF_UNATTENDED=1`, unclaim) and stop; do not proceed to E2E.
 
 6a. **Check the harness survived the merge** — run this immediately, before anything else:
    ```bash
@@ -184,10 +184,29 @@ release-branches/release → release's own permanent worktree — staging enviro
    # Full suite — no filter. Release aggregation guarantee (BRF-080):
    # every test skipped on a feature branch by tiered gating MUST run here.
    ```
-   If tests fail, inform the user of failures (and, under `WF_UNATTENDED=1`, unclaim) and stop —
-   do **not** push. The `release` branch is not advanced, so `main..release` stays a reliable
-   signal that whatever *is* on `release` already passed this suite (`/wf-deploy`, and the
-   daemon's own eligibility check, both depend on that).
+   If tests fail, do **not** push — and **roll the local merge back before you report anything**:
+   ```bash
+   scripts/wf-exec.sh wf-release-rollback.sh
+   ```
+   Then inform the user of the failures, quoting that script's line verbatim, and (under
+   `WF_UNATTENDED=1`) unclaim and stop.
+
+   **The rollback is not optional and not cosmetic.** Step 6 already fast-forwarded the *local*
+   `release` ref onto develop; stopping at "do not push" leaves it there. `main..release` is read
+   as "these commits passed E2E" by `wf-list-deploy.sh`, by the daemon, and by `/wf-deploy` —
+   and every one of them reads the LOCAL ref. client-b WFI-007: E2E failed 1/117, this step
+   exited without resetting, and 71 seconds later the daemon counted 30 commits on
+   `release..main` and dispatched a deploy worker, which opened a `deploy-approval` gate quoting
+   the whole red batch as ready to promote to production. coordinator WFI-002 is the same finding read
+   across the portfolio: unfixed, it blocks enabling the daemon on every client that holds a
+   release/deploy grant.
+
+   `wf-release-rollback.sh` resets `release` to `origin/release` — which *is* the pre-merge tip,
+   because step 6 pulls it immediately before merging and step 8 pushes only on success. It
+   refuses, loudly and without touching anything, if the refs have diverged or the worktree has
+   modified tracked files. **Exit 1 means the local ref is still ahead**: say so in the failure
+   report and tell the user the deploy signal is untrustworthy until it is reconciled — never
+   report "release was not advanced" over a refusal.
 8. **Push release branch** — only reached once tests pass:
    ```bash
    git push origin release
@@ -211,12 +230,27 @@ release-branches/release → release's own permanent worktree — staging enviro
      /wf-deploy
    ```
 
-   **On failure:**
+   **On failure** — state what the local ref actually did, quoting step 7's rollback line. Never
+   assert "not advanced" from the fact that nothing was pushed; that claim is about the local ref
+   and only the rollback's own output can support it (WFI-007).
+
+   Rollback succeeded:
    ```
-   ✗ E2E tests failed on the local merge — release branch was NOT advanced
+   ✗ E2E tests failed on the local merge — nothing pushed
+   ✓ <the wf-release-rollback.sh line, verbatim>
 
    Fix the issues on the feature branch, create a new PR, and re-run /wf-release.
    Do NOT proceed with /wf-deploy until E2E passes.
+   ```
+
+   Rollback refused (exit 1):
+   ```
+   ✗ E2E tests failed on the local merge — nothing pushed
+   ✗ local `release` is STILL ahead of origin/release — the rollback refused:
+     <the script's stderr, verbatim>
+
+   Until that is reconciled, `main..release` overstates what passed E2E: /wf-deploy and the
+   orchestrator both read that local ref. Do NOT deploy.
    ```
 
 ## Unattended mode
@@ -287,7 +321,7 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
 - **Do NOT merge to main** — that's `/wf-deploy`
 - **Do NOT update REGISTRY.md** — plan states are already set by `wf-test` and `wf-deploy`
 - **Do NOT** force push — use regular merge
-- **Do NOT push `release` before E2E passes** — step 7 runs tests against the local merge; step 8 pushes only on success, so `main..release` stays a trustworthy "these commits passed" signal
+- **Do NOT push `release` before E2E passes, and roll the local merge back when it doesn't** — step 7 runs tests against the local merge, step 8 pushes only on success, and step 7's `wf-release-rollback.sh` returns the local ref on failure. All three are needed for `main..release` to stay a trustworthy "these commits passed" signal: `/wf-deploy` and the daemon read the LOCAL ref, so a failed run that only skips the push still hands them a batch that never passed (WFI-007, coordinator WFI-002)
 - **Complete all steps** — if the user interrupts mid-run, tell them which step to resume at; there is no shared checkout to leave parked, so an interruption costs nothing beyond finishing later
 - **Return your own cwd to the develop worktree at step 9** — not because anything needs it back (nothing else ever touches `release-branches/release`), but so the session you're running in ends up back where the human expects it
 

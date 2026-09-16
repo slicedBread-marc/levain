@@ -55,6 +55,13 @@
 #   --kind bug|request      default: bug
 #   --severity Critical|High|Medium|Low   default: Medium
 #   --description / --steps / --expected / --actual / --notes  <text>
+#   --links        <text>   free text for the new report's Links: field — a
+#                            ticket, a decision record, a related artifact in
+#                            the host project
+#   --amends <BUG-id>       this report CORRECTS one already filed in the host.
+#                            Sets Links on both sides, in the host's own repo:
+#                            the new one says "Amends <ID>", the named one
+#                            gains "Amended by <new ID>" (coordinator WFI-001)
 #
 # The reporting project is recorded automatically: --source is stamped
 # "cross-project:<this project's slug>" on the host's side. Write the title
@@ -87,6 +94,8 @@ steps=""
 expected=""
 actual=""
 notes=""
+links=""
+amends=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -98,8 +107,10 @@ while [ $# -gt 0 ]; do
     --expected)    expected="${2:?--expected requires a value}"; shift 2 ;;
     --actual)      actual="${2:?--actual requires a value}"; shift 2 ;;
     --notes)       notes="${2:?--notes requires a value}"; shift 2 ;;
-    -h|--help)     sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    -*) echo "wf-dep-bug.sh: unknown option '$1'" >&2; exit 1 ;;
+    --links)       links="${2:?--links requires a value}"; shift 2 ;;
+    --amends)      amends="${2:?--amends requires a bug ID}"; shift 2 ;;
+    -h|--help)     wf_usage; exit 0 ;;
+    -*) wf_bad_option "$1" ;;
     *)  if [ -z "$title" ]; then title="$1"; else
           echo "Error: unexpected argument '$1' — the title is one argument, quote it" >&2; exit 1
         fi; shift ;;
@@ -183,6 +194,12 @@ if [ "$host_branch" != "develop" ]; then
   exit 2
 fi
 
+# An array, not `${links:+--links "$links"}`: an unquoted conditional expansion
+# word-splits, which turns a multi-word link into several arguments.
+[ -n "$amends" ] && links="${links:+$links; }Amends $amends"
+link_args=()
+[ -n "$links" ] && link_args=(--links "$links")
+
 bug_out=""
 if ! bug_out=$(cd "$host_path" && scripts/wf-exec.sh wf-bug-new.sh "$title" \
     --kind "$kind" \
@@ -192,11 +209,24 @@ if ! bug_out=$(cd "$host_path" && scripts/wf-exec.sh wf-bug-new.sh "$title" \
     --steps "${steps:-TBD}" \
     --expected "${expected:-TBD}" \
     --actual "${actual:-TBD}" \
+    "${link_args[@]+"${link_args[@]}"}" \
     --notes "${kind_note}${kind_note:+$'\n\n'}${notes:-—}"); then
   echo "Error: filing in $host_name failed — see output above" >&2
   exit 1
 fi
 eval "$bug_out"
+
+# The other half of --amends: the report being corrected has to say so too, or
+# a reader who opens it first never learns a correction exists. Written by the
+# HOST's own wf-bug-link.sh, through the host's own wf-exec.sh — this script
+# never edits another project's files directly (coordinator WFI-001).
+if [ -n "$amends" ]; then
+  if (cd "$host_path" && scripts/wf-exec.sh wf-bug-link.sh "$amends" "Amended by $BUG_ID" >&2); then
+    echo "$amends in $host_name now links $BUG_ID" >&2
+  else
+    echo "Warning: $BUG_ID was filed, but back-linking $amends FAILED — $BUG_ID says it amends $amends and $amends does not mention it. Link it in $host_name before its triage reads only one side." >&2
+  fi
+fi
 
 echo "$BUG_ID filed in $host_name → $host_path/$BUG_DIR" >&2
 echo "Not pushed — push $host_name's develop from that project (or let its own orchestrator do it) before anyone there can act on it." >&2

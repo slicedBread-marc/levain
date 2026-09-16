@@ -21,6 +21,16 @@ if [ $# -lt 1 ]; then
   exit 1
 fi
 
+case "$1" in
+  -h|--help)
+    echo "Usage: $0 <script-name> [args...]"
+    echo
+    echo "Runs a versioned wf-* script. '$0 <script-name> --help' prints that"
+    echo "script's own manual. Version resolution: \$WF_VERSION, then the WF"
+    echo "column in plans/REGISTRY.md, then .claude/workflow-version."
+    exit 0 ;;
+esac
+
 script_name="$1"
 shift
 
@@ -123,6 +133,30 @@ target="$ROOT/scripts/$script_folder/$script_name"
 if [ ! -x "$target" ]; then
   echo "wf-exec.sh: $target is missing or not executable — run deploy-all.sh to reinstall" >&2
   exit 1
+fi
+
+# ── --help, for every script, whether or not it parses one ───────────────
+#
+# Each script's leading comment block IS its manual — usage lines, options,
+# and the incident behind each. Almost none of them routed `--help` to it: 6
+# of 98 handled the flag, and the rest either answered "Unknown option" and
+# exited 1, or worse, consumed it. `wf-commit.sh --help` took `--help` as the
+# positional <message> and printed "nothing to commit for the given paths —
+# skipped", exit 0 — the flag silently became a no-op commit attempt
+# (client-b WFI-006; WFI-008 reports the same for wf-bug-close.sh and
+# wf-claim.sh). Fixing that one script at a time leaves 92 to go and the next
+# new script starts out wrong again.
+#
+# So the dispatcher answers it, once, for all of them: every skill and every
+# worker reaches a wf-* script through here. A script that handles the flag
+# itself still wins — we only step in when its own parser has no case for it.
+if [ $# -ge 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  if ! grep -qE '^[[:space:]]*(-h\|)?--help\)' "$target"; then
+    awk 'NR == 1 && /^#!/ { next }
+         /^#/ { sub(/^#[ ]?/, ""); print; next }
+         { exit }' "$target"
+    exit 0
+  fi
 fi
 
 exec "$target" "$@"

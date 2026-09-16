@@ -454,13 +454,36 @@ dispatch() {
 
   local attempts; attempts=$(attempts_get "$id" "$role")
   if [ "$attempts" -ge "$cfg_max_attempts" ]; then
+    # RELEASE/DEPLOY: a run that correctly concluded "nothing to promote" is a
+    # SUCCESSFUL no-op, and it moves the branch this budget measures by exactly
+    # nothing — so N of them in a row look identical to N failures. client-c
+    # WFI-035: three /wf-release runs each exited "Release is up to date with
+    # develop — nothing to release", all three correct, and the third opened a
+    # `stuck` gate asserting no forward progress. Nothing could have progressed;
+    # there was no work. So before parking one, ask the eligibility check again:
+    # if there is nothing to promote right now, the repetition is not stuckness
+    # and the counter is poisoned rather than informative. Clear it and skip.
+    case "$id" in
+      RELEASE|DEPLOY)
+        if ! "$SELF_DIR/wf-list-$role.sh" >/dev/null 2>&1; then
+          $dry_run || attempts_reset "$id"
+          skip_note "$role" "$id" "nothing to $role right now — $attempts no-op run(s), attempt budget cleared"
+          return 1
+        fi
+        ;;
+    esac
     # Opening the gate is a real mutation — a preview must not do it either.
     # No second `gate_open` test here: the check at the top of dispatch()
     # already returned for every artifact that has one, and asking again costs
     # another full wf-list-gates.sh run per parked plan per tick.
+    local stuck_why="neither the registry state nor the progress.md step checklist moved"
+    case "$id" in
+      RELEASE) stuck_why="the release branch did not move" ;;
+      DEPLOY)  stuck_why="main did not move" ;;
+    esac
     if ! $dry_run; then
       "$SELF_DIR/wf-gate-open.sh" "$artifact" stuck \
-        "$role has run $attempts times with no forward progress — neither the registry state nor the progress.md step checklist moved. Needs a human look." \
+        "$role has run $attempts times with no forward progress — $stuck_why. Needs a human look." \
         --skill "wf-$role" >/dev/null 2>&1 || true
     fi
     skip_note "$role" "$id" "$attempts attempts without progress, parked" stuck

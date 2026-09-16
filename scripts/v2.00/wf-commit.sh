@@ -86,6 +86,13 @@ source "$(dirname "$0")/wf-orch-lib.sh"
 message="${1:-}"
 shift || true
 
+# Before anything else: --help is not a commit message. It used to be taken as
+# one, which took this script all the way to "nothing to commit for the given
+# paths — skipped" and exit 0 (client-b WFI-006).
+case "$message" in
+  -h|--help) wf_usage; exit 0 ;;
+esac
+
 paths=()
 allow_empty=false
 want_branch=""
@@ -111,7 +118,7 @@ while [ $# -gt 0 ]; do
       ;;
     --allow-empty) allow_empty=true; shift ;;
     --branch) shift; want_branch="${1:-}"; shift || true ;;
-    *) echo "Unknown option: $1" >&2; exit 1 ;;
+    *) wf_bad_option "$1" ;;
   esac
 done
 

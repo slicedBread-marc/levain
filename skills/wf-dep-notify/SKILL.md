@@ -72,10 +72,21 @@ standing in the target's pipeline beyond the moment the report lands.
      --description "<what changed, written for the DEPENDENT's reader>" \
      --expected "<what their integration should do now — the new contract>" \
      --actual "<what breaks, or changes, if they don't update>" \
-     --notes "<deploy reference, migration guide, timeline>"
+     --notes "<deploy reference, migration guide, timeline>" \
+     [--links "<ticket, decision record, related artifact over there>"] \
+     [--amends <BUG-id>]
    ```
    Omit `--to` to broadcast to every declared dependent; pass it to reach just one. Omitted
    fields land as `TBD` — never invent them.
+
+   **Correcting something already filed: `--amends <BUG-id>`.** A correction that arrives before
+   the target has triaged the original is only useful if the two are linked, and linking them
+   used to mean hand-editing `Links:` inside another project's `bugs/open/` — the one thing a
+   coordinator is told never to do (coordinator WFI-001). `--amends` writes both sides through the
+   target's own scripts: the new report gets `Amends <ID>`, and `<ID>` gains `Amended by <new
+   ID>`. It needs `--to` whenever more than one target is configured — the ID belongs to one
+   project's counter, and the same number means something different in each. If the back-link
+   fails, the script says so loudly: relay that, because a one-sided link is worse than none.
 
    **Severity is urgency to act, not how bad the change is in the abstract.** `Critical`/`High`
    for something that breaks a dependent's integration now or on its next deploy; `Low` for a

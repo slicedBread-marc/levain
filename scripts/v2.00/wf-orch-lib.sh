@@ -1131,3 +1131,35 @@ wf_event() {
   local log="$(wf_orch_dir)/events.log"
   printf '%s\t%s\t%s\t%s\n' "$(wf_now)" "$type" "$artifact" "$msg" >> "$log"
 }
+
+# ── Self-documentation ────────────────────────────────────────────────────
+#
+# Every script in this folder opens with a comment block that IS its manual:
+# the usage lines, the options, and the incident that shaped each one. Nothing
+# routed a caller to it. `wf-commit.sh --help` consumed `--help` as the
+# positional <message> and printed "nothing to commit for the given paths —
+# skipped"; `wf-claim.sh --status` and `wf-bug-close.sh --help` answered
+# "Unknown option" and exited 1 over usage text they define a few lines later.
+# So the only discoverable way to read an interface was to open the file
+# (client-b WFI-006, and the same point again in WFI-008).
+#
+# wf-exec.sh now intercepts -h/--help for every script that does not handle it
+# itself. These two are for the other half: an option the script does not know.
+
+# wf_usage [file] — print the leading comment block of a script, unprefixed.
+wf_usage() {
+  local f="${1:-$0}"
+  awk 'NR == 1 && /^#!/ { next }
+       /^#/ { sub(/^#[ ]?/, ""); print; next }
+       { exit }' "$f"
+}
+
+# wf_bad_option <option> [file] — say which option, then show the manual.
+# Exits 1; a caller that wants to continue should not use it.
+wf_bad_option() {
+  local opt="$1" f="${2:-$0}"
+  echo "$(basename "$f"): unknown option '$opt'" >&2
+  echo >&2
+  wf_usage "$f" >&2
+  exit 1
+}

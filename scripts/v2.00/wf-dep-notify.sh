@@ -65,6 +65,31 @@
 #                            procedure, if there is one (default: N/A, this
 #                            is a notice, not a reproducible defect)
 #   --notes        <text>   deploy reference, migration guide, timeline
+#   --links        <text>   free text for the new report's Links: field —
+#                            a ticket, a decision record, a related artifact
+#                            in the target project
+#   --amends <BUG-id>       this report CORRECTS one already filed in the
+#                            target. Sets Links on both sides in the target's
+#                            own repo: the new one says "Amends <ID>", the
+#                            named one gains "Amended by <new ID>". Requires
+#                            --to unless exactly one target is configured —
+#                            the ID belongs to one project's counter, and
+#                            broadcasting it would name a different artifact
+#                            in each.
+#
+# AMENDING, AND WHY IT IS A FLAG RATHER THAN AN EDIT
+#
+# A correction to an already-filed request arrives before triage more often
+# than not, and the two reports are only useful together. Nothing could link
+# them: `--links` did not exist here, and no script could touch a filed bug's
+# Links field, so the only route was hand-editing bugs/open/ inside another
+# project — which is precisely what a coordinator is told never to do. coordinator hit
+# it filing client-b BUG-008 against BUG-007, and again with client-e
+# BUG-125 against BUG-123/124, still unlinked (coordinator WFI-001).
+#
+# The back-link is written by the TARGET's own wf-bug-link.sh, through the
+# target's own wf-exec.sh — the same rule the filing itself follows: this
+# script never writes into another project's tree directly.
 #
 # This project's identity is recorded automatically: --source is stamped
 # "cross-project:<this project's slug>" on each dependent's side.
@@ -110,10 +135,14 @@ steps=""
 expected=""
 actual=""
 notes=""
+links=""
+amends=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --to)          to_name="${2:?--to requires a value}"; shift 2 ;;
+    --links)       links="${2:?--links requires a value}"; shift 2 ;;
+    --amends)      amends="${2:?--amends requires a bug ID}"; shift 2 ;;
     --kind)        kind="${2:?--kind requires a value}"; shift 2 ;;
     --severity)    severity="${2:?--severity requires a value}"; shift 2 ;;
     --description) description="${2:?--description requires a value}"; shift 2 ;;
@@ -121,8 +150,8 @@ while [ $# -gt 0 ]; do
     --expected)    expected="${2:?--expected requires a value}"; shift 2 ;;
     --actual)      actual="${2:?--actual requires a value}"; shift 2 ;;
     --notes)       notes="${2:?--notes requires a value}"; shift 2 ;;
-    -h|--help)     sed -n '2,96p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    -*) echo "wf-dep-notify.sh: unknown option '$1'" >&2; exit 1 ;;
+    -h|--help)     wf_usage; exit 0 ;;
+    -*) wf_bad_option "$1" ;;
     *)  if [ -z "$title" ]; then title="$1"; else
           echo "Error: unexpected argument '$1' — the title is one argument, quote it" >&2; exit 1
         fi; shift ;;
@@ -176,6 +205,17 @@ if [ "${#target_names[@]}" -eq 0 ]; then
   exit 1
 fi
 
+# An --amends ID is allocated by ONE project's counter. Broadcasting it would
+# name a different artifact in each target, or none.
+if [ -n "$amends" ]; then
+  if [ -z "$to_name" ] && [ "${#target_names[@]}" -gt 1 ]; then
+    echo "Error: --amends names an artifact in one project's counter — say which with --to." >&2
+    printf 'Configured targets: %s\n' "$(IFS=,; echo "${target_names[*]}")" >&2
+    exit 1
+  fi
+  links="${links:+$links; }Amends $amends"
+fi
+
 if [ -n "$to_name" ]; then
   found=false
   for n in "${target_names[@]}"; do [ "$n" = "$to_name" ] && found=true && break; done
@@ -192,6 +232,11 @@ case "$kind" in
   request) kind_note="This is a work request from $caller_slug, which coordinates this project. It is a capability ask, not a defect found here — triage it through this project's own /wf-spec like any other request. $caller_slug does not plan, claim or implement it." ;;
   bug)     kind_note="This is a defect reported by $caller_slug, observed from outside this project. $caller_slug does not plan, claim or implement it — it goes through this project's own /wf-spec like any other bug." ;;
 esac
+
+# An array, not `${links:+--links "$links"}`: an unquoted conditional expansion
+# word-splits, which turns a multi-word link into several arguments.
+link_args=()
+[ -n "$links" ] && link_args=(--links "$links")
 
 notified=0
 skipped=0
@@ -232,12 +277,25 @@ for i in "${!target_names[@]}"; do
       --steps "${steps:-N/A — this is a $kind, not a reproducible defect.}" \
       --expected "${expected:-TBD}" \
       --actual "${actual:-TBD}" \
+      "${link_args[@]+"${link_args[@]}"}" \
       --notes "${kind_note}${notes:+$'\n\n'}${notes}"); then
     echo "SKIPPED $name filing-failed"
     echo "wf-dep-notify: filing in $name failed — see output above" >&2
     skipped=$((skipped + 1)); continue
   fi
   eval "$bug_out"
+
+  # The other half of --amends: the report being corrected has to say so too,
+  # or a reader who opens it first never learns a correction exists. Written by
+  # the TARGET's own wf-bug-link.sh, through the target's own wf-exec.sh — this
+  # script never edits another project's files directly (coordinator WFI-001).
+  if [ -n "$amends" ]; then
+    if (cd "$path" && scripts/wf-exec.sh wf-bug-link.sh "$amends" "Amended by $BUG_ID" >&2); then
+      echo "$amends in $name now links $BUG_ID" >&2
+    else
+      echo "wf-dep-notify: $BUG_ID was filed in $name, but back-linking $amends FAILED — $BUG_ID says it amends $amends and $amends does not mention it. Link it in $name before its triage reads only one side." >&2
+    fi
+  fi
 
   echo "NOTIFIED $name $BUG_ID $path $BUG_DIR"
   echo "$BUG_ID filed in $name → $path/$BUG_DIR (not pushed — that project's own push)" >&2

@@ -1,13 +1,28 @@
 #!/usr/bin/env bash
 # wf-bug-close.sh <bug-id> <plan-name> [--no-commit]
-# wf-bug-close.sh <bug-id> --duplicate-of <ID> [--no-commit]
+# wf-bug-close.sh <bug-id> --duplicate-of <ID> [--note <text>] [--no-commit]
+# wf-bug-close.sh <bug-id> --superseded-by <ID> [--note <text>] [--no-commit]
 # wf-bug-close.sh <bug-id> --fixed-in <sha> [--note <text>] [--no-commit]
 # wf-bug-close.sh <bug-id> --wont-fix [--note <text>] [--no-commit]
 #
 # Moves a bug to closed and marks it as resolved.
 # Updates bug.md Status to Closed with date and the reason: the fixing plan,
-# the artifact it duplicates, the commit that fixed it directly, or the decision
-# not to fix it at all.
+# the artifact it duplicates, the artifact that superseded it, the commit that
+# fixed it directly, or the decision not to fix it at all.
+#
+# A DUPLICATE AND A SOURCE ARE OPPOSITE RELATIONS
+#
+# The reasons above had no verb for the commonest triage outcome of all: a bug
+# read, understood, and folded into a brief that replaces it. client-b BUG-007
+# and BUG-008 became BRF-010, which says in its own text that it supersedes
+# them — and the only close that would accept a BRF target was
+# `--duplicate-of`, so both closed as "duplicate of BRF-010" and the ledger
+# recorded the relation backwards. BRF-010 is not what BUG-007 duplicates; it
+# is what BUG-007 became. `--duplicate-of` also took no `--note`, so there was
+# nowhere to say so at close time (client-b WFI-008).
+#
+# `--superseded-by <ID>` is that verb, and `--note` now works with every
+# reason — a close is a record, and the record was the thing missing.
 #
 # NOT EVERY FIX IS WORTH A PLAN, AND THE ONES THAT ARE NOT WERE UNCLOSEABLE
 #
@@ -101,10 +116,13 @@
 set -euo pipefail
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=wf-orch-lib.sh
+source "$SELF_DIR/wf-orch-lib.sh"
 
 bug_id=""
 plan_name=""
 duplicate_of=""
+superseded_by=""
 fixed_in=""
 wont_fix=false
 close_note_extra=""
@@ -114,29 +132,32 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-commit)    do_commit=false; shift ;;
     --duplicate-of) duplicate_of="${2:?--duplicate-of requires an artifact ID}"; shift 2 ;;
+    --superseded-by) superseded_by="${2:?--superseded-by requires an artifact ID}"; shift 2 ;;
     --fixed-in)     fixed_in="${2:?--fixed-in requires a commit sha}"; shift 2 ;;
     --wont-fix)     wont_fix=true; shift ;;
     --note)         close_note_extra="${2:?--note requires a value}"; shift 2 ;;
-    -*) echo "Unknown option: $1" >&2; exit 1 ;;
+    -*) wf_bad_option "$1" ;;
     *)  if [ -z "$bug_id" ]; then bug_id="$1"; else plan_name="$1"; fi; shift ;;
   esac
 done
 
 # Exactly one reason. Two would leave bug.md claiming two different resolutions.
 reasons=0
-[ -n "$plan_name" ]    && reasons=$((reasons + 1))
-[ -n "$duplicate_of" ] && reasons=$((reasons + 1))
-[ -n "$fixed_in" ]     && reasons=$((reasons + 1))
-$wont_fix              && reasons=$((reasons + 1))
+[ -n "$plan_name" ]     && reasons=$((reasons + 1))
+[ -n "$duplicate_of" ]  && reasons=$((reasons + 1))
+[ -n "$superseded_by" ] && reasons=$((reasons + 1))
+[ -n "$fixed_in" ]      && reasons=$((reasons + 1))
+$wont_fix               && reasons=$((reasons + 1))
 
 if [ "$reasons" -gt 1 ]; then
-  echo "Error: a bug is closed by a plan, as a duplicate, by a commit, or as won't-fix — pick one." >&2
+  echo "Error: a bug is closed by a plan, as a duplicate, as superseded, by a commit, or as won't-fix — pick one." >&2
   exit 1
 fi
 
 if [ -z "$bug_id" ] || [ "$reasons" -eq 0 ]; then
   echo "Usage: $0 <bug-id> <plan-name> [--no-commit]" >&2
-  echo "       $0 <bug-id> --duplicate-of <ID> [--no-commit]" >&2
+  echo "       $0 <bug-id> --duplicate-of <ID> [--note <text>] [--no-commit]" >&2
+  echo "       $0 <bug-id> --superseded-by <ID> [--note <text>] [--no-commit]" >&2
   echo "       $0 <bug-id> --fixed-in <sha> [--note <text>] [--no-commit]" >&2
   echo "       $0 <bug-id> --wont-fix [--note <text>] [--no-commit]" >&2
   exit 1
@@ -157,7 +178,7 @@ done
 if [ -z "$bug_dir" ]; then
   for d in bugs/closed/${bug_id}*/; do
     if [ -d "$d" ]; then
-      why=$(grep -m1 -E "^(Fixed by plan|Fixed directly in|Closed as duplicate of|Closed as won't-fix):" "$d/bug.md" 2>/dev/null || true)
+      why=$(grep -m1 -E "^(Fixed by plan|Fixed directly in|Closed as duplicate of|Superseded by|Closed as won't-fix):" "$d/bug.md" 2>/dev/null || true)
       # "Already closed" is only the whole answer when the close was COMMITTED.
       # A run that died in the staging window (WFI-192) leaves the bug at
       # bugs/closed/ on disk with the rename staged, and a re-run must finish
@@ -189,6 +210,13 @@ today=$(date +%Y-%m-%d)
 if [ -n "$duplicate_of" ]; then
   close_note="Closed as duplicate of: $duplicate_of — closed by decision, not fixed"
   close_line="duplicate of $duplicate_of"
+  [ -n "$close_note_extra" ] && close_note="$close_note
+$close_note_extra"
+elif [ -n "$superseded_by" ]; then
+  close_note="Superseded by: $superseded_by — closed by decision, not fixed"
+  close_line="superseded by $superseded_by"
+  [ -n "$close_note_extra" ] && close_note="$close_note
+$close_note_extra"
 elif $wont_fix; then
   # The reason is the whole record, so say so where the note would otherwise be
   # missed: a won't-fix with no reason is a bug that will be re-filed.

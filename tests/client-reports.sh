@@ -4912,6 +4912,210 @@ assert_eq "wf-verify tells a worker how to run a scope that will not fit" "true"
   "$(grep -q 'wf-test-scope.sh PLN-NNN-<slug> --split' "$LIB_ROOT/skills/wf-verify/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A failed E2E run does not leave release looking promotable (client-b WFI-007, coordinator WFI-002)"
+
+# /wf-release merged develop into LOCAL release, E2E failed 1/117, and the run
+# exited without resetting it while reporting "release branch was NOT
+# advanced" — false for the local ref. 71s later the daemon counted 30 commits
+# on release..main and dispatched a deploy worker, which opened a
+# deploy-approval gate quoting the whole red batch as ready for production.
+REL="$TEST_DIR/relroll"
+ORIGIN="$TEST_DIR/relroll-origin"
+mkdir -p "$REL/scripts"
+cp "$SCRIPT_DIR/wf-release-rollback.sh" "$SCRIPT_DIR/wf-list-deploy.sh" \
+   "$SCRIPT_DIR/wf-list-release.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$REL/scripts/"
+(
+  git init -q --bare "$ORIGIN"
+  cd "$REL" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf 'app\n' > app.txt && git add -A && git commit -q -m "seed"
+  git branch -q release && git branch -q main
+  git remote add origin "$ORIGIN" && git push -q origin develop release main
+  git fetch -q origin
+  # A real batch of work on develop, then the failed-release state: local
+  # release fast-forwarded onto it, nothing pushed.
+  printf 'feature\n' >> app.txt && git add -A && git commit -q -m "feat: PLN-001 the work"
+  git checkout -q release && git merge -q develop --no-edit && git checkout -q develop
+) >/dev/null 2>&1
+
+assert_eq "an unpushed local release is NOT deployable" "" \
+  "$(cd "$REL" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+
+roll=$(cd "$REL" && ./scripts/wf-release-rollback.sh 2>&1 || true)
+assert_eq "the rollback says where the ref actually went" "true" \
+  "$(printf '%s' "$roll" | grep -q 'rolled back to origin/release' && echo true || echo false)"
+assert_eq "and local release is back at origin/release" "true" \
+  "$(cd "$REL" && [ "$(git rev-parse release)" = "$(git rev-parse origin/release)" ] && echo true || echo false)"
+assert_eq "a second run is a no-op, not an error" "true" \
+  "$(cd "$REL" && ./scripts/wf-release-rollback.sh 2>&1 | grep -q 'nothing to roll back' && echo true || echo false)"
+
+# The pushed case is the one that IS deployable — the rollback must not have
+# broken the normal path.
+(cd "$REL" && git checkout -q release && git merge -q develop --no-edit \
+  && git push -q origin release && git fetch -q origin && git checkout -q develop) >/dev/null 2>&1
+assert_eq "a pushed release still dispatches a deploy" "DEPLOY" \
+  "$(cd "$REL" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+
+# Diverged refs are not this script's failure to undo — it must refuse rather
+# than --hard away commits nobody can name. Both sides move: a commit only the
+# local ref has, and a commit only the remote has.
+(
+  cd "$REL"
+  git checkout -q release && printf 'local only\n' >> app.txt \
+    && git add -A && git commit -q -m "a commit only this checkout has"
+  git checkout -q develop && printf 'remote only\n' >> app.txt \
+    && git add -A && git commit -q -m "a commit only the remote has" \
+    && git push -q -f origin develop:release
+  git fetch -q origin && git checkout -q develop
+) >/dev/null 2>&1
+div_rc=0
+(cd "$REL" && ./scripts/wf-release-rollback.sh) >/dev/null 2>&1 || div_rc=$?
+assert_eq "diverged refs are refused, not reset" "1" "$div_rc"
+
+assert_eq "/wf-release rolls the local merge back on failure" "true" \
+  "$(grep -q 'wf-release-rollback.sh' "$LIB_ROOT/skills/wf-release/SKILL.md" && echo true || echo false)"
+assert_eq "and never reports 'NOT advanced' from the absence of a push" "false" \
+  "$(grep -q 'release branch was NOT advanced' "$LIB_ROOT/skills/wf-release/SKILL.md" && echo true || echo false)"
+assert_eq "/wf-deploy refuses a release that was never pushed" "true" \
+  "$(grep -q 'origin/release\.\.release' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A correct 'nothing to release' is not a stuck pipeline (client-c WFI-035)"
+
+# Three /wf-release runs each exited "Release is up to date with develop —
+# nothing to release", all three correct, and the third opened a `stuck` gate
+# asserting no forward progress. The range held one bookkeeping commit from
+# the prior deploy; the eligibility check dispatched a worker for it every
+# tick, because an EMPTY range diff satisfied its "changed something outside
+# plans/" test — the single blank line it produced matched nothing.
+NOOP="$TEST_DIR/noop-release"
+mkdir -p "$NOOP/scripts"
+cp "$SCRIPT_DIR/wf-list-release.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$NOOP/scripts/"
+(
+  cd "$NOOP" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf 'app\n' > app.txt && git add -A && git commit -q -m "seed"
+  git branch -q release
+  # /wf-deploy's promote marker: an empty commit, subject and all.
+  git commit -q --allow-empty -m "release: promote to main"
+) >/dev/null 2>&1
+
+assert_eq "an empty-diff bookkeeping commit is not releasable work" "" \
+  "$(cd "$NOOP" && ./scripts/wf-list-release.sh 2>/dev/null)"
+
+(cd "$NOOP" && printf '| PLN-001 | x | complete |\n' > registry.md && git add -A \
+  && git commit -q -m "registry(PLN-001): complete") >/dev/null 2>&1
+assert_eq "nor is a registry transition with real file content" "" \
+  "$(cd "$NOOP" && ./scripts/wf-list-release.sh 2>/dev/null)"
+
+(cd "$NOOP" && printf 'feature\n' >> app.txt && git add -A \
+  && git commit -q -m "feat: PLN-002 real work") >/dev/null 2>&1
+assert_eq "real work still dispatches a release" "RELEASE" \
+  "$(cd "$NOOP" && ./scripts/wf-list-release.sh 2>/dev/null)"
+
+assert_eq "the orchestrator re-checks eligibility before parking RELEASE as stuck" "true" \
+  "$(grep -q 'wf-list-\$role.sh' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A script's interface is readable without opening it (client-b WFI-006, WFI-008)"
+
+# `wf-commit.sh --help` took --help as the positional <message>, ran a real
+# no-op commit attempt and printed "nothing to commit for the given paths —
+# skipped" with exit 0. wf-bug-close.sh and wf-claim.sh answered "Unknown
+# option" and exited 1 over usage text they define a few lines down. 6 of 98
+# scripts handled the flag.
+HELPD="$TEST_DIR/helpflag"
+mkdir -p "$HELPD/scripts/$SCRIPT_FOLDER" "$HELPD/.claude"
+cp "$LIB_SCRIPTS/wf-exec.sh" "$HELPD/scripts/"
+cp "$LIB_SCRIPTS/version-map.txt" "$HELPD/scripts/"
+cp "$SCRIPT_DIR"/*.sh "$HELPD/scripts/$SCRIPT_FOLDER/"
+printf '%s\n' "${SCRIPT_FOLDER#v}.0" > "$HELPD/.claude/workflow-version"
+(cd "$HELPD" && git init -qb develop . && git config user.email t@t && git config user.name t \
+  && git add -A && git commit -q -m seed) >/dev/null 2>&1
+
+help_out=$(cd "$HELPD" && ./scripts/wf-exec.sh wf-commit.sh --help 2>&1 || true)
+assert_eq "--help prints the usage line, not a commit attempt" "true" \
+  "$(printf '%s' "$help_out" | grep -q 'wf-commit.sh <message>' && echo true || echo false)"
+# The real property: --help must not run a commit. (The header text quotes the
+# "nothing to commit" line as evidence, so grepping the output for it proves
+# nothing either way.)
+assert_eq "--help creates no commit" "1" \
+  "$(cd "$HELPD" && git rev-list --count HEAD | xargs)"
+assert_eq "wf-bug-close.sh --help prints its four close forms" "true" \
+  "$(cd "$HELPD" && ./scripts/wf-exec.sh wf-bug-close.sh --help 2>&1 | grep -q -- '--superseded-by' && echo true || echo false)"
+assert_eq "wf-claim.sh --help prints its options" "true" \
+  "$(cd "$HELPD" && ./scripts/wf-exec.sh wf-claim.sh --help 2>&1 | grep -q -- '--if-free' && echo true || echo false)"
+# A script that parses --help itself still wins.
+assert_eq "a script with its own --help keeps it" "true" \
+  "$(cd "$HELPD" && ./scripts/wf-exec.sh wf-dep-notify.sh --help 2>&1 | grep -q -- '--amends' && echo true || echo false)"
+# And an option the script does not know shows the manual instead of one line.
+claim_help=$(cd "$HELPD" && ./scripts/wf-exec.sh wf-claim.sh --status 2>&1 || true)
+assert_eq "an unknown option answers with the usage it defines" "true" \
+  "$(printf '%s' "$claim_help" | grep -q -- '--if-free' && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A bug folded into a brief is superseded, not duplicated (client-b WFI-008)"
+
+# BUG-007 and BUG-008 became BRF-010, which says in its own text that it
+# supersedes them. --duplicate-of was the only close that accepted a BRF
+# target, so the ledger and the commit both recorded the arrow backwards, and
+# --duplicate-of took no --note to say otherwise.
+SUP="$TEST_DIR/supersede"
+mkdir -p "$SUP/scripts" "$SUP/bugs/open/BUG-007-a-defect"
+cp "$SCRIPT_DIR/wf-bug-close.sh" "$SCRIPT_DIR/wf-bug-link.sh" "$SCRIPT_DIR/wf-commit.sh" \
+   "$SCRIPT_DIR/wf-lock.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$SUP/scripts/"
+(
+  cd "$SUP" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf '# A defect\n\n> **Status:** Open\n> **ID:** BUG-007\n> **Links:** _(none)_\n\n## Notes\n—\n' \
+    > bugs/open/BUG-007-a-defect/bug.md
+  git add -A && git commit -q -m "bug(BUG-007): filed"
+) >/dev/null 2>&1
+
+(cd "$SUP" && ./scripts/wf-bug-close.sh BUG-007 --superseded-by BRF-010 \
+   --note "BRF-010 was written from this report") >/dev/null 2>&1
+assert_eq "the close records the real relation" "true" \
+  "$(grep -q '^Superseded by: BRF-010' "$SUP/bugs/closed/BUG-007-a-defect/bug.md" && echo true || echo false)"
+assert_eq "and --note survives into the record" "true" \
+  "$(grep -q 'BRF-010 was written from this report' "$SUP/bugs/closed/BUG-007-a-defect/bug.md" && echo true || echo false)"
+assert_eq "the commit subject says superseded, not duplicate" "true" \
+  "$(cd "$SUP" && git log -1 --format=%s | grep -q 'superseded by BRF-010' && echo true || echo false)"
+assert_eq "closing twice is still success" "true" \
+  "$(cd "$SUP" && ./scripts/wf-bug-close.sh BUG-007 --superseded-by BRF-010 2>&1 | grep -q 'already closed' && echo true || echo false)"
+
+# --note used to be silently dropped for a duplicate — wf-spec passes one.
+mkdir -p "$SUP/bugs/open/BUG-009-echo"
+(
+  cd "$SUP"
+  printf '# An echo\n\n> **Status:** Open\n> **ID:** BUG-009\n> **Links:** _(none)_\n\n## Notes\n—\n' \
+    > bugs/open/BUG-009-echo/bug.md
+  git add -A && git commit -q -m "bug(BUG-009): filed"
+  ./scripts/wf-bug-close.sh BUG-009 --duplicate-of BUG-007 --note "same identifier, already fixed"
+) >/dev/null 2>&1
+assert_eq "a duplicate close carries its --note too" "true" \
+  "$(grep -q 'same identifier, already fixed' "$SUP/bugs/closed/BUG-009-echo/bug.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A correction can link the report it corrects (coordinator WFI-001)"
+
+# coordinator filed client-b BUG-008 to correct BUG-007 before triage. wf-dep-notify.sh
+# had no --links, and no script could amend a filed bug's Links field, so the
+# only route was hand-editing another project's bugs/open/ — the one thing a
+# coordinator is told never to do. client-e BUG-125/123/124 is still unlinked.
+(cd "$SUP" && ./scripts/wf-bug-link.sh BUG-007 "Amended by BUG-008") >/dev/null 2>&1
+assert_eq "a filed bug's Links can be amended by script" "true" \
+  "$(grep -q '\*\*Links:\*\* Amended by BUG-008' "$SUP/bugs/closed/BUG-007-a-defect/bug.md" && echo true || echo false)"
+(cd "$SUP" && ./scripts/wf-bug-link.sh BUG-007 "See DC-014") >/dev/null 2>&1
+assert_eq "a second link appends rather than replacing" "true" \
+  "$(grep -q '\*\*Links:\*\* Amended by BUG-008; See DC-014' "$SUP/bugs/closed/BUG-007-a-defect/bug.md" && echo true || echo false)"
+assert_eq "re-linking the same text is a no-op, not a duplicate" "1" \
+  "$(grep -c 'Amended by BUG-008' "$SUP/bugs/closed/BUG-007-a-defect/bug.md" | xargs)"
+assert_eq "an unknown bug is an error, not a silent success" "1" \
+  "$( (cd "$SUP" && ./scripts/wf-bug-link.sh BUG-404 "x") >/dev/null 2>&1; echo $? )"
+
+assert_eq "wf-dep-notify.sh --amends needs --to when targets are plural" "true" \
+  "$(grep -q 'amends names an artifact in one project' "$SCRIPT_DIR/wf-dep-notify.sh" && echo true || echo false)"
+assert_eq "both cross-project filers pass --links through" "true" \
+  "$(grep -q 'link_args' "$SCRIPT_DIR/wf-dep-notify.sh" && grep -q 'link_args' "$SCRIPT_DIR/wf-dep-bug.sh" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

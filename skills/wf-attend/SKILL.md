@@ -319,12 +319,20 @@ Display the question verbatim, get the answer, apply it, close the gate with the
 **If the answer disposes of a bug, use the scripted close.** A `needs-input` gate often resolves as "this bug is a duplicate", "this one is already fixed", or "we are not fixing this", and each has a verb — none of them needs a plan, and none of them should be a hand-edit plus a `git mv`:
 
 ```bash
-scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --duplicate-of <BRF-NNN|BUG-NNN|PLN-NNN>
+scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --duplicate-of <BRF-NNN|BUG-NNN|PLN-NNN> [--note "<...>"]
+scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --superseded-by <BRF-NNN|BUG-NNN|PLN-NNN> [--note "<...>"]
 scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --fixed-in <sha> [--note "<what and why>"]
 scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --wont-fix --note "<why not>"
 ```
 
-All three find the bug in `bugs/open/` as readily as `bugs/triaged/`, write the real reason rather than a plan that does not exist, and commit both sides of the rename themselves. client-a's WFI-226 closed a duplicate by hand because the two-argument `<bug-id> <plan-name>` form was the only one it knew about — the close was correct in content and invisible to everything that reads a scripted close.
+**`--duplicate-of` and `--superseded-by` are opposite relations — pick the true one.** A
+duplicate says "this was already filed over there". Superseded says "this was read, and the work
+it asked for now lives over there" — the ordinary outcome when a `needs-input` answer folds a
+bug into a brief. client-b BUG-007 and BUG-008 became BRF-010, and closing them as duplicates
+of it put the arrow backwards in the ledger and in the commit subject, the one record a later
+reader of `bugs/closed/` actually sees (WFI-008).
+
+All of them find the bug in `bugs/open/` as readily as `bugs/triaged/`, write the real reason rather than a plan that does not exist, and commit both sides of the rename themselves. client-a's WFI-226 closed a duplicate by hand because the two-argument `<bug-id> <plan-name>` form was the only one it knew about — the close was correct in content and invisible to everything that reads a scripted close.
 
 ## After each gate
 

@@ -45,6 +45,22 @@ Before starting, confirm E2E passed on release:
    git rev-parse --verify release
    ```
    Steps 3 and 4 read `release` and `main` as refs too, which resolve from any worktree in the repository.
+
+2a. **Refuse to promote a `release` that was never pushed.** Everything below treats
+   `release --not main` as "commits that passed E2E", and that is only true of commits
+   `/wf-release` actually pushed — it pushes *after* its suite passes, and never before:
+   ```bash
+   git fetch origin release --quiet 2>/dev/null || true
+   git rev-list origin/release..release --oneline
+   ```
+   **Any output here is a stop.** Those commits are on the local `release` ref and on no remote,
+   which means the run that put them there did not reach its push — the E2E suite failed, or the
+   worker died mid-run. client-b WFI-007 is that exact state reaching a `deploy-approval` gate:
+   30 commits quoted as ready for production, over a suite that was red 1/117. Tell the user
+   what is unpushed, point them at `scripts/wf-exec.sh wf-release-rollback.sh` (which resets the
+   local ref to `origin/release`) or at re-running `/wf-release`, then unclaim and exit — do not
+   prompt, do not open a gate, and under `WF_UNATTENDED=1` do not proceed on any grant. A
+   standing grant authorizes promoting a validated batch; it does not make this one validated.
 3. **Show recent release commits** so the user can confirm what's being promoted:
    ```bash
    TOTAL=$(git rev-list --count release --not main)

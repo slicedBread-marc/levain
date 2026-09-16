@@ -93,8 +93,15 @@ eval "$(scripts/wf-exec.sh wf-dep-bug.sh --host client-c "<title>" \
   --steps "<numbered list, or TBD>" \
   --expected "<what should happen>" \
   --actual "<what does happen>" \
-  --notes "<how this project hit it — a plan ID, a page, a call it made>")"
+  --notes "<how this project hit it — a plan ID, a page, a call it made>" \
+  [--links "<ticket, decision record, related artifact over there>"] \
+  [--amends <BUG-id>])"
 ```
+`--amends <BUG-id>` is for a report that **corrects one already filed in that host** — a common
+case, since a correction usually arrives before the host has triaged the original. It links both
+sides through the host's own scripts (`Amends <ID>` on the new one, `Amended by <new ID>` on the
+named one) rather than hand-editing `Links:` in another project's `bugs/open/`, which is the one
+thing a cross-project filer must never do (coordinator WFI-001).
 This `cd`s into the dependency's own checkout and runs **its own** `wf-bug-new.sh` through **its
 own** `wf-exec.sh` — the bug is allocated through that project's counter and lands in that
 project's `bugs/open/`, exactly where its own `/wf-spec` already looks. There is no second inbox
@@ -137,10 +144,21 @@ changed here is what broke, or will break, someone else's integration.
 A duplicate has no fixing plan and is never triaged, so the normal close path — `/wf-deploy` closing a bug when its plan completes — never reaches it. Close it here, with the script, from `bugs/open/`:
 
 ```bash
-scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --duplicate-of <BRF-NNN|BUG-NNN|PLN-NNN>
+scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --duplicate-of <BRF-NNN|BUG-NNN|PLN-NNN> [--note "<...>"]
 ```
 
-It writes `Status: Closed`, the date, and `Closed as duplicate of: <ID> — closed by decision, not fixed` into `bug.md`, then commits the move naming **both** sides of the rename. Do not do this by hand: a rename is two paths, only the caller's pathspec decides which of them land, and a hand-close that names one leaves the bug tracked at `open/` **and** `closed/` in the same HEAD (WFI-136, WFI-139). Confirm with the user before closing — deciding two artifacts are the same issue is their call, not yours.
+It writes `Status: Closed`, the date, and `Closed as duplicate of: <ID> — closed by decision, not fixed` into `bug.md`, then commits the move naming **both** sides of the rename.
+
+**A bug that became a brief is superseded, not duplicated.** When triage reads a bug and folds
+what it asked for into a new artifact, the new one did not exist first — the bug is its source:
+
+```bash
+scripts/wf-exec.sh wf-bug-close.sh BUG-NNN --superseded-by <BRF-NNN|BUG-NNN|PLN-NNN> [--note "<...>"]
+```
+
+`--duplicate-of` in that case records the relation backwards, in `bug.md` and in the commit
+subject both — client-b closed BUG-007 as "duplicate of BRF-010" when BRF-010 was derived from
+it and says so in its own text (WFI-008). Every reason takes `--note`; a close is a record. Do not do this by hand: a rename is two paths, only the caller's pathspec decides which of them land, and a hand-close that names one leaves the bug tracked at `open/` **and** `closed/` in the same HEAD (WFI-136, WFI-139). Confirm with the user before closing — deciding two artifacts are the same issue is their call, not yours.
 
 **One narrow exception auto-closes without asking**, during `wf-spec`'s bug-triage step only: a bug `wf-verify` filed automatically, naming a concrete identifier already fixed by a plan at `verify` or later. See `skills/wf-spec/SKILL.md` § "Plan from bug", step 2. Everywhere else — including this section in general — the confirm-first rule above stands.
 
