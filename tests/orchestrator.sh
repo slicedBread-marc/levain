@@ -900,6 +900,88 @@ assert_eq "dead worker is not listed as running" "false" \
 rm -f "$ORCH/logs/PLN-021-bbb-verify.pid" "$ORCH/logs/PLN-099-dead-implement.pid"
 "$SCRIPT_DIR/wf-gate-close.sh" PLN-022 done >/dev/null 2>&1
 
+section "Brainstorms — the count, the drift, and the park"
+
+# The backlog these tests build:
+#   BRF-101 Exploring, listed          → an incomplete brainstorm
+#   BRF-102 Idea, NOT listed           → drift (and an incomplete brainstorm
+#                                        the index cannot see)
+#   BRF-103 Planned, NOT listed, has a plan → unlisted ON PURPOSE (WFI-028);
+#                                        neither counted nor drift
+mkdir -p plans/PLN-103-shipped
+touch plans/PLN-103-shipped/plan.md
+brief() {
+  printf '# %s\n\n> **ID:** %s\n> **schema_version:** 4\n> **Status:** %s\n> **Created:** 2026-04-07\n> **Plan:** %s\n\n## Problem\nx\n' \
+    "$4" "$1" "$2" "${3:-—}" > "plans/briefs/$1-$5.md"
+}
+brief BRF-101 Exploring "—" "One idea" one
+brief BRF-102 Idea "—" "Two idea" two
+brief BRF-103 Planned "[PLN-103](../PLN-103-shipped/plan.md)" "Shipped" shipped
+cp "$LIB_ROOT/templates/plans/briefs/INDEX.md" plans/briefs/INDEX.md
+"$SCRIPT_DIR/wf-brief-park.sh" BRF-101 --clear >/dev/null 2>&1 || true
+# Only BRF-101 gets a row.
+awk '/^## Exploring/{print; print "> blurb"; print ""; print "- [BRF-101-one.md](BRF-101-one.md) — One idea"; next}1' \
+  plans/briefs/INDEX.md > plans/briefs/INDEX.tmp && mv plans/briefs/INDEX.tmp plans/briefs/INDEX.md
+
+assert_eq "only the listed Idea/Exploring brief is counted" "1" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --count 2>/dev/null)"
+assert_eq "a Decided brief is not an incomplete brainstorm" "true" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" 2>/dev/null | grep -qv 'Decided' && echo true || echo false)"
+assert_eq "an unlisted brief is reported as drift" "1" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --drift --count 2>/dev/null)"
+assert_eq "and it is BRF-102, not the shipped BRF-103" "true" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --drift 2>/dev/null | grep -q '^BRF-102' && echo true || echo false)"
+assert_eq "a brief whose plan exists is never drift (WFI-028 pruning)" "false" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --drift 2>/dev/null | grep -q 'BRF-103' && echo true || echo false)"
+
+# The board carries both numbers, and nothing else moved.
+board_fields=$("$SCRIPT_DIR/wf-board.sh" --fields 2>/dev/null)
+assert_eq "--fields reports brainstorms" "true" \
+  "$(printf '%s' "$board_fields" | grep -q 'brainstorms=1' && echo true || echo false)"
+assert_eq "--fields reports brainstorms_drift" "true" \
+  "$(printf '%s' "$board_fields" | grep -q 'brainstorms_drift=1' && echo true || echo false)"
+# Captured first, not piped into `grep -q`: this suite runs under `pipefail`,
+# and `grep -q` exits on its first match, SIGPIPEs the board mid-write and
+# makes the pipeline status 141 no matter what grep found.
+board_plain=$("$SCRIPT_DIR/wf-board.sh" --plain 2>/dev/null)
+assert_eq "the board renders a brainstorms line above draft" "true" \
+  "$(printf '%s\n' "$board_plain" | grep -qE '^  brainstorms +1' && echo true || echo false)"
+assert_eq "and names the drift repair on that line" "true" \
+  "$(printf '%s\n' "$board_plain" | grep -q 'not in INDEX.md' && echo true || echo false)"
+
+# Reindex: adds the missing row, leaves the shipped brief pruned.
+assert_eq "a dry run exits 2 when there is drift and writes nothing" "2" \
+  "$("$SCRIPT_DIR/wf-brainstorm-reindex.sh" >/dev/null 2>&1; echo $?)"
+assert_eq "and really wrote nothing" "1" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --count 2>/dev/null)"
+"$SCRIPT_DIR/wf-brainstorm-reindex.sh" --apply >/dev/null 2>&1
+assert_eq "--apply clears the drift" "0" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --drift --count 2>/dev/null)"
+assert_eq "the reindexed brief now counts" "2" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --count 2>/dev/null)"
+assert_eq "the shipped brief was not put back" "false" \
+  "$(grep -q 'BRF-103' plans/briefs/INDEX.md && echo true || echo false)"
+
+# Parking: out of the count, into ## Parked, reversible.
+assert_eq "parking with no reason is refused" "1" \
+  "$("$SCRIPT_DIR/wf-brief-park.sh" BRF-102 >/dev/null 2>&1; echo $?)"
+"$SCRIPT_DIR/wf-brief-park.sh" BRF-102 "not this year" >/dev/null 2>&1
+assert_eq "a parked brief leaves the count" "1" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --count 2>/dev/null)"
+assert_eq "it is not drift either — its row moved, it wasn't deleted" "0" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --drift --count 2>/dev/null)"
+assert_eq "--parked shows it with the recorded reason" "true" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --parked 2>/dev/null | grep -q 'not this year' && echo true || echo false)"
+assert_eq "the reason records what it was parked FROM" "true" \
+  "$(grep -q 'was Idea' plans/briefs/BRF-102-two.md && echo true || echo false)"
+"$SCRIPT_DIR/wf-brief-park.sh" BRF-102 --clear >/dev/null 2>&1
+assert_eq "--clear restores the status it had" "true" \
+  "$(grep -qE '^> \*\*Status:\*\* Idea$' plans/briefs/BRF-102-two.md && echo true || echo false)"
+assert_eq "and it counts again" "2" \
+  "$("$SCRIPT_DIR/wf-list-brainstorms.sh" --count 2>/dev/null)"
+assert_eq "INDEX.md never grows a duplicate row through all of that" "1" \
+  "$(grep -c 'BRF-102-two.md](BRF-102-two.md)' plans/briefs/INDEX.md | tr -d ' ')"
+
 section "Skills wired up"
 
 for s in wf-board wf-attend wf-orchestrate; do

@@ -22,6 +22,10 @@
 #                 cross-project grid from this). Not for humans. Includes
 #                 attn=<comma-separated gated plan IDs, most-important
 #                 first, `!` suffix on a stuck one>,
+#                 brainstorms=<briefs listed under ## Idea / ## Exploring in
+#                 plans/briefs/INDEX.md — thinking never carried to a
+#                 decision> with brainstorms_drift=<brief files that have no
+#                 row in that index at all>,
 #                 release_pending=<plans complete on develop but not yet
 #                 carried through /wf-release, or `-` with no release
 #                 branch>, and deploy_pending=<plans on release but not
@@ -177,6 +181,30 @@ render() {
     done
   fi
 
+  # ── Incomplete brainstorms ───────────────────────────────────────────
+  # Briefs listed under `## Idea` / `## Exploring` in plans/briefs/INDEX.md —
+  # thinking that was started and never carried to a decision. The pipeline
+  # histogram above cannot show them: it counts PLN- rows, and a brief has no
+  # registry row until it becomes a plan. wf-list-specable.sh cannot either —
+  # it offers only `Decided` briefs, by design. So an idea captured on a
+  # Tuesday and forgotten is invisible on every existing surface, which is
+  # exactly the class of thing this board exists to stop.
+  #
+  # `brainstorms_drift` is the second number because the index is maintained
+  # by hand: a brief file with no row in it is not counted (the index is the
+  # source of truth) but must not be silent either — client-e carried ten of
+  # them. wf-brainstorm-reindex.sh is the repair.
+  local brainstorms=0 brainstorms_drift=0
+  if [ -f "$ROOT/plans/briefs/INDEX.md" ]; then
+    # `|| true`, not `|| echo 0`: --count prints the number and STILL exits 1
+    # when it is zero (the wf-list-* convention), so a fallback echo would
+    # append a second line to a perfectly good "0".
+    brainstorms=$("$SELF_DIR/wf-list-brainstorms.sh" --count 2>/dev/null || true)
+    brainstorms_drift=$("$SELF_DIR/wf-list-brainstorms.sh" --drift --count 2>/dev/null || true)
+    [ -n "$brainstorms" ] || brainstorms=0
+    [ -n "$brainstorms_drift" ] || brainstorms_drift=0
+  fi
+
   # ── Release pending ──────────────────────────────────────────────────
   # Plans complete on `develop` that have never been carried through
   # /wf-release — so the full, unfiltered suite has never run against them
@@ -234,12 +262,13 @@ render() {
     [ "$release_field" -lt 0 ] 2>/dev/null && release_field="-"
     local deploy_field="$deploy_pending"
     [ "$deploy_field" -lt 0 ] 2>/dev/null && deploy_field="-"
-    printf 'daemon=%s\tenabled=%s\tspawns=%s/%s\trunning=%s\tgates=%s\tgates_stuck=%s\tgates_blocked=%s\tdraft=%s\tready=%s\tactive=%s\tverify=%s\ttesting=%s\tcomplete=%s\trolled_back=%s\tabandoned=%s\tregistry=%s\tattn=%s\trelease_pending=%s\tdeploy_pending=%s\n' \
+    printf 'daemon=%s\tenabled=%s\tspawns=%s/%s\trunning=%s\tgates=%s\tgates_stuck=%s\tgates_blocked=%s\tdraft=%s\tready=%s\tactive=%s\tverify=%s\ttesting=%s\tcomplete=%s\trolled_back=%s\tabandoned=%s\tregistry=%s\tattn=%s\trelease_pending=%s\tdeploy_pending=%s\tbrainstorms=%s\tbrainstorms_drift=%s\n' \
       "$daemon_raw" "$enabled" "$budget_used" "$budget_max" \
       "$running_n" "$gates_n" "$gates_stuck" "$gates_blocked" \
       "$st_draft" "$st_ready" "$st_active" "$st_verify" "$st_testing" \
       "$st_complete" "$st_rolled_back" "$st_abandoned" \
-      "$registry_field" "$attn" "$release_field" "$deploy_field"
+      "$registry_field" "$attn" "$release_field" "$deploy_field" \
+      "$brainstorms" "$brainstorms_drift"
     return
   fi
 
@@ -300,6 +329,19 @@ render() {
   # ── Pipeline ────────────────────────────────────────────────────────
   printf '%s\n' "${B}PIPELINE${R}"
   if [ -f "$REGISTRY" ]; then
+    # Before `draft`: thinking that hasn't produced a plan yet. Listed with the
+    # states even though it isn't one, because that is where a reader looks for
+    # "what is in this project" — and an idea nobody has looked at in a month
+    # is the one thing here that never announces itself.
+    if [ "$brainstorms" -gt 0 ] 2>/dev/null; then
+      printf '  %-11s %s' "brainstorms" "$brainstorms"
+    else
+      printf '  %s%-11s %s%s' "$DIM" "brainstorms" "$brainstorms" "$R"
+    fi
+    if [ "$brainstorms_drift" -gt 0 ] 2>/dev/null; then
+      printf ' %s(+%s not in INDEX.md — wf-brainstorm-reindex.sh)%s' "$YEL" "$brainstorms_drift" "$R"
+    fi
+    printf '\n'
     printf '  %-11s %s\n' "draft" "$st_draft"
     printf '  %-11s %s\n' "ready" "$st_ready"
     printf '  %-11s %s\n' "active" "$st_active"

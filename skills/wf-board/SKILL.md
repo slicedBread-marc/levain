@@ -30,7 +30,13 @@ Say what the human should do next, choosing the **first** case that applies:
 | `enabled: false` in the header | The orchestrator is off. Suggest a `--sweep --dry-run` first, then enabling it in `claude-workflow.yml`. |
 | A `stuck` gate is listed | That plan hit its attempt budget — it needs a human look, not another retry. |
 | Workers running, no gates | Say what's in flight and roughly how long it's been. Nothing to do but wait. |
+| Pipeline empty, `brainstorms` non-zero | The backlog isn't empty, it's unfinished thinking. Name the count and suggest `/wf-brainstorm` to decide or park them. |
 | Pipeline empty | Suggest `/wf-brainstorm` or `/wf-bug` to feed it. |
+
+The `brainstorms` line carries a `(+N not in INDEX.md)` tail when brief files
+exist that the backlog doesn't list. Mention it when it appears —
+`wf-brainstorm-reindex.sh` is the repair — but never run it from here: this
+skill writes nothing.
 
 ## Watch mode
 

@@ -2,7 +2,7 @@
 
 > **ID:** BRF-NNN
 > **schema_version:** 4
-> **Status:** Idea | Exploring | Decided | Planned
+> **Status:** Idea | Exploring | Decided | Planned | Parked | Reference
 > **Created:** YYYY-MM-DD
 > **Plan:** (link to plan once one exists, e.g., PLN-NNN-slug)
 
@@ -12,6 +12,12 @@
      `wf-brief-block.sh BRF-NNN "<why>" [--on <artifact>] [--repo <name>]` and
      clear it with `--clear`. The brief stays Decided and stops being offered to
      /wf-spec; short of a plan existing, it is the only exit a brief has. -->
+
+<!-- A brief nobody is carrying forward is PARKED, not deleted:
+     `wf-brief-park.sh BRF-NNN "<why>"` sets Status to Parked, stamps a dated
+     reason, and moves its INDEX.md row to `## Parked`. It stops counting as an
+     incomplete brainstorm on the board and stays one command away
+     (`wf-list-brainstorms.sh --parked`). `--clear` puts it back. -->
 
 
 ## Problem

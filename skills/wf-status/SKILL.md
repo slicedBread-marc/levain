@@ -32,6 +32,7 @@ scripts/wf-exec.sh wf-list-verify.sh 2>/dev/null || true
 scripts/wf-exec.sh wf-list-testable.sh 2>/dev/null || true
 scripts/wf-exec.sh wf-list-findings.sh 2>/dev/null || true
 scripts/wf-exec.sh wf-list-briefs.sh 2>/dev/null || true
+scripts/wf-exec.sh wf-list-brainstorms.sh 2>/dev/null || true
 scripts/wf-exec.sh wf-list-bugs.sh 2>/dev/null || true
 scripts/wf-exec.sh wf-registry-audit.sh 2>/dev/null || true
 
@@ -92,8 +93,9 @@ If `plans/auto-test-log.md` exists (the `ls` above printed a path), add this lin
 - BRF-001 — User auth improvements — Decided
 - BUG-006 — Database connection leak — High
 
-### Ideas
+### Ideas (2 incomplete brainstorms)
 - BRF-004 — Analytics dashboard — Exploring
+- BRF-012 — Offline mode — Idea
 
 ### Bugs
 - BUG-001 (High) — Login crashes [open]
@@ -132,6 +134,7 @@ Use `wf-list-implementable.sh` output (tab-separated: `<type>\t<plan-name>\t<goa
 | wf-list-implementable.sh | `processing` | In progress | active, claimed — show claim age |
 | wf-list-verify.sh | — | Verifying (agent) | automated |
 | wf-list-testable.sh | — | Ready to test | append `[blocked by PLN-NNN]` if 6th field starts with `blocked:` |
+| wf-list-brainstorms.sh | — | Ideas | briefs at Idea/Exploring — thinking never carried to a decision. Head the section with the count; if its stderr reported briefs missing from INDEX.md, add that line too |
 | REGISTRY.md | `complete` | Done (by tag) | group counts by Tags column ($9); untagged → "uncategorized" |
 
 To check for ESCALATED findings: `scripts/wf-exec.sh wf-list-replanning.sh 2>/dev/null`

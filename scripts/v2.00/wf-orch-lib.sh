@@ -1132,6 +1132,116 @@ wf_event() {
   printf '%s\t%s\t%s\t%s\n' "$(wf_now)" "$type" "$artifact" "$msg" >> "$log"
 }
 
+# ── plans/briefs/INDEX.md ─────────────────────────────────────────────────
+#
+# The briefs backlog is a markdown file with one `## <Status>` section per
+# state and one `- [name](file.md) — description` row per brief. Two scripts
+# rewrite it — wf-brief-park.sh moves a row between sections, and
+# wf-brainstorm-reindex.sh adds a missing one — and both want the same two
+# careful behaviours, so they live here rather than as two awk programs that
+# will drift apart:
+#
+#   · a row is carried VERBATIM. It is a human's own words about their own
+#     idea; a script that re-derives it from the brief header replaces a
+#     description with a title and quietly loses the difference.
+#   · insertion goes after the section's last non-blank line, so a row lands
+#     under the existing entries and the `>` blurb keeps its blank line
+#     instead of collecting one row of stray whitespace per edit.
+
+# wf_brief_has_plan <brief.md> — true when a plan was written from this brief.
+#
+# Two ways to know, because the Plan: field has been written four different
+# ways in the field (a markdown link, a backticked legacy path, a bare slug,
+# and in plenty of briefs not at all):
+#
+#   1. any PLN-NNN named in the brief's Plan: field, matched to a real
+#      plans/PLN-NNN-* directory;
+#   2. failing that, the brief's own number — a plan inherits the number of
+#      the brief it came from (BRF-041 → PLN-041, see CLAUDE.md), and the
+#      counter is global, so plans/PLN-041-* can only have come from BRF-041.
+#
+# Used to tell a brief that is unlisted BECAUSE IT SHIPPED (/wf-brainstorm
+# prunes those rows — client-c WFI-028) from one that fell out of the
+# index by accident.
+wf_brief_has_plan() {
+  local brief_md="$1" num pln
+  [ -f "$brief_md" ] || return 1
+
+  pln=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Plan:\*\*' "$brief_md" 2>/dev/null \
+        | grep -oE 'PLN-[0-9]+' | head -1 || true)
+  if [ -n "$pln" ]; then
+    for d in plans/"$pln"-*/; do [ -d "$d" ] && return 0; done
+  fi
+
+  num=$(basename "$brief_md" | grep -oE '^BRF-[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+  if [ -n "$num" ]; then
+    for d in plans/PLN-"$num"-*/; do [ -d "$d" ] && return 0; done
+  fi
+  return 1
+}
+
+# wf_index_take_row <index> <needle> — remove the first row mentioning
+# <needle> and print it. Rewrites the index in place. Prints nothing and
+# leaves the file untouched when there is no such row.
+wf_index_take_row() {
+  local index="$1" needle="$2" tmp="$1.tmp.$$"
+  [ -f "$index" ] || return 1
+  local row
+  row=$(grep -m1 -F -- "$needle" "$index" | grep '^- \[' || true)
+  [ -n "$row" ] || return 1
+  # Pulling a row out can leave the blank line above it stacked on the blank
+  # line below it; a run of blanks is collapsed so a section that has been
+  # edited a few times still looks hand-written.
+  WF_ROW="$row" awk '
+    BEGIN { dropped = 0; blanks = 0 }
+    !dropped && $0 == ENVIRON["WF_ROW"] { dropped = 1; next }
+    {
+      if ($0 ~ /^[ \t]*$/) { blanks++; if (blanks > 1) next } else blanks = 0
+      print
+    }
+  ' "$index" > "$tmp" && mv "$tmp" "$index"
+  printf '%s\n' "$row"
+}
+
+# wf_index_put_row <index> <section> <row> — insert <row> at the end of
+# `## <section>`, creating the section at the end of the file if it is absent.
+wf_index_put_row() {
+  local index="$1" section="$2" row="$3" tmp="$1.tmp.$$"
+  [ -f "$index" ] || return 1
+  WF_SECTION="$section" WF_ROW="$row" awk '
+    { lines[++n] = $0 }
+    END {
+      target = "^## " ENVIRON["WF_SECTION"] "[ \t]*$"
+      start = 0
+      for (i = 1; i <= n; i++) if (lines[i] ~ target) { start = i; break }
+
+      if (start == 0) {
+        for (i = 1; i <= n; i++) print lines[i]
+        if (n > 0 && lines[n] != "") print ""
+        print "## " ENVIRON["WF_SECTION"]
+        print ENVIRON["WF_ROW"]
+        exit 0
+      }
+
+      end = n
+      for (i = start + 1; i <= n; i++) if (lines[i] ~ /^## /) { end = i - 1; break }
+      at = start
+      for (i = start; i <= end; i++) if (lines[i] != "") at = i
+
+      for (i = 1; i <= n; i++) {
+        print lines[i]
+        if (i == at) {
+          # Inserting into an empty section lands right after its `>` blurb;
+          # the template puts a blank line between the two, so keep it rather
+          # than producing a shape no hand-written section has.
+          if (lines[i] ~ /^>/ || lines[i] ~ /^## /) print ""
+          print ENVIRON["WF_ROW"]
+        }
+      }
+    }
+  ' "$index" > "$tmp" && mv "$tmp" "$index"
+}
+
 # ── Self-documentation ────────────────────────────────────────────────────
 #
 # Every script in this folder opens with a comment block that IS its manual:
