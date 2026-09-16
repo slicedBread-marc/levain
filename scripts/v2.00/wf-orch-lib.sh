@@ -291,6 +291,25 @@ wf_escalated_count() {
 
 wf_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+# wf_read1 <file> [default] — the first line of a one-line file, or the default
+# (empty) when it is missing or unreadable. Never fails.
+#
+# The orchestrator's state is dozens of these: a pidfile, an attempt count, a
+# progress signature, a skip latch. `$(cat "$f" 2>/dev/null || echo "")` reads
+# them, and on a daemon tick that is a fork per pidfile per role plus one per
+# candidate — for files holding a single short token. `read` is a builtin.
+# The `|| :` must NOT clear v. Most of these files are written with `printf
+# '%s'` and so have no trailing newline, and `read` reports failure at EOF even
+# though it has already assigned everything it read. Discarding the value on
+# that status makes every latch read as empty and every pidfile as dead.
+wf_read1() {
+  local v=""
+  if [ -f "$1" ]; then
+    IFS= read -r v < "$1" 2>/dev/null || :
+  fi
+  printf '%s' "${v:-${2:-}}"
+}
+
 # ── Config ────────────────────────────────────────────────────────────────
 
 # wf_cfg <dotted.path> [default]

@@ -156,7 +156,7 @@ if [ -n "$query" ]; then
   # wrote, and the dispatcher asks under the brief it dispatched (WFI-187).
   gate_file=$(wf_gate_file "$id") || exit 1
   # shellcheck disable=SC1090
-  eval "$(cat "$gate_file")"
+  eval "$(<"$gate_file")"
   gstate=$(state_of "$GATE_ID")
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$GATE_ID" "$GATE_NAME" "$GATE_OPENED" "$(flatten "$GATE_QUESTION")" \
@@ -175,7 +175,7 @@ for gate_file in "$gates_dir"/*.gate; do
   # Eval in a subshell so one malformed gate can't poison the next.
   (
     # shellcheck disable=SC1090
-    eval "$(cat "$gate_file")"
+    eval "$(<"$gate_file")"
     # Blocking count leads, zero-padded, so a plain lexical sort orders by cost
     # first and by opened-timestamp second without a second sort key.
     gstate=$(state_of "$GATE_ID")
@@ -196,5 +196,7 @@ fi
 # leave the ISO-8601 timestamp ascending (lexical = oldest first).
 sort -k1,1nr -k2,2 "$tmp" \
   | awk -F'\t' '{ print $3 "\t" $4 "\t" $2 "\t" $5 "\t" $6 "\t" ($1 + 0) "\t" $7 "\t" $8 }'
+# `xargs` is not redundant here: BSD `wc -l < file` pads its count with leading
+# spaces, and this line is parsed by callers.
 echo "GATES: $(wc -l < "$tmp" | xargs)" >&2
 exit 0

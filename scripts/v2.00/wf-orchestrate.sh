@@ -171,11 +171,15 @@ gate_open()  { "$SELF_DIR/wf-list-gates.sh" "$1" >/dev/null 2>&1; }
 gate_line()  { "$SELF_DIR/wf-list-gates.sh" "$1" 2>/dev/null; }
 
 # Live worker count for a role, across all artifacts.
+#
+# `read -r < "$pf"` rather than `$(cat "$pf")`: this runs for every pidfile of
+# every role on every tick, and a fork per pidfile is the whole cost of the
+# call — the file is one line holding one integer.
 role_running() {
   local role="$1" n=0 pf pid
   for pf in "$ORCH/logs"/*-"$role".pid; do
     [ -f "$pf" ] || continue
-    pid=$(cat "$pf" 2>/dev/null || echo "")
+    pid=$(wf_read1 "$pf")
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       n=$((n + 1))
     else
@@ -187,7 +191,7 @@ role_running() {
 
 # Attempt budget — the loop breaker. A plan bouncing active⇄verify forever
 # burns tokens silently; after N implement spawns it parks as `stuck` instead.
-attempts_get() { cat "$ORCH/attempts/$1.$2" 2>/dev/null || echo 0; }
+attempts_get() { wf_read1 "$ORCH/attempts/$1.$2" 0; }
 attempts_bump() {
   local n; n=$(( $(attempts_get "$1" "$2") + 1 ))
   echo "$n" > "$ORCH/attempts/$1.$2"
@@ -244,7 +248,7 @@ progress_check() {
   mkdir -p "$ORCH/progress"
   file="$ORCH/progress/$id"
   sig=$(progress_sig "$id")
-  prev=$(cat "$file" 2>/dev/null || echo "")
+  prev=$(wf_read1 "$file")
   if [ -n "$prev" ] && [ "$sig" != "$prev" ]; then
     attempts_reset "$id"
     wf_event progress "$id" "forward progress $prev → $sig — attempt budget reset"
@@ -257,7 +261,7 @@ progress_check() {
 spawn_budget_left() {
   local bucket count
   bucket="$ORCH/spawns-$(date +%Y%m%d%H)"
-  count=$(cat "$bucket" 2>/dev/null || echo 0)
+  count=$(wf_read1 "$bucket" 0)
   printf '%s' "$(( cfg_max_spawns - count ))"
 }
 spawn_budget_bump() {
@@ -296,7 +300,7 @@ skip_note() {
   $dry_run && return 0
   mkdir -p "$ORCH/skips"
   file="$ORCH/skips/${role}.${id}"
-  prev=$(cat "$file" 2>/dev/null || echo "")
+  prev=$(wf_read1 "$file")
   [ "$reason" = "$prev" ] && return 0
   printf '%s' "$reason" > "$file"
   WF_SKIP_WAS_NEW=true
@@ -559,9 +563,24 @@ candidates_test() {
     | awk -F'\t' 'NF && $6 !~ /^blocked:/ { print $1 }' || true
 }
 
+# Plans owing a consistency pass. Asked for twice per sweep — once as the
+# consistency role's own candidate list, once by candidates_implement to
+# subtract them — and wf-list-consistency.sh walks every plan folder to answer.
+# Cached for the tick, and cleared at the top of each sweep: the only thing that
+# can change the answer mid-sweep is a worker this sweep just spawned, and a
+# worker takes minutes to reach a registry write while a sweep takes
+# milliseconds. The next tick asks again.
+_TICK_CONSISTENCY=""
+_TICK_CONSISTENCY_SET=""
 candidates_consistency() {
   [ "$cfg_consistency" = "true" ] || return 0
-  "$SELF_DIR/wf-list-consistency.sh" 2>/dev/null | awk -F'\t' 'NF { print $1 }' || true
+  if [ -z "$_TICK_CONSISTENCY_SET" ]; then
+    _TICK_CONSISTENCY=$("$SELF_DIR/wf-list-consistency.sh" 2>/dev/null \
+                        | awk -F'\t' 'NF { print $1 }' || true)
+    _TICK_CONSISTENCY_SET=1
+  fi
+  [ -n "$_TICK_CONSISTENCY" ] && printf '%s\n' "$_TICK_CONSISTENCY"
+  return 0
 }
 
 candidates_implement() {
@@ -570,14 +589,16 @@ candidates_implement() {
   local pending
   pending=$(candidates_consistency)
 
+  # A plan still owing a consistency pass is not implementable yet — building
+  # it first is what turns a cheap amendment into a migration. One awk pass
+  # subtracts the list; the `grep -qx` this replaces forked once per
+  # implementable plan.
   "$SELF_DIR/wf-list-implementable.sh" 2>/dev/null \
     | awk -F'\t' '$1 == "new" || $1 == "resume" || $1 == "fix" { print $2 }' \
-    | while IFS= read -r name; do
-        # A plan still owing a consistency pass is not implementable yet —
-        # building it first is what turns a cheap amendment into a migration.
-        printf '%s\n' "$pending" | grep -qx "$name" && continue
-        printf '%s\n' "$name"
-      done || true
+    | awk -v pending="$pending" '
+        BEGIN { n = split(pending, p, "\n"); for (i = 1; i <= n; i++) if (p[i] != "") skip[p[i]] = 1 }
+        !($0 in skip)
+      ' || true
 }
 
 candidates_release() {
@@ -622,13 +643,22 @@ SWEEP_ROLES="release deploy verify test consistency implement spec"
 # unreachable precisely when there was progress to report. An out-of-band
 # result channel makes that class of bug impossible rather than fixing one case.
 SWEPT=0
+# Live workers across every role, as counted by the sweep that just ran — the
+# daemon loop's stall test reads this rather than re-walking the pidfiles.
+SWEEP_LIVE=0
 
 sweep() {
   local spawned=0 role cap running artifact
 
+  # This tick's caches start empty — see candidates_consistency.
+  _TICK_CONSISTENCY=""
+  _TICK_CONSISTENCY_SET=""
+  SWEEP_LIVE=0
+
   # Nothing is dispatchable into a checkout somebody else is standing in.
   if ! checkout_available; then
     SWEPT=0
+    SWEEP_LIVE=$(workers_live)
     return 0
   fi
   skip_clear "orchestrator" "—"
@@ -641,6 +671,7 @@ sweep() {
     # full the role is still surfaces.
     if [ "$running" -ge "$cap" ]; then
       skip_note "$role" cap "at cap ($running/$cap)"
+      SWEEP_LIVE=$((SWEEP_LIVE + running))
       continue
     fi
     skip_clear "$role" cap
@@ -653,6 +684,10 @@ sweep() {
         spawned=$((spawned + 1))
       fi
     done < <("candidates_$role")
+    # What the daemon loop's stall check needs, accumulated from the counts
+    # this loop already took — workers_live() re-ran role_running for all
+    # seven roles a line later, walking every pidfile a second time per tick.
+    SWEEP_LIVE=$((SWEEP_LIVE + running))
   done
 
   # Only a sweep that did something is worth an event. A daemon writes one
@@ -677,7 +712,7 @@ stall_note() {
   gates=$("$SELF_DIR/wf-list-gates.sh" 2>/dev/null \
           | awk -F'\t' '{ printf "%s(%s, blocking %s) ", $1, $2, $6 }' || true)
   sig="${gates:-none}"
-  prev=$(cat "$file" 2>/dev/null || echo "")
+  prev=$(wf_read1 "$file")
   [ "$sig" = "$prev" ] && return 0
   printf '%s' "$sig" > "$file"
   if [ -n "$gates" ]; then
@@ -773,7 +808,7 @@ case "$mode" in
       if [ "$SWEPT" -gt 0 ]; then
         echo "$(wf_now)  dispatched $SWEPT"
         rm -f "$ORCH/stalled"          # next stall is a fresh one, announce it
-      elif [ "$(workers_live)" -eq 0 ]; then
+      elif [ "$SWEEP_LIVE" -eq 0 ]; then
         stall_note
       else
         rm -f "$ORCH/stalled"          # work is in flight; not stalled
@@ -836,7 +871,7 @@ case "$mode" in
     if [ "$mode" = "kill-all" ]; then
       for pf in "$ORCH/logs"/*.pid; do
         [ -f "$pf" ] || continue
-        wpid=$(cat "$pf" 2>/dev/null || echo "")
+        wpid=$(wf_read1 "$pf")
         if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
           kill "$wpid" 2>/dev/null && echo "  killed worker PID $wpid ($(basename "$pf" .pid))"
         fi
