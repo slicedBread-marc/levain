@@ -1148,6 +1148,18 @@ wf_event() {
 #     under the existing entries and the `>` blurb keeps its blank line
 #     instead of collecting one row of stray whitespace per edit.
 
+# wf_brief_title <brief.md> — the brief's heading, for a row or a list line.
+#
+# The first line is not it: some briefs open with a `---` frontmatter block
+# (client-e's BRF-011 and BRF-067 among them), and reading line 1 turned those
+# into rows titled "---". The first `# ` heading is the title in both shapes.
+wf_brief_title() {
+  local t
+  t=$(grep -m1 -E '^#[ \t]' "$1" 2>/dev/null | sed 's/^#[[:space:]]*//; s/[[:space:]]*$//' || true)
+  [ -n "$t" ] || t="(untitled)"
+  printf '%s' "$t"
+}
+
 # wf_brief_has_plan <brief.md> — true when a plan was written from this brief.
 #
 # Two ways to know, because the Plan: field has been written four different

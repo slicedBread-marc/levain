@@ -142,8 +142,7 @@ move_index_row() {
     # forgettable as it was, and demand a reindex first for the one brief the
     # operator has already decided about.
     local title
-    title=$(head -1 "$brief_md" | sed 's/^#[[:space:]]*//')
-    [ -n "$title" ] || title="(untitled)"
+    title=$(wf_brief_title "$brief_md")
     row="- [${base}](${base}) — ${title}"
     echo "note: $base had no INDEX.md row — added one under ## $target" >&2
   fi

@@ -86,8 +86,7 @@ for brief_md in plans/briefs/*.md; do
   case "$status" in *"|"*) status="" ;; esac
   section=$(section_for "$status")
 
-  title=$(head -1 "$brief_md" | sed 's/^#[[:space:]]*//')
-  [ -n "$title" ] || title="(untitled — needs a one-line description)"
+  title=$(wf_brief_title "$brief_md")
   # Em dash, filename link text: the row shape every hand-written row in the
   # field already uses, so a repaired index reads like the rest of it.
   pending="${pending}${section}	- [${base}](${base}) — ${title}

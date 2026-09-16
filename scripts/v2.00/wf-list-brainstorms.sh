@@ -120,8 +120,7 @@ if [ -f "$INDEX" ]; then
     # says nothing about this brief; report it as unknown rather than as a
     # status it does not have.
     case "$status" in ""|*"|"*) status="unknown" ;; esac
-    title=$(head -1 "$brief_md" | sed 's/^#[[:space:]]*//')
-    [ -n "$title" ] || title="(untitled)"
+    title=$(wf_brief_title "$brief_md")
     drift_rows="${drift_rows}${id}	${status}	${base}	${title}
 "
     drift_n=$((drift_n + 1))
