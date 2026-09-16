@@ -216,6 +216,29 @@ If the user picks a bug BUG-NNN:
 ## What you do
 
 1. **Read the input** — if from a brief: read the relevant brief in `plans/briefs/`; if from a bug: the bug's `bug.md` becomes the scope definition
+
+1z. **If the brief cannot be converted to a plan yet, say so in the brief and stop.** Two shapes
+   reach here and neither is work: a brief blocked on something outside this repo (an open bug in
+   another project, a dependency that does not exist yet), and a brief that *sequences several
+   future plans* rather than becoming one — its `Plan:` field a deliberate `(none — …)`. Both are
+   `Decided` by design, so neither can ever reach the plan-exists test that takes a brief off the
+   specable list, and without a verb here the dispatcher sends a worker at it on every sweep
+   forever. client-b BRF-010 did exactly that: read the brief, read the answered gate saying "no
+   PLN-010 yet; BRF-010 stays Decided", read the still-open blocking bug in `client-d`, created
+   nothing, and was dispatched again a minute later (WFI-009).
+   ```bash
+   scripts/wf-exec.sh wf-brief-block.sh BRF-NNN "<why, in one line>" \
+     [--on <BUG-NNN|PLN-NNN>] [--repo <project>]
+   ```
+   Then unclaim and finish. The brief stays `Decided`, its INDEX row does not move, and nothing
+   else changes — it simply stops being offered until someone runs `--clear`. **The reason is
+   required**, because a blocker nobody can read is a brief nobody can unblock; name the
+   artifact and the repo whenever there is one.
+
+   **Do not re-open the answered gate to ask again** — that is the re-derived-question
+   anti-pattern (WFI-180/181/182). And do not block a brief you simply find hard: this is for a
+   brief whose conversion is *impossible right now*, which you verified, not for one you would
+   rather not write.
 1a. **Check deferred criteria** — list the open ones:
     ```bash
     scripts/wf-exec.sh wf-defer-criterion.sh --list

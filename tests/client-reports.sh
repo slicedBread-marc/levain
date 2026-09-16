@@ -5182,6 +5182,79 @@ assert_eq "so a coordinator's git status stays clean after filing" "" \
   "$(cd "$COORDIG" && git status --porcelain | grep 'orchestrator' || true)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A brief that cannot become a plan yet leaves the specable list (client-b WFI-009)"
+
+# A bug leaves the list by moving open/ → triaged/. A brief's only documented
+# exit is a plan folder existing (WFI-188/189/190) — which a brief blocked on
+# another repo, or one that sequences several future plans rather than becoming
+# one, can never satisfy. BRF-010 was dispatched a spec worker on every sweep:
+# it read the brief, the answered gate saying "no PLN-010 yet; BRF-010 stays
+# Decided", and the still-open client-d bug, then exited having created nothing.
+BLK="$TEST_DIR/brief-block"
+mkdir -p "$BLK/scripts" "$BLK/plans/briefs"
+cp "$SCRIPT_DIR/wf-brief-block.sh" "$SCRIPT_DIR/wf-list-specable.sh" \
+   "$SCRIPT_DIR/wf-review-status.sh" "$SCRIPT_DIR/wf-plan-id.sh" \
+   "$SCRIPT_DIR/wf-counter-next.sh" "$SCRIPT_DIR/wf-commit.sh" \
+   "$SCRIPT_DIR/wf-lock.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$BLK/scripts/"
+(
+  cd "$BLK" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n<!-- Counter: 10 -->\n' \
+    > plans/REGISTRY.md
+  printf '# Receive the workshop\n\n> **ID:** BRF-010\n> **Status:** Decided\n> **Plan:** _(none — this brief sequences several future plans, not one)_\n\n## Problem\nx\n' \
+    > plans/briefs/BRF-010-receive-the-workshop.md
+  printf '# Briefs\n\n## Decided\n- [Receive the workshop](BRF-010-receive-the-workshop.md) — the receiving side\n' \
+    > plans/briefs/INDEX.md
+  git add -A && git commit -q -m seed
+) >/dev/null 2>&1
+
+assert_eq "an unblocked decided brief is offered" "true" \
+  "$(cd "$BLK" && ./scripts/wf-list-specable.sh 2>/dev/null | grep -q '^BRF-010' && echo true || echo false)"
+
+assert_eq "blocking it requires a reason" "1" \
+  "$( (cd "$BLK" && ./scripts/wf-brief-block.sh BRF-010) >/dev/null 2>&1; echo $? )"
+
+(cd "$BLK" && ./scripts/wf-brief-block.sh BRF-010 "tokens/dist/tools.css does not exist yet" \
+   --on BUG-002 --repo client-d) >/dev/null 2>&1
+assert_eq "a blocked brief is no longer offered" "false" \
+  "$(cd "$BLK" && ./scripts/wf-list-specable.sh 2>/dev/null | grep -q '^BRF-010' && echo true || echo false)"
+# Captured first, then matched: the script exits 1 when it has nothing to
+# offer, and under `set -o pipefail` that exit sinks the whole pipeline
+# regardless of what grep found.
+blk_err=$(cd "$BLK" && ./scripts/wf-list-specable.sh 2>&1 >/dev/null || true)
+assert_eq "and the reason is visible to a human, on stderr" "true" \
+  "$(printf '%s' "$blk_err" | grep -q 'BUG-002 (in client-d)' && echo true || echo false)"
+# The reason is carried whole. `sed -E 's/[ \t]*$//'` does not mean "trim
+# trailing whitespace": inside a bracket expression \t is the literal
+# characters backslash and t, so it also ate a trailing 't' — "does not exist
+# yet" reached the operator as "does not exist ye". Same pattern parsed the
+# Plan: field in two places, where a plan slug ending in t (PLN-012-fix-import)
+# would fail its own -d test and put the artifact back on the list forever.
+assert_eq "and it keeps its last character" "true" \
+  "$(printf '%s' "$blk_err" | grep -q 'does not exist yet' && echo true || echo false)"
+assert_eq "the brief itself carries the blocker" "true" \
+  "$(grep -q '^> \*\*Blocked:\*\* BUG-002 (in client-d) — tokens/dist/tools.css does not exist yet' \
+      "$BLK/plans/briefs/BRF-010-receive-the-workshop.md" && echo true || echo false)"
+assert_eq "and its Status is untouched — this is not a state change" "true" \
+  "$(grep -q '^> \*\*Status:\*\* Decided' "$BLK/plans/briefs/BRF-010-receive-the-workshop.md" && echo true || echo false)"
+
+# Re-blocking rewrites the field rather than stacking a second one.
+(cd "$BLK" && ./scripts/wf-brief-block.sh BRF-010 "still waiting" --on BUG-002 --repo client-d) >/dev/null 2>&1
+assert_eq "re-blocking leaves exactly one Blocked field" "1" \
+  "$(grep -c '\*\*Blocked:\*\*' "$BLK/plans/briefs/BRF-010-receive-the-workshop.md" | xargs)"
+
+(cd "$BLK" && ./scripts/wf-brief-block.sh BRF-010 --clear) >/dev/null 2>&1
+assert_eq "clearing puts it straight back on the list" "true" \
+  "$(cd "$BLK" && ./scripts/wf-list-specable.sh 2>/dev/null | grep -q '^BRF-010' && echo true || echo false)"
+assert_eq "clearing twice is success, not an error" "0" \
+  "$( (cd "$BLK" && ./scripts/wf-brief-block.sh BRF-010 --clear) >/dev/null 2>&1; echo $? )"
+
+# The template's guidance must not read as a live blocker.
+assert_eq "template prose does not block every new brief" "false" \
+  "$(grep -qE '^> \*\*Blocked:\*\*' "$LIB_ROOT/templates/plans/briefs/TEMPLATE.md" && echo true || echo false)"
+assert_eq "wf-spec knows the verb" "true" \
+  "$(grep -q 'wf-brief-block.sh' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

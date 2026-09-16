@@ -170,7 +170,7 @@ for bug_md in bugs/triaged/*/bug.md; do
   bug_id=$(wf_bug_id "$bug_md")
   [ -n "$bug_id" ] || continue
   plan_field=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Plan:\*\*' "$bug_md" 2>/dev/null \
-               | sed -E 's/^.*\*\*Plan:\*\*[ \t]*//; s/[ \t]*$//; s#/$##' || true)
+               | sed -E 's/^.*\*\*Plan:\*\*[[:space:]]*//; s/[[:space:]]*$//; s#/$##' || true)
   case "$plan_field" in
     ""|*"(none"*|*_none_*) ;;
     # `if`, not `[ -d ... ] && continue` — under `set -e` a bare `&&` whose
@@ -226,7 +226,7 @@ brief_is_planned() {
   [ -f "$brief_md" ] || return 1
 
   plan_field=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Plan:\*\*' "$brief_md" 2>/dev/null \
-               | sed -E 's/^.*\*\*Plan:\*\*[ \t]*//; s/[ \t]*$//; s#/$##' || true)
+               | sed -E 's/^.*\*\*Plan:\*\*[[:space:]]*//; s/[[:space:]]*$//; s#/$##' || true)
   case "$plan_field" in
     ""|*"(none"*|*_none_*) ;;
     *) [ -d "$plan_field" ] && return 0
@@ -239,6 +239,36 @@ brief_is_planned() {
   [ -n "$brief_id" ] && [ "$brief_id" != "—" ] || return 1
   "$SELF_DIR/wf-plan-id.sh" "$brief_id" --peek 2>/dev/null \
     | grep -q "PLAN_ID_RESUME='true'"
+}
+
+# A BRIEF THAT CANNOT BE CONVERTED YET NEEDS AN EXIT TOO
+#
+# brief_is_planned() above covers the brief that already HAS a plan. It says
+# nothing about the brief that cannot have one yet, and two kinds cannot:
+# one blocked on something in another repo, and one that sequences several
+# future plans rather than becoming one (its Plan: field a deliberate
+# "(none — …)"). Neither can ever satisfy the plan-exists test, so both were
+# offered on every sweep forever. client-b BRF-010 is both at once: a spec
+# worker was dispatched onto it, read the brief, the answered gate saying "no
+# PLN-010 yet; BRF-010 stays Decided", and the still-open client-d bug it
+# waits on — then exited having created nothing, ready to be dispatched again
+# a minute later (WFI-009).
+#
+# `> **Blocked:** <reason>` in the brief's header is the missing verb
+# (wf-brief-block.sh writes and clears it). It is not silent: the reason goes
+# to stderr, so a human running this sees what is being held back and why,
+# while the stdout a dispatcher parses carries only work that can be done.
+brief_is_blocked() {
+  local brief_md="$1" field
+  field=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Blocked:\*\*' "$brief_md" 2>/dev/null \
+          | sed -E 's/^.*\*\*Blocked:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
+  # A parenthesised value is template prose, not a blocker — the same defence
+  # the Plan: field needs, and for the same reason: a placeholder that reads as
+  # a real value hides work instead of describing it.
+  case "$field" in
+    ""|"("*|*"(none"*|*_none_*|"—") return 1 ;;
+    *) printf '%s' "$field"; return 0 ;;
+  esac
 }
 
 briefs_found=0
@@ -260,6 +290,12 @@ if [ -f "plans/briefs/INDEX.md" ]; then
       # planned brief reads the same whether or not a worker happens to be
       # holding it at this instant (WFI-188/189/190).
       brief_is_planned "plans/briefs/$link" "$brief_id" && continue
+
+      # Blocked by a recorded, human-written reason — see brief_is_blocked.
+      if blocked_why=$(brief_is_blocked "plans/briefs/$link"); then
+        echo "$brief_id blocked, not offered: $blocked_why" >&2
+        continue
+      fi
 
       # Same claim check as bugs: a brief under spec has no plan folder yet.
       if [ "$brief_id" != "—" ] && wf_claim_held "$brief_id"; then continue; fi

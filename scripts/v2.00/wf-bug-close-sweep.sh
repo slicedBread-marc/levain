@@ -60,7 +60,7 @@ for bug_md in bugs/triaged/*/bug.md; do
   case "$status" in *[Cc]losed*) continue ;; esac
 
   plan_field=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Plan:\*\*' "$bug_md" 2>/dev/null \
-               | sed -E 's/^.*\*\*Plan:\*\*[ \t]*//; s/[ \t]*$//; s#/$##' || true)
+               | sed -E 's/^.*\*\*Plan:\*\*[[:space:]]*//; s/[[:space:]]*$//; s#/$##' || true)
   case "$plan_field" in ""|*"(none"*|*_none_*) continue ;; esac
 
   plan_id=$(printf '%s' "$plan_field" | grep -oE '^PLN-[0-9]+' || true)

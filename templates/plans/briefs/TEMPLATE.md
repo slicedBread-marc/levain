@@ -6,6 +6,14 @@
 > **Created:** YYYY-MM-DD
 > **Plan:** (link to plan once one exists, e.g., PLN-NNN-slug)
 
+<!-- A brief that cannot be converted to a plan yet — blocked on another repo,
+     or one that sequences several future plans rather than becoming one — adds
+     a `> **Blocked:** <reason>` field to the header above. Write it with
+     `wf-brief-block.sh BRF-NNN "<why>" [--on <artifact>] [--repo <name>]` and
+     clear it with `--clear`. The brief stays Decided and stops being offered to
+     /wf-spec; short of a plan existing, it is the only exit a brief has. -->
+
+
 ## Problem
 What's wrong, missing, or desired? Who does it affect?
 
