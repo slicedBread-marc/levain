@@ -30,6 +30,24 @@ build_command: ""
 # rather than the config's (WFI-035).
 test_command: ""
 
+# External services the E2E suite needs, checked by wf-preflight.sh before
+# /wf-release runs the suite. One name, one check, joined by the FIRST ':'.
+# A check starting http:// or https:// is fetched; anything else is run as a
+# shell command and passes on exit 0.
+#
+#   e2ePrereqs:
+#     - "dev issuer:http://localhost:8084/.well-known/openid-configuration"
+#     - "database:pg_isready -q -h localhost"
+#
+# Leave it out when the suite is self-contained — the check is then a no-op.
+# Declare one for every service whose absence makes tests fail: a red suite is
+# only evidence against the commits if the suite could have passed. client-e
+# lost a release to 9 login tests timing out because client-c's local dev
+# issuer was down, on a merge with no src/ changes at all (WFI-028). Prefer a
+# probe that proves the service is SERVING (a discovery endpoint) over one that
+# proves a socket is open.
+e2ePrereqs: []
+
 # Flag to run a single test by name or pattern.
 # Common values: "--grep" (mocha/jest), "--filter" (dotnet VSTest), "-k" (pytest), "-run" (go)
 #

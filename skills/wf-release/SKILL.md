@@ -177,6 +177,26 @@ release-branches/release → release's own permanent worktree — staging enviro
    **After any restore, keep running everything through `scripts/wf-exec.sh`.** A client that predates v5 may still carry flat `scripts/wf-*.sh` files tracked in git; those are pre-untracking copies and they are stale. `scripts/v*/` is the live harness, and `wf-exec.sh` is what resolves to it — calling a flat script directly silently runs old code (WFI-014).
 
    This happens **once per client**, on the first release after the harness is untracked on develop, and it self-clears when the change reaches `main`. It is silent and total while it lasts: client-c lost 106 files including `wf-exec.sh` mid-skill and only found out at step 8, with exit 127 (WFI-006).
+6b. **Check the suite's external prerequisites before running it:**
+   ```bash
+   scripts/wf-exec.sh wf-preflight.sh
+   ```
+   Exit `0` → continue at step 7 (this includes "none declared", which is the normal case for a
+   self-contained suite). Exit `1` → **do not run the suite.** It names which prerequisite is
+   unreachable; roll the merge back (step 7's `wf-release-rollback.sh`), report *that* as the
+   reason, and stop — attended, tell the user what to start; under `WF_UNATTENDED=1`, open a
+   `needs-input` gate quoting the DOWN line, then unclaim and exit 0.
+
+   A red suite is only evidence against the commits if the suite is self-contained. client-e
+   WFI-028: 9 of 70 E2E tests failed with 30s response timeouts on a merge carrying no `src/`
+   changes at all — the login tests drive an OIDC challenge at `Oidc:Authority`
+   (`http://localhost:8084`), and client-c's local dev issuer was not running. Starting it
+   and re-running, with no code change, turned the same filter from 2 failed / 5 passed in 1m6s
+   into 7 passed / 0 failed in 8s. The rollback did its job, so nothing unsafe followed — but the
+   report accused a clean batch, and an operator acting on it goes hunting a regression that does
+   not exist. Prerequisites are declared per project in its own `claude-workflow.yml` under
+   `e2ePrereqs:`; a project with none declared is unaffected by this step.
+
 7. **Run E2E / integration tests** (staging validation), against the local merge — before anything is pushed:
    ```bash
    {{build_command}} < /dev/null
@@ -184,7 +204,10 @@ release-branches/release → release's own permanent worktree — staging enviro
    # Full suite — no filter. Release aggregation guarantee (BRF-080):
    # every test skipped on a feature branch by tiered gating MUST run here.
    ```
-   If tests fail, do **not** push — and **roll the local merge back before you report anything**:
+   If tests fail, **first ask whether the suite was even in a position to judge**: re-run
+   `scripts/wf-exec.sh wf-preflight.sh`. A prerequisite that went down mid-run implicates the
+   environment, not the commits (WFI-028) — report it that way. Either way, do **not** push, and
+   **roll the local merge back before you report anything**:
    ```bash
    scripts/wf-exec.sh wf-release-rollback.sh
    ```

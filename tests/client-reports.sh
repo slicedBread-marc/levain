@@ -5255,6 +5255,50 @@ assert_eq "wf-spec knows the verb" "true" \
   "$(grep -q 'wf-brief-block.sh' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A red suite is only evidence against the commits if it could have passed (client-e WFI-028)"
+
+# 9 of 70 E2E tests failed with 30s response timeouts on a merge carrying no
+# src/ changes: the login tests drive an OIDC challenge at Oidc:Authority
+# (localhost:8084) and client-c's dev issuer was not running. Starting it
+# and re-running, with no code change, turned 2 failed / 5 passed in 1m6s into
+# 7 passed / 0 failed in 8s. The rollback worked; the REPORT accused a clean
+# batch, which sends an operator hunting a regression that does not exist.
+PRE="$TEST_DIR/preflight"
+mkdir -p "$PRE/scripts"
+cp "$SCRIPT_DIR/wf-preflight.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$PRE/scripts/"
+(cd "$PRE" && git init -qb develop . && git config user.email t@t && git config user.name t \
+  && printf 'project_slug: pre\n' > claude-workflow.yml \
+  && git add -A && git commit -q -m seed) >/dev/null 2>&1
+
+assert_eq "a project declaring none is not in trouble, just quiet" "0" \
+  "$( (cd "$PRE" && ./scripts/wf-preflight.sh) >/dev/null 2>&1; echo $? )"
+
+printf 'project_slug: pre\ne2ePrereqs:\n  - "dev issuer:false"\n  - "database:true"\n' \
+  > "$PRE/claude-workflow.yml"
+pre_rc=0
+pre_out=$( (cd "$PRE" && ./scripts/wf-preflight.sh 2>/dev/null) ) || pre_rc=$?
+assert_eq "a prerequisite that is down fails the check" "1" "$pre_rc"
+assert_eq "and is named, with the probe that failed" "true" \
+  "$(printf '%s' "$pre_out" | grep -q '^DOWN dev issuer — false' && echo true || echo false)"
+assert_eq "one that is up is reported up, not silently assumed" "true" \
+  "$(printf '%s' "$pre_out" | grep -q '^ok database' && echo true || echo false)"
+
+printf 'project_slug: pre\ne2ePrereqs:\n  - "database:true"\n' > "$PRE/claude-workflow.yml"
+assert_eq "all up is a clean exit" "0" \
+  "$( (cd "$PRE" && ./scripts/wf-preflight.sh) >/dev/null 2>&1; echo $? )"
+
+# A URL check must not pass merely because something answered the socket.
+printf 'project_slug: pre\ne2ePrereqs:\n  - "issuer:http://127.0.0.1:9/nothing-here"\n' \
+  > "$PRE/claude-workflow.yml"
+assert_eq "an unreachable URL is DOWN, not ok" "1" \
+  "$( (cd "$PRE" && ./scripts/wf-preflight.sh) >/dev/null 2>&1; echo $? )"
+
+assert_eq "/wf-release checks prerequisites before blaming the commits" "true" \
+  "$(grep -q 'wf-preflight.sh' "$LIB_ROOT/skills/wf-release/SKILL.md" && echo true || echo false)"
+assert_eq "and the config key is documented for a client to copy" "true" \
+  "$(grep -q 'e2ePrereqs' "$LIB_ROOT/config.example.yml" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"
