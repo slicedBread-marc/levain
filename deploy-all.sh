@@ -178,10 +178,22 @@ if [ -s "$SUSPEND_STATE" ]; then
         # this deploy from an agent's shell is exactly that case — the daemon
         # restored here was killed nine minutes on, when the tool call that ran
         # the deploy was reaped, long after the check below had passed.
+        #
+        # THE REDIRECTION AND THE `exec` BELONG TO THE SUBSHELL, NOT THE DAEMON.
+        # `( cd … && nohup daemon >>log 2>&1 & )` looks equivalent and is not:
+        # the forked subshell does not exit after starting the background job,
+        # it lingers for the daemon's whole life holding the fds it inherited —
+        # this script's stdout and stderr. Unredirected that is invisible; run
+        # `deploy-all.sh | tail`, or from any wrapper that reads our output to
+        # EOF, and the reader blocks until the daemon exits. The command
+        # returned, and the terminal still hung (measured: a 15s stub daemon
+        # held a `| cat` for exactly 15s). Backgrounding the whole subshell
+        # with all three descriptors pointed away, and `exec`ing so no shell is
+        # left behind at all, is what actually detaches it.
         if command -v setsid >/dev/null 2>&1; then
-            (cd "$p" && setsid nohup scripts/wf-exec.sh wf-orchestrate.sh --daemon >> "$log" 2>&1 &) || true
+            ( cd "$p" && exec setsid nohup scripts/wf-exec.sh wf-orchestrate.sh --daemon ) >> "$log" 2>&1 < /dev/null &
         else
-            (cd "$p" && nohup scripts/wf-exec.sh wf-orchestrate.sh --daemon >> "$log" 2>&1 &) || true
+            ( cd "$p" && exec nohup scripts/wf-exec.sh wf-orchestrate.sh --daemon ) >> "$log" 2>&1 < /dev/null &
             RESTART_FRAGILE=true
         fi
         # Verify rather than trust: `nohup … &` returns 0 whether or not the

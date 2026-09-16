@@ -187,7 +187,7 @@ if $want_tunnel; then
     tunnel_pidfile="${TMPDIR:-/tmp}/wf-tunnel-$COMPOSE_PROJECT_NAME.pid"
     : > "$tunnel_log"
     export FEATURE_PORT
-    nohup bash -c "$tunnel_cmd" >>"$tunnel_log" 2>&1 &
+    nohup bash -c "$tunnel_cmd" >>"$tunnel_log" 2>&1 </dev/null &
     echo $! > "$tunnel_pidfile"
 
     # Quick tunnels print their hostname a second or two after start.

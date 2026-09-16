@@ -5181,6 +5181,56 @@ touch "$COORDIG/.claude/orchestrator/events.log"
 assert_eq "so a coordinator's git status stays clean after filing" "" \
   "$(cd "$COORDIG" && git status --porcelain | grep 'orchestrator' || true)"
 
+# --stop-daemons returned, and the terminal hung anyway. `( cd … && nohup
+# daemon >>log 2>&1 & )` does not detach: the forked subshell lingers for the
+# daemon's whole life holding the descriptors it inherited — deploy-all's own
+# stdout and stderr — so anything reading this script's output to EOF (a pipe,
+# an agent's shell, `| tail`) blocks until the daemon exits, which for a daemon
+# is never. Measured before the fix: a 15s stub daemon held a `| cat` for
+# exactly 15s. The restart must background the whole subshell with all three
+# descriptors pointed away, and exec so no shell is left behind.
+HANGD="$TEST_DIR/deploy-detach"
+mkdir -p "$HANGD/client/.claude/orchestrator" "$HANGD/client/scripts"
+cp "$LIB_ROOT/deploy-all.sh" "$HANGD/deploy-all.sh"
+printf '#!/bin/bash\necho "  (stub install)"\n' > "$HANGD/install.sh"
+cat > "$HANGD/client/scripts/wf-exec.sh" <<'STUB'
+#!/bin/bash
+# stub dispatcher: only the two calls deploy-all makes of a client.
+pidfile=".claude/orchestrator/daemon.pid"
+case "${2:-}" in
+  --stop)   pid=$(cat "$pidfile" 2>/dev/null || echo ""); [ -n "$pid" ] && kill "$pid" 2>/dev/null
+            rm -f "$pidfile"; echo "daemon stopped (PID $pid)" ;;
+  --daemon) echo $$ > "$pidfile"; exec sleep 40 ;;
+esac
+STUB
+chmod +x "$HANGD/client/scripts/wf-exec.sh"
+printf '%s\n' "$HANGD/client" > "$HANGD/deployments.txt"
+sleep 40 & HANG_FAKE=$!
+echo "$HANG_FAKE" > "$HANGD/client/.claude/orchestrator/daemon.pid"
+# The stub's --stop kills it; disown so bash does not narrate the death of a
+# job the test arranged to be killed.
+disown "$HANG_FAKE" 2>/dev/null || true
+
+( bash "$HANGD/deploy-all.sh" --stop-daemons | cat ) > "$HANGD/out" 2>&1 &
+HANG_PL=$!
+hang_waited=0
+while kill -0 "$HANG_PL" 2>/dev/null && [ "$hang_waited" -lt 15 ]; do
+  sleep 1; hang_waited=$((hang_waited + 1))
+done
+if kill -0 "$HANG_PL" 2>/dev/null; then
+  kill -9 "$HANG_PL" 2>/dev/null || true
+  assert_eq "a piped --stop-daemons returns while the daemon it restarted runs on" "true" "false"
+else
+  assert_eq "a piped --stop-daemons returns while the daemon it restarted runs on" "true" "true"
+fi
+wait "$HANG_PL" 2>/dev/null || true
+hang_pid=$(cat "$HANGD/client/.claude/orchestrator/daemon.pid" 2>/dev/null || echo "")
+assert_eq "and the daemon it restarted is the one still running" "true" \
+  "$([ -n "$hang_pid" ] && kill -0 "$hang_pid" 2>/dev/null && echo true || echo false)"
+assert_eq "no lingering launcher shell holds the caller's output open" "false" \
+  "$(grep -qE '^\s*\(cd "\$p" && (setsid )?nohup .* &\)' "$LIB_ROOT/deploy-all.sh" && echo true || echo false)"
+[ -n "$hang_pid" ] && kill "$hang_pid" 2>/dev/null
+
 # ═══════════════════════════════════════════════════════════════════════
 section "A brief that cannot become a plan yet leaves the specable list (client-b WFI-009)"
 
