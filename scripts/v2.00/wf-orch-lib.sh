@@ -1156,7 +1156,11 @@ wf_event() {
 wf_brief_title() {
   local t
   t=$(grep -m1 -E '^#[ \t]' "$1" 2>/dev/null | sed 's/^#[[:space:]]*//; s/[[:space:]]*$//' || true)
-  [ -n "$t" ] || t="(untitled)"
+  # Then a frontmatter `title:`, then the filename. "(untitled)" tells a reader
+  # nothing and makes the row harder to act on than the path would have been.
+  [ -n "$t" ] || t=$(grep -m1 -E '^title:' "$1" 2>/dev/null \
+                     | sed -E 's/^title:[[:space:]]*//; s/^"//; s/"$//; s/[[:space:]]*$//' || true)
+  [ -n "$t" ] || t=$(basename "$1" .md | sed -E 's/^BRF-[0-9]+-//; s/-/ /g')
   printf '%s' "$t"
 }
 
@@ -1218,9 +1222,17 @@ wf_index_take_row() {
 # wf_index_put_row <index> <section> <row> — insert <row> at the end of
 # `## <section>`, creating the section at the end of the file if it is absent.
 wf_index_put_row() {
-  local index="$1" section="$2" row="$3" tmp="$1.tmp.$$"
+  local index="$1" section="$2" row="$3" tmp="$1.tmp.$$" blurb=""
   [ -f "$index" ] || return 1
-  WF_SECTION="$section" WF_ROW="$row" awk '
+  case "$section" in
+    Parked)    blurb="Set aside on purpose — not being explored, kept for the record with a dated reason." ;;
+    Idea)      blurb="Captured but not yet explored." ;;
+    Exploring) blurb="Actively being discussed or researched. Open questions remain." ;;
+    Decided)   blurb="Approach chosen, ready for a planner session to convert into an implementation plan." ;;
+    Planned)   blurb="Ideas that have graduated to implementation plans." ;;
+    Reference) blurb="Long-lived context documents, not actionable ideas." ;;
+  esac
+  WF_SECTION="$section" WF_ROW="$row" WF_BLURB="$blurb" awk '
     { lines[++n] = $0 }
     END {
       target = "^## " ENVIRON["WF_SECTION"] "[ \t]*$"
@@ -1228,9 +1240,15 @@ wf_index_put_row() {
       for (i = 1; i <= n; i++) if (lines[i] ~ target) { start = i; break }
 
       if (start == 0) {
+        # Creating the section: it gets the same one-line `>` blurb every
+        # hand-written section has, or it reads as something a script dropped
+        # in. `## Parked` is the case that actually happens — it is newer than
+        # every index in the field.
         for (i = 1; i <= n; i++) print lines[i]
         if (n > 0 && lines[n] != "") print ""
         print "## " ENVIRON["WF_SECTION"]
+        if (ENVIRON["WF_BLURB"] != "") print "> " ENVIRON["WF_BLURB"]
+        print ""
         print ENVIRON["WF_ROW"]
         exit 0
       }

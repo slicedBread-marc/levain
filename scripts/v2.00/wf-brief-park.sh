@@ -127,13 +127,8 @@ move_index_row() {
   local target="$1" row
   [ -f "$INDEX" ] || { echo "no INDEX.md — brief header updated, index not touched" >&2; return 0; }
 
-  # `## Parked` is newer than every index in the field, so the first park in a
-  # project creates it — with the one-line blurb every other section has, or
-  # the section reads as something a script dropped in rather than part of the
-  # backlog.
-  if [ "$target" = "Parked" ] && ! grep -qE '^## Parked[ \t]*$' "$INDEX"; then
-    printf '\n## Parked\n> Set aside on purpose — not being explored, kept for the record with a dated reason.\n' >> "$INDEX"
-  fi
+  # `## Parked` is newer than every index in the field; wf_index_put_row
+  # creates it, blurb and all, on the first park in a project.
   if ! row=$(wf_index_take_row "$INDEX" "$base"); then
     # No row to move: this brief is drift as well as parked — the legacy case
     # this verb exists for. Writing the row instead of refusing is what makes
