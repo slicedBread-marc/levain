@@ -96,6 +96,9 @@ git commit -qm init >/dev/null 2>&1
 # A live worker: a real process whose pid sits in the usual pidfile, keyed on
 # the artifact NUMBER the way wf-spawn.sh writes it.
 sleep 120 & SLEEPER=$!
+# Disowned so the shell doesn't print a "Terminated" job notice over the
+# results when cleanup kills it.
+disown "$SLEEPER" 2>/dev/null || true
 echo "$SLEEPER" > .claude/orchestrator/logs/1-implement.pid
 
 echo "wf-board-drill.sh contract"

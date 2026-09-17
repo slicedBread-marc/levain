@@ -337,11 +337,14 @@ case "$node" in
   events)
     id="${1:-}"
     num=$(printf '%s' "$id" | grep -oE '[0-9]+' | head -1)
-    if [ -s "$ORCH/events.log" ] && [ -n "$num" ]; then
-      # Matched on the NUMBER, not the name: an artifact's events are written
-      # under whichever name it had at the time (BUG-043 then PLN-043), and
-      # the number is the identity that survives the rename.
-      grep -E "(PLN|BUG|BRF)-0*$num([^0-9]|$)" "$ORCH/events.log" \
+    # Matched on the NUMBER, not the name: an artifact's events are written
+    # under whichever name it had at the time (BUG-043 then PLN-043), and the
+    # number is the identity that survives the rename. RELEASE and DEPLOY
+    # were never counter-allocated, so for those the name IS the identity.
+    pattern="(PLN|BUG|BRF)-0*$num([^0-9]|$)"
+    [ -n "$num" ] || pattern="$id"
+    if [ -s "$ORCH/events.log" ]; then
+      grep -E "$pattern" "$ORCH/events.log" \
         | tail -40 \
         | while IFS=$'\t' read -r ets etype eart emsg; do
             printf '  %s  %-11s %-11s %s\n' "${ets#*T}" "$etype" "$eart" "$emsg"
