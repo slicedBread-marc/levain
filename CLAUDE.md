@@ -137,6 +137,7 @@ The four-terminal layout above is the **manual** mode. With the orchestrator ena
 | `wf-orchestrate.sh --daemon` | Continuous dispatch (its own terminal; never returns) |
 | `wf-orchestrate.sh <ID>` | Drive one bug/brief/plan end to end — the hook for an external project |
 | `/wf-board` | What's in flight: workers, gates, pipeline, events |
+| `wf-board-drill.sh <row>` | What's *behind* a board number — the workers, the plans, the logs. Read-only; its list lines carry the argv of the next level down, which is how coordinator' `wf-board-all` drills from a grid cell to a live worker's log without knowing what any of them are |
 | `/wf-attend` | Drain the queue of decisions the orchestrator refused to make |
 | `wf-autonomy.sh --show` | What this project has authorized the harness to do unattended |
 
