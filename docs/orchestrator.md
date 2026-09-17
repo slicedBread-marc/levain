@@ -66,12 +66,25 @@ consults a grant; it only decides "is there a diff to look at."
 
 `progress_sig()` (the attempt-budget loop breaker, below) needs a real case
 for these two ids rather than its normal registry-row read, which doesn't
-exist for them: it hashes the relevant branch's HEAD
-(`release:$(git rev-parse release)` / `deploy:$(git rev-parse main)`) instead,
-so the signature only changes on an actual successful promotion. Skipping this
-case would mean the signature never changes between dispatches, and three
-lifetime release attempts — successes included — would permanently trip
-`stuck`.
+exist for them: it reads the relevant branch's tip instead, so the signature
+only changes on an actual successful promotion. Skipping this case would mean
+the signature never changes between dispatches, and three lifetime release
+attempts — successes included — would permanently trip `stuck`.
+
+**The ref it reads is the PUSHED one** — `origin/release` / `origin/main`,
+falling back to the local ref only where no remote-tracking ref exists at all.
+The local ref is not a promotion signal: `/wf-release` fast-forwards local
+`release` onto develop at step 6 and only finds out at step 7 that the suite
+failed, and when the rollback then refuses (refs diverged, worktree dirty) the
+local ref stays ahead for a run that promoted nothing. client-a's WFI-254:
+two runs each reported *"Critical: … Do NOT deploy. The local release branch is
+now ahead with untested commits"*, each was logged here as forward progress,
+and each reset the budget and spawned the next release worker — three in total,
+spending 3 of a 4/day standing grant on the exact repetition the budget exists
+to stop. Only `git push` moves a remote-tracking ref, and both skills push only
+after their tests pass, so `origin/<branch>` means *this promotion happened*.
+Reading it can only under-report progress (an unfetched push by someone else),
+and under-reporting parks a `stuck` gate for a human — the safe direction.
 
 ### The consistency pass
 

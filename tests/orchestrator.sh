@@ -2381,6 +2381,152 @@ assert_eq "an approval recorded at the gate dispatches with no grant at all" "tr
 assert_eq "and stops dispatching once the batch it approved has moved on" "false" \
   "$(auth_dispatches_release)"
 
+
+# ═══════════════════════════════════════════════════════════════════════
+section "The release suite is run by the harness, not typed by the worker"
+
+# WFI-252. /wf-release and /wf-deploy stated the full-suite aggregation
+# guarantee as a comment above a {{test_command}} placeholder and left the
+# running of it to the worker, so nothing downstream could tell a full run from
+# a filtered one. A RELEASE worker reported "474 passed, 0 failed" — one
+# assembly — and pushed `release`; the configured suite on that content was
+# 3100 tests with 121 failures, all in the E2E assembly it named as passing.
+SUITE=$(mktemp -d)
+git init -q "$SUITE" >/dev/null
+cd "$SUITE" || exit 1
+git config user.email t@t.com; git config user.name T
+git commit -q --allow-empty -m base
+mkdir -p scripts; printf '0.00 v2.00\n' > scripts/version-map.txt
+
+printf 'build_command: "echo building"\ntest_command: "echo 3100 total"\n' > claude-workflow.yml
+out=$("$SCRIPT_DIR/wf-suite-run.sh" --label t --build 2>&1); rc=$?
+assert_eq "a passing suite exits 0" "0" "$rc"
+assert_eq "and says so in a receipt the skill quotes" "true" \
+  "$(printf '%s' "$out" | grep -q '^SUITE_RESULT=pass' && echo true || echo false)"
+assert_eq "naming the command it actually ran" "true" \
+  "$(printf '%s' "$out" | grep -q '^SUITE_CMD=echo 3100 total$' && echo true || echo false)"
+assert_eq "and the log holding the whole output" "true" \
+  "$([ -f "$(printf '%s' "$out" | sed -n 's/^SUITE_LOG=//p')" ] && echo true || echo false)"
+
+printf 'build_command: "echo b"\ntest_command: "exit 1"\n' > claude-workflow.yml
+out=$("$SCRIPT_DIR/wf-suite-run.sh" --label t 2>&1); rc=$?
+assert_eq "a failing suite exits 1" "1" "$rc"
+assert_eq "and never prints a pass" "true" \
+  "$(printf '%s' "$out" | grep -q '^SUITE_RESULT=fail' && echo true || echo false)"
+
+printf 'build_command: "exit 1"\ntest_command: "echo never reached"\n' > claude-workflow.yml
+out=$("$SCRIPT_DIR/wf-suite-run.sh" --label t --build 2>&1); rc=$?
+assert_eq "a failing build exits 1 without running the suite" "1" "$rc"
+assert_eq "and says the suite never ran" "true" \
+  "$(printf '%s' "$out" | grep -q 'the suite never ran' && echo true || echo false)"
+
+# No suite configured is a gap to report, never a pass.
+printf 'build_command: "echo b"\n' > claude-workflow.yml
+"$SCRIPT_DIR/wf-suite-run.sh" >/dev/null 2>&1
+assert_eq "an unconfigured suite exits 2, not 0" "2" "$?"
+
+cd "$TEST_DIR" || exit 1
+rm -rf "$SUITE"
+
+section "What a harness needs to be intact depends on the worktree"
+
+# WFI-253. Two faults in one check. `harness_intact()` demanded
+# scripts/v*/wf-*.sh, a layout no client has had since v9.0.0 put the scripts
+# under scripts/gen/<build>/v*/ — so it condemned every current MAIN worktree.
+# And it demanded version-map.txt inside a LINKED worktree, where wf-exec.sh
+# resolves that from the main checkout and it is not supposed to exist at all.
+# /wf-deploy's release-branches/main worktree hit both, and the recovery that
+# followed reported an unrestorable harness over a dispatcher that worked.
+HR=$(mktemp -d)
+RESTORE="$SCRIPT_DIR/wf-harness-restore.sh"
+git init -q -b develop "$HR" >/dev/null
+cd "$HR" || exit 1
+git config user.email t@t.com; git config user.name T
+mkdir -p scripts/gen/b1/v2.00 .claude
+cp "$SCRIPT_DIR/wf-worktree-harness.sh" scripts/gen/b1/v2.00/
+printf '0.00 v2.00\n' > scripts/version-map.txt
+echo b1 > scripts/current
+printf '#!/usr/bin/env bash\necho dispatch\n' > scripts/wf-exec.sh; chmod +x scripts/wf-exec.sh
+printf 'scripts/\n.claude/\n' > .gitignore
+git add -A >/dev/null 2>&1; git commit -qm seed >/dev/null 2>&1
+
+bash "$RESTORE" --check >/dev/null 2>&1
+assert_eq "a gen-era main worktree reads as intact" "0" "$?"
+
+git worktree add -q "$HR/rel" -b release >/dev/null 2>&1
+cd "$HR/rel" || exit 1
+bash "$RESTORE" --check >/dev/null 2>&1
+assert_eq "a linked worktree with no dispatcher reads as missing" "1" "$?"
+
+bash "$RESTORE" >/dev/null 2>&1
+assert_eq "and is restored from the main worktree, no library and no network" "0" "$?"
+assert_eq "the dispatcher is what landed" "true" \
+  "$([ -x scripts/wf-exec.sh ] && echo true || echo false)"
+assert_eq "version-map.txt is NOT copied — it resolves from the main worktree" "false" \
+  "$([ -f scripts/version-map.txt ] && echo true || echo false)"
+bash "$RESTORE" --check >/dev/null 2>&1
+assert_eq "and the linked worktree now reads as intact" "0" "$?"
+
+# Exit 2 is a total failure to restore, and must never be reported as 0.
+NOHOPE=$(mktemp -d)
+git init -q "$NOHOPE" >/dev/null
+cd "$NOHOPE" || exit 1
+git config user.email t@t.com; git config user.name T
+git commit -q --allow-empty -m base
+bash "$RESTORE" >/dev/null 2>&1
+assert_eq "nothing left to try exits 2, not 0" "2" "$?"
+
+cd "$TEST_DIR" || exit 1
+git -C "$HR" worktree remove --force "$HR/rel" >/dev/null 2>&1
+rm -rf "$HR" "$NOHOPE"
+
+section "Forward progress for RELEASE/DEPLOY reads the PUSHED ref"
+
+# progress_sig() is a pure function for these two ids — it returns before it
+# touches SELF_DIR or the registry — so it is lifted out and called directly.
+eval "$(sed -n '/^progress_sig()/,/^}/p' "$SCRIPT_DIR/wf-orchestrate.sh")"
+
+PROG=$(mktemp -d)
+git init -q -b develop "$PROG" >/dev/null
+git init -q --bare "$PROG.origin.git" >/dev/null
+cd "$PROG" || exit 1
+git config user.email t@t.com; git config user.name T
+git commit -q --allow-empty -m base
+git branch release
+git remote add origin "$PROG.origin.git"
+git push -q origin release
+git fetch -q origin
+
+before=$(progress_sig RELEASE)
+assert_eq "the signature names the pushed ref" "true" \
+  "$(printf '%s' "$before" | grep -q '^release:origin/release@' && echo true || echo false)"
+
+# WFI-254: /wf-release fast-forwards LOCAL release at step 6 and only finds out
+# at step 7 that the suite failed. When the rollback then refuses, the local ref
+# is left ahead for a run that promoted nothing — and the old signature
+# (`git rev-parse release`) moved, resetting the attempt budget and spawning the
+# next release worker. Three runs, three "Do NOT deploy", 3 of a 4/day grant.
+git checkout -q release
+git commit -q --allow-empty -m "untested commits a failed run left on local release"
+git checkout -q develop
+assert_eq "a failed run that left local release ahead is NOT forward progress" \
+  "$before" "$(progress_sig RELEASE)"
+
+# A real promotion pushes, and only a push moves the remote-tracking ref.
+git push -q origin release
+assert_eq "an actual push to origin/release IS forward progress" "false" \
+  "$([ "$before" = "$(progress_sig RELEASE)" ] && echo true || echo false)"
+
+# A local-only client has no remote-tracking ref; the local one is all there is,
+# and no signal at all would park every release as `stuck`.
+git remote remove origin
+git update-ref -d refs/remotes/origin/release
+assert_eq "falls back to the local ref when nothing tracks a remote" "true" \
+  "$(progress_sig RELEASE | grep -q '^release:release@' && echo true || echo false)"
+
+cd "$TEST_DIR" || exit 1
+rm -rf "$PROG" "$PROG.origin.git"
+
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n══════════════════════════════════════════════════════════════\n'
 if [ "$FAIL" -eq 0 ]; then

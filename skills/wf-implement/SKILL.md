@@ -324,19 +324,27 @@ and must be discarded, not reported.
    git add -A -- ':(exclude)scripts/wf-*.sh' ':(exclude).claude/' ':(exclude)plans/' ':(exclude)templates/' 2>/dev/null; git diff --cached --quiet || git commit -m "implement(PLN-NNN-<slug>): wip before merge"
    $DEVELOP_ROOT/scripts/wf-exec.sh wf-merge-develop.sh
    ```
-   Shell variables do NOT persist across bash calls — run these together so `DEVELOP_ROOT` and `cd` stay in scope. In any later bash call that needs develop paths, re-resolve: `DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')`
+   Shell variables do NOT persist across bash calls — run these together so `DEVELOP_ROOT` and `cd` stay in scope.
+
+   **Every later bash call that uses `$DEVELOP_ROOT` must set it in that same call.** Not "should" — an unset `$DEVELOP_ROOT` expands to nothing, so `$DEVELOP_ROOT/scripts/wf-exec.sh` becomes `/scripts/wf-exec.sh` and the call dies with `no such file or directory`, exit 127 (client-a WFI-251, on the docker teardown at step 23). The blocks below therefore carry this line themselves; keep it when you copy them:
+   ```bash
+   DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+   ```
+   The working directory *does* carry over between calls, and `git worktree list` answers the same from anywhere inside the repo, so this line is safe to repeat and costs nothing.
 
    **`git add -A`, not `git add -u`.** This commit exists to capture everything a previous session left behind before the merge rewrites the tree, and `-u` stages only changes to files git already tracks — a new file it has never seen is not one of them. client-a's PLN-246 resumed a crashed session that had written four new test files covering 10 of the plan's 13 tests; the documented wip commit skipped every one of them silently, and they would have reached verify and testing with no coverage at all had a `git status` not caught them by hand (WFI-223). The pathspec exclusions do the work of keeping develop's harness files out; `-u` was never what made this commit safe.
 
    **The branch check is a hard stop, not a receipt.** Printing `git branch --show-current` only helps if something reads it; the explicit check refuses to go on. A resume that finds anything other than `feature/PLN-NNN-<slug>` here is standing in the wrong directory or on a branch that is not this plan's, and everything after this line commits code (WFI-123).
 12. **Set the Docker project name and port:**
     ```bash
+    DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
     eval "$($DEVELOP_ROOT/scripts/wf-exec.sh wf-plan-port.sh PLN-NNN-<slug>)"
     ```
 13. **Read the plan** — from develop worktree: `$DEVELOP_ROOT/plans/PLN-NNN-<slug>/plan.md`
 14. **Execute steps in order** — follow each step exactly as specified
     - After each step, commit, record the step, and refresh the claim:
       ```bash
+      DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
       git add src/ tests/ && git commit -m "implement(PLN-NNN-<slug>): step N — <desc>"
       $DEVELOP_ROOT/scripts/wf-exec.sh wf-progress-tick.sh PLN-NNN N "<desc>"
       $DEVELOP_ROOT/scripts/wf-exec.sh wf-claim.sh PLN-NNN-<slug>
@@ -349,6 +357,7 @@ and must be discarded, not reported.
 16. **Log progress** — handled by `wf-progress-tick.sh` in step 14; do not hand-edit the `## Steps` checklist. For anything that is not a step completion (a note, an ambiguity you resolved conservatively), append directly to `$DEVELOP_ROOT/plans/PLN-NNN-<slug>/progress.md` under `## Log`. **Never use relative paths** — `plans/` only exists on the develop worktree.
 17. **Deploy to local container for testing:**
     ```bash
+    DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
     $DEVELOP_ROOT/scripts/wf-exec.sh wf-docker-up.sh PLN-NNN-<slug>
     ```
 
@@ -356,6 +365,7 @@ and must be discarded, not reported.
 
     **The real test for "there is nothing to deploy" is the config:**
     ```bash
+    DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
     $DEVELOP_ROOT/scripts/wf-exec.sh wf-config-get.sh local_deploy_command
     ```
     Empty means this project has no local container — skip the step and say so in `progress.md`. Non-empty means the container is expected; a failure there is a failure to report, not a step to drop.
@@ -422,8 +432,10 @@ and must be discarded, not reported.
     same exclusions appear on every other `git add` in this skill.
 23. **Destroy the docker container:**
     ```bash
+    DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
     $DEVELOP_ROOT/scripts/wf-exec.sh wf-docker-down.sh PLN-NNN-<slug>
     ```
+    Resolved in this call, not inherited from step 9 — steps 9 and 23 are many bash calls apart and nothing carries a shell variable that far (WFI-251).
 
 ---
 
@@ -431,17 +443,19 @@ and must be discarded, not reported.
 
 **A criterion is accepted only in `testing`, by `/wf-test` — never by holding the plan at `active` for an out-of-band human look.** When step 22's checklist passes, advance to `verify` (step 25); do not stay at `active` waiting for a human to eyeball the running container and accept criteria there instead. That acceptance happens outside every gate this pipeline has: it is not written to `findings.md`, not visible to `wf-list-*` or the orchestrator, and its only record is whatever prose the builder happens to put in `progress.md` — unauditable, and invisible to anyone who did not read that file (client-f WFI-002). If a criterion is genuinely subjective and likely to take a few rounds of human judgment (a visual layout, a wording call), that is exactly what the `verify → testing → active` fix cycle is for: tag it `← MANUAL-TEST` if it has no code-level finding, exit to `verify` as normal, and let `/wf-test` record PASS/FAIL. Iterating through the full cycle for a subjective judgment costs a round trip, not a redesign.
 
-**IMPORTANT:** All commands in this phase must run from the develop root (`DEVELOP_ROOT`). Set this once and use it for every command:
+**IMPORTANT:** All commands in this phase must run from the develop root (`DEVELOP_ROOT`). Set it **in every bash call that uses it** — "set it once" is not a thing a shell variable does across separate calls (WFI-251):
 ```bash
-DEVELOP_ROOT=$(git worktree list | head -1 | awk '{print $1}')
+DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
 ```
 
 24. **Return to develop:**
     ```bash
+    DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
     cd "$DEVELOP_ROOT"
     ```
 25. **Move the plan to `verify` and commit it, in one step:**
     ```bash
+    DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
     cd "$DEVELOP_ROOT" && scripts/wf-exec.sh wf-registry-update.sh PLN-NNN active verify \
       --commit "implement(PLN-NNN-<slug>): verified, moved to verify" \
       --add plans/PLN-NNN-<slug>/ \
@@ -469,6 +483,7 @@ DEVELOP_ROOT=$(git worktree list | head -1 | awk '{print $1}')
     `--add` makes the plan folder part of the same atomic commit.
 26. **Release the claim — last:**
     ```bash
+    DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
     cd "$DEVELOP_ROOT" && scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
     ```
 
@@ -517,6 +532,7 @@ The verify agent found code/test/spec issues and set the REGISTRY state back to 
    **The `ready → active` line is not optional, and it is why step 1 says "shows the plan" rather than "shows it as `active`".** A fix cycle is entered on the *type* `wf-list-implementable.sh` computes — worktree present plus unchecked findings — and that type is `fix` whatever the registry row says. A replan leaves a plan at `ready` while its worktree survives, so the fix path is reached with the row still reading `ready`, and every fix in the cycle then lands correctly right up until the Phase 3 exit refuses: `PLN-NNN is in state ready, not active` (client-a WFI-202). The transition belongs at entry, where the work actually starts, not at the exit that discovers it missing. `wf-list-implementable.sh` already treats `ready`-with-a-worktree as `active` internally; this makes the registry agree.
 4. **Set the Docker project name and port** — same as Phase 2 step 12, and for the same reason:
    ```bash
+   DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
    eval "$($DEVELOP_ROOT/scripts/wf-exec.sh wf-plan-port.sh PLN-NNN-<slug>)"
    ```
    **Not optional, and not covered by Phase 2 having done it** — these are shell
@@ -534,6 +550,7 @@ The verify agent found code/test/spec issues and set the REGISTRY state back to 
    **A finding you cannot fix without editing `plan.md` is not yours, whether or not it says ESCALATED.** Before fixing, name the file the fix edits. If that file is the plan — a Step, a Tests-table row, an acceptance criterion, a Design Decision, the Rollback section — stop: the Rules bar you from those sections, and no amount of re-reading resolves the contradiction between "fix every finding" and "do not edit the plan". Leave it unchecked, mark it `← ESCALATED` so `wf-findings-route.sh` routes it correctly next time, append a line to `progress.md` naming the finding and the section it would have to touch, and send the plan back:
 
    ```bash
+   DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
    cd $DEVELOP_ROOT
    $DEVELOP_ROOT/scripts/wf-exec.sh wf-docker-down.sh PLN-NNN-<slug>   # if you started a container
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN active draft \
@@ -548,6 +565,7 @@ The verify agent found code/test/spec issues and set the REGISTRY state back to 
    **A real bug in code this plan never touched is a third case, and it is neither of the first two.** Fixing it violates "no unrelated refactoring"; escalating it is wrong because there is nothing for a planner to amend — the plan is not contradicted by a defect somewhere else. client-a's WFI-081 had no route for it and opened a `needs-input` gate rather than guess, which is the right instinct and the wrong cost. The route is the one verify already uses for out-of-scope security work: **file it, tag it, move on.**
 
    ```bash
+   DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
    cd $DEVELOP_ROOT
    # One call: allocates through the counter, writes bug.md in the shape the
    # rest of the pipeline parses, and commits it pathspec-scoped. Hand-writing

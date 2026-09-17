@@ -179,7 +179,9 @@ Feature-branch verify runs a **scoped** test suite, not the full suite. The scop
 - Auto-detected categories from `git diff develop..HEAD` via `testMappings`
 - Mandatory categories (`testScopeMandatory`) — always included
 
-Category names and filter substrings live in `claude-workflow.yml → testScopes`. `wf-release` runs the full suite with no filter — the aggregation guarantee that every test skipped on a feature branch runs before production. Missing/empty `## Test Scope` → full-suite fallback.
+Category names and filter substrings live in `claude-workflow.yml → testScopes`. `wf-release` and `wf-deploy` run the full suite with no filter — the aggregation guarantee that every test skipped on a feature branch runs before production. Missing/empty `## Test Scope` → full-suite fallback.
+
+Both run it through `wf-suite-run.sh`, which executes `test_command` from `claude-workflow.yml` verbatim and prints the receipt those skills quote (`SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`). The guarantee is enforced there rather than requested of the worker: a run that narrows the suite and reports a count cannot be told from a full one, and one that did exactly that pushed `release` on a single assembly (WFI-252).
 
 ### Tester Role (`/wf-test`)
 - **Entry:** `grep "| testing |" REGISTRY.md`

@@ -148,13 +148,29 @@ untrack commit's deletions took 106 files including `wf-exec.sh`. The skill disc
 at its own last step, with exit 127 (WFI-006). Switching back to develop restores
 nothing: ignored files are not materialised by a checkout.
 
-`wf-harness-restore.sh` is the answer for that case. It tries two recoveries, in order:
+`wf-harness-restore.sh` is the answer for that case. It tries three recoveries, in order:
 
+0. **The main worktree**, whenever the damage is in a *linked* one
+   (`release-branches/*`, `feature-branches/*`). It is on the same disk and already holds
+   a complete, current harness, so this needs no library, no network, no history search,
+   and cannot install a stale generation. It is `wf-worktree-harness.sh` — the same copy
+   that populates a worktree at creation. client-a's WFI-253 recovered exactly this
+   way, by hand, by re-running `wf-worktree-pin.sh`.
 1. **The library.** `install.sh` writes its own path to `.claude/workflow-source` —
    untracked, so no checkout can delete it — and re-running it regenerates the harness
    the project's `.claude/workflow-version` actually names.
 2. **History.** Check the files out of the newest ref that still tracks them, then
    `git rm --cached` them back to untracked. Needs neither the library nor the network.
+
+**What "intact" means depends on which worktree you are in**, and getting that wrong is
+its own incident. Only the *main* worktree needs `scripts/version-map.txt`, `scripts/current`
+and the versioned script folders: `wf-exec.sh`'s `find_project_root` answers with the main
+worktree, so a linked worktree's whole harness is `scripts/wf-exec.sh` plus the `wf-*`
+skills, and that is all `wf-worktree-harness.sh` copies in. Applying the main-worktree test
+inside `release-branches/main` condemns a dispatcher that works — `/wf-deploy` step 7a did
+that literally, and `harness_intact()` did it too (WFI-253). The same check also has to
+accept the v9 layout: the scripts live under `scripts/gen/<build>/v*/`, not `scripts/v*/`,
+so a test written for the pre-gen layout reports every current client as broken.
 
 `wf-merge-develop.sh` and `wf-merge-release.sh` call it when the copy-from-main path
 finds nothing to copy, and `/wf-release` step 5a carries the same recovery as plain git

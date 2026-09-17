@@ -128,18 +128,24 @@ Before starting, confirm E2E passed on release:
    ```
    The `-X theirs` option automatically accepts release's version of any conflicting files in `plans/`.
 
-7a. **Check the harness survived the merge:**
+7a. **Check the harness survived the merge** — ask the script, do not hand-roll the test:
    ```bash
-   [ -x scripts/wf-exec.sh ] && [ -f scripts/version-map.txt ] && echo "harness ok" \
-     || echo "HARNESS MISSING"
+   scripts/wf-exec.sh wf-harness-restore.sh --check && echo "harness ok" || echo "HARNESS MISSING"
    ```
-   `HARNESS MISSING` means this merge carried the commit that stops tracking the generated harness onto a branch that still tracked it, so git deleted the files — and they are gitignored, so nothing puts them back. Restore with `scripts/wf-exec.sh wf-harness-restore.sh` if the dispatcher survived — it reinstalls from the library recorded in `.claude/workflow-source` and only falls back to history, with a version check, if the library is gone. **Exit 3 means it could only find a stale harness**: treat that as unrecovered and reinstall from the library before doing anything else (WFI-119). If the dispatcher itself did not survive, use the recovery in `/wf-release` step 6a, which needs no harness. Run the same check again after step 12 returns to the develop worktree (WFI-006) — the back-merge there is a separate merge and can go stale independently.
+   **You are standing in `release-branches/main`, a LINKED worktree, and the harness there is only `scripts/wf-exec.sh` plus the `wf-*` skills.** `version-map.txt`, `scripts/current` and the versioned script folders resolve from the *main* worktree — `wf-exec.sh`'s `find_project_root` answers with it — so they are not supposed to be here and testing for them condemns a dispatcher that works. This step used to do exactly that (`[ -f scripts/version-map.txt ]`), and client-a's WFI-253 spent a recovery on a harness that was never missing.
 
-8. **Run full test suite** (final integration check):
+   `HARNESS MISSING` means this merge carried the commit that stops tracking the generated harness onto a branch that still tracked it, so git deleted the files — and they are gitignored, so nothing puts them back. Restore with:
    ```bash
-   {{build_command}} < /dev/null
-   {{test_command}} < /dev/null
+   scripts/wf-exec.sh wf-harness-restore.sh; echo "restore exit=$?"
    ```
+   In this worktree its first recovery is the main worktree sitting next to you, which needs no library and no network; the library and then history are the fallbacks. **Read the exit code, and report it** — `0` restored, `2` a total failure to restore (every reason is on stderr; never read one of those as recovered), `3` it could only find a **stale** harness, which is unrecovered too: reinstall from the library before doing anything else (WFI-119). If the dispatcher itself did not survive, use the recovery in `/wf-release` step 6a, which needs no harness. Run the same check again after step 12 returns to the develop worktree (WFI-006) — the back-merge there is a separate merge and can go stale independently.
+
+8. **Run full test suite** (final integration check) — **run the script, do not type a test command:**
+   ```bash
+   scripts/wf-exec.sh wf-suite-run.sh --label deploy --build
+   ```
+   It runs `build_command` then `test_command` from `claude-workflow.yml`, verbatim and unfiltered, against merged `main` in the worktree you are standing in, and ends with `SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`. **Exit 0 pass, 1 fail, 2 no suite configured** — 2 is a gap to report, never a pass. Report the `SUITE_RESULT=` line verbatim with `SUITE_CMD=` beside it; a count read out of the output is not evidence of what ran (WFI-252, where a release was pushed on one assembly's 474 tests reported as the whole E2E suite — **this step is what caught it**, and it only caught it because it ran the configured command).
+
    If tests fail, abort the deploy — do NOT proceed to registry updates. Inform user of failures (and, under `WF_UNATTENDED=1`, unclaim) and suggest fixing on the release branch, then re-running `/wf-release`.
 
    **This step reads as inline and on a large project it cannot be.** A foreground Bash call is capped at 10 minutes; client-a's full suite takes about 13, so it used to be killed mid-run every time, and back when this ran in the shared develop worktree that stalled the deploy at its most dangerous point — the registry every other session read was `main`'s stale copy (WFI-213). That specific danger is gone now that `main` lives in its own worktree: a long suite here no longer touches `plans/REGISTRY.md` on develop, and the orchestrator keeps dispatching normally throughout. The 10-minute cap itself is unchanged, though — if the suite is known to exceed it, run it with `run_in_background` and **wait for it to finish before doing anything else**. That is safe here and nowhere else in the harness: `/wf-deploy` runs in a session that persists across turns, unlike the verify agent, which is killed the moment it stops producing output and must never background anything.

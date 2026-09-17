@@ -18,7 +18,27 @@
 # what discovered it, with exit 127 (WFI-006). Switching back to develop does
 # not help — ignored files are not restored by a checkout.
 #
-# TWO RECOVERIES, IN THIS ORDER
+# WHAT "INTACT" MEANS DEPENDS ON WHICH WORKTREE YOU ARE IN
+#
+# Only the MAIN worktree needs the versioned script folders. wf-exec.sh's
+# find_project_root answers with the main worktree, so in a LINKED worktree
+# (release-branches/main, release-branches/release, feature-branches/*) the
+# whole harness is scripts/wf-exec.sh plus the wf-* skills — the versioned
+# scripts, version-map.txt and scripts/current all resolve from the main
+# checkout and are not supposed to be here. wf-worktree-harness.sh copies in
+# exactly that much, by design.
+#
+# Applying the main-worktree test in a linked worktree is a false alarm, and an
+# expensive one: client-a's WFI-253 saw `git merge -X theirs --no-ff release`
+# delete version-map.txt inside release-branches/main, and both /wf-deploy step
+# 7a and this script declared HARNESS MISSING over a dispatcher that worked.
+# What actually recovered it was re-running wf-worktree-pin.sh — which is
+# wf-worktree-harness.sh, recovery 1 below.
+#
+# THREE RECOVERIES, IN THIS ORDER
+#
+# 0. THE MAIN WORKTREE, when we are in a linked one. It is on the same disk,
+#    already holds a complete harness, and needs neither library nor network.
 #
 # 1. THE LIBRARY. `install.sh` writes its own path to .claude/workflow-source
 #    (untracked, so a checkout cannot delete it). Re-running it regenerates the
@@ -46,6 +66,9 @@
 # Exit 0 restored (or already intact), 1 --check found it missing, 2 it is
 # missing and nothing in this repository or on this machine can restore it,
 # 3 restored from a ref whose workflow version does not match this project's.
+#
+# 2 IS A TOTAL FAILURE TO RESTORE and the caller must treat it as one. Every
+# path to it prints its reasons to stderr first; none of them returns 0.
 
 set -euo pipefail
 
@@ -62,12 +85,38 @@ for d in scripts/v*/; do [ -d "$d" ] && paths+=("${d%/}"); done
 for d in .claude/skills/wf-*/; do [ -d "$d" ] && paths+=("${d%/}"); done
 [ -f .claude/workflow.md ] && paths+=(.claude/workflow.md)
 
-# Intact means the entry point is there and can dispatch: wf-exec.sh plus the
-# map it resolves through plus at least one version folder.
+# Where the versioned scripts are supposed to live — the main worktree, which
+# is the parent of the common git dir. Equal to $PWD when we ARE the main
+# worktree.
+main_root() {
+  local common
+  common=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P) || return 1
+  dirname "$common"
+}
+MAIN_ROOT=$(main_root || true)
+HERE=$(pwd -P)
+IN_LINKED_WORKTREE=false
+[ -n "$MAIN_ROOT" ] && [ "$MAIN_ROOT" != "$HERE" ] && IN_LINKED_WORKTREE=true
+
+# Intact means the entry point is there and can dispatch. In the main worktree
+# that is wf-exec.sh plus the map it resolves through plus at least one version
+# folder. In a linked worktree it is wf-exec.sh here plus that same set over in
+# the main worktree, because that is where this dispatcher resolves them from —
+# demanding local copies there fails a working harness (WFI-253).
+dispatch_set_at() {
+  local r="$1"
+  [ -f "$r/scripts/version-map.txt" ] || return 1
+  compgen -G "$r/scripts/v*/wf-*.sh" >/dev/null 2>&1 \
+    || compgen -G "$r/scripts/gen/*/v*/wf-*.sh" >/dev/null 2>&1 || return 1
+  return 0
+}
 harness_intact() {
   [ -x scripts/wf-exec.sh ] || return 1
-  [ -f scripts/version-map.txt ] || return 1
-  compgen -G "scripts/v*/wf-*.sh" >/dev/null 2>&1 || return 1
+  if $IN_LINKED_WORKTREE; then
+    dispatch_set_at "$MAIN_ROOT" || return 1
+  else
+    dispatch_set_at "$HERE" || return 1
+  fi
   return 0
 }
 
@@ -90,6 +139,46 @@ read_stamp() { [ -f "$1" ] && tr -d '[:space:]' < "$1" || true; }
 # What this project says it should be running. Empty in a pre-v5 client.
 want_version=$(read_stamp .claude/workflow-version)
 
+# Whether a recovery was even attempted, so the final error can say which ones
+# were tried rather than assert a library was never recorded when one was
+# (WFI-253 — the operator was told "no workflow library is recorded in
+# .claude/workflow-source" immediately after being told that library's install
+# had failed).
+tried=""
+
+# ── 0. The main worktree, when this is a linked one ───────────────────────
+#
+# wf-worktree-harness.sh copies exactly the set a linked worktree needs —
+# wf-exec.sh, the wf-* skills, settings.local.json — from the main checkout.
+# No library, no network, no history search, and no chance of installing a
+# stale generation, because the source is the harness this machine is running
+# right now. This is what recovered client-a's release-branches/main after
+# the promote merge deleted its tracked copies (WFI-253); it was reached by
+# re-running wf-worktree-pin.sh, which calls this same script.
+if $IN_LINKED_WORKTREE && dispatch_set_at "$MAIN_ROOT"; then
+  tried="$tried main-worktree"
+  helper=""
+  for cand in "$(dirname "$0")/wf-worktree-harness.sh" \
+              "$MAIN_ROOT"/scripts/gen/*/v*/wf-worktree-harness.sh \
+              "$MAIN_ROOT"/scripts/v*/wf-worktree-harness.sh; do
+    if [ -x "$cand" ]; then helper="$cand"; break; fi
+  done
+  if [ -n "$helper" ]; then
+    echo "Restoring from the main worktree at $MAIN_ROOT ..."
+    bash "$helper" "$HERE" || true
+  else
+    # Even with no helper on disk, the one file that must be here is copyable.
+    mkdir -p scripts
+    cp -p "$MAIN_ROOT/scripts/wf-exec.sh" scripts/wf-exec.sh 2>/dev/null || true
+    chmod +x scripts/wf-exec.sh 2>/dev/null || true
+  fi
+  if harness_intact; then
+    echo "Harness restored from the main worktree (dispatcher resolves $MAIN_ROOT/scripts)"
+    exit 0
+  fi
+  echo "Warning: copying from the main worktree did not produce a usable harness." >&2
+fi
+
 # ── 1. The library, if this machine still has it ──────────────────────────
 #
 # .claude/workflow-source is UNTRACKED, and that has a consequence in a git
@@ -106,10 +195,16 @@ if [ -z "$library" ]; then
   main_root=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
   if [ -n "$main_root" ] && [ "$main_root" != "$(pwd)" ]; then
     library=$(read_stamp "$main_root/.claude/workflow-source")
-    [ -n "$library" ] && echo "Read the library path from the main worktree at $main_root"
+    # `[ -n "$library" ] && echo ...` here would be the last command of this
+    # block, so under `set -e` an empty result exits the script 1 — silently
+    # skipping the history recovery that is the entire point of continuing.
+    if [ -n "$library" ]; then
+      echo "Read the library path from the main worktree at $main_root"
+    fi
   fi
 fi
 if [ -n "$library" ] && [ -f "$library/install.sh" ]; then
+  tried="$tried library"
   echo "Restoring from the workflow library at $library ..."
   if bash "$library/install.sh" "$(pwd)" >/dev/null 2>&1 && harness_intact; then
     got=$(read_stamp .claude/workflow-version)
@@ -166,8 +261,18 @@ for pass in matching any; do
 done
 
 if [ -z "$restored_from" ]; then
-  echo "Error: no ref in this repository still tracks scripts/wf-exec.sh," >&2
-  echo "       and no workflow library is recorded in .claude/workflow-source." >&2
+  # Say what was actually tried. Asserting "no workflow library is recorded"
+  # two lines after reporting that library's install failed sent WFI-253's
+  # operator looking for a missing config file that was there all along.
+  echo "Error: the harness could not be restored at $(pwd)." >&2
+  echo "       no ref in this repository still tracks scripts/wf-exec.sh" >&2
+  case " $tried " in
+    *" main-worktree "*) echo "       the main worktree at $MAIN_ROOT was tried and did not produce one" >&2 ;;
+  esac
+  case " $tried " in
+    *" library "*) echo "       the library at $library was tried and its install did not produce one" >&2 ;;
+    *)             echo "       no workflow library is recorded in .claude/workflow-source" >&2 ;;
+  esac
   echo "       Re-run the workflow library's install.sh against this project:" >&2
   echo "         bash /path/to/lv-levain/install.sh $(pwd)" >&2
   exit 2

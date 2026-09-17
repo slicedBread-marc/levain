@@ -230,9 +230,33 @@ progress_sig() {
   # branch each promotes IS the forward-progress signal: it only moves on an
   # actual successful promotion, so a gate or a failure (which move nothing)
   # still counts against the budget as intended, and a real success resets it.
+  #
+  # The ref read is the PUSHED one, not the local one. A /wf-release run whose
+  # tests fail has ALREADY fast-forwarded local `release` onto develop by the
+  # time it finds out (step 6 merges, step 7 tests); when the rollback then
+  # refuses — refs diverged, worktree dirty — the local ref stays ahead and
+  # moved for a run that promoted nothing. client-a's WFI-254: two runs each
+  # reported "Critical: ... Do NOT deploy. The local release branch is now
+  # ahead with untested commits", and each was logged here as forward progress,
+  # resetting the budget and spawning the next release worker — three in total,
+  # burning 3 of a 4/day standing grant on a failure the budget exists to stop.
+  # `git push` is the only thing that moves origin/<branch>, and both skills
+  # push only after their tests pass, so the remote-tracking ref means exactly
+  # "this promotion actually happened". Fall back to the local ref only when
+  # there is no remote-tracking ref at all (a local-only client), where it is
+  # the only signal there is.
+  progress_ref() {
+    local b="$1" r
+    for r in "origin/$b" "$b"; do
+      if git rev-parse --verify --quiet "$r" >/dev/null 2>&1; then
+        printf '%s@%s' "$r" "$(git rev-parse "$r")"; return 0
+      fi
+    done
+    printf 'none'
+  }
   case "$id" in
-    RELEASE) printf 'release:%s' "$(git rev-parse release 2>/dev/null || echo none)"; return 0 ;;
-    DEPLOY)  printf 'deploy:%s'  "$(git rev-parse main    2>/dev/null || echo none)"; return 0 ;;
+    RELEASE) printf 'release:%s' "$(progress_ref release)"; return 0 ;;
+    DEPLOY)  printf 'deploy:%s'  "$(progress_ref main)";    return 0 ;;
   esac
   st=$(plan_state "$id")
   cnt=$("$SELF_DIR/wf-progress-count.sh" "$id" 2>/dev/null || echo "0/0")
@@ -478,8 +502,8 @@ dispatch() {
     # another full wf-list-gates.sh run per parked plan per tick.
     local stuck_why="neither the registry state nor the progress.md step checklist moved"
     case "$id" in
-      RELEASE) stuck_why="the release branch did not move" ;;
-      DEPLOY)  stuck_why="main did not move" ;;
+      RELEASE) stuck_why="nothing was pushed to origin/release" ;;
+      DEPLOY)  stuck_why="nothing was pushed to origin/main" ;;
     esac
     if ! $dry_run; then
       "$SELF_DIR/wf-gate-open.sh" "$artifact" stuck \

@@ -197,13 +197,18 @@ release-branches/release → release's own permanent worktree — staging enviro
    not exist. Prerequisites are declared per project in its own `claude-workflow.yml` under
    `e2ePrereqs:`; a project with none declared is unaffected by this step.
 
-7. **Run E2E / integration tests** (staging validation), against the local merge — before anything is pushed:
+7. **Run E2E / integration tests** (staging validation), against the local merge — before anything is pushed. **Do not type a test command here; run the script:**
    ```bash
-   {{build_command}} < /dev/null
-   {{test_command}} < /dev/null
-   # Full suite — no filter. Release aggregation guarantee (BRF-080):
-   # every test skipped on a feature branch by tiered gating MUST run here.
+   scripts/wf-exec.sh wf-suite-run.sh --label release --build
    ```
+   It runs `build_command` and then `test_command` from `claude-workflow.yml`, verbatim and unfiltered, in the worktree you are standing in, and ends with three lines: `SUITE_CMD=`, `SUITE_LOG=`, `SUITE_RESULT=`. **Exit 0 pass, 1 fail, 2 no suite is configured** — 2 is a gap to report and never a pass.
+
+   **`SUITE_RESULT=` is the only thing that may be reported as the verdict, and `SUITE_CMD=` must be quoted beside it.** A count you read out of the output is not evidence of what ran. client-a's WFI-252: a run reported "✓ E2E tests passed: **474 passed, 0 failed**" and pushed `release`. 474 was one assembly; the configured suite on that content was 3100 tests with 121 failures, every one of them in the E2E assembly the run had named as passing. So the run labelled a non-E2E assembly as the E2E suite, never ran the suite it claimed had passed, and pushed on that basis. `/wf-deploy`'s own full run caught it and reset `main` — nothing else would have.
+
+   This is the **release aggregation guarantee** (BRF-080) and it is now enforced rather than requested: every test a feature branch skipped under tiered gating runs here, whole. Narrowing the suite — an assembly, a filter, a category — is not a judgment call available at this step.
+
+   **The suite may outlast a foreground Bash call.** If it is known to exceed 10 minutes, run this with `run_in_background` and **wait for it to finish**, then read the verdict out of `SUITE_LOG`. Never report a suite you did not see end.
+
    If tests fail, **first ask whether the suite was even in a position to judge**: re-run
    `scripts/wf-exec.sh wf-preflight.sh`. A prerequisite that went down mid-run implicates the
    environment, not the commits (WFI-028) — report it that way. Either way, do **not** push, and
@@ -244,10 +249,12 @@ release-branches/release → release's own permanent worktree — staging enviro
    scripts/wf-exec.sh wf-unclaim.sh RELEASE
    ```
 
-   **On success:**
+   **On success** — the suite line is step 7's receipt, copied, not composed:
    ```
    ✓ develop merged to release (plan files synced)
-   ✓ E2E tests passed on release branch
+   ✓ <the SUITE_RESULT= line, verbatim>
+     ran: <the SUITE_CMD= line, verbatim>
+     log: <the SUITE_LOG= path>
 
    NEXT: When ready to promote to production, run:
      /wf-deploy
@@ -344,6 +351,8 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
 - **Do NOT merge to main** — that's `/wf-deploy`
 - **Do NOT update REGISTRY.md** — plan states are already set by `wf-test` and `wf-deploy`
 - **Do NOT** force push — use regular merge
+- **Run the configured suite through `wf-suite-run.sh`, whole** — never a hand-typed or narrowed test command. Report its `SUITE_RESULT=` line verbatim with `SUITE_CMD=` beside it; a pass asserted from a count you read is how one assembly's 474 tests were pushed to `release` as the whole E2E suite (WFI-252)
+- **A run that refuses to push has accomplished nothing, and must read that way** — say so plainly, unclaim, and stop. The orchestrator's forward-progress signal for `RELEASE` is `origin/release`, not the local ref, precisely so a failed run whose rollback refused (local `release` left ahead) no longer resets the attempt budget and spawns the next release worker: client-a's WFI-254 burned 3 of a 4/day standing grant that way, three runs in a row, each one reporting "Do NOT deploy"
 - **Do NOT push `release` before E2E passes, and roll the local merge back when it doesn't** — step 7 runs tests against the local merge, step 8 pushes only on success, and step 7's `wf-release-rollback.sh` returns the local ref on failure. All three are needed for `main..release` to stay a trustworthy "these commits passed" signal: `/wf-deploy` and the daemon read the LOCAL ref, so a failed run that only skips the push still hands them a batch that never passed (WFI-007, coordinator WFI-002)
 - **Complete all steps** — if the user interrupts mid-run, tell them which step to resume at; there is no shared checkout to leave parked, so an interruption costs nothing beyond finishing later
 - **Return your own cwd to the develop worktree at step 9** — not because anything needs it back (nothing else ever touches `release-branches/release`), but so the session you're running in ends up back where the human expects it
