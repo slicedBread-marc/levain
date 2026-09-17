@@ -2428,6 +2428,73 @@ assert_eq "an unconfigured suite exits 2, not 0" "2" "$?"
 cd "$TEST_DIR" || exit 1
 rm -rf "$SUITE"
 
+section "A long suite is waited for, and an unverified merge undoes itself"
+
+# WFI-255. An unattended DEPLOY worker merged release into main, wrote "Full
+# test suite running (expected ~13 min)" and "Awaiting test results", then
+# exited rc=0 sixty seconds later. It never awaited them; the suite was red.
+# Two things were missing: a way to wait longer than one foreground call, and
+# anything that undoes a merge whose verdict never arrived.
+LONG=$(mktemp -d)
+git init -q -b develop "$LONG" >/dev/null
+cd "$LONG" || exit 1
+git config user.email t@t.com; git config user.name T
+git commit -q --allow-empty -m base
+mkdir -p scripts; printf '0.00 v2.00\n' > scripts/version-map.txt
+printf 'test_command: "sleep 6; echo done"\n' > claude-workflow.yml
+
+out=$("$SCRIPT_DIR/wf-suite-run.sh" --label long --detach 2>&1)
+H=$(printf '%s' "$out" | sed -n 's/^SUITE_HANDLE=//p')
+assert_eq "--detach returns a handle without waiting" "true" \
+  "$([ -n "$H" ] && echo true || echo false)"
+"$SCRIPT_DIR/wf-suite-wait.sh" "$H" --timeout 1 >/dev/null 2>&1
+assert_eq "a suite still running exits 3 — neither pass nor fail" "3" "$?"
+"$SCRIPT_DIR/wf-suite-wait.sh" "$H" --timeout 60 >/dev/null 2>&1
+assert_eq "and the same handle returns the verdict once it lands" "0" "$?"
+"$SCRIPT_DIR/wf-suite-wait.sh" "$LONG/no-such-run.log" >/dev/null 2>&1
+assert_eq "a handle naming nothing is exit 2, not a wait" "2" "$?"
+
+# The guard: a merge into main that no suite verdict ever reached.
+git branch release
+git branch main
+MAINWT="$LONG/release-branches/main"
+git worktree add -q "$MAINWT" main >/dev/null 2>&1
+cd "$MAINWT" || exit 1
+pre=$(git rev-parse HEAD)
+"$SCRIPT_DIR/wf-deploy-guard.sh" --status >/dev/null 2>&1
+assert_eq "nothing armed on a clean repo" "1" "$?"
+"$SCRIPT_DIR/wf-deploy-guard.sh" --arm >/dev/null 2>&1
+assert_eq "arming records the pre-merge tip" "0" "$?"
+git commit -q --allow-empty -m "release: promote to main"
+assert_eq "main has moved" "false" "$([ "$pre" = "$(git rev-parse HEAD)" ] && echo true || echo false)"
+
+# The worker now vanishes without a verdict — exactly WFI-255.
+"$SCRIPT_DIR/wf-deploy-guard.sh" --status >/dev/null 2>&1
+assert_eq "the merge is still marked unverified" "0" "$?"
+"$SCRIPT_DIR/wf-deploy-guard.sh" --recover >/dev/null 2>&1
+assert_eq "the next run recovers it" "0" "$?"
+assert_eq "and main is back where it was" "$pre" "$(git rev-parse HEAD)"
+"$SCRIPT_DIR/wf-deploy-guard.sh" --status >/dev/null 2>&1
+assert_eq "with nothing left armed" "1" "$?"
+
+# A passing suite disarms, and then nothing is recoverable — the merge stands.
+"$SCRIPT_DIR/wf-deploy-guard.sh" --arm >/dev/null 2>&1
+git commit -q --allow-empty -m "release: promote to main"
+kept=$(git rev-parse HEAD)
+"$SCRIPT_DIR/wf-deploy-guard.sh" --disarm >/dev/null 2>&1
+"$SCRIPT_DIR/wf-deploy-guard.sh" --recover >/dev/null 2>&1
+assert_eq "a disarmed merge has nothing to recover" "1" "$?"
+assert_eq "and main keeps the promotion" "$kept" "$(git rev-parse HEAD)"
+
+# Arming anywhere but main is refused — this script resets branches.
+cd "$LONG" || exit 1
+"$SCRIPT_DIR/wf-deploy-guard.sh" --arm >/dev/null 2>&1
+assert_eq "arming off main is refused" "2" "$?"
+
+cd "$TEST_DIR" || exit 1
+git -C "$LONG" worktree remove --force "$MAINWT" >/dev/null 2>&1
+rm -rf "$LONG"
+
 section "What a harness needs to be intact depends on the worktree"
 
 # WFI-253. Two faults in one check. `harness_intact()` demanded

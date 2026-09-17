@@ -3862,10 +3862,16 @@ assert_eq "merge reports that it is already unattended, not that it is refused" 
 assert_eq "an unknown action is exit 2, never exit 1" "2" \
   "$("$SCRIPT_DIR/wf-autonomy.sh" relase --quiet; echo $?)"
 
+TODAY_UTC=$(date -u +%Y-%m-%d)
+# The ceiling is counted against the REAL day, so these blocks have to ask as
+# of today — and a grant with a hardcoded expiry therefore goes stale on its
+# own deadline and fails the whole section for no reason. NOT_YET is always
+# in this run's future.
+NOT_YET="$((${TODAY_UTC%%-*} + 1))-01-01"
+
 # The ceiling bounds the blast radius of a grant when the pipeline goes wrong.
 rm -f .claude/orchestrator/events.log
-write_grant standing "A Tester" 2026-09-16 1 "release"
-TODAY_UTC=$(date -u +%Y-%m-%d)
+write_grant standing "A Tester" $NOT_YET 1 "release"
 assert_ok "the first action inside the ceiling is authorized" \
   env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
 assert_fails "the one past it is not" \
@@ -3884,7 +3890,7 @@ assert_eq "and an authorization carries the grant's identity, not just 'ok'" "tr
 # 2026-09-15: four autonomy-use lines by 13:37, then twelve consecutive
 # "daily ceiling 4 reached" refusals through 16:56, each parking a gate.
 rm -f .claude/orchestrator/events.log
-write_grant standing "A Tester" 2026-09-16 1 "release deploy production-push"
+write_grant standing "A Tester" $NOT_YET 1 "release deploy production-push"
 assert_ok "spending the release budget..." \
   env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
 assert_fails "...exhausts release" \
@@ -3906,7 +3912,7 @@ assert_eq "a production-push line is not counted as a release" "true" \
 # ask before committing to a worker without consuming the grant that worker
 # then needs — or stamping the log with a decision no skill ever acted on.
 rm -f .claude/orchestrator/events.log
-write_grant standing "A Tester" 2026-09-16 1 "release"
+write_grant standing "A Tester" $NOT_YET 1 "release"
 assert_ok "--check on an authorized action exits 0" \
   env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --check --quiet
 assert_fails "--check on an unauthorized action exits 1" \

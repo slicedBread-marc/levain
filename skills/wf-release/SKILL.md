@@ -207,7 +207,12 @@ release-branches/release → release's own permanent worktree — staging enviro
 
    This is the **release aggregation guarantee** (BRF-080) and it is now enforced rather than requested: every test a feature branch skipped under tiered gating runs here, whole. Narrowing the suite — an assembly, a filter, a category — is not a judgment call available at this step.
 
-   **The suite may outlast a foreground Bash call.** If it is known to exceed 10 minutes, run this with `run_in_background` and **wait for it to finish**, then read the verdict out of `SUITE_LOG`. Never report a suite you did not see end.
+   **The suite may outlast a foreground Bash call** (the cap is 10 minutes). Do not background it — detach it and wait in slices:
+   ```bash
+   scripts/wf-exec.sh wf-suite-run.sh --label release --build --detach   # prints SUITE_HANDLE=
+   scripts/wf-exec.sh wf-suite-wait.sh <SUITE_HANDLE>                    # blocks up to 9 minutes
+   ```
+   `wf-suite-wait.sh` exits **0 pass, 1 fail, 3 still running** — on `3`, call it again with the same handle, as many times as it takes. Each call is its own foreground command under the cap, and each one keeps the session alive. **`3` is neither a pass nor a failure**, and under `WF_UNATTENDED=1` a headless run ends the moment it stops producing output and takes every background job with it — which is how a DEPLOY worker came to announce it was awaiting results and exit sixty seconds later on a red suite (WFI-255). Never report a verdict `wf-suite-wait.sh` did not return.
 
    If tests fail, **first ask whether the suite was even in a position to judge**: re-run
    `scripts/wf-exec.sh wf-preflight.sh`. A prerequisite that went down mid-run implicates the

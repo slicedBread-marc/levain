@@ -27,6 +27,8 @@
 #
 #   --label <name>   tag for the log file name (default: suite)
 #   --build          run build_command first; a failure there is exit 1 too
+#   --detach         start the run in a process that outlives this call and
+#                    return immediately; wait for it with wf-suite-wait.sh
 #
 # Output, on stdout, as the last lines:
 #   SUITE_CMD=<the command that ran, verbatim>
@@ -36,10 +38,21 @@
 # Exit 0 the suite passed, 1 it failed (or the build did), 2 no test_command is
 # configured for this project — which is a fact to report, never a pass.
 #
-# THIS IS A LONG-RUNNING COMMAND. A foreground Bash call is capped at 10
-# minutes and a real suite can exceed that. Everything is teed to SUITE_LOG as
-# it runs, so a caller that has to background this reads the verdict out of
-# that file rather than re-running.
+# THIS IS A LONG-RUNNING COMMAND, AND WAITING FOR IT IS THE HARD PART.
+#
+# A foreground call is capped at 10 minutes; client-a's suite takes about
+# 13. An UNATTENDED worker cannot solve that by backgrounding, because a
+# headless run ends the moment it stops producing output and takes every
+# background job with it. client-a's WFI-255: a DEPLOY worker merged
+# `release` into `main`, wrote "Full test suite running (expected ~13 min)"
+# and "Awaiting test results", and exited rc=0 sixty seconds later. It never
+# awaited them. The suite was red.
+#
+# `--detach` is the way to wait. The run is handed to a process that outlives
+# this call and writes its verdict to <log>.status; wf-suite-wait.sh then
+# blocks for a bounded slice and reports "still running" rather than lying.
+# A worker loops on that, so every individual call stays under the cap while
+# the session keeps producing output and therefore stays alive.
 
 set -uo pipefail
 
@@ -49,11 +62,15 @@ source "$SELF_DIR/wf-orch-lib.sh"
 
 label="suite"
 do_build=false
+detach=false
+# Set by the re-exec below so the detached child runs the suite for real.
+child="${WF_SUITE_CHILD_LOG:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --label) label="${2:-suite}"; shift 2 ;;
     --build) do_build=true; shift ;;
-    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    --detach) detach=true; shift ;;
+    -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
     *) echo "wf-suite-run.sh: unknown option '$1'" >&2; exit 2 ;;
   esac
 done
@@ -69,7 +86,41 @@ fi
 DEVELOP_ROOT="$(wf_develop_root)"
 LOG_DIR="$DEVELOP_ROOT/.claude/orchestrator/logs"
 mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="${TMPDIR:-/tmp}"
-LOG="$LOG_DIR/suite-$label-$(date +%Y%m%d-%H%M%S).log"
+LOG="${child:-$LOG_DIR/suite-$label-$(date +%Y%m%d-%H%M%S).log}"
+
+# ── --detach: hand the run to a process that outlives this call ───────────
+#
+# `setsid` where it exists, `nohup` otherwise: the child must survive the
+# session that started it, because the whole point is that the session cannot
+# hold a 13-minute foreground call. The status file is written by the child
+# when it finishes and is the only thing wf-suite-wait.sh trusts — a running
+# child has none, which is exactly how "still running" is told apart from
+# "finished and passed".
+if $detach && [ -z "$child" ]; then
+  rm -f "$LOG.status"
+  # Create the handle here, not in the child: wf-suite-wait.sh tells "bad
+  # handle" from "not finished yet" by whether the log exists, and a child that
+  # has not been scheduled yet would otherwise look like a typo.
+  : > "$LOG"
+  args=(--label "$label")
+  $do_build && args+=(--build)
+  launcher=(nohup)
+  command -v setsid >/dev/null 2>&1 && launcher=(setsid nohup)
+  WF_SUITE_CHILD_LOG="$LOG" "${launcher[@]}" "$0" "${args[@]}" >/dev/null 2>&1 &
+  echo "SUITE_LOG=$LOG"
+  echo "SUITE_HANDLE=$LOG"
+  echo "SUITE_RESULT=running (detached pid $!)"
+  echo "Wait for it: wf-suite-wait.sh $LOG"
+  exit 0
+fi
+
+# The child records its verdict where wf-suite-wait.sh will look for it. A
+# `trap` rather than a line at the bottom: a child killed mid-suite must leave
+# a verdict that says so, not an absent file that reads as "still running"
+# forever.
+if [ -n "$child" ]; then
+  trap 'printf "SUITE_LOG=%s\nSUITE_RESULT=fail (the suite process died before it finished — see the log)\n" "$LOG" > "$LOG.status"' EXIT INT TERM
+fi
 
 # Runs where the caller is standing, on purpose: /wf-release tests the local
 # merge inside release-branches/release, /wf-deploy tests merged `main` inside
@@ -80,6 +131,18 @@ echo "  branch: $(git branch --show-current 2>/dev/null || echo '(detached)')" |
 echo "  head:   $(git rev-parse --short HEAD 2>/dev/null || echo unknown)" | tee -a "$LOG"
 
 rc=0
+
+# The receipt, in one place. A detached child's stdout goes nowhere, so its
+# copy has to land in the status file — same three lines, so a caller reads an
+# identical receipt whether it ran the suite inline or waited for one.
+finish() {
+  local result="$1" cmd="$2"
+  printf 'SUITE_CMD=%s\nSUITE_LOG=%s\nSUITE_RESULT=%s\n' "$cmd" "$LOG" "$result"
+  if [ -n "$child" ]; then
+    trap - EXIT
+    printf 'SUITE_CMD=%s\nSUITE_LOG=%s\nSUITE_RESULT=%s\n' "$cmd" "$LOG" "$result" > "$LOG.status"
+  fi
+}
 
 if $do_build; then
   BUILD_CMD=$(wf_cfg build_command)
@@ -92,9 +155,7 @@ if $do_build; then
     rc=${PIPESTATUS[0]}
     if [ "$rc" -ne 0 ]; then
       echo ""
-      echo "SUITE_CMD=$BUILD_CMD"
-      echo "SUITE_LOG=$LOG"
-      echo "SUITE_RESULT=fail (build exit $rc — the suite never ran)"
+      finish "fail (build exit $rc — the suite never ran)" "$BUILD_CMD"
       exit 1
     fi
   fi
@@ -108,11 +169,9 @@ eval "$TEST_CMD" < /dev/null 2>&1 | tee -a "$LOG"
 rc=${PIPESTATUS[0]}
 
 echo ""
-echo "SUITE_CMD=$TEST_CMD"
-echo "SUITE_LOG=$LOG"
 if [ "$rc" -eq 0 ]; then
-  echo "SUITE_RESULT=pass (exit 0)"
+  finish "pass (exit 0)" "$TEST_CMD"
   exit 0
 fi
-echo "SUITE_RESULT=fail (exit $rc)"
+finish "fail (exit $rc)" "$TEST_CMD"
 exit 1

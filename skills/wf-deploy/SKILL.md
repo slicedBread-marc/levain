@@ -122,11 +122,20 @@ Before starting, confirm E2E passed on release:
    git pull origin main
    ```
    `release-branches/main` is `main`'s permanent home — created once, reused forever. Before this, `/wf-deploy` moved the *shared* develop worktree onto `main` for the duration of the run, which put `plans/REGISTRY.md` — the file the orchestrator and every other session reads — behind `main`'s older copy for as long as the deploy took, and any concurrent session standing in that same directory found itself on `main` too (client-a's WFI-135, WFI-157, WFI-213 — the last of those had a client already work around exactly this by hand, keeping `release` in its own worktree; this generalizes that shape and applies it to `main` as well). Pinning `main` here means the develop worktree — project root, wherever this session started — never moves at all. **Steps 6–11 run in `release-branches/main`**, not the project root; every command below assumes that cwd. See [`docs/release-worktrees.md`](../../docs/release-worktrees.md).
-7. **Merge `release` into `main`** (auto-resolve in favor of release):
+6a. **Recover any merge a previous run left unverified, before adding another:**
    ```bash
+   scripts/wf-exec.sh wf-deploy-guard.sh --recover
+   ```
+   Exit 1 means there was nothing to recover — the normal case. Exit 0 means a previous `/wf-deploy` merged into `main` and stopped before its suite returned a verdict, and `main` has just been put back to where it was; say so, and carry on with this run from a clean base. Exit 2 means it refused and `main` needs a human — stop there.
+
+7. **Arm the guard, then merge `release` into `main`** (auto-resolve in favor of release) — **in one call, in this order:**
+   ```bash
+   scripts/wf-exec.sh wf-deploy-guard.sh --arm
    git merge -X theirs --no-ff release -m "release: promote to main"
    ```
    The `-X theirs` option automatically accepts release's version of any conflicting files in `plans/`.
+
+   **The arm is what makes this merge provisional.** From here until step 8's suite passes, local `main` claims a promotion nothing has verified, and a run that stops in that window leaves the claim standing. client-a's WFI-255: an unattended worker merged 164 commits here, wrote *"Full test suite running (expected ~13 min)"* and *"Awaiting test results"*, then exited rc=0 sixty seconds later. It never awaited them and the suite was red. Nothing reached production — `origin/main` never moved — but the repository read as deployed until a human noticed and reset it by hand. The marker is what step 6a of the *next* run reads, so an abandoned deploy undoes itself instead of waiting to be spotted.
 
 7a. **Check the harness survived the merge** — ask the script, do not hand-roll the test:
    ```bash
@@ -146,9 +155,27 @@ Before starting, confirm E2E passed on release:
    ```
    It runs `build_command` then `test_command` from `claude-workflow.yml`, verbatim and unfiltered, against merged `main` in the worktree you are standing in, and ends with `SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`. **Exit 0 pass, 1 fail, 2 no suite configured** — 2 is a gap to report, never a pass. Report the `SUITE_RESULT=` line verbatim with `SUITE_CMD=` beside it; a count read out of the output is not evidence of what ran (WFI-252, where a release was pushed on one assembly's 474 tests reported as the whole E2E suite — **this step is what caught it**, and it only caught it because it ran the configured command).
 
-   If tests fail, abort the deploy — do NOT proceed to registry updates. Inform user of failures (and, under `WF_UNATTENDED=1`, unclaim) and suggest fixing on the release branch, then re-running `/wf-release`.
+   **On a pass, and only then, disarm the guard:**
+   ```bash
+   scripts/wf-exec.sh wf-deploy-guard.sh --disarm
+   ```
 
-   **This step reads as inline and on a large project it cannot be.** A foreground Bash call is capped at 10 minutes; client-a's full suite takes about 13, so it used to be killed mid-run every time, and back when this ran in the shared develop worktree that stalled the deploy at its most dangerous point — the registry every other session read was `main`'s stale copy (WFI-213). That specific danger is gone now that `main` lives in its own worktree: a long suite here no longer touches `plans/REGISTRY.md` on develop, and the orchestrator keeps dispatching normally throughout. The 10-minute cap itself is unchanged, though — if the suite is known to exceed it, run it with `run_in_background` and **wait for it to finish before doing anything else**. That is safe here and nowhere else in the harness: `/wf-deploy` runs in a session that persists across turns, unlike the verify agent, which is killed the moment it stops producing output and must never background anything.
+   If tests fail, abort the deploy — do NOT proceed to registry updates, and **leave the guard armed**; recover the merge before you stop:
+   ```bash
+   scripts/wf-exec.sh wf-deploy-guard.sh --recover
+   ```
+   Then inform the user of the failures (and, under `WF_UNATTENDED=1`, unclaim) and suggest fixing on the release branch, then re-running `/wf-release`.
+
+   **This step reads as inline and on a large project it cannot be.** A foreground Bash call is capped at 10 minutes; client-a's full suite takes about 13. Back when this ran in the shared develop worktree that stalled the deploy at its most dangerous point — the registry every other session read was `main`'s stale copy (WFI-213). That danger is gone now that `main` lives in its own worktree. The cap is not.
+
+   **When the suite will not fit in one call, detach it and wait in slices — never background it and move on:**
+   ```bash
+   scripts/wf-exec.sh wf-suite-run.sh --label deploy --build --detach   # prints SUITE_HANDLE=
+   scripts/wf-exec.sh wf-suite-wait.sh <SUITE_HANDLE>                   # blocks up to 9 minutes
+   ```
+   `wf-suite-wait.sh` exits **0 pass, 1 fail, 3 still running**. On `3`, call it again with the same handle, as many times as it takes. Each call is its own foreground command, safely under the cap, and every one of them is a tool call that keeps the session alive.
+
+   **`3` is not a pass and not a failure, and this is the step where that has actually gone wrong.** WFI-255 is a worker that backgrounded the suite, announced it was awaiting results, and exited rc=0 sixty seconds later with `main` merged and the suite red. Under `WF_UNATTENDED=1` there is no session to come back to: a headless run ends the moment it stops producing output and takes every background job with it. So no `run_in_background`, no "I'll check the log later", and no verdict reported that `wf-suite-wait.sh` did not return.
 
 8a. **Sanity-check the branch before anything else commits:**
     ```bash
@@ -321,6 +348,8 @@ Plans never move folders, so the only potential conflict is REGISTRY.md — whic
 - **Do NOT** force push — this is a main branch, use regular merge
 - **Do NOT** skip back-merge — develop needs to stay in sync with main
 - **Steps 6–11 run in `release-branches/main`, step 12 onward runs in the develop worktree** — step 6 pins and moves you into the former; step 12 moves you back
+- **The merge into `main` is provisional until its suite passes** — step 7 arms `wf-deploy-guard.sh`, step 8 disarms it on a pass and recovers on a failure, and step 6a recovers whatever a previous run abandoned. Never merge without arming first: a run that stops in that window leaves `main` claiming a promotion nothing verified (WFI-255)
+- **Never report a suite verdict you did not wait for** — `wf-suite-wait.sh` exit `3` means *still running*, and the only correct response is to call it again. Under `WF_UNATTENDED=1` nothing you background survives your own exit
 - **Complete all steps** — if the user interrupts, tell them which step to resume at; there is no shared checkout to leave parked, so an interruption costs nothing beyond finishing later
 
 ## On startup
