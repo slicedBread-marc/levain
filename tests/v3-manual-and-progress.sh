@@ -208,6 +208,27 @@ assert_eq "re-ticking it appends nothing" "3/4" "$("$SCRIPT_DIR/wf-progress-coun
 assert_eq "the appended row stays inside ## Steps" "1" \
   "$(awk '/^## Steps/{s=1;next} /^## /{s=0} s && /Step 11/' plans/PLN-020-legacy/progress.md | wc -l | tr -d ' ')"
 
+# An amendment's own steps are labelled by the amendment — `Step A1.1` … —
+# so the label carries a leading letter and dots. Those were a usage error
+# until WFI-263, and eight rows were ticked by hand instead.
+"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 A1.1 "amendment A-1 step one" >/dev/null 2>&1
+assert_eq "an amendment-numbered step is accepted" "4/5" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+assert_contains "and lands with its whole label" "- \[x\] Step A1.1: amendment A-1 step one" \
+  "$(cat plans/PLN-020-legacy/progress.md)"
+"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 A1.2 "amendment A-1 step two" >/dev/null 2>&1
+assert_eq "a sibling amendment step is its own row" "5/6" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+assert_contains "A1.1 was not re-ticked as A1.2" "- \[x\] Step A1.1: amendment A-1 step one" \
+  "$(cat plans/PLN-020-legacy/progress.md)"
+"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 A1.1 "again" >/dev/null 2>&1
+assert_eq "re-ticking an amendment step appends nothing" "5/6" \
+  "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+# `A1` names the family, not a step — appending it beside A1.1/A1.2 would
+# corrupt the checklist the orchestrator reads (the WFI-115 rule).
+assert_exit "a bare amendment prefix is refused" 1 \
+  "$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 A1 "family, not a step"
+assert_exit "a label with no digit is a usage error" 1 \
+  "$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 foo "not a label"
+
 # ── P-002 manual criterion lint ────────────────────────────────────────
 section "wf-manual-lint (P-002)"
 

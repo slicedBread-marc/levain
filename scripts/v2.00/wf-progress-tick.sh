@@ -43,12 +43,22 @@ while [ $# -gt 0 ]; do
 done
 
 plan_id=$(printf '%s' "$raw_id" | grep -oE 'PLN-[0-9]+' || true)
-# A step label is a number, optionally sub-lettered: 3, 1a, 1a-i, 12b-iv.
-# Plans do sub-letter their steps, and the label is matched WHOLE below, so
-# the argument has to be able to carry the whole thing.
-if [ -z "$plan_id" ] || ! printf '%s' "$step" | grep -qE '^[0-9]+[A-Za-z0-9]*(-[A-Za-z0-9]+)*$'; then
+# A step label is whatever the checklist writes after `Step`: a number (3), a
+# sub-lettered step (1a, 1a-i, 12b-iv), or an amendment's step, which /wf-spec
+# writes prefixed by the amendment and dotted — `Step A1.1` … `Step A1.8`.
+# It must contain a digit and may not end on a separator; everything else is
+# the plan's own convention, and this script's job is to tick the row the plan
+# actually wrote, not to impose a numbering scheme on it.
+#
+# The old grammar demanded a leading digit and no dots, so every amendment step
+# was a usage error and client-a's PLN-281 ticked eight rows of progress.md
+# by hand — on the one file whose checklist the orchestrator reads as forward
+# progress, and whose per-tick commit is what makes it survive a stash
+# (WFI-263).
+if [ -z "$plan_id" ] || ! printf '%s' "$step" | grep -qE '^[A-Za-z]*[0-9][0-9A-Za-z]*([.-][0-9A-Za-z]+)*$'; then
   echo "Usage: $0 <plan-id-or-name> <step-label> [description] [--blocked]" >&2
-  echo "  <step-label> is 3, or a sub-lettered step such as 1a or 1a-iii" >&2
+  echo "  <step-label> is the whole label the checklist writes after 'Step':" >&2
+  echo "  3, a sub-lettered step such as 1a or 1a-iii, or an amendment's A1.1" >&2
   exit 1
 fi
 
@@ -115,18 +125,27 @@ fi
 # corrupting the one checklist the orchestrator reads for forward progress, so
 # this exits instead, naming the rows it could have meant.
 step_label_scan=$(awk -v want="$step" '
+  # The label is everything after `Step `, up to the first character that
+  # cannot be part of one. Taken from the first DIGIT instead, an amendment
+  # row — `Step A1.1` — lost its `A` and then stopped at the dot, so all eight
+  # of PLN-281`s A1.x rows read as the label `1` (WFI-263).
+  # Anchored on the checkbox, and LEFTMOST: a description is free to contain
+  # the word "step" itself ("Step A1.1: amendment A-1 step one"), and reading
+  # from the last one would take the label from the prose.
   function steplabel(line,   n) {
-    n = line
-    sub(/^[^0-9]*/, "", n)            # up to the first digit
-    sub(/[^0-9A-Za-z-].*$/, "", n)    # digits, letters and hyphens are the label
-    sub(/-+$/, "", n)                 # a trailing hyphen is punctuation, not label
+    if (!match(line, /\][[:space:]]*[Ss]tep[[:space:]]+/)) return ""
+    n = substr(line, RSTART + RLENGTH)
+    sub(/[^0-9A-Za-z.-].*$/, "", n)   # digits, letters, dots and hyphens
+    sub(/[.-]+$/, "", n)              # a trailing separator is punctuation
+    if (n !~ /[0-9]/) return ""       # a label without a digit is prose
     return n
   }
   /^## Steps/ { in_steps = 1; next }
   /^## /      { in_steps = 0 }
   !in_steps   { next }
-  /^[[:space:]]*-[[:space:]]*\[[[:space:]xX]*\][[:space:]]*[Ss]tep[[:space:]]+[0-9]/ {
-    n = steplabel($0); ln = tolower(n); lw = tolower(want)
+  /^[[:space:]]*-[[:space:]]*\[[[:space:]xX]*\][[:space:]]*[Ss]tep[[:space:]]+[0-9A-Za-z]/ {
+    n = steplabel($0); if (n == "") next
+    ln = tolower(n); lw = tolower(want)
     if (ln == lw) { exact = 1; next }
     # A prefix only counts as the same family when what follows is not another
     # digit — otherwise `1` would claim `12`.
@@ -178,15 +197,20 @@ if [ "$status" = "done" ]; then
     # appended row).
     in_steps && /^[[:space:]]*$/ { held[++nheld] = $0; next }
     in_steps { flush_held() }
-    in_steps && /^[[:space:]]*-[[:space:]]*\[[[:space:]xX]*\][[:space:]]*[Ss]tep[[:space:]]+[0-9]+/ {
+    in_steps && /^[[:space:]]*-[[:space:]]*\[[[:space:]xX]*\][[:space:]]*[Ss]tep[[:space:]]+[0-9A-Za-z]/ {
       line = $0
       # Whole-label match — see the WFI-115 note above. `1` ticks `Step 1`,
-      # never `Step 1a-i` and never `Step 12`.
-      n = line
-      sub(/^[^0-9]*/, "", n)
-      sub(/[^0-9A-Za-z-].*$/, "", n)
-      sub(/-+$/, "", n)
-      if (tolower(n) == tolower(want)) {
+      # never `Step 1a-i` and never `Step 12`. Read from after `Step`, not from
+      # the first digit, so an amendment row keeps its prefix and its dots
+      # (`A1.1`, WFI-263).
+      # Leftmost, anchored on the checkbox — a description may say "step" too.
+      n = ""
+      if (match(line, /\][[:space:]]*[Ss]tep[[:space:]]+/)) {
+        n = substr(line, RSTART + RLENGTH)
+        sub(/[^0-9A-Za-z.-].*$/, "", n)
+        sub(/[.-]+$/, "", n)
+      }
+      if (n ~ /[0-9]/ && tolower(n) == tolower(want)) {
         # Matching an already-ticked row too is what makes a re-run a no-op
         # instead of appending a second copy of the same step.
         hit = 1
