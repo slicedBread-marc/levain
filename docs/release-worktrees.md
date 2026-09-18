@@ -98,6 +98,27 @@ reason, as for a feature worktree.
   a narrower threat than WFI-157's shared-checkout race, but not a
   nonexistent one.
 
+## What the pinning costs: a local `release` ref nobody in this session moves
+
+Pinning has a consequence worth stating outright, because it cost a production deploy.
+`release` now lives in a worktree a given session never enters, so the *local* `release` ref
+holds whatever the last run **in this checkout** left there — not what the last `/wf-release`
+anywhere pushed. Every downstream reader is local: `git rev-list --count release --not main`
+is the eligibility signal, and `git merge release` is the promotion.
+
+client-a WFI-258: an unattended `/wf-deploy` merged a local `release` that was 34 commits
+behind `origin/release`, ran the full suite green on that stale tree, pushed `main`, and
+reported *"15 commits promoted (PLN-273 work)"*. PLN-273 was registry-complete, on
+`origin/release`, and not in production. Nothing detected it — a stale tree builds, the suite
+passes, and the completion message names plans the merge never carried. Only the *ahead*
+direction had a guard (client-b WFI-007, unpushed commits); behind had none.
+
+`wf-release-sync.sh` is that guard, run by `/wf-deploy` step 2a before anything reads the ref:
+in sync or fast-forwarded → 0, ahead → 2, diverged → 3, unanswerable → 1. Behind-only is the
+one case it repairs rather than refuses, because a behind-only ref has nothing local to lose —
+the repair is a fast-forward and never a reset. **Any new reader of `release --not main` has the
+same exposure**; put the sync in front of it.
+
 ## Migration note for an existing client
 
 The first `/wf-release` or `/wf-deploy` run after this lands creates the

@@ -372,7 +372,17 @@ fi
 # it is multi-line and would need three levels of quoting otherwise.
 export WF_PROMPT="$prompt"
 export WF_UNATTENDED=1 WF_ROLE="$role" WF_ARTIFACT="$artifact"
+# The worker's LAST act is to log its exit, and it runs hours after this line.
+# Baking an absolute generation path into that command assumes the path still
+# exists when the worker finishes, and a deploy in the meantime makes it not:
+# client-a WFI-256 lost a completed implement run's exit event to
+# `.../scripts/gen/9.4.0-.../v2.00/wf-event.sh: No such file or directory`,
+# because two deploys inside a minute retired the build the worker was launched
+# from. So the pinned path is the preference and the dispatcher is the fallback
+# — the generation a worker started under, while it is there, and the live
+# harness when it is not.
 event_sh="$(cd "$(dirname "$0")" && pwd)/wf-event.sh"
+event_fallback="$ROOT/scripts/wf-exec.sh"
 
 claimfile="$claim_dir/.wf-claim"
 
@@ -393,7 +403,11 @@ nohup bash -c "
     rc=\$?
     rm -f '$pidfile'
     [ -n '$claimfile' ] && rm -f '$claimfile'
-    '$event_sh' exit '$id' \"$role rc=\$rc\"
+    if [ -x '$event_sh' ]; then
+      '$event_sh' exit '$id' \"$role rc=\$rc\"
+    else
+      '$event_fallback' wf-event.sh exit '$id' \"$role rc=\$rc\"
+    fi
 " < /dev/null > "$log" 2>&1 &
 
 worker_pid=$!

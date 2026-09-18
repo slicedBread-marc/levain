@@ -36,6 +36,10 @@
 #   4    stood down: launches kept dying before their workers started, so the
 #        fault is in this process. Start a fresh daemon. No attempts were
 #        charged to any artifact.
+#   5    stood down: the script directory this daemon runs out of was removed
+#        by a deploy and no published build replaced it. Normally a deploy is
+#        survived by re-exec'ing onto the new build (WFI-257); this is the case
+#        where there is nothing to re-exec onto. Reinstall, then start a daemon.
 #
 # The dispatcher skips an artifact when ANY of these hold:
 #   · a gate is open on it            · its deps are not complete
@@ -52,6 +56,10 @@ source "$SELF_DIR/wf-orch-lib.sh"
 REGISTRY="plans/REGISTRY.md"
 
 # ── Arguments ─────────────────────────────────────────────────────────────
+# Kept verbatim: a daemon that re-execs onto a replacement build (see
+# `orch_live_path` below) has to come back up with the flags it was started
+# with, and by then the parsed variables have been consumed.
+ORIG_ARGV=("$@")
 mode=""
 target=""
 until_state=""
@@ -754,10 +762,26 @@ sweep() {
 # condition worth notifying on: unambiguous, never self-correcting, and every
 # minute spent in it is wasted wall-clock.
 stall_note() {
-  local gates sig prev file
+  local gates sig prev file rc=0 raw
   file="$ORCH/stalled"
-  gates=$("$SELF_DIR/wf-list-gates.sh" 2>/dev/null \
-          | awk -F'\t' '{ printf "%s(%s, blocking %s) ", $1, $2, $6 }' || true)
+  # "The pipeline is empty or complete" is an assertion about gates, so it may
+  # only be made when the gate list was actually READ. A failing wf-list-gates
+  # returns the same empty string as a clean pipeline, and in WFI-257 it failed
+  # for the same reason everything else did — its build had been deleted — so
+  # the daemon announced an empty pipeline over an open RELEASE gate and an
+  # active plan. An unreadable gate list is now its own message.
+  raw=$("$SELF_DIR/wf-list-gates.sh" 2>/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    sig="unreadable"
+    prev=$(wf_read1 "$file")
+    [ "$sig" = "$prev" ] && return 0
+    printf '%s' "$sig" > "$file"
+    wf_event stalled "—" "nothing dispatchable, and the gate list could not be read (wf-list-gates.sh exit $rc) — cause unknown, do not read this as an empty pipeline"
+    echo "$(wf_now)  STALLED — nothing dispatchable and the gate list is unreadable (wf-list-gates.sh exit $rc)"
+    return 0
+  fi
+  gates=$(printf '%s\n' "$raw" \
+          | awk -F'\t' 'NF { printf "%s(%s, blocking %s) ", $1, $2, $6 }' || true)
   sig="${gates:-none}"
   prev=$(wf_read1 "$file")
   [ "$sig" = "$prev" ] && return 0
@@ -769,6 +793,35 @@ stall_note() {
     wf_event stalled "—" "nothing dispatchable and no gates open — the pipeline is empty or complete"
     echo "$(wf_now)  idle — nothing to dispatch"
   fi
+}
+
+# ── Is this process still the harness? ────────────────────────────────────
+#
+# A daemon resolves its own directory ONCE, at startup, and calls every other
+# script as "$SELF_DIR/wf-*.sh" from then on. A deploy that retires the build
+# it was launched from therefore does not stop it: bash holds the open file of
+# the script itself, so the loop keeps sweeping and --daemon-status keeps
+# answering "running", while every spawn dies rc=127 on a path that no longer
+# exists. client-a WFI-257: 71 minutes silently stalled with an active,
+# dispatchable plan and an open RELEASE gate, and `--sweep --dry-run` through
+# the CURRENT dispatcher looked perfectly healthy, because that is a different
+# process resolving a different tree.
+#
+# So the daemon re-checks, once per sweep, where the published build says
+# wf-orchestrate.sh lives — the same two-step resolution wf-exec.sh does,
+# inlined rather than shelled out because it runs every interval forever — and
+# re-execs onto it when that is somewhere else. Re-exec keeps the PID, so the
+# pidfile, the claims stamped with it and --stop all stay valid; the daemon
+# startup path allows a pidfile naming its own PID for exactly this reason.
+orch_live_path() {
+  local build label p
+  [ -f "$ROOT/scripts/current" ] || return 1
+  build=$(tr -d '[:space:]' < "$ROOT/scripts/current")
+  [ -n "$build" ] || return 1
+  label=$(basename "$SELF_DIR")
+  p="$ROOT/scripts/gen/$build/$label/wf-orchestrate.sh"
+  [ -x "$p" ] || return 1
+  printf '%s' "$p"
 }
 
 # Live workers across every role.
@@ -819,7 +872,11 @@ case "$mode" in
     require_enabled || exit 1
     if [ -f "$DAEMON_PID" ]; then
       old=$(cat "$DAEMON_PID" 2>/dev/null || echo "")
-      if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
+      # A pidfile naming THIS pid is this process's own, left by the daemon
+      # that just re-exec'd itself onto a new build — exec preserves the PID.
+      # Without the exemption a re-exec is refused as a duplicate of itself,
+      # and the daemon exits on the deploy it was trying to survive.
+      if [ -n "$old" ] && [ "$old" != "$$" ] && kill -0 "$old" 2>/dev/null; then
         echo "wf-orchestrate: daemon already running (PID $old)" >&2
         exit 1
       fi
@@ -851,6 +908,24 @@ case "$mode" in
     echo "wf-orchestrate: daemon up, sweeping every ${cfg_interval}s. Ctrl-C or --stop to end."
     echo "wf-orchestrate: config is read once, at startup — restart to pick up claude-workflow.yml changes."
     while true; do
+      # Before the sweep, not after: a sweep from a retired build spawns
+      # nothing and charges skips to artifacts that have nothing wrong.
+      live_orch=$(orch_live_path || true)
+      if [ -n "$live_orch" ] && [ "$live_orch" != "$SELF_DIR/wf-orchestrate.sh" ]; then
+        echo "$(wf_now)  harness replaced underneath — re-exec onto $live_orch"
+        wf_event daemon "—" "re-exec onto $(basename "$(dirname "$(dirname "$live_orch")")") — harness replaced underneath"
+        trap - INT TERM EXIT   # exec does not run traps; do not leave a half-armed one
+        exec "$live_orch" "${ORIG_ARGV[@]}"
+      elif [ ! -x "$SELF_DIR/wf-spawn.sh" ]; then
+        # Our own tree is gone and nothing resolvable replaced it. Keeping the
+        # loop alive here is what WFI-257 actually cost: a daemon that reports
+        # itself up and cannot dispatch anything.
+        echo "wf-orchestrate: $SELF_DIR is gone and no published build replaces it." >&2
+        echo "wf-orchestrate: standing down — nothing this process calls can be dispatched. Re-run deploy-all.sh, then start a fresh daemon." >&2
+        wf_event daemon "—" "stood down — its script directory was removed and nothing replaced it"
+        daemon_exit_rc=5
+        exit 5
+      fi
       sweep
       if [ "$SWEPT" -gt 0 ]; then
         echo "$(wf_now)  dispatched $SWEPT"

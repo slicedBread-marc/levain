@@ -46,21 +46,34 @@ Before starting, confirm E2E passed on release:
    ```
    Steps 3 and 4 read `release` and `main` as refs too, which resolve from any worktree in the repository.
 
-2a. **Refuse to promote a `release` that was never pushed.** Everything below treats
-   `release --not main` as "commits that passed E2E", and that is only true of commits
-   `/wf-release` actually pushed — it pushes *after* its suite passes, and never before:
+2a. **Make the local `release` ref agree with `origin/release` before reading it.** Everything
+   below treats `release --not main` as "commits that passed E2E", and that is only true of
+   commits `/wf-release` actually pushed — it pushes *after* its suite passes, and never before.
+   The local ref is not automatically those commits: `release` lives in its own long-lived
+   worktree this session never enters, so it holds whatever the last run *in this checkout* left
+   there. Ask the script, do not hand-roll the comparison:
    ```bash
-   git fetch origin release --quiet 2>/dev/null || true
-   git rev-list origin/release..release --oneline
+   scripts/wf-exec.sh wf-release-sync.sh; echo "sync exit=$?"
    ```
-   **Any output here is a stop.** Those commits are on the local `release` ref and on no remote,
-   which means the run that put them there did not reach its push — the E2E suite failed, or the
-   worker died mid-run. client-b WFI-007 is that exact state reaching a `deploy-approval` gate:
-   30 commits quoted as ready for production, over a suite that was red 1/117. Tell the user
-   what is unpushed, point them at `scripts/wf-exec.sh wf-release-rollback.sh` (which resets the
-   local ref to `origin/release`) or at re-running `/wf-release`, then unclaim and exit — do not
-   prompt, do not open a gate, and under `WF_UNATTENDED=1` do not proceed on any grant. A
-   standing grant authorizes promoting a validated batch; it does not make this one validated.
+
+   | Exit | What it means | What you do |
+   |-|-|-|
+   | `0` | Local `release` equals `origin/release` — already, or it was just fast-forwarded (the script says which). | Continue at step 3 |
+   | `2` | Local is **ahead** — unpushed commits no E2E run validated | **Stop.** Name what is unpushed, point the user at `scripts/wf-exec.sh wf-release-rollback.sh` or at re-running `/wf-release`, then unclaim and exit |
+   | `3` | Local and `origin/release` have **diverged** | **Stop.** Report both tips; this needs a human. Unclaim and exit |
+   | `1` | The answer could not be established (no `origin/release`, dirty release worktree, fast-forward refused) | **Stop.** Quote its stderr, unclaim and exit |
+
+   **Every non-zero exit is a hard stop** — do not prompt, do not open a gate, and under
+   `WF_UNATTENDED=1` do not proceed on any grant. A standing grant authorizes promoting a
+   validated batch; it does not make this one validated.
+
+   Both directions of that disagreement have shipped a wrong deploy. Ahead: client-b WFI-007 —
+   30 commits reached a `deploy-approval` gate quoted as ready for production, over a suite that
+   was red 1/117. Behind: client-a WFI-258 — an unattended run merged a local `release` that
+   was **34 commits behind** `origin/release`, ran the full suite green on that stale tree, pushed
+   `main`, and reported "15 commits promoted (PLN-273 work)" while PLN-273 stayed out of
+   production. Nothing else catches the behind case: the stale tree builds, the suite passes, and
+   the completion message names plans the merge never carried.
 3. **Show recent release commits** so the user can confirm what's being promoted:
    ```bash
    TOTAL=$(git rev-list --count release --not main)
@@ -134,6 +147,10 @@ Before starting, confirm E2E passed on release:
    git merge -X theirs --no-ff release -m "release: promote to main"
    ```
    The `-X theirs` option automatically accepts release's version of any conflicting files in `plans/`.
+
+   `release` here is the *local* ref, which is only the validated batch because step 2a made it
+   equal `origin/release` — the merge does not re-check that (client-a WFI-258). If you reached
+   this step without a clean `wf-release-sync.sh`, go back; a stale tree merges and tests green.
 
    **The arm is what makes this merge provisional.** From here until step 8's suite passes, local `main` claims a promotion nothing has verified, and a run that stops in that window leaves the claim standing. client-a's WFI-255: an unattended worker merged 164 commits here, wrote *"Full test suite running (expected ~13 min)"* and *"Awaiting test results"*, then exited rc=0 sixty seconds later. It never awaited them and the suite was red. Nothing reached production — `origin/main` never moved — but the repository read as deployed until a human noticed and reset it by hand. The marker is what step 6a of the *next* run reads, so an abandoned deploy undoes itself instead of waiting to be spotted.
 

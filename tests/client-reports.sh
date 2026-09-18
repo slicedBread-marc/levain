@@ -5008,8 +5008,11 @@ assert_eq "/wf-release rolls the local merge back on failure" "true" \
   "$(grep -q 'wf-release-rollback.sh' "$LIB_ROOT/skills/wf-release/SKILL.md" && echo true || echo false)"
 assert_eq "and never reports 'NOT advanced' from the absence of a push" "false" \
   "$(grep -q 'release branch was NOT advanced' "$LIB_ROOT/skills/wf-release/SKILL.md" && echo true || echo false)"
+# The comparison moved into wf-release-sync.sh, which guards BOTH directions
+# (client-a WFI-258); what must survive is that /wf-deploy stops on an
+# unpushed local ref rather than promoting it.
 assert_eq "/wf-deploy refuses a release that was never pushed" "true" \
-  "$(grep -q 'origin/release\.\.release' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'wf-release-rollback.sh' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A correct 'nothing to release' is not a stuck pipeline (client-c WFI-035)"
@@ -5399,6 +5402,98 @@ assert_eq "/wf-release checks prerequisites before blaming the commits" "true" \
   "$(grep -q 'wf-preflight.sh' "$LIB_ROOT/skills/wf-release/SKILL.md" && echo true || echo false)"
 assert_eq "and the config key is documented for a client to copy" "true" \
   "$(grep -q 'e2ePrereqs' "$LIB_ROOT/config.example.yml" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A deploy promotes what was pushed, not what this checkout happens to hold (client-a WFI-258)"
+
+# An unattended /wf-deploy merged a local `release` that was 34 commits behind
+# origin/release, ran the full suite green on that stale tree, pushed main, and
+# reported "15 commits promoted (PLN-273 work)". PLN-273 was registry-complete
+# and on origin/release, and not in production. Only the AHEAD direction was
+# guarded (WFI-007); behind had no guard, and nothing else catches it — a stale
+# tree builds and tests green, and the completion message names plans the merge
+# never carried.
+SYNC="$TEST_DIR/relsync"
+SORIGIN="$TEST_DIR/relsync-origin"
+mkdir -p "$SYNC/scripts"
+cp "$SCRIPT_DIR/wf-release-sync.sh" "$SCRIPT_DIR/wf-release-rollback.sh" \
+   "$SCRIPT_DIR/wf-orch-lib.sh" "$SYNC/scripts/"
+(
+  git init -q --bare "$SORIGIN"
+  cd "$SYNC" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf 'app\n' > app.txt && git add -A && git commit -q -m "seed"
+  git branch -q release && git branch -q main
+  git remote add origin "$SORIGIN" && git push -q origin develop release main
+  git fetch -q origin
+) >/dev/null 2>&1
+
+assert_eq "refs that agree need no repair" "0" \
+  "$( (cd "$SYNC" && ./scripts/wf-release-sync.sh) >/dev/null 2>&1; echo $? )"
+
+# The reported state: someone else pushed release; this checkout never saw it.
+(
+  cd "$SYNC" && git checkout -q release \
+    && printf 'PLN-273\n' >> app.txt && git add -A && git commit -q -m "feat: PLN-273 the work" \
+    && git push -q origin release \
+    && git reset --hard -q HEAD~1 && git fetch -q origin && git checkout -q develop
+) >/dev/null 2>&1
+
+assert_eq "a local release behind origin is NOT promotable as it stands" "2" \
+  "$( (cd "$SYNC" && ./scripts/wf-release-sync.sh --check) >/dev/null 2>&1; echo $? )"
+
+sync_out=$(cd "$SYNC" && ./scripts/wf-release-sync.sh 2>&1 || true)
+assert_eq "so it is fast-forwarded, and says by how much" "true" \
+  "$(printf '%s' "$sync_out" | grep -q 'fast-forwarded to origin/release' && echo true || echo false)"
+assert_eq "and the local ref now IS what was pushed" "true" \
+  "$(cd "$SYNC" && [ "$(git rev-parse release)" = "$(git rev-parse origin/release)" ] && echo true || echo false)"
+assert_eq "the plan that was missed is now in the promotion range" "true" \
+  "$(cd "$SYNC" && git log --oneline release --not main | grep -q 'PLN-273' && echo true || echo false)"
+
+# The ahead direction stays refused — a fast-forward must never become a way
+# to launder unpushed commits into a promotion (WFI-007).
+(cd "$SYNC" && git checkout -q release && printf 'unpushed\n' >> app.txt \
+  && git add -A && git commit -q -m "feat: never pushed" && git checkout -q develop) >/dev/null 2>&1
+assert_eq "an unpushed local release is still a stop, not a sync" "2" \
+  "$( (cd "$SYNC" && ./scripts/wf-release-sync.sh) >/dev/null 2>&1; echo $? )"
+assert_eq "and the ref was not touched" "true" \
+  "$(cd "$SYNC" && [ "$(git rev-list --count origin/release..release)" = "1" ] && echo true || echo false)"
+
+# Diverged is nobody's automatic repair.
+(
+  cd "$SYNC" && git checkout -q develop && printf 'remote only\n' >> app.txt \
+    && git add -A && git commit -q -m "a commit only the remote has" \
+    && git push -q -f origin develop:release && git fetch -q origin
+) >/dev/null 2>&1
+assert_eq "diverged refs are refused with their own code" "3" \
+  "$( (cd "$SYNC" && ./scripts/wf-release-sync.sh) >/dev/null 2>&1; echo $? )"
+
+assert_eq "/wf-deploy checks the ref before reading it as a validated batch" "true" \
+  "$(grep -q 'wf-release-sync.sh' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+
+section "A worker's exit event outlives the build it was launched from (client-a WFI-256)"
+
+# wf-spawn.sh baked an absolute generation path into the detached worker's last
+# command. Two deploys inside a minute retired that build while an implement
+# worker was still running, and the completed run lost its exit event to
+# ".../gen/9.4.0-.../v2.00/wf-event.sh: No such file or directory".
+assert_eq "the pinned path is a preference, not an assumption" "true" \
+  "$(grep -q 'if \[ -x .\$event_sh. \]' "$SCRIPT_DIR/wf-spawn.sh" && echo true || echo false)"
+assert_eq "and the dispatcher is the fallback when it is gone" "true" \
+  "$(grep -q "event_fallback' wf-event.sh exit" "$SCRIPT_DIR/wf-spawn.sh" && echo true || echo false)"
+
+section "A daemon does not report health from a deleted harness (client-a WFI-257)"
+
+# It kept sweeping out of a retired build — bash held the open file — while
+# every spawn died rc=127, then logged "nothing dispatchable and no gates open
+# — the pipeline is empty or complete" over an active plan and an open RELEASE
+# gate, because wf-list-gates.sh was in the same deleted tree and its failure
+# was indistinguishable from an empty list.
+assert_eq "an unreadable gate list is never read as an empty pipeline" "true" \
+  "$(grep -q 'the gate list could not be read' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+assert_eq "the daemon re-execs onto the build that replaced its own" "true" \
+  "$(grep -q 'exec "\$live_orch"' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+assert_eq "and stands down rather than sweep from a tree nothing replaced" "true" \
+  "$(grep -q 'daemon_exit_rc=5' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n'

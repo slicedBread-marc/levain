@@ -137,12 +137,39 @@ label in the library source rather than only the current one.
 
 ## Retention
 
-Step 5 keeps the new build and the one it replaced, and deletes everything older. Two builds
-is ample: a daemon re-resolves through `wf-exec.sh` on every sweep, so the only thing holding
-a build open is a script subprocess that is already running, and those live for seconds to
-minutes. `rm -rf` on a directory a process is executing from leaves open descriptors valid,
-but a later `$SELF_DIR/wf-sibling.sh` spawn would fail — keeping the previous build removes
-that window rather than arguing about how small it is.
+Step 5 keeps the new build, the one it replaced, and **any build a live process is running out
+of**. Everything older goes.
+
+The original rule was "current and previous", on the reasoning that the only thing holding a
+build open is a script subprocess living seconds to minutes. That was wrong in both directions
+that matter, and client-a paid for both inside one minute — two deploys, and the build under
+them was 9.4.0:
+
+- **A worker runs for hours out of the build it was launched from.** `wf-spawn.sh` detaches a
+  `bash -c` whose last line logs the run's exit through that build's `wf-event.sh`. WFI-256: a
+  completed implement run lost its exit event to `No such file or directory`.
+- **A daemon runs out of one indefinitely.** It resolves `SELF_DIR` once at startup and calls
+  every sibling from there. WFI-257: bash held the open file of `wf-orchestrate.sh` itself, so
+  the loop kept sweeping, kept writing events, and kept answering `--daemon-status` *running*,
+  while every spawn died `rc=127`. It then announced "the pipeline is empty or complete" — over
+  an active plan and an open gate — because `wf-list-gates.sh` was in the same deleted tree and
+  its failure was indistinguishable from an empty list. 71 minutes, silently.
+
+So liveness is now part of the rule: `build_in_use` asks `pgrep -f "/gen/<build>/"`, which is
+exactly the shape both holders have — the daemon's own command line, and the detached wrapper
+carrying the build's `wf-event.sh`. The exemption is about liveness and not about the build, so
+the next deploy after the process exits collects it; otherwise this trades a deleted harness for
+an unbounded one.
+
+Both holders also defend themselves now, because a retention rule is a policy and the callers
+should not depend on it holding:
+
+- `wf-spawn.sh` prefers the pinned `wf-event.sh` and falls back to `scripts/wf-exec.sh`.
+- The daemon re-checks, once per sweep, where `scripts/current` says its own script lives, and
+  `exec`s onto it when that is somewhere else. `exec` preserves the PID, so the pidfile, the
+  claims stamped with it and `--stop` all stay valid — the daemon startup path allows a pidfile
+  naming its own PID for precisely this case. With nothing to re-exec onto it stands down with
+  exit 5 rather than sweep from a tree that no longer exists.
 
 `wf-prune-versions.sh` retires builds on demand and reports them in `--list`. It keeps its
 existing job too: a *label* is retained while any non-complete plan's WF stamp resolves to
@@ -192,8 +219,11 @@ them, and their comments still record why they are shaped the way they are.
 ./install.sh <client> && b=$(cat <client>/scripts/current)
 [ "$a" != "$b" ]                       # a new build each time
 
-# 3. Two builds retained, no more.
-ls <client>/scripts/gen | wc -l        # → 2
+# 3. Two builds retained, no more — plus any a live process is running out of.
+ls <client>/scripts/gen | wc -l        # → 2 with nothing running
+
+# 3a. A daemon survives the deploy that replaces its build, keeping its PID.
+ps -o command= -p "$(cat <client>/.claude/orchestrator/daemon.pid)"   # names the NEW build
 
 # 4. deploy-all.sh does not refuse a live daemon.
 ./deploy-all.sh                        # exit 0 with daemons running

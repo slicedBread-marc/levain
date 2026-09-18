@@ -96,19 +96,45 @@ gen_publish() {
     echo -e "${GREEN}  Published scripts/gen/$BUILD_ID and flipped scripts/current${NC}"
 }
 
+build_in_use() {
+    # Is any live process running out of this build? Its path appears verbatim
+    # in the command line of anything launched from it — the daemon
+    # (`bash .../gen/<build>/v2.00/wf-orchestrate.sh --daemon`) and every
+    # worker wrapper wf-spawn.sh detaches, which carries the build's
+    # wf-event.sh for the whole life of the run.
+    local base="$1"
+    command -v pgrep >/dev/null 2>&1 || return 1
+    pgrep -f "/gen/$base/" >/dev/null 2>&1
+}
+
 gen_retire() {
-    # Keep the new build and the one it replaced, and nothing older. Two is
-    # ample: a daemon re-resolves through wf-exec.sh on every sweep, so the
-    # only thing holding a build open is a script subprocess already running,
-    # and those last seconds. Keeping the previous build removes the window
-    # where such a subprocess spawns a sibling out of a folder just deleted.
+    # Keep the new build, the one it replaced, and any build something is
+    # still running out of. Nothing older.
+    #
+    # "Current and previous" alone was the rule, on the assumption that the
+    # only thing holding a build open is a subprocess that lasts seconds. That
+    # is false twice over: an implement worker runs for hours out of the build
+    # it was launched from, and a daemon runs out of one indefinitely. Two
+    # deploys inside a minute retired a build under both — client-a WFI-256
+    # (a finished worker lost its exit event) and WFI-257 (the daemon kept
+    # sweeping from a deleted tree, every spawn rc=127, for 71 minutes while
+    # reporting itself healthy). Both now also defend themselves — wf-spawn.sh
+    # falls back to the dispatcher, the daemon re-execs onto the live build —
+    # but a deploy that deletes a tree out from under a running process is the
+    # cause, and this is where it is prevented.
     local d base
     for d in "$GEN_ROOT"/*/; do
         [ -d "$d" ] || continue
         base=$(basename "$d")
         [ "$base" = "$BUILD_ID" ] && continue
         [ -n "$PREV_BUILD" ] && [ "$base" = "$PREV_BUILD" ] && continue
-        case "$base" in .building.*) ;; *) echo -e "${YELLOW}  Retired scripts/gen/$base${NC}" ;; esac
+        case "$base" in .building.*) ;; *)
+            if build_in_use "$base"; then
+                echo -e "${YELLOW}  Kept scripts/gen/$base — a live process is running out of it${NC}"
+                continue
+            fi
+            echo -e "${YELLOW}  Retired scripts/gen/$base${NC}" ;;
+        esac
         rm -rf "$d"
     done
 
