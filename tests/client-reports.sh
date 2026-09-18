@@ -5470,6 +5470,91 @@ assert_eq "diverged refs are refused with their own code" "3" \
 assert_eq "/wf-deploy checks the ref before reading it as a validated batch" "true" \
   "$(grep -q 'wf-release-sync.sh' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
 
+# client-a WFI-261: the repair has to work where `release` actually lives —
+# its own pinned worktree (docs/release-worktrees.md), not the checkout the
+# script is called from. The report's worry is that a bare `git fetch
+# origin release:release` is refused outright while that branch is checked out
+# somewhere. It is, which is why the script fetches WITHOUT a refspec and
+# fast-forwards inside the worktree it found by walking `git worktree list`.
+PINSYNC="$TEST_DIR/relsync-pinned"
+PINORIGIN="$TEST_DIR/relsync-pinned-origin"
+mkdir -p "$PINSYNC/scripts"
+cp "$SCRIPT_DIR/wf-release-sync.sh" "$SCRIPT_DIR/wf-release-rollback.sh" \
+   "$SCRIPT_DIR/wf-orch-lib.sh" "$PINSYNC/scripts/"
+(
+  git init -q --bare "$PINORIGIN"
+  cd "$PINSYNC" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf 'app\n' > app.txt && git add -A && git commit -q -m "seed"
+  git branch -q release && git branch -q main
+  git remote add origin "$PINORIGIN" && git push -q origin develop release main
+  git fetch -q origin
+  # release gets its own long-lived worktree, as /wf-release pins it.
+  git worktree add -q release-branches/release release
+  # Someone else's /wf-release pushes; this checkout's ref never moves.
+  git push -q origin "$(git rev-parse develop)":refs/heads/release 2>/dev/null || true
+  cd release-branches/release && git checkout -q -B release "$(git -C "$PINSYNC" rev-parse origin/release)" 2>/dev/null || true
+) >/dev/null 2>&1
+# Advance origin/release behind this checkout's back, leaving the pinned
+# worktree behind by one real commit.
+(
+  cd "$PINSYNC" && printf 'PLN-280\n' >> app.txt && git add -A \
+    && git commit -q -m "feat: PLN-280 the seq guard" \
+    && git push -q origin develop:release && git fetch -q origin
+) >/dev/null 2>&1
+
+assert_eq "a pinned release worktree behind origin is detected, not missed" "2" \
+  "$( (cd "$PINSYNC" && ./scripts/wf-release-sync.sh --check) >/dev/null 2>&1; echo $? )"
+pin_out=$(cd "$PINSYNC" && ./scripts/wf-release-sync.sh 2>&1 || true)
+assert_eq "and the fast-forward lands in the worktree, not a refused ref update" "0" \
+  "$( (cd "$PINSYNC" && ./scripts/wf-release-sync.sh) >/dev/null 2>&1; echo $? )"
+assert_eq "the branch a worktree holds is now what was pushed" "true" \
+  "$(cd "$PINSYNC" && [ "$(git rev-parse release)" = "$(git rev-parse origin/release)" ] && echo true || echo false)"
+assert_eq "the plan that was behind is in the promotion range" "true" \
+  "$(cd "$PINSYNC" && git log --oneline release --not main | grep -q 'PLN-280' && echo true || echo false)"
+# Behind again, but with an uncommitted edit in the release worktree: a
+# fast-forward there would move the branch out from under whoever is mid-edit.
+(
+  cd "$PINSYNC" && printf 'PLN-281\n' >> app.txt && git add -A \
+    && git commit -q -m "feat: PLN-281 more work" \
+    && git push -q origin develop:release && git fetch -q origin
+  printf 'scratch\n' >> "$PINSYNC/release-branches/release/app.txt"
+) >/dev/null 2>&1
+assert_eq "a dirty release worktree is refused rather than moved under someone" "1" \
+  "$( (cd "$PINSYNC" && ./scripts/wf-release-sync.sh) >/dev/null 2>&1; echo $? )"
+assert_eq "and the refusal left the branch where it was" "true" \
+  "$(cd "$PINSYNC" && [ "$(git rev-list --count release..origin/release)" = "1" ] && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A deferred-criteria question is about a batch, and ages with it (client-a WFI-260)"
+
+# /wf-deploy step 4a is a would-ask-a-human point with no named gate, so an
+# unattended worker invented one. An invented name is unknown to
+# wf_promote_tip_ref, so nothing recorded the commit set the answer was given
+# for: the answer could neither authorize the next dispatch (which re-ran the
+# check, got the same exit 1, and re-opened an answered gate — WFI-005's loop)
+# nor lapse when origin/release moved two minutes later and put two more plans
+# in the batch.
+( . "$SCRIPT_DIR/wf-orch-lib.sh"
+  assert_eq "the gate is scoped to the release tip, like deploy-approval" "release" \
+    "$(wf_promote_tip_ref deploy-deferred-criteria)"
+  assert_eq "and an unclassified gate name still scopes to nothing" "" \
+    "$(wf_promote_tip_ref needs-input)"
+)
+assert_eq "wf-promote-approval.sh can be asked about it by name" "true" \
+  "$(grep -qE '^ *deferred\) *id=DEPLOY; *gate=deploy-deferred-criteria' "$SCRIPT_DIR/wf-promote-approval.sh" && echo true || echo false)"
+assert_eq "step 4a names the gate instead of leaving the worker to invent one" "true" \
+  "$(grep -q 'wf-gate-open.sh DEPLOY deploy-deferred-criteria' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+assert_eq "and reads the answer of record before re-asking" "true" \
+  "$(grep -q 'wf-promote-approval.sh deferred' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+assert_eq "/wf-attend knows how to drain it" "true" \
+  "$(grep -q 'deploy-deferred-criteria' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
+# A standing `deploy` grant is policy written before these criteria existed, and
+# DC-014 was the kind that crash-loops production (WFI-011). No autonomy action
+# stands behind this gate, so --basis autonomy must be refused on it.
+assert_eq "a standing grant cannot close it unattended" "false" \
+  "$(awk '/--basis autonomy, but/{found=1} /deploy-deferred-criteria\)  *auto_action/{bad=1} END{print (bad?"true":"false")}' \
+      "$SCRIPT_DIR/wf-gate-close.sh")"
+
 section "A worker's exit event outlives the build it was launched from (client-a WFI-256)"
 
 # wf-spawn.sh baked an absolute generation path into the detached worker's last
