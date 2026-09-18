@@ -106,6 +106,38 @@ Before starting, confirm E2E passed on release:
    check cannot tell the two apart; a human or grant has to. client-c's DC-014 was exactly
    the dangerous kind and went unread straight into a production crash-loop (WFI-011) — don't
    let this step become the same silent skip.
+
+   **Under `WF_UNATTENDED=1`, exit `1` is a gate — but read the answer of record first:**
+   ```bash
+   scripts/wf-exec.sh wf-promote-approval.sh deferred; echo "deferred approval exit=$?"
+   ```
+   Exit `0` — a human already answered this question *for this batch*; quote its line and
+   continue at step 5. Exit `1` or `2` — open the gate **under exactly this name**, then unclaim
+   and exit 0.
+
+   **A standing `deploy` grant does not answer this one, and `wf-autonomy.sh` is not consulted
+   here.** A grant is policy written in advance; these criteria did not exist when it was written,
+   and one of them can be the hard runtime dependency that crash-loops production (WFI-011).
+   `wf-gate-close.sh` enforces the same thing from the other side — `--basis autonomy` is refused
+   on this gate name, because no autonomy action stands behind it.
+   ```bash
+   scripts/wf-exec.sh wf-gate-open.sh DEPLOY deploy-deferred-criteria \
+     "<the check's output> — <commit list from step 3>" --skill wf-deploy
+   scripts/wf-exec.sh wf-unclaim.sh DEPLOY
+   ```
+   **Do not invent a gate name here, and do not fold this into `deploy-approval`.** The name is
+   what gives the answer its scoping: `wf_promote_tip_ref` maps `deploy-deferred-criteria` to the
+   `release` tip, so a gate opened for one batch stops authorizing a different one. A worker that
+   names its own gate gets neither — its answer is never recorded against a commit set, and
+   `wf-promote-approval.sh` has nothing to read, so the next dispatch re-runs this check, gets the
+   same exit 1, and re-asks a question that was already answered (client-b WFI-005's loop).
+
+   **And the batch this question describes goes stale.** client-a WFI-260: this gate opened at
+   15:15 quoting 91 commits; `/wf-release` merged PR #214 into `origin/release` at 15:17, and by
+   the time a human read the question the promotion was 118 commits carrying PLN-279 and PLN-280
+   — two plans whose deferred criteria the question never showed. Step 2a's fast-forward means the
+   *merge* is never stale; the **question** is what ages, and only the tip scoping catches it. On
+   exit `2`, say in the gate question that new commits landed on `release` after the earlier answer.
 5. **Prompt user**: "These commits will be promoted to main. Proceed? (y/n)"
    Wait for explicit confirmation before continuing. If they decline, stop here — do not proceed
    to step 6.
@@ -342,8 +374,15 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   left to do but hit this same non-gate again (client-c WFI-029). Nothing in the "resolve
   every other gate" bullet below applies to step 14; it is not a would-ask-a-human point, it is a
   documented no-op.
+- **Step 4a has its own named gate and its own answer-of-record check** — `deploy-deferred-criteria`,
+  read back with `wf-promote-approval.sh deferred`. It is written out at step 4a; do not re-derive
+  it here and do not give it another name.
 - **Resolve every other `[GATE]` or would-ask-a-human point in the steps above the same way** —
-  open a gate naming the question, unclaim, and exit 0. Never guess, never hang.
+  open a gate naming the question, unclaim, and exit 0. Never guess, never hang. A question that
+  is about *the batch* rather than about one plan needs a gate name this harness knows
+  (`wf_promote_tip_ref` in `wf-orch-lib.sh`), or its answer is recorded against no commit set and
+  cannot lapse when the batch moves — that is client-a WFI-260. If you find yourself needing a
+  new one, file it with `wf-issue.sh` rather than inventing it.
 - **On every exit path** — grant found and the run proceeds to completion, gate opened, or an
   error stops the run early — `scripts/wf-exec.sh wf-unclaim.sh DEPLOY` is the last action before
   finishing.

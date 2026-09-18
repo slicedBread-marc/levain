@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
-# wf-promote-approval.sh <release|deploy>
+# wf-promote-approval.sh <release|deploy|deferred>
 #
 # Did a human already approve THIS promotion at a gate?
+#
+#   release   develop -> release, at `release-approval`
+#   deploy    release -> main, at `deploy-approval`
+#   deferred  release -> main WITH open deferred criteria, at
+#             `deploy-deferred-criteria` — /wf-deploy step 4a. Without it that
+#             step had no way to read its own answer: every unattended dispatch
+#             re-ran wf-deferred-check.sh, got the same exit 1, and re-opened
+#             the gate a human had already answered. That is client-b WFI-005's
+#             loop in a second place, found by client-a WFI-260.
 #
 # WHY THIS EXISTS
 #
@@ -55,10 +64,11 @@ done
 say() { $quiet || echo "$@"; }
 
 case "$action" in
-  release) id=RELEASE; gate=release-approval ;;
-  deploy)  id=DEPLOY;  gate=deploy-approval ;;
+  release)  id=RELEASE; gate=release-approval ;;
+  deploy)   id=DEPLOY;  gate=deploy-approval ;;
+  deferred) id=DEPLOY;  gate=deploy-deferred-criteria ;;
   *)
-    echo "Usage: $0 <release|deploy> [--quiet]" >&2
+    echo "Usage: $0 <release|deploy|deferred> [--quiet]" >&2
     exit 1 ;;
 esac
 

@@ -226,6 +226,25 @@ Three properties make this a one-off approval rather than a grant by the back do
 still what `--show` reports. Both the dispatcher's pre-flight and the `/wf-release` and
 `/wf-deploy` skills ask for the one-off approval **first**, and fall through to the grant.
 
+### A third promotion gate, with no grant behind it
+
+`/wf-deploy` step 4a asks a second question about the same batch — "these plans shipped with
+`external`/`soak`/`unbuilt` criteria still open; promote anyway?" — at
+`deploy-deferred-criteria`, read back with `wf-promote-approval.sh deferred`. It is
+commit-set-scoped exactly like the two above, and for the same reason: client-a WFI-260 had
+this gate open quoting 91 commits when a `/wf-release` two minutes later put 118 in the batch,
+carrying two plans whose deferred criteria the question never showed.
+
+It is the one promotion gate with **no** fall-through to a grant. `wf-gate-close.sh` refuses
+`--basis autonomy` on it and the skill never asks `wf-autonomy.sh` there, because a standing
+`deploy` grant is policy written before these criteria existed — and client-c's DC-014 was
+the kind that crash-loops production when it goes unread (WFI-011). A human answers it or
+nothing does.
+
+Until it existed the step had no answer path at all: every unattended dispatch re-ran the
+check, got the same exit 1, and re-opened a gate a human had already answered — WFI-005's loop
+in a second place.
+
 ---
 
 ## What this does *not* do

@@ -229,9 +229,11 @@ The plan burned its attempt budget without changing state — a retry will not h
    - **escalate** — write an ESCALATED finding describing the loop, set state to `draft`, then close the gate.
    - **stop** — leave the gate open and say so. It stays parked.
 
-### `release-approval` / `deploy-approval`
+### `release-approval` / `deploy-approval` / `deploy-deferred-criteria`
 
 An unattended `/wf-release` or `/wf-deploy` reached its promotion prompt with nobody to prompt, asked `wf-autonomy.sh`, and was told no. The question holds the commit list; read it out.
+
+`deploy-deferred-criteria` is the same shape one step earlier: `/wf-deploy` step 4a found criteria the plans in the batch shipped without (`external`/`soak`/`unbuilt`). Everything below applies to it unchanged — including `--decision`, without which the next dispatch re-runs the check and re-asks. Read `scripts/wf-exec.sh wf-deferred-check.sh <plans>` out with the commit list, and **re-derive the plan list from `origin/main..origin/release` rather than trusting the question's**: client-a WFI-260 had this gate open at 15:15 quoting 91 commits, and PR #214 merged into `origin/release` two minutes later, putting two plans in the batch whose deferred criteria the question never showed.
 
 1. Show the commits and ask the plain question — "promote these to `release`?" / "…to `main`?"
 
@@ -255,7 +257,7 @@ An unattended `/wf-release` or `/wf-deploy` reached its promotion prompt with no
    scripts/wf-exec.sh wf-gate-close.sh RELEASE "approved — <what they said>" --decision approve
    scripts/wf-exec.sh wf-gate-close.sh DEPLOY  "declined — <why>"          --decision reject
    ```
-   **Never omit `--decision` on these two gates.** An approval recorded only as prose authorizes
+   **Never omit `--decision` on these three gates.** An approval recorded only as prose authorizes
    nothing: client-b WFI-005 had a human approve the same release twice here, and both times the
    daemon's next `/wf-release` asked `wf-autonomy.sh` (which knows only about standing grants),
    was told no, and re-opened the gate it had just been let through — each re-opening quoting a

@@ -249,6 +249,10 @@ if [ "${WF_UNATTENDED:-0}" = "1" ]; then
       # Only two gates have an autonomy action behind them. Everything else on
       # wf-autonomy.sh's list is never-grantable BY NAME, and reaching for
       # `autonomy` on one of those is exactly the WFI-227 move.
+      # `deploy-deferred-criteria` is deliberately NOT here. A standing `deploy`
+      # grant is policy written before these criteria existed, and one of them
+      # can be the hard runtime dependency that crash-loops production
+      # (client-c DC-014, WFI-011). It needs a human or nothing.
       case "$gate_name" in
         release-approval) auto_action=release ;;
         deploy-approval)  auto_action=deploy ;;

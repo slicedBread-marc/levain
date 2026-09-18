@@ -39,6 +39,11 @@
 #                     develop -> release promotion (wf-autonomy.sh release)
 #   deploy-approval   an unattended /wf-deploy found no standing grant for the
 #                     release -> main promotion (wf-autonomy.sh deploy)
+#   deploy-deferred-criteria  an unattended /wf-deploy step 4a found criteria
+#                     the plans in this batch shipped without. Scoped to the
+#                     release tip like deploy-approval, so the answer lapses
+#                     when the batch changes (client-a WFI-260). Use this
+#                     name — a worker that invents its own gets no scoping.
 #
 # Re-opening an existing gate is a no-op (keeps the original timestamp), so a
 # retried worker doesn't reset the queue position.

@@ -1093,10 +1093,20 @@ wf_gate_revision_scoped() {
 # gate". wf_promote_tip resolves it, preferring the remote ref where one exists,
 # because `release` and `main` live in pinned worktrees this checkout never
 # moves and their local refs are routinely behind (WFI-024, WFI-027).
+#
+# `deploy-deferred-criteria` is on this list for the same reason: it asks "ship
+# these plans with these criteria still open?", and which plans those are comes
+# straight out of `release --not main`. client-a WFI-260 — the gate opened at
+# 15:15 quoting 91 commits, /wf-release merged PR #214 into origin/release two
+# minutes later, and the batch the human would be answering about was 118
+# commits carrying two plans (PLN-279, PLN-280) whose deferred criteria that
+# question never showed. Scoping it to the release tip lapses the answer the
+# moment the batch changes, exactly as it does for deploy-approval.
 wf_promote_tip_ref() {
   case "${1:-}" in
     release-approval) printf 'develop' ;;
     deploy-approval)  printf 'release' ;;
+    deploy-deferred-criteria) printf 'release' ;;
     *) printf '' ;;
   esac
 }
