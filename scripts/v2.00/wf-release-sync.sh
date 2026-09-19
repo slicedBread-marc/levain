@@ -46,6 +46,13 @@
 #   1  could not establish the answer (no origin/release, fetch failed with no
 #      cached ref, dirty worktree blocking the fast-forward, FF refused).
 #
+# It also refreshes `origin/main` and prints, before any exit:
+#
+#   DEPLOY_BASE=origin/main (<short sha>)
+#
+# the ref a caller must count its batch against. Not `main`: see the comment at
+# the fetch. Nothing else in /wf-deploy refreshes that ref.
+#
 # --check   report only; never move the ref. A behind ref exits 2 as well,
 #           since "not promotable as it stands" is the answer being asked for.
 # --dry-run same as --check, phrased as what would happen.
@@ -84,6 +91,24 @@ git_in() { if [ -n "$wt" ]; then git -C "$wt" "$@"; else git "$@"; fi; }
 
 git_in fetch origin release --quiet 2>/dev/null || \
   echo "wf-release-sync: could not fetch origin/release — judging against the cached remote ref" >&2
+
+# `main` is fetched here too, on every path, because the deploy that calls this
+# measures its batch against it and there is nowhere else in /wf-deploy that
+# refreshes it. client-a WFI-264: the `deploy-deferred-criteria` question put
+# to a human quoted "205 commits", taken from `release --not main` on a LOCAL
+# main that still carried an unrecovered provisional promote merge, 149 commits
+# ahead of origin/main. The real batch was 353. Local main is what the promotion
+# merges INTO; origin/main is what production has, and only the second one can
+# say what is about to ship. The DEPLOY_BASE line below names the ref a caller
+# should count against — printed before every exit path, including the refusals.
+git_in fetch origin main --quiet 2>/dev/null || true
+if git_in rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+  echo "DEPLOY_BASE=origin/main ($(git_in rev-parse --short origin/main))"
+else
+  # No remote main yet — a project that has never deployed. The local ref is
+  # then the only answer there is, and it is not a stale one.
+  echo "DEPLOY_BASE=main ($(git_in rev-parse --short main 2>/dev/null || echo 'does not exist'))"
+fi
 
 local_sha=$(git_in rev-parse --verify --quiet release 2>/dev/null || true)
 remote_sha=$(git_in rev-parse --verify --quiet origin/release 2>/dev/null || true)

@@ -751,28 +751,39 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    ```
    If this fails with non-trivial conflicts, route back to builder (same as merge-blocked path below).
 
-   **Post-merge build validation** — catch semantically broken merges that git auto-resolved without conflict markers:
+   **Post-merge validation** — catch semantically broken merges that git auto-resolved without conflict markers. **This runs the full suite by default, not a build.** Do not type a test command here; run the script:
    ```bash
-   if ! ../../scripts/wf-exec.sh wf-build-check.sh; then
-     echo "BUILD FAILED after merging release. The merge likely combined incompatible code."
+   ../../scripts/wf-exec.sh wf-post-merge-check.sh --label "post-merge-$PLAN_NAME"
+   ```
+   It reads `postMergeCheck:` from `claude-workflow.yml` — `full` (default: `build_command` then `test_command`, whole and unfiltered) or `build` (build only, the pre-9.8 behavior). **Exit 0 good, 1 the merged tree is broken, 2 nothing is configured to check it with** — 2 is a gap to report, never a pass.
+
+   **The suite may outlast a foreground Bash call** (the cap is 10 minutes). Detach and wait in slices, exactly as `/wf-release` step 7 does — never `run_in_background`:
+   ```bash
+   ../../scripts/wf-exec.sh wf-post-merge-check.sh --label "post-merge-$PLAN_NAME" --detach   # prints SUITE_HANDLE=
+   ../../scripts/wf-exec.sh wf-suite-wait.sh <SUITE_HANDLE>                                   # 0 pass, 1 fail, 3 still running
+   ```
+   On `3`, call it again with the same handle, as many times as it takes.
+
+   **Why the suite and not just a build.** The tree this creates is the tree that reaches `release` sixty seconds later, and the only other thing that ever runs a suite on it is `/wf-deploy` — after the plan is complete, its worktree destroyed, and a human already asked to approve the promotion. client-a, 2026-09-18: PLN-283 and PLN-284 were each green alone and together broke one CLI test (`CaptureTimingTests.SendNote_WithATicket…` — PLN-283 moved what the ticket folder holds, PLN-284's path asserted the old shape). Both compiled, so the build check passed both. Three deploys found it, one 20-minute suite each, and DEPLOY parked `stuck` with fifteen completed plans behind it. A semantic merge break is what the merging side is best placed to fix and worst placed to notice.
+
+   On failure (exit 1):
+   ```bash
+     echo "POST-MERGE CHECK FAILED after merging release. The merge combined incompatible code."
      echo "Routing back to builder to resolve."
    ```
-   - Write findings to `plans/$PLAN_NAME/findings.md`:
+   - Write findings to `plans/$PLAN_NAME/findings.md`, **quoting `SUITE_RESULT=` and the failing test name verbatim** — the builder's whole starting point is which assertion broke:
      ```markdown
-     ## Build Failure After Release Merge — YYYY-MM-DD
+     ## Broken After Release Merge — YYYY-MM-DD
      
-     - [ ] **Behavior**: Build fails after merging origin/release into feature branch. Git auto-resolved the merge without conflict markers, but the result doesn't compile. Review the merge commit and fix the broken file(s).
+     - [ ] **Behavior**: <build failed | suite failed: N of M, `<failing test>`> after merging origin/release into the feature branch. Git auto-resolved the merge without conflict markers; the result is broken anyway. Review the merge commit and fix it here — this must not reach release.
      ```
    - Route back to active:
      ```bash
-     scripts/wf-exec.sh wf-registry-update.sh $PLAN_NAME testing active --commit "test($PLAN_NAME): build broken after release merge — back to builder" --add plans/$PLAN_NAME/findings.md
+     scripts/wf-exec.sh wf-registry-update.sh $PLAN_NAME testing active --commit "test($PLAN_NAME): broken after release merge — back to builder" --add plans/$PLAN_NAME/findings.md
      ```
    - Destroy container: `../../scripts/wf-exec.sh wf-docker-down.sh $PLAN_NAME`
-   - Display: "Build failed after merging release. Routed back to builder (testing → active). Findings written."
-   - **Stop here — do not continue with remaining steps.**
-   ```bash
-   fi
-   ```
+   - Display: "Post-merge check failed after merging release. Routed back to builder (testing → active). Findings written."
+   - **Stop here — do not continue with remaining steps.** Nothing below this point may run: the push and the PR merge are what put the broken tree on `release`.
 
    Push to remote. **Wrap every call that talks to GitHub in `wf-retry.sh`** — it retries only transient failures (timeouts, 5xx, resets, rate limits) and returns a real refusal immediately:
    ```bash

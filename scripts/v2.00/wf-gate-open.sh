@@ -44,6 +44,12 @@
 #                     release tip like deploy-approval, so the answer lapses
 #                     when the batch changes (client-a WFI-260). Use this
 #                     name — a worker that invents its own gets no scoping.
+#   deploy-suite-red  /wf-deploy step 2b found that this exact release tip has
+#                     already merged and failed the full suite
+#                     (wf-deploy-suite-memo.sh). Not an approval question: no
+#                     answer promotes it, the fix has to land on `release`, and
+#                     doing so moves the tip and clears the memo. Parked so a
+#                     human sees the failing test instead of three more suites.
 #
 # Re-opening an existing gate is a no-op (keeps the original timestamp), so a
 # retried worker doesn't reset the queue position.
@@ -314,7 +320,13 @@ fi
   # Recording it here is what lets wf-promote-approval.sh tell an answer that
   # still covers the promotion in front of it from one given about an older
   # batch (client-b WFI-005).
+  #
+  # Fetched first. A tip this checkout has not heard about yet is not the batch
+  # in front of anyone, and an approval recorded against it is discarded the
+  # moment something else fetches — client-a WFI-264, where that gap was four
+  # hours wide and cost the human the same answer twice. See wf_promote_fetch.
   if [ -n "$(wf_promote_tip_ref "$gate_name")" ]; then
+    wf_promote_fetch "$gate_name"
     wf_emit GATE_PROMOTE_TIP "$(wf_promote_tip "$gate_name" || true)"
   fi
   if [ -n "$prior_res" ]; then

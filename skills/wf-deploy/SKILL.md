@@ -74,10 +74,41 @@ Before starting, confirm E2E passed on release:
    `main`, and reported "15 commits promoted (PLN-273 work)" while PLN-273 stayed out of
    production. Nothing else catches the behind case: the stale tree builds, the suite passes, and
    the completion message names plans the merge never carried.
+
+   It also fetches `origin/main` and prints `DEPLOY_BASE=origin/main (<sha>)` before every exit.
+   **That is the ref every count and every plan list below is taken against — not local `main`.**
+   Local `main` is what the promotion merges *into*, and between step 7 and step 14 it legitimately
+   holds commits production does not; a previous run that stopped in that window leaves them there
+   until step 6a recovers, which happens *after* the gate. client-a WFI-264: the deferred-criteria
+   question put to a human quoted "205 commits" off a local `main` carrying an unrecovered promote
+   merge. The real batch was 353 commits and 15 plans. Set it once and use it:
+   ```bash
+   BASE=origin/main; git rev-parse --verify -q "$BASE" >/dev/null || BASE=main
+   ```
+
+2b. **Has this exact batch already failed the deploy suite?**
+   ```bash
+   scripts/wf-exec.sh wf-deploy-suite-memo.sh --check; echo "memo exit=$?"
+   ```
+   Exit `0` — no record for this release tip; continue at step 3. Exit `1` — a previous deploy
+   already merged these same commits and ran the whole suite red. **Do not run it again.** The
+   tip cannot pass until something lands on `release`, and landing on `release` moves the tip,
+   which clears this by construction. Report the recorded `MEMO_SUMMARY=` and `MEMO_LOG=` lines
+   verbatim, then:
+   - **Attended**: tell the user which test failed and that the fix belongs on a feature branch
+     (`/wf-bug` it if there is no plan for it yet). Unclaim and exit.
+   - **Unattended** (`WF_UNATTENDED=1`): open gate `deploy-suite-red` with the summary as the
+     question, then unclaim and exit 0.
+
+   client-a, 2026-09-18: three deploys at 18:36, 19:03 and 19:25, each merging the identical
+   commits, each running a ~20-minute suite, each failing the same single test of 3,339, each
+   recovering `main`. An hour of compute to learn one fact three times, and DEPLOY then parked
+   `stuck` knowing no more than the first run had. Nothing was wrong with any of those runs; what
+   was missing was a memory between them.
 3. **Show recent release commits** so the user can confirm what's being promoted:
    ```bash
-   TOTAL=$(git rev-list --count release --not main)
-   git log --oneline release --not main -n 20
+   TOTAL=$(git rev-list --count release --not $BASE)
+   git log --oneline release --not $BASE -n 20
    if [ "$TOTAL" -gt 20 ]; then echo "…and $((TOTAL - 20)) more ($TOTAL commits total)"; fi
    ```
    **Always carry the total with the list.** `-n 20` is a display convenience, not the
@@ -86,7 +117,11 @@ Before starting, confirm E2E passed on release:
    `deploy-approval` gate that quotes it (client-b WFI-003/WFI-004), so the count and the
    `…and N more` line are part of the list from here on: wherever a step below says "the commit
    list from step 3", it means the list *plus* that marker.
-4. **If no new commits on release vs main**: inform the user there is nothing to deploy. **If this is an attended run** (`WF_UNATTENDED` unset), also close a stale `deploy-approval` gate before unclaiming — nothing being left to deploy means whatever that gate asked about was already promoted or abandoned by some other path, and a human running this attended is exactly the moment to clear it rather than leave it for `/wf-attend` to notice later (client-c WFI-031: an unattended dispatch kept reopening `deploy-approval` for a commit already the tip of `main`, because nothing ever told the gate the promotion had happened — this closes that gap the next time a human is actually here to answer for it):
+
+   `$BASE` is step 2a's, and it is `origin/main` on any project that has ever deployed. Counting
+   against local `main` is how a human came to be asked about "205 commits" when 353 were about
+   to ship (WFI-264).
+4. **If no new commits on release vs `$BASE`**: inform the user there is nothing to deploy. **If this is an attended run** (`WF_UNATTENDED` unset), also close a stale `deploy-approval` gate before unclaiming — nothing being left to deploy means whatever that gate asked about was already promoted or abandoned by some other path, and a human running this attended is exactly the moment to clear it rather than leave it for `/wf-attend` to notice later (client-c WFI-031: an unattended dispatch kept reopening `deploy-approval` for a commit already the tip of `main`, because nothing ever told the gate the promotion had happened — this closes that gap the next time a human is actually here to answer for it):
    ```bash
    if [ "${WF_UNATTENDED:-0}" != "1" ] \
       && scripts/wf-exec.sh wf-list-gates.sh DEPLOY 2>/dev/null | grep -q "$(printf '\t')deploy-approval$(printf '\t')"; then
@@ -96,7 +131,7 @@ Before starting, confirm E2E passed on release:
    Then unclaim (`scripts/wf-exec.sh wf-unclaim.sh DEPLOY`) and exit.
 4a. **Check for open deferred criteria on the plans being promoted:**
    ```bash
-   scripts/wf-exec.sh wf-deferred-check.sh $(git log --oneline release --not main | grep -oE 'PLN-[0-9]+' | sort -u)
+   scripts/wf-exec.sh wf-deferred-check.sh $(git log --oneline release --not $BASE | grep -oE 'PLN-[0-9]+' | sort -u)
    ```
    Exit `0` — nothing open, continue. Exit `1` — print its output to the user before the confirmation
    prompt below: these are `external`/`soak`/`unbuilt` criteria that plan shipped without,
@@ -204,16 +239,18 @@ Before starting, confirm E2E passed on release:
    ```
    It runs `build_command` then `test_command` from `claude-workflow.yml`, verbatim and unfiltered, against merged `main` in the worktree you are standing in, and ends with `SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`. **Exit 0 pass, 1 fail, 2 no suite configured** — 2 is a gap to report, never a pass. Report the `SUITE_RESULT=` line verbatim with `SUITE_CMD=` beside it; a count read out of the output is not evidence of what ran (WFI-252, where a release was pushed on one assembly's 474 tests reported as the whole E2E suite — **this step is what caught it**, and it only caught it because it ran the configured command).
 
-   **On a pass, and only then, disarm the guard:**
+   **On a pass, and only then, disarm the guard and clear any recorded failure:**
    ```bash
    scripts/wf-exec.sh wf-deploy-guard.sh --disarm
+   scripts/wf-exec.sh wf-deploy-suite-memo.sh --clear
    ```
 
-   If tests fail, abort the deploy — do NOT proceed to registry updates, and **leave the guard armed**; recover the merge before you stop:
+   If tests fail, abort the deploy — do NOT proceed to registry updates, and **leave the guard armed**; recover the merge and **record the verdict against this batch** before you stop:
    ```bash
    scripts/wf-exec.sh wf-deploy-guard.sh --recover
+   scripts/wf-exec.sh wf-deploy-suite-memo.sh --fail "<the failing test, N of M>" --log "<SUITE_LOG path>"
    ```
-   Then inform the user of the failures (and, under `WF_UNATTENDED=1`, unclaim) and suggest fixing on the release branch, then re-running `/wf-release`.
+   Then inform the user of the failures (and, under `WF_UNATTENDED=1`, unclaim) and say where the fix belongs: on a feature branch through the pipeline, not on `release` by hand. Re-running `/wf-deploy` on these same commits will do nothing but spend the suite again — step 2b now refuses it, which is the point of the memo. **The summary you pass is what the next run and the gate quote**, so name the failing test; "tests failed" tells the next reader nothing the memo did not already cost them.
 
    **This step reads as inline and on a large project it cannot be.** A foreground Bash call is capped at 10 minutes; client-a's full suite takes about 13. Back when this ran in the shared develop worktree that stalled the deploy at its most dangerous point — the registry every other session read was `main`'s stale copy (WFI-213). That danger is gone now that `main` lives in its own worktree. The cap is not.
 

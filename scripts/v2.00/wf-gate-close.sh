@@ -67,6 +67,39 @@
 #                dispatch asks again. Fail closed: an unrecorded decision is not
 #                an approval.
 #
+#                An `approve` on a promotion gate is checked against the ref
+#                ITSELF before it is recorded — see THE BATCH MOVED below.
+#
+# --batch-moved-ok
+#                Record an `approve` against the CURRENT tip even though the
+#                gate was opened against an older one. Only for a caller that
+#                has re-derived the batch from the remote refs and is answering
+#                about what is actually there — `/wf-attend` does this, and says
+#                so in the resolution. Never a way to get past the refusal
+#                without looking.
+#
+# THE BATCH MOVED
+#
+# A promotion approval is scoped to a commit set: same tip, same promotion. The
+# tip is stamped at open, and wf-promote-approval.sh compares it to the tip in
+# front of the next worker. When they disagree the answer is discarded and the
+# gate re-opens — correct when commits genuinely landed in between, and a trap
+# when the gate was opened against a tip that was never current.
+#
+# client-a WFI-264 is the trap. The gate stamped a four-hour-stale
+# origin/release (nothing on the open path fetched, so PR #220's merge was
+# invisible), a human approved it, /wf-deploy fetched, the mismatch discarded
+# the answer, and the same question re-opened 41 seconds later under the same
+# headline — indistinguishable, to the human, from the by-design case. They
+# answered the identical question twice.
+#
+# wf_promote_fetch on the open path closes the hole. This is the second half:
+# when an `approve` arrives for a tip that has moved SINCE the question was
+# asked, say so HERE — to the person standing at the terminal who can still do
+# something about it — rather than recording an approval that is already dead
+# and letting a worker discard it silently a minute later. Exit 5, gate left
+# exactly as it was.
+#
 # --basis <b>    WHAT answered this gate. Required when WF_UNATTENDED=1 — see
 #                below. The vocabulary is closed and each value is checked:
 #
@@ -102,7 +135,8 @@
 # `/wf-attend` is where that answer belongs.
 #
 # Exit 0 on success (idempotent), 1 on usage error,
-#        4 when an unattended close has no acceptable basis.
+#        4 when an unattended close has no acceptable basis,
+#        5 when an `approve` names a batch the source ref has moved past.
 
 set -euo pipefail
 
@@ -118,6 +152,7 @@ resolves=""
 plan_body_fp_at_open=""
 promote_tip=""
 decision=""
+batch_moved_ok=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -131,6 +166,7 @@ while [ $# -gt 0 ]; do
       esac
       shift 2 ;;
     --resolves) resolves="${2:?--resolves requires a finding substring, or 'all'}"; shift 2 ;;
+    --batch-moved-ok) batch_moved_ok=true; shift ;;
     -*)      echo "Unknown option: $1" >&2; exit 1 ;;
     *)
       if [ -z "$artifact" ]; then artifact="$1"; else resolution="$1"; fi
@@ -277,6 +313,43 @@ if [ "${WF_UNATTENDED:-0}" = "1" ]; then
     *)
       refuse_basis "--basis '$basis' is not in the vocabulary (verdict | config | autonomy | human:<ref>)" ;;
   esac
+fi
+
+# ── Is the approval about the batch that is actually there? ───────────────
+#
+# See THE BATCH MOVED in the header. Checked BEFORE the gate file is removed,
+# so a refusal leaves the question exactly where it was and the human can
+# answer the real one. Only `approve` is checked: a rejection of a batch that
+# has since grown is still a rejection, and refusing it would park a `no`
+# nobody asked to revisit.
+if [ "$decision" = "approve" ] && [ -n "$promote_tip" ]; then
+  wf_promote_fetch "$gate_name"
+  now_tip=$(wf_promote_tip "$gate_name" 2>/dev/null || true)
+  if [ -n "$now_tip" ] && [ "$now_tip" != "$promote_tip" ]; then
+    if $batch_moved_ok; then
+      echo "wf-gate-close: '$gate_name' was asked about $(wf_promote_tip_ref "$gate_name") ${promote_tip:0:9}," >&2
+      echo "  which is now at ${now_tip:0:9}. Recording the approval against the CURRENT tip on" >&2
+      echo "  --batch-moved-ok: the caller says it re-derived the batch and answered about that." >&2
+      promote_tip="$now_tip"
+    else
+      echo "wf-gate-close: refusing to record an approval for a batch that has moved." >&2
+      echo "  '$gate_name' on $id was asked about $(wf_promote_tip_ref "$gate_name") at ${promote_tip:0:9}." >&2
+      echo "  That ref is now at ${now_tip:0:9}. The commits you were shown are not the commits" >&2
+      echo "  that would be promoted, and wf-promote-approval.sh would discard this answer the" >&2
+      echo "  moment a worker read it back (client-a WFI-264). Nothing was closed." >&2
+      # Named against the same refs the promotion itself reads: develop is
+      # local (the skill pushes it), release and main are read from origin.
+      case "$gate_name" in
+        release-approval) hint_range='develop --not origin/release' ;;
+        *)                hint_range='origin/release --not origin/main' ;;
+      esac
+      echo "  Re-derive the batch against the current tip and answer that:" >&2
+      echo "    git log --oneline $hint_range" >&2
+      echo "  Then close with --batch-moved-ok, or re-run the skill to re-ask the question." >&2
+      wf_event gate-close-refused "$id" "$gate_name: approve for ${promote_tip:0:9}, ref now ${now_tip:0:9} — batch moved"
+      exit 5
+    fi
+  fi
 fi
 
 # Past the guard: the gate is answered, so the parking file goes. An attended

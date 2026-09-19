@@ -322,6 +322,12 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    ```
    If this fails with non-trivial conflicts, route back to builder (same as merge-blocked path below).
 
+   **Post-merge validation** — the merged tree is what reaches `release` a moment later, and this is the last point at which the plan that broke it is still in hand:
+   ```bash
+   ../../scripts/wf-exec.sh wf-post-merge-check.sh --label "post-merge-$PLAN_NAME"
+   ```
+   Exit 0 good, 1 broken, 2 nothing configured to check with (a gap to report, never a pass). Detach and wait in slices if the suite may outlast the 10-minute foreground cap — see `/wf-test`'s matching step, which this mirrors exactly, including why a build check alone is not enough (client-a, 2026-09-18: two plans green alone, one broken test merged, found three deploys later). On exit 1, route back to builder exactly as the merge-blocked path below does and **stop** — the push and the PR merge are what put a broken tree on `release`.
+
    Push to remote. If push fails, display the error and **stop** — ask the user to resolve manually.
    ```bash
    git push -u origin "$CURRENT_BRANCH"

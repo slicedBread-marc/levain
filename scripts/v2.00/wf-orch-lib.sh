@@ -1131,6 +1131,38 @@ wf_promote_tip() {
   printf '%s' "$sha"
 }
 
+# wf_promote_fetch <gate-name>
+#
+# Refresh the remote-tracking ref a promotion gate is scoped to, so the tip
+# stamped on the gate is the tip that EXISTS rather than the one this checkout
+# last happened to hear about.
+#
+# WHY: wf_promote_tip reads refs/remotes/origin/<ref>, which only moves on a
+# fetch, and nothing on the gate-open path fetches. client-a WFI-264: a
+# `deploy-deferred-criteria` gate opened at 17:46 carrying d762af79 — already 69
+# commits stale, because /wf-test had merged PR #220 into origin/release through
+# GitHub and no local ref had heard of it. A human approved that gate four hours
+# later; /wf-deploy's step 2a then fetched as a side effect of wf-release-sync.sh,
+# wf-promote-approval.sh compared the fresh tip against the stale recorded one,
+# and discarded an answer the human had no way to give correctly. The gate
+# re-opened 41 seconds later with the same headline. A gate opened against a tip
+# that was never current cannot be answered in a way that sticks.
+#
+# Best effort by design: offline, the cached ref is still the best answer
+# available and a gate that cannot be opened is worse than one scoped to the
+# last tip this checkout saw. `develop` is local — /wf-release pushes it as part
+# of the promotion, so its local ref IS the batch (see wf_promote_tip).
+wf_promote_fetch() {
+  local ref root
+  ref=$(wf_promote_tip_ref "${1:-}")
+  [ -n "$ref" ] || return 0
+  [ "$ref" = "develop" ] && return 0
+  root="$(wf_develop_root)"
+  git -C "$root" fetch --quiet origin \
+    "+refs/heads/$ref:refs/remotes/origin/$ref" 2>/dev/null || true
+  return 0
+}
+
 # ── Events ────────────────────────────────────────────────────────────────
 
 # wf_event <type> <artifact> <message>

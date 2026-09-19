@@ -245,6 +245,35 @@ Until it existed the step had no answer path at all: every unattended dispatch r
 check, got the same exit 1, and re-opened a gate a human had already answered — WFI-005's loop
 in a second place.
 
+### The tip an approval is scoped to has to be a tip that exists
+
+Commit-set scoping only works if the tip stamped on the gate is the tip the promotion will
+actually read. `wf_promote_tip` resolves `refs/remotes/origin/<ref>`, and a remote-tracking ref
+only moves on a fetch — so a gate could be opened against a tip this checkout had simply not
+heard about, and the human's answer was then discarded by the first worker that did fetch.
+
+client-a WFI-264: the gate opened at 17:46 carrying an `origin/release` four hours and 69
+commits stale, because `/wf-test` had merged a PR into release through GitHub. A human approved
+it at 21:50. `/wf-deploy`'s step 2a fetched, `wf-promote-approval.sh` saw the mismatch, exited 2,
+and the identical question re-opened 41 seconds later — indistinguishable, from where the human
+sat, from the by-design "the batch changed" case above. They answered it twice.
+
+Two changes, either of which would have caught it:
+
+- **`wf_promote_fetch` on the open path.** `wf-gate-open.sh` refreshes the ref before stamping,
+  so the question is asked about what is there. Best-effort: offline, the cached ref is still
+  better than refusing to open a gate.
+- **A close-time re-check.** `wf-gate-close.sh` refuses (**exit 5**) an `--decision approve`
+  whose gate was opened against a tip the ref has since moved past, leaving the gate open and
+  saying so — to the person standing there, who can still re-derive the batch — instead of
+  writing an approval that is already dead. `--batch-moved-ok` records it against the current
+  tip, for a caller (`/wf-attend`) that has re-derived the batch and is answering about *that*.
+
+The batch a human is shown must also be counted against `origin/main`, not local `main`:
+`wf-release-sync.sh` now fetches it and prints `DEPLOY_BASE=`. Local `main` legitimately holds
+commits production does not between `/wf-deploy`'s merge and its push, and an unrecovered one of
+those is what made the same gate quote "205 commits" for a batch of 353.
+
 ---
 
 ## What this does *not* do

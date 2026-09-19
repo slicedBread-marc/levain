@@ -30,6 +30,27 @@ build_command: ""
 # rather than the config's (WFI-035).
 test_command: ""
 
+# What validates the tree produced when /wf-test merges `release` into a feature
+# branch, just before that tree is pushed to `release` (wf-post-merge-check.sh).
+#
+#   full   (default)  build_command, then test_command, whole and unfiltered.
+#   build             build_command only — the pre-9.8 behavior.
+#
+# `full` costs one suite run per plan exit, paid by the plan whose merge broke
+# something. `build` saves that and moves the discovery to /wf-deploy, which is
+# hours later, after the plan is complete and its worktree destroyed, and after
+# a human has been asked to approve the promotion.
+#
+# client-a, 2026-09-18: PLN-283 and PLN-284 were each green alone and
+# together broke one CLI test — PLN-283 changed what the ticket folder holds,
+# PLN-284's path asserted the old shape. Both compiled, so the build check
+# passed both. Three deploys found it, one 20-minute suite each, and DEPLOY
+# parked `stuck` with fifteen completed plans behind it.
+#
+# Set `build` only with a reason written beside it — a suite too slow to run at
+# every plan exit, and an accepted cost of finding merge breaks at deploy.
+postMergeCheck: full
+
 # External services the E2E suite needs, checked by wf-preflight.sh before
 # /wf-release runs the suite. One name, one check, joined by the FIRST ':'.
 # A check starting http:// or https:// is fetched; anything else is run as a

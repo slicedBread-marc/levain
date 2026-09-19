@@ -271,6 +271,25 @@ An unattended `/wf-release` or `/wf-deploy` reached its promotion prompt with no
    promotion runs, the gate re-opens by design — the human is being asked about new work, not
    asked again about work they already cleared.
 
+   **Exit 5 — "refusing to record an approval for a batch that has moved."** The ref moved between
+   the question being asked and the answer being given, so recording it would put a dead approval
+   in the ledger that the next worker silently discards. Do not retry the same close. Re-derive
+   the batch from the remote refs (step 1's fetch), show the human what is *actually* there, and
+   only then:
+   ```bash
+   scripts/wf-exec.sh wf-gate-close.sh DEPLOY "approved — <what they said, naming the re-derived batch>" \
+     --decision approve --batch-moved-ok
+   ```
+   `--batch-moved-ok` says "I looked at the current tip and this answer is about that". It is not
+   a retry flag. If the human's answer would change with the extra commits, ask them again instead.
+
+   client-a WFI-264 is what this exists for: a `deploy-deferred-criteria` gate opened against an
+   origin/release ref four hours stale, a human approved it, the deploy fetched, the tip mismatched,
+   and the identical question re-opened 41 seconds later — indistinguishable to them from the
+   by-design case above. They answered the same question twice. Gates now fetch before stamping the
+   tip, so this should be rare; when it does happen it is now loud and it happens while you are
+   still standing there.
+
    Then check whether a daemon is live before saying what happens next:
    ```bash
    scripts/wf-exec.sh wf-orchestrate.sh --daemon-status
@@ -315,6 +334,26 @@ Never write a grant the user did not ask for, never widen one to save a future r
 **A thing the user said to you is not a grant.** "Process them all", "go ahead", "yes to everything" — these tell *you*, in this conversation, how to work the queue in front of you. They authorize nothing outside it and they expire when the conversation does. client-a's WFI-227: a worker took "process them all" as standing authority, closed a `spec-approval` gate on its own recognisance, and had an implementer running by the time the human answered the same question three minutes later in `/wf-attend`. The resolution it wrote said so out loud — "approved by the assistant … not by Marc" — and nothing read it.
 
 The only durable authorization is the one in `claude-workflow.yml`, which is why this section exists at all (WFI-159). If a conversational instruction sounds like it should outlive the session, that is the moment to offer to write it down — with an author, a date and an expiry — not to act as though it already had been. And `spec-approval` and `manual-test` can never be written down there; `wf-gate-close.sh` refuses an unattended close of any gate without a checked `--basis`, so the harness now stops this rather than trusting it.
+
+### `deploy-suite-red`
+
+Not an approval question, and there is no answer here that promotes anything. `/wf-deploy` merged
+this exact `release` tip into `main`, ran the whole suite, and it failed; step 2b is refusing to
+spend the suite again on a tree that cannot have changed. Read the failing test out of the question
+(and `MEMO_LOG=` for the full output), then route it like any other defect:
+
+- **There is no plan or bug for it** — file one: `/wf-bug` it, or `scripts/wf-exec.sh wf-bug-new.sh
+  "<failing test>: <what it asserts vs. what happens>" --severity High --source agent:wf-deploy`.
+  The fix goes through the pipeline onto a feature branch like anything else. **Never fix it by
+  hand on `release`.**
+- **It is already in flight** — say which plan, and leave the gate closed with that as the
+  resolution. The memo clears itself when the fix lands: anything merged into `release` moves the
+  tip, and the memo is keyed to the tip.
+
+The usual cause is a semantic merge break — two plans green in their own worktrees, broken
+together — which `/wf-test`'s post-merge check now runs the full suite to catch at the plan that
+caused it (`postMergeCheck:`). A `deploy-suite-red` gate on a project with `postMergeCheck: build`
+is first evidence that the setting is costing more than it saves.
 
 ### `needs-input` (or any gate name not listed above)
 

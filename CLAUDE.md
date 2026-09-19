@@ -155,6 +155,12 @@ commit set it was given for, and read back by `wf-promote-approval.sh` — which
 dispatcher and the two skills consult **before** the grant. Without it an approval could not
 reach the merge at all (client-b WFI-005).
 
+That scoping needs the stamped tip to be one that exists: gates fetch before stamping, and
+`wf-gate-close.sh` refuses (exit 5) an approval for a batch the ref has moved past rather than
+recording one a worker will silently discard (client-a WFI-264). A deploy whose suite goes
+red records it against the release tip (`wf-deploy-suite-memo.sh`), so the next dispatch parks
+`deploy-suite-red` instead of re-merging the same commits and re-running the same suite.
+
 Each client also gets a generated `WORKFLOW.md` at its project root (from `templates/WORKFLOW.md`) — the entry-point contract for any agent or script that lands in that repo cold: pipeline shape, hooks that fire automatically, and the `wf-orchestrate.sh` exit codes.
 
 ---
@@ -204,7 +210,7 @@ Bugs move through: `bugs/open/` → `bugs/triaged/` → `bugs/closed/`
 
 4. **Verify agent** (automatic) — triggered by REGISTRY state change to `verify`. Checks code, spec completeness, and design soundness. Auto-routes: clean→`testing`, findings→`active`, escalated→`draft`.
 
-5. **T4 (Tester)** runs `/wf-test` — greps REGISTRY for `testing` state. Guides human through acceptance criteria. On pass, creates PR to release.
+5. **T4 (Tester)** runs `/wf-test` — greps REGISTRY for `testing` state. Guides human through acceptance criteria. On pass, merges `release` in, runs `wf-post-merge-check.sh` (the **full suite** by default — `postMergeCheck:` in `claude-workflow.yml`) on the merged tree, and creates the PR to release. That check is the only thing between a semantic merge break and `release`: two plans green alone and red together used to be found by `/wf-deploy`, one 20-minute suite at a time, long after both plans were complete (client-a WFI-264).
 
 6. **Release** — `/wf-release` merges approved PRs into the release branch and runs E2E tests to validate staging.
 
