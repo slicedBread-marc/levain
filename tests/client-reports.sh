@@ -2519,6 +2519,43 @@ eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-903 spec-approval)"
 assert_eq "an edited plan makes it stale again" "true" "$GATE_STALE"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A skill closes its own gate, not whatever is open (client-b WFI-010)"
+
+# An attended /wf-test held PLN-010's claim; an unattended worker opened a
+# needs-input gate on it asking about a test account. The tester's exit ran
+# `wf-gate-close.sh PLN-010 "manual test found 1 issue(s)"` with no gate named,
+# closed the needs-input gate, and recorded the test-exit message as the answer
+# to a question about test credentials — a wrong decision of record.
+registry_add_row PLN-943 wrong-gate testing
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-943 needs-input "which account tests the login?" >/dev/null 2>&1
+assert_eq "closing a gate that is not the caller's is refused" "5" \
+  "$("$SCRIPT_DIR/wf-gate-close.sh" PLN-943 "manual test found 1 issue(s)" --only manual-test >/dev/null 2>&1; echo $?)"
+# Captured, never piped into `grep -q`: this file runs under `pipefail`, and a
+# -q grep exits on its first match, so the writer takes SIGPIPE and the
+# pipeline reports 141 however good the output was.
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-943 needs-input)"
+assert_eq "and the question it would have deleted is still parked" "true" "$GATE_OPEN"
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-943 manual-test)"
+assert_eq "nothing was recorded against the gate the caller named" "false" "$GATE_ANSWERED"
+
+# The caller's own gate closes normally.
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-943 "account is seeded by the fixture" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-943 manual-test "2 criteria need eyes" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-943 "manual test passed" --only manual-test >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-943 manual-test)"
+assert_eq "its own gate closes as before" "true" "$GATE_ANSWERED"
+
+# No gate open is a no-op, never a backfill — that is what separates --only
+# from --gate, and why an unattended pass cannot leave a record saying a human
+# signed something off.
+registry_add_row PLN-944 never-gated testing
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-944 "manual test passed" --only manual-test >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-944 manual-test)"
+assert_eq "no gate open records nothing" "false" "$GATE_ANSWERED"
+assert_eq "and --only with --gate is refused outright" "1" \
+  "$("$SCRIPT_DIR/wf-gate-close.sh" PLN-943 x --only manual-test --gate manual-test >/dev/null 2>&1; echo $?)"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "A review says which text it judged (client-a WFI-069)"
 
 # Staleness was a comparison of two day-granular dates, so a plan reviewed and

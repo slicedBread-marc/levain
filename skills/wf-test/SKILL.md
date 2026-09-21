@@ -926,7 +926,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    ```bash
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete - \
      --commit "test(PLN-NNN-<slug>): human test passed — complete"
-   scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "manual test passed"
+   scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "manual test passed" --only manual-test
    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    ```
 
@@ -1067,10 +1067,12 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
      --commit "<message from above>" \
      --add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md \
            plans/auto-test-log.md
-   scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "manual test found N issue(s)"
+   scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "manual test found N issue(s)" --only manual-test
    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    ```
    Close the gate on this path too. A findings exit sends the plan to `draft`, and a `manual-test` gate left open there parks it in front of a planner who has nothing to answer.
+
+   **`--only manual-test` is not optional, on either exit path.** The only gate this skill opens is `manual-test`, and without the flag the script closes whatever is open — which on a busy plan is somebody else's question. client-b' PLN-010 had an unattended worker open a `needs-input` gate asking about a test account while an attended `/wf-test` held the claim; the tester's exit closed that gate and recorded "manual test found 1 issue(s)" as the answer to it (WFI-010). With the flag, a different gate open is exit 5 and nothing is touched: go answer it deliberately, then retry. No gate open at all is a silent no-op, as before.
 
    **The order of these three lines is the contract — see [Order of exit](#order-of-exit).**
 

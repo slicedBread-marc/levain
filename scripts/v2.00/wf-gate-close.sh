@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# wf-gate-close.sh <artifact-id> [resolution] [--gate <name>] [--basis <basis>]
+# wf-gate-close.sh <artifact-id> [resolution] [--gate <name>] [--only <name>]
+#                  [--basis <basis>]
 #
 # Releases a parked artifact. The next dispatcher sweep picks it up again.
 # Safe to call when no gate is open.
@@ -29,6 +30,25 @@
 #                writing (client-a WFI-060, PLN-019's spec approval), and
 #                the only workarounds are faking an open gate or overriding the
 #                skill's own rule.
+#
+# --only <name>  Close the open gate ONLY if it is this one. A different gate
+#                open is a refusal (exit 5), and no gate open is a no-op — it
+#                never backfills, which is what separates it from --gate.
+#
+#                Without it, this script closes whatever is open, and a skill
+#                that means "close MY gate" says exactly the same thing as
+#                "close anything". client-b' PLN-010: an attended /wf-test
+#                held the claim, an unattended worker opened a `needs-input`
+#                gate on the plan asking about a test account, and the tester's
+#                exit ran `wf-gate-close.sh PLN-010 "manual test found 1
+#                issue(s)"`. That closed the needs-input gate and recorded the
+#                test-exit message as the answer to a question about test
+#                credentials — a wrong decision of record, in the ledger, that
+#                had to be corrected by an appended note (WFI-010).
+#
+#                A gate is a question, and answering the wrong one is worse
+#                than answering none: the question disappears and the record
+#                says a human settled it.
 #
 # --resolves <s> Tick the unchecked finding(s) this answer settles. <s> is a
 #                substring matched against the finding text, or the word `all`
@@ -147,6 +167,7 @@ source "$SELF_DIR/wf-orch-lib.sh"
 artifact=""
 resolution=""
 forced_gate=""
+only_gate=""
 basis=""
 resolves=""
 plan_body_fp_at_open=""
@@ -157,6 +178,7 @@ batch_moved_ok=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --gate)  forced_gate="${2:?--gate requires a gate name}"; shift 2 ;;
+    --only)  only_gate="${2:?--only requires a gate name}"; shift 2 ;;
     --basis) basis="${2:?--basis requires a value}"; shift 2 ;;
     --decision)
       decision="${2:?--decision requires approve or reject}"
@@ -174,8 +196,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "$artifact" ] || { echo "Usage: $0 <artifact-id> [resolution] [--gate <name>] [--basis <basis>]" >&2; exit 1; }
+[ -n "$artifact" ] || { echo "Usage: $0 <artifact-id> [resolution] [--gate <name>] [--only <name>] [--basis <basis>]" >&2; exit 1; }
 resolution="${resolution:-resolved}"
+
+if [ -n "$only_gate" ] && [ -n "$forced_gate" ]; then
+  echo "Error: --only and --gate are opposites — --gate records a resolution with no gate open," >&2
+  echo "       --only refuses to record one unless that exact gate is open. Pick one." >&2
+  exit 1
+fi
 
 # Accept PLN-004 / PLN-004-slug, or the fixed pipeline-stage literals
 # RELEASE / DEPLOY — see the matching comment in wf-gate-open.sh.
@@ -237,6 +265,20 @@ else
   gate_name="$forced_gate"
 fi
 [ -n "$forced_gate" ] && gate_name="$forced_gate"
+
+# ── --only: this gate, or none ────────────────────────────────────────────
+# Before anything is removed or recorded, so a refusal leaves the gate exactly
+# as it was — the same rule the unattended check below follows.
+if [ -n "$only_gate" ] && [ "$gate_name" != "$only_gate" ]; then
+  echo "wf-gate-close: $id has '$gate_name' open, not '$only_gate' — nothing closed." >&2
+  echo "  The caller asked to close its own gate and found somebody else's question parked" >&2
+  echo "  on this artifact (WFI-010). Closing it would delete that question and record this" >&2
+  echo "  resolution as its answer." >&2
+  [ -n "$gate_question" ] && echo "  Open question: $gate_question" >&2
+  echo "  Answer it deliberately — /wf-attend, or wf-gate-close.sh $id \"<answer>\" — then retry." >&2
+  wf_event gate-close-refused "$id" "$gate_name open, caller asked for $only_gate (WFI-010)"
+  exit 5
+fi
 
 # ── Who is answering? ─────────────────────────────────────────────────────
 #
