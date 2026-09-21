@@ -157,7 +157,8 @@ Do not derive the ID by hand and do not call `wf-counter-next.sh` yourself. Ask:
 
 ```bash
 eval "$(scripts/wf-exec.sh wf-plan-id.sh BRF-041)"
-# → PLAN_ID, PLAN_NUM, PLAN_ID_INHERITED, PLAN_ID_COLLISION, PLAN_ID_RESUME, PLAN_ID_DIR
+# → PLAN_ID, PLAN_NUM, PLAN_ID_INHERITED, PLAN_ID_COLLISION, PLAN_ID_RESUME, PLAN_ID_DIR,
+#   PLAN_ID_CLAIMED_BY, PLAN_ID_CLAIMED_STATE
 ```
 
 `PLAN_ID_INHERITED=true` is the ordinary case: the number was free and the plan keeps it.
@@ -165,6 +166,12 @@ eval "$(scripts/wf-exec.sh wf-plan-id.sh BRF-041)"
 **Ask again immediately before you create the folder (step 5).** The answer describes the registry and `plans/` at the instant it was given, and step 3 is minutes of exploration, drafting and user confirmation away from step 5. client-a's WFI-147: two sessions on BUG-075 both got `PLN-075, COLLISION=, RESUME=false` seconds apart — both answers correct — and both drafted a plan under that number with different slugs. The duplicate was written and committed before `wf-registry-add.sh` refused the second row, which is the only backstop there is and it fires last. The second call is cheap, and it has seen the other session's work.
 
 **`PLAN_ID_RESUME=true` means the folder already there is yours** — an earlier attempt at this same artifact wrote it and did not finish. `PLAN_ID_DIR` is the folder: read what is in it, keep what is still right, and continue. Do **not** create a second folder and do not treat it as a collision.
+
+**A resume is only ever a plan still in `draft`.** A brief that sequences several plans is named by every one of them forever — the header field names the brief, and nothing in it names the move — so move 2, 3 and 4 all point at move 1's folder, and move 1 is finished work. client-b' BRF-010 move 4 was answered `PLAN_ID_DIR=plans/PLN-010-animation-lab`, complete since the day before; continuing there as instructed would have overwritten a completed plan's `plan.md`, `findings.md` and `progress.md` (WFI-016). The script now passes over any claimant that has left `draft` and reports it as `PLAN_ID_CLAIMED_BY` / `PLAN_ID_CLAIMED_STATE` instead, with the reason in `PLAN_ID_COLLISION`.
+
+**`PLAN_ID_CLAIMED_BY` set with `PLAN_ID_RESUME=false` is a plan that already exists for this artifact and is past drafting.** You have a fresh number and an empty `PLAN_ID_DIR`. Before writing anything, decide which case this is, and say which in the new plan's Context line:
+- the brief genuinely sequences several plans and this is the next move — write the new plan, and name the earlier move so the sequence is legible;
+- this artifact has already been specced and something re-dispatched it — there is no spec work to do. Stop and say so rather than writing a second plan for one bug.
 
 **A resume does not always carry the inherited number.** `PLAN_ID_RESUME=true` together with `PLAN_ID_INHERITED=false` means the earlier attempt had itself collided and wrote under a *reallocated* number. **Use `$PLAN_ID`** — never the source artifact's own number — for the folder, the row, the branch and every commit message. client-a's WFI-162: BRF-081's first attempt wrote `plans/PLN-101-headless-support-bundle/`, and the resume check only ever looked under `plans/PLN-081-*`, so the next dispatch found nothing, allocated PLN-102, and burned a counter increment on a plan that must never exist. Every re-dispatch would have burned another, and a run driven by the brief ID alone would have created the duplicate.
 
@@ -296,6 +303,7 @@ If the user picks a bug BUG-NNN:
    ```bash
    eval "$(scripts/wf-exec.sh wf-plan-id.sh <SRC-ID>)"
    ```
+   - `PLAN_ID_CLAIMED_BY` non-empty with `PLAN_ID_RESUME=false` — a plan naming this artifact exists and is `$PLAN_ID_CLAIMED_STATE`, past drafting. It is **not** yours to write into (WFI-016). Use the fresh `$PLAN_ID`, and resolve the two cases in [ID Inheritance](#id-inheritance) before you do.
    - `PLAN_ID_RESUME=true` — another session (or an earlier attempt of yours) created the folder while you were drafting. **Continue in `$PLAN_ID_DIR`**, whatever slug it carries, and under whatever number `$PLAN_ID` names — a resume folder may sit under a reallocated number (WFI-162). Fold anything you drafted into what is there. Do not create a second folder. (Write straight into `$PLAN_ID_DIR` — it is already tracked, so the staging below does not apply.)
    - `PLAN_ID_INHERITED=false` — the number was taken while you were drafting. Use the reallocated `$PLAN_ID` and record `$PLAN_ID_COLLISION` in the Context line.
    - Otherwise nothing moved: this is a new plan, and it is written in **staging** — see below.

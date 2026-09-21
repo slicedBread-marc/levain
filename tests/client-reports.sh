@@ -3876,6 +3876,39 @@ assert_eq "and the duplicate is named in the collision note" "true" \
   "$(printf '%s' "$PLAN_ID_COLLISION" | grep -q 'DUPLICATE PLANS FOR BRF-970' && echo true || echo false)"
 rm -rf plans/PLN-972-the-duplicate
 
+# WFI-016: a brief that sequences several plans is named by every one of them
+# forever, so move 2, 3 and 4 all resolve onto move 1's folder — and move 1 is
+# finished work. client-b' BRF-010 move 4 was answered RESUME=true,
+# DIR=plans/PLN-010-animation-lab, complete since the previous day; following
+# that literally overwrites a completed plan's plan.md, findings and progress.
+registry_add_row PLN-974 move-one complete
+printf '# PLN-974\n\n> **Brief:** briefs/BRF-974-sequenced.md\n\n## Goal\nx\n' \
+  > plans/PLN-974-move-one/plan.md
+eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-974)"
+assert_eq "a completed plan naming the brief is not a resume target" "false" "$PLAN_ID_RESUME"
+assert_eq "so a fresh number is allocated instead" "false" "$PLAN_ID_INHERITED"
+assert_eq "and nothing points the caller at the completed folder" "" "$PLAN_ID_DIR"
+assert_contains "the collision note says which folder was passed over and why" \
+  "plans/PLN-974-move-one (complete)" "$PLAN_ID_COLLISION"
+
+# Same rule, every state that has left drafting. `ready` has a builder coming
+# for it; a spec session writing into it is not resuming a draft.
+registry_add_row PLN-975 move-two ready
+printf '# PLN-975\n\n> **Brief:** briefs/BRF-975-sequenced.md\n\n## Goal\nx\n' \
+  > plans/PLN-975-move-two/plan.md
+eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-975)"
+assert_eq "a plan past draft is not a resume target either" "false" "$PLAN_ID_RESUME"
+assert_contains "and the state that disqualified it is named" "(ready)" "$PLAN_ID_COLLISION"
+
+# The resume that IS a resume still works — draft is the state a spec session
+# can continue, and that is the whole point of the branch above it.
+registry_add_row PLN-976 still-drafting draft
+printf '# PLN-976\n\n> **Brief:** briefs/BRF-976-sequenced.md\n\n## Goal\nx\n' \
+  > plans/PLN-976-still-drafting/plan.md
+eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-976)"
+assert_eq "a draft naming the brief is still resumed" "true" "$PLAN_ID_RESUME"
+assert_eq "in its own folder" "plans/PLN-976-still-drafting" "$PLAN_ID_DIR"
+
 # WFI-161: a reallocation leaves the session's claim on the SOURCE number, so
 # the plan it is writing is unclaimed — and the daemon dispatched a second spec
 # worker onto it the moment wf-registry-add.sh committed the draft row.

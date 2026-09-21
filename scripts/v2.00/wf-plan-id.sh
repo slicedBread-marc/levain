@@ -154,6 +154,8 @@ if [ "$prefix" = "PLN" ]; then
   wf_emit PLAN_ID_COLLISION ""
   wf_emit PLAN_ID_RESUME    "false"
   wf_emit PLAN_ID_DIR       ""
+  wf_emit PLAN_ID_CLAIMED_BY    "${blocked_id:-}"
+  wf_emit PLAN_ID_CLAIMED_STATE "${blocked_id_state:-}"
   exit 0
 fi
 
@@ -201,6 +203,8 @@ if [ -z "$collision" ]; then
   wf_emit PLAN_ID_COLLISION ""
   wf_emit PLAN_ID_RESUME    "false"
   wf_emit PLAN_ID_DIR       ""
+  wf_emit PLAN_ID_CLAIMED_BY    "${blocked_id:-}"
+  wf_emit PLAN_ID_CLAIMED_STATE "${blocked_id_state:-}"
   exit 0
 fi
 
@@ -257,7 +261,69 @@ claims_this() {
   ' "$1/plan.md" 2>/dev/null
 }
 
-if [ -n "$existing_dir" ] && claims_this "$existing_dir"; then
+# ── A resume target has to be a plan still being drafted ──────────────────
+#
+# `claims_this` answers "does this folder name the artifact being specced". For
+# a brief that sequences SEVERAL plans, every one of them answers yes forever:
+# the header field names the brief, and nothing in it names the move. So the
+# second, third and fourth moves of a brief all resolve onto the FIRST move's
+# folder — and that folder is finished work.
+#
+# client-b' BRF-010 says so in its own Plan field: "(none — this brief
+# sequences several future plans, not one)". Move 4 was answered
+# PLAN_ID_RESUME=true, PLAN_ID_DIR=plans/PLN-010-animation-lab — move 1,
+# complete since the previous day. Following step 5 literally ("Continue in
+# $PLAN_ID_DIR, whatever slug it carries") overwrites a completed plan's
+# plan.md, findings.md and progress.md (WFI-016).
+#
+# A plan being drafted is the only thing a spec session can continue. Draft, or
+# no registry row at all — a folder mid-creation, which is WFI-169's case and
+# still this artifact's to finish. Every other state means the plan left
+# drafting: `ready` and `active` have a builder on them, `testing` has a tester,
+# `complete` and `abandoned` are terminal. Writing into any of those is not
+# resuming a draft, it is overwriting somebody else's plan, and the number is
+# cheaper than the document.
+#
+# This does not settle which plan a later move SHOULD land in — nothing here
+# can, while the only evidence is a brief ID every move shares. It settles that
+# the answer is never a plan that has moved on.
+resumable_plan() {
+  local pid st
+  pid=$(basename "$1" | grep -oE '^PLN-[0-9]+' || true)
+  [ -n "$pid" ] || return 1
+  st=$(wf_registry_field "$pid" state "$REGISTRY" 2>/dev/null || true)
+  case "$st" in
+    ""|draft) return 0 ;;
+    *) blocked_state="$st"; return 1 ;;
+  esac
+}
+
+# Named by the note below when a candidate was passed over for its state.
+#
+# PASSED OVER IS NOT INVISIBLE. A plan that names this artifact and has left
+# draft is the answer to a different question, and something already asks it:
+# wf-spawn.sh refuses to spawn a spec worker for a brief whose plan is past
+# draft, and finds that plan through this script (client-a WFI-188). Report
+# it as PLAN_ID_CLAIMED_BY/PLAN_ID_CLAIMED_STATE rather than as a resume, so
+# the guard keeps its evidence and the caller still never writes into it.
+blocked_state=""
+blocked_dirs=""
+blocked_id=""
+blocked_id_state=""
+note_blocked() {
+  local pid
+  pid=$(basename "$1" | grep -oE '^PLN-[0-9]+' || true)
+  blocked_dirs="${blocked_dirs:+$blocked_dirs, }$1 ($blocked_state)"
+  if [ -z "$blocked_id" ]; then
+    blocked_id="$pid"
+    blocked_id_state="$blocked_state"
+  fi
+  wf_event id-resume-blocked "$id" "$1 names $id but is $blocked_state — not a resume target (WFI-016)"
+}
+
+if [ -n "$existing_dir" ] && claims_this "$existing_dir" && ! resumable_plan "$existing_dir"; then
+  note_blocked "$existing_dir"
+elif [ -n "$existing_dir" ] && claims_this "$existing_dir"; then
   wf_event id-resume "$id" "PLN-${num} folder $existing_dir is this artifact's own — resuming, not reallocating"
   wf_emit PLAN_ID           "PLN-${num}"
   wf_emit PLAN_NUM          "$num"
@@ -265,6 +331,8 @@ if [ -n "$existing_dir" ] && claims_this "$existing_dir"; then
   wf_emit PLAN_ID_COLLISION ""
   wf_emit PLAN_ID_RESUME    "true"
   wf_emit PLAN_ID_DIR       "$existing_dir"
+  wf_emit PLAN_ID_CLAIMED_BY    "${blocked_id:-}"
+  wf_emit PLAN_ID_CLAIMED_STATE "${blocked_id_state:-}"
   exit 0
 fi
 
@@ -293,6 +361,10 @@ resume_extra=""
 while IFS= read -r d; do
   [ -n "$d" ] || continue
   claims_this "$d" || continue
+  if ! resumable_plan "$d"; then
+    note_blocked "$d"
+    continue
+  fi
   if [ -z "$resume_dir" ]; then
     resume_dir="$d"
   else
@@ -320,6 +392,8 @@ if [ -n "$resume_dir" ]; then
   wf_emit PLAN_ID_COLLISION "$note"
   wf_emit PLAN_ID_RESUME    "true"
   wf_emit PLAN_ID_DIR       "$resume_dir"
+  wf_emit PLAN_ID_CLAIMED_BY    "${blocked_id:-}"
+  wf_emit PLAN_ID_CLAIMED_STATE "${blocked_id_state:-}"
   exit 0
 fi
 
@@ -360,7 +434,7 @@ if [ -f "$reserve_file" ]; then
       # Still free — the same answer as last time is the honest one.
       new_id="$reserved"
       wf_event id-reserved "$id" "re-using the reservation $reserved rather than allocating again (WFI-177)"
-    elif claims_this "$reserved_dir" || [ ! -f "$reserved_dir/plan.md" ]; then
+    elif { claims_this "$reserved_dir" && resumable_plan "$reserved_dir"; } || [ ! -f "$reserved_dir/plan.md" ]; then
       # This artifact's own earlier attempt, possibly one that got no further
       # than mkdir. Continue in it rather than leaving it orphaned (WFI-169).
       resume_num="${reserved#*-}"
@@ -372,12 +446,22 @@ if [ -f "$reserve_file" ]; then
       wf_emit PLAN_ID_COLLISION "$collision"
       wf_emit PLAN_ID_RESUME    "true"
       wf_emit PLAN_ID_DIR       "$reserved_dir"
+  wf_emit PLAN_ID_CLAIMED_BY    "${blocked_id:-}"
+  wf_emit PLAN_ID_CLAIMED_STATE "${blocked_id_state:-}"
       exit 0
     else
       wf_event id-reservation-lost "$id" "$reserved was reserved for $id but $reserved_dir now belongs to another artifact — allocating again"
       $peek || rm -f "$reserve_file"
     fi
   fi
+fi
+
+# Whatever was passed over for its state belongs in the answer, not only in the
+# event log. The caller is about to be told the number was reallocated, and
+# "PLN-010 names this brief but is complete" is the difference between a
+# reallocation that looks arbitrary and one a human can check in a second.
+if [ -n "$blocked_dirs" ]; then
+  collision="${collision:+$collision; }already-claimed by $blocked_dirs — not resumable (WFI-016)"
 fi
 
 # Nothing reserved, or the reservation was lost. Allocate a fresh number —
@@ -406,3 +490,5 @@ wf_emit PLAN_ID_INHERITED "false"
 wf_emit PLAN_ID_COLLISION "$collision"
 wf_emit PLAN_ID_RESUME    "false"
 wf_emit PLAN_ID_DIR       ""
+  wf_emit PLAN_ID_CLAIMED_BY    "${blocked_id:-}"
+  wf_emit PLAN_ID_CLAIMED_STATE "${blocked_id_state:-}"

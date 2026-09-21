@@ -285,6 +285,15 @@ case "${id%%-*}" in
       peek=$("$SELF_DIR/wf-plan-id.sh" "$id" --peek 2>/dev/null || true)
       if printf '%s' "$peek" | grep -q "PLAN_ID_RESUME='true'"; then
         state_id=$(printf '%s' "$peek" | grep '^PLAN_ID=' | cut -d"'" -f2)
+      else
+        # A plan that names this artifact and has left `draft` is not offered
+        # as a resume — a spec session writing into it would overwrite a plan
+        # a builder or tester already has (WFI-016). It is still exactly what
+        # this guard is looking for, so it is reported separately rather than
+        # dropped: without it, the brief whose plan went `ready` reads as never
+        # specced at all and gets another spec worker, which is WFI-188.
+        claimed=$(printf '%s' "$peek" | grep '^PLAN_ID_CLAIMED_BY=' | cut -d"'" -f2)
+        [ -n "$claimed" ] && state_id="$claimed"
       fi
     fi ;;
 esac
