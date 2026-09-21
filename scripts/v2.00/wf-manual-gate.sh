@@ -104,25 +104,7 @@ build_sha=""
 if [ -f "$progress_md" ] && [ -n "$build_sha" ]; then
   resolved_file=$(mktemp "${TMPDIR:-/tmp}/wf-manual-gate.XXXXXX")
   trap 'rm -f "$resolved_file"' EXIT
-  awk -F'|' -v sha="$build_sha" '
-    function trim(x) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", x); return x }
-    NF < 6 { next }
-    {
-      criterion = trim($3); build = trim($4); result = toupper(trim($5))
-      if (result != "PASS") next
-      if (criterion == "" || tolower(criterion) == "criterion") next
-      # Any hex run of 7+ characters in the Build cell is a candidate sha. It
-      # matches when it is a prefix of the tree standing here — the file
-      # abbreviates, and by how much is the writing sessions business.
-      n = split(build, parts, /[^0-9a-fA-F]+/)
-      for (i = 1; i <= n; i++) {
-        if (length(parts[i]) >= 7 && index(sha, tolower(parts[i])) == 1) {
-          print criterion
-          next
-        }
-      }
-    }
-  ' "$progress_md" > "$resolved_file"
+  wf_test_progress_passes "$progress_md" "$build_sha" > "$resolved_file"
   if [ -s "$resolved_file" ]; then
     resolved_args=(--resolved "$resolved_file")
   else

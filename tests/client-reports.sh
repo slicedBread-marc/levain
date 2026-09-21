@@ -5863,6 +5863,142 @@ assert_eq "and stands down rather than sweep from a tree nothing replaced" "true
   "$(grep -q 'daemon_exit_rc=5' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A transition is not an answer to the gate that gates it (client-b WFI-012)"
+
+# PLN-011 went draft -> ready at 512143e while its spec-approval gate had been
+# open and unanswered for an hour, on the strength of an unattended review
+# reaching Approved at round 3. A daemon was live, and the open gate was the
+# only thing still holding /wf-implement back from a plan no human had passed.
+cd "$TEST_DIR/main" || exit 1
+registry_add_row PLN-980 gated-transition draft
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-980" >/dev/null 2>&1
+
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-980 spec-approval "Widen the hero to full bleed — approve?" >/dev/null 2>&1
+
+out=$(env WF_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-980 draft ready 2>&1; echo "rc=$?")
+assert_eq "draft -> ready is refused while the spec-approval gate is open" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
+assert_eq "and says which gate, so the fix is the gate and not the row" "true" \
+  "$(printf '%s' "$out" | grep -q 'OPEN, unanswered spec-approval gate' && echo true || echo false)"
+assert_eq "and replays the question rather than re-deriving it" "true" \
+  "$(printf '%s' "$out" | grep -q 'Widen the hero to full bleed' && echo true || echo false)"
+assert_eq "the row is untouched — a refusal changes nothing" "draft" "$(registry_state PLN-980)"
+
+# Answering it is the whole fix. Nothing else has to change.
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-980 "approved" --gate spec-approval >/dev/null 2>&1
+assert_ok "once a human has answered, the same call goes through" \
+  env WF_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-980 draft ready
+assert_eq "and the plan is ready" "ready" "$(registry_state PLN-980)"
+
+# The reconcile case wf-attend's own rules describe: the gate's substance was
+# settled elsewhere and the row needs moving. A human's call, and typing the
+# override is how it is recorded as one.
+registry_add_row PLN-981 gated-override draft
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-981" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-981 spec-approval "Approve?" >/dev/null 2>&1
+assert_ok "WF_ALLOW_UNGATED=1 overrides for the reconcile case" \
+  env WF_ALLOW_UNREVIEWED=1 WF_ALLOW_UNGATED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-981 draft ready
+assert_eq "and only then does the row move" "ready" "$(registry_state PLN-981)"
+
+# A plan with no gate at all is unaffected — this guard asks one question and
+# invents nothing when there is no gate to read.
+registry_add_row PLN-982 ungated-plan draft
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-982" >/dev/null 2>&1
+assert_ok "a plan that was never gated transitions normally" \
+  env WF_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-982 draft ready
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A human test nobody performed does not complete (client-d WFI-009)"
+
+# PLN-004, PLN-005 and PLN-006 each reached `complete` within minutes of their
+# spec-approval gates closing. No manual-test gate was ever opened for any of
+# them, all 9 human criteria were unchecked, and two of the completing commits
+# say "human test passed — complete" while changing only REGISTRY.md.
+cd "$TEST_DIR/main" || exit 1
+registry_add_row PLN-983 untested-complete testing
+cat > plans/PLN-983-untested-complete/plan.md <<'PLAN950'
+# PLN-983-untested-complete
+
+## Goal
+Park a divergent report where a human can see it.
+
+## Verification Checklist
+
+### Human Test Criteria
+
+#### Manual
+- [ ] (eyes:blocking) the parked report makes it obvious what diverged
+- [ ] (eyes:cosmetic) the divergence banner sits clear of the table header
+PLAN950
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-983" >/dev/null 2>&1
+
+out=$(env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-983 testing complete 2>&1; echo "rc=$?")
+assert_eq "testing -> complete is refused with an unchecked eyes:blocking criterion" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
+assert_eq "and names the count, not just the rule" "true" \
+  "$(printf '%s' "$out" | grep -q '1 eyes:blocking' && echo true || echo false)"
+assert_eq "the plan stays in testing" "testing" "$(registry_state PLN-983)"
+
+# The cosmetic one alone never blocked anything — failing it files a bug and
+# ships. Check the blocking one off and the transition is the tester's to make.
+sed -i.bak 's/- \[ \] (eyes:blocking)/- [x] (eyes:blocking)/' plans/PLN-983-untested-complete/plan.md
+rm -f plans/PLN-983-untested-complete/plan.md.bak
+assert_ok "a ticked eyes:blocking criterion completes" \
+  env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-983 testing complete
+assert_eq "and the plan is complete" "complete" "$(registry_state PLN-983)"
+
+# The second way out: the criterion stays unchecked in plan.md — which is
+# correct, a passed manual criterion is never ticked — and the record of the
+# run settles it. This is the weaker question the gate cannot ask: not "is this
+# build judged" but "did anyone ever execute this".
+registry_add_row PLN-984 recorded-pass testing
+cp plans/PLN-983-untested-complete/plan.md plans/PLN-984-recorded-pass/plan.md
+sed -i.bak 's/- \[x\] (eyes:blocking)/- [ ] (eyes:blocking)/' plans/PLN-984-recorded-pass/plan.md
+rm -f plans/PLN-984-recorded-pass/plan.md.bak
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-984" >/dev/null 2>&1
+
+out=$(env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-984 testing complete 2>&1; echo "rc=$?")
+assert_eq "an unchecked criterion with no record anywhere is refused" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
+
+cat > plans/PLN-984-recorded-pass/test-progress.md <<'PROG951'
+# Test progress — PLN-984
+
+| # | Criterion | Build | Result | Notes |
+|-|-|-|-|-|
+| 1 | the parked report makes it obvious what diverged | abc1234 | PASS | judged at 1280px |
+PROG951
+assert_ok "a PASS in test-progress.md settles it — any run, any build" \
+  env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-984 testing complete
+
+# The third way out: a human was asked and replied. An answered manual-test
+# gate is the most direct evidence there is.
+registry_add_row PLN-985 gate-answered testing
+cp plans/PLN-984-recorded-pass/plan.md plans/PLN-985-gate-answered/plan.md
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-985" >/dev/null 2>&1
+out=$(env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-985 testing complete 2>&1; echo "rc=$?")
+assert_eq "no gate, no record, no tick — refused" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-985 manual-test "Eyeball the parked report?" >/dev/null 2>&1
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-985 "looked at it, it is obvious" --gate manual-test >/dev/null 2>&1
+assert_ok "an answered manual-test gate settles it" \
+  env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-985 testing complete
+
+# A plan with no blocking criteria at all is unaffected, which is most of them.
+registry_add_row PLN-986 no-manual testing
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-986" >/dev/null 2>&1
+assert_ok "a plan with no manual criteria completes untouched" \
+  env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-986 testing complete
+
+# And the override exists, because a criterion can be satisfied somewhere this
+# cannot see. It leaves a record: the caller had to type it.
+registry_add_row PLN-987 untested-override testing
+cp plans/PLN-984-recorded-pass/plan.md plans/PLN-987-untested-override/plan.md
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-987" >/dev/null 2>&1
+assert_ok "WF_ALLOW_UNTESTED=1 overrides" \
+  env WF_ALLOW_UNMERGED=1 WF_ALLOW_UNTESTED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-987 testing complete
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

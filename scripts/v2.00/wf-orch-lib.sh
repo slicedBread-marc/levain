@@ -686,6 +686,52 @@ wf_goal_span() {
   ' "$1"
 }
 
+# ── Criteria a test record already settled ───────────────────────────────
+#
+# wf-test records a PASS in test-progress.md and deliberately leaves plan.md's
+# checkbox alone — it ticks a box only on a deferral or a cosmetic failure. So
+# the two surfaces disagree by construction for every criterion that simply
+# passed, and anything counting open criteria out of plan.md counts passed ones
+# among them (WFI-013).
+#
+# Two callers, one parser, because they must never disagree about what the
+# record says:
+#
+#   wf-manual-gate.sh   passes the tip it is standing on. A PASS is a
+#                       measurement of one tree, and deciding whether to stop
+#                       for a human is a question about THIS build.
+#   wf-registry-update.sh  passes nothing. Its question at `testing -> complete`
+#                       is weaker and different — was this criterion ever
+#                       executed by anyone — and by then the worktree whose sha
+#                       would scope the answer is often already gone.
+#
+# Prints one criterion text per line. No file, no rows, no output, exit 0 —
+# "nothing was recorded" is an answer, not an error.
+wf_test_progress_passes() {
+  local file="$1" sha="${2:-}"
+  [ -f "$file" ] || return 0
+  awk -F'|' -v sha="$sha" '
+    function trim(x) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", x); return x }
+    NF < 6 { next }
+    {
+      criterion = trim($3); build = trim($4); result = toupper(trim($5))
+      if (result != "PASS") next
+      if (criterion == "" || tolower(criterion) == "criterion") next
+      if (sha == "") { print criterion; next }
+      # Any hex run of 7+ characters in the Build cell is a candidate sha. It
+      # matches when it is a prefix of the tree in hand — the file abbreviates,
+      # and by how much is the writing sessions business.
+      n = split(build, parts, /[^0-9a-fA-F]+/)
+      for (i = 1; i <= n; i++) {
+        if (length(parts[i]) >= 7 && index(sha, tolower(parts[i])) == 1) {
+          print criterion
+          next
+        }
+      }
+    }
+  ' "$file"
+}
+
 # ── Claims ────────────────────────────────────────────────────────────────
 #
 # A claim says "a live session is working this artifact". It is only worth

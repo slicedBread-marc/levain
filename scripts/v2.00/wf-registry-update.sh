@@ -51,6 +51,18 @@
 #   wf-registry-update.sh PLN-004 draft ready --note "scope settled against publish-guard"
 #   wf-registry-update.sh PLN-004 verify active --commit "verify(PLN-004): findings" --add plans/PLN-004-slug/findings.md
 #
+# GUARDS. Four transitions verify the claim they make rather than take the
+# caller's word for it. Each has its own override, and each override is a
+# sentence a human has to type:
+#
+#   draft -> ready      WF_ALLOW_UNREVIEWED=1   no review of record (WFI-164)
+#   draft -> ready      WF_ALLOW_UNGATED=1      spec-approval open, unanswered
+#                                               (client-b WFI-012)
+#   testing -> complete WF_ALLOW_UNTESTED=1     an eyes:blocking criterion with
+#                                               no tick, no record, no gate
+#                                               (client-d WFI-009)
+#   * -> complete       WF_ALLOW_UNMERGED=1     branch merged nowhere (WFI-165)
+#
 # Exit 0 on success, 1 on error.
 
 set -euo pipefail
@@ -258,6 +270,128 @@ if [ "$from_state" = "draft" ] && [ "$to_state" = "ready" ] && [ "${WF_ALLOW_UNR
   if [ "${REVIEW_STALE:-false}" = "true" ]; then
     echo "wf-registry-update: warning — $plan_id's review is STALE (the plan changed after the verdict)." >&2
     echo "                    Marking it ready anyway; re-review before a builder acts on it." >&2
+  fi
+fi
+
+# --- Guard: the gate that gates this transition is still open ------------
+#
+# An open `spec-approval` gate asks one question and only one: may a builder
+# start on this plan. `draft -> ready` IS that answer. So a transition written
+# while the gate is open and unanswered does not bypass a check somewhere else
+# in the pipeline — it answers the human's question on their behalf, in a
+# commit, and leaves the gate standing as the only thing still holding the
+# dispatch back.
+#
+# client-b WFI-012: PLN-011 went draft -> ready at 512143e on the strength of
+# an unattended architecture review reaching "Approved" at round 3 — its
+# spec-approval gate had been open and unanswered since 14:30Z. The subject
+# said as much: "spec approved round 3, transition was never applied". A daemon
+# was live (pid 84870) and the open gate was the single remaining reason
+# /wf-implement was not dispatched on a plan no human had approved.
+# wf-list-gates.sh reported fit=mismatch, correctly — but the state it named as
+# a mismatch was one the transition should not have been able to produce.
+#
+# The reviewer's verdict and the gate answer different questions, and the
+# transition here is the place that conflates them: the review asks "is this
+# plan sound", the gate asks "do you, the human, accept what it commits us to".
+# wf-replan-target.sh already refuses this for a REPLAN, but only by
+# re-deriving the need from gating tags. This asks nothing and derives nothing:
+# a gate is open, or it is not. Self-clearing, so the fix is always the same —
+# answer it, with the question it actually asked:
+#
+#   wf-gate-list.sh / wf-attend        the queue it is sitting in
+#   wf-gate-close.sh <id> spec-approval "<resolution>" --decision approve
+#
+# WF_ALLOW_UNGATED=1 for the reconcile case, which is real: wf-attend's own
+# rules cover a row whose gate has been settled in substance elsewhere and
+# needs closing rather than asking. That is a human's call, and typing the
+# override is how it is recorded as one.
+if [ "$from_state" = "draft" ] && [ "$to_state" = "ready" ] && [ "${WF_ALLOW_UNGATED:-}" != "1" ]; then
+  GATE_OPEN=false
+  GATE_ANSWERED=false
+  eval "$("$SELF_DIR/wf-gate-status.sh" "$plan_id" spec-approval 2>/dev/null || true)"
+  if [ "${GATE_OPEN:-false}" = "true" ] && [ "${GATE_ANSWERED:-false}" != "true" ]; then
+    echo "Error: $plan_id has an OPEN, unanswered spec-approval gate — refusing 'draft' -> 'ready'." >&2
+    echo "       That transition is the gate's own question. Writing it here answers for the" >&2
+    echo "       human and leaves their gate standing as the last thing holding dispatch back" >&2
+    echo "       (client-b WFI-012). A passing review is not an approval; they ask different" >&2
+    echo "       questions." >&2
+    # wf-gate-status.sh reads GATE_QUESTION off the RESOLVED record, and this
+    # gate has none by definition. The open file is where the question still
+    # lives, and replaying it verbatim is the whole point (WFI-180/181/182).
+    open_q=$(wf_gate_field "$(wf_gate_file "$plan_id" || true)" GATE_QUESTION 2>/dev/null || true)
+    [ -n "$open_q" ] && echo "       Asked: $open_q" >&2
+    echo "       Answer it, then run this again:" >&2
+    echo "         wf-gate-close.sh $plan_id spec-approval \"<resolution>\" --decision approve" >&2
+    echo "       Nothing was changed. WF_ALLOW_UNGATED=1 overrides (reconcile only)." >&2
+    exit 1
+  fi
+fi
+
+# --- Guard: a human test that nobody performed ---------------------------
+#
+# `testing -> complete` is the transition that asserts the human criteria were
+# satisfied. client-d's WFI-009: PLN-004, PLN-005 and PLN-006 all reached
+# `complete` unattended within minutes of their spec-approval gates closing. No
+# manual-test gate was ever opened for any of them — GATE_OPEN=false,
+# GATE_ANSWERED=false, basis none, for all three. All 9 human test criteria
+# were still unchecked, including PLN-006s (eyes:blocking) "the parked report
+# makes it obvious what diverged". Two of the completing commits say so in
+# their subjects: "human test passed — complete", changing only REGISTRY.md and
+# ticking no criterion. A human was at an attended terminal throughout and
+# performed no acceptance testing.
+#
+# Nothing reached production — origin/main had not moved in four days — but the
+# plans were `complete` on develop and origin/release, and each plan own verify
+# record had explicitly left those criteria open "for /wf-test".
+#
+# So the assertion is checked where it is made. An unresolved eyes:blocking
+# criterion is the one kind nothing may dismiss: somebody judged it as needing
+# eyes AND as blocking release without them (WFI-129). Three things can settle
+# it, and one of them must have happened:
+#
+#   the checkbox    ticked in plan.md — passed, deferred, or filed as cosmetic
+#   the record      a PASS in test-progress.md, by any run on any build. The
+#                   question here is weaker than the gate question: not "is
+#                   this build judged" but "did anyone ever execute this",
+#                   which is what these three plans could not answer.
+#   the gate        an answered manual-test gate. A human was asked and replied.
+#
+# Deliberately NOT wf-manual-gate.sh, though that script answers a neighbouring
+# question well: it gates when it cannot read the plan diff, and by the time a
+# plan completes its worktree is usually gone — so every honest completion
+# would refuse. This reads plan.md and test-progress.md, both of which are on
+# develop and outlive the branch.
+#
+# WF_ALLOW_UNTESTED=1 for a plan whose criteria were satisfied somewhere this
+# cannot see. Like every other override here it is for the exception, and it
+# leaves a record: the caller had to type it.
+if [ "$from_state" = "testing" ] && [ "$to_state" = "complete" ] \
+   && [ "${WF_ALLOW_UNTESTED:-}" != "1" ]; then
+  mt_slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
+  mt_dir="plans/${plan_id}-${mt_slug}"
+  if [ -f "$mt_dir/plan.md" ]; then
+    mt_resolved=$(mktemp "${TMPDIR:-/tmp}/wf-complete-guard.XXXXXX")
+    wf_test_progress_passes "$mt_dir/test-progress.md" > "$mt_resolved"
+    MANUAL_OPEN_BLOCKING=0
+    eval "$("$SELF_DIR/wf-manual-lint.sh" "$plan_id" --counts --resolved "$mt_resolved" 2>/dev/null || true)"
+    rm -f "$mt_resolved"
+    if [ "${MANUAL_OPEN_BLOCKING:-0}" -gt 0 ]; then
+      GATE_ANSWERED=false
+      eval "$("$SELF_DIR/wf-gate-status.sh" "$plan_id" manual-test 2>/dev/null || true)"
+      if [ "${GATE_ANSWERED:-false}" != "true" ]; then
+        echo "Error: refusing $plan_id 'testing' -> 'complete' — ${MANUAL_OPEN_BLOCKING} eyes:blocking" >&2
+        echo "       criterion(s) are unchecked in plan.md, no PASS for them in test-progress.md," >&2
+        echo "       and no answered manual-test gate. Nothing says a human ever saw them." >&2
+        echo "       An eyes:blocking criterion blocks release without eyes by definition; a" >&2
+        echo "       commit saying 'human test passed' does not make one true (client-d WFI-009)." >&2
+        echo "       Run /wf-test, or record the result where it can be read:" >&2
+        echo "         wf-manual-lint.sh $plan_id            # which criteria are open" >&2
+        echo "         wf-defer-criterion.sh $plan_id …      # if it cannot be tested yet" >&2
+        echo "       Nothing was changed. WF_ALLOW_UNTESTED=1 overrides." >&2
+        exit 1
+      fi
+    fi
   fi
 fi
 

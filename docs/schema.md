@@ -148,12 +148,18 @@ A dependency that is abandoned **will never be satisfied**. `wf-check-deps.sh` r
 
 **States are validated on write.** `wf-registry-update.sh` rejects any value outside the set above. It used to accept anything, so a typo — or a state someone invented under deadline — became a live value in the pipeline's single source of truth, unroutable by the orchestrator and permanently blocking to dependents. Use `wf-abandon.sh <ID> --reason "..."`, which records why in the plan's `progress.md`; the reason is the part that would otherwise be lost.
 
-**Two transitions carry a precondition, checked on write.** The registry is what every other skill trusts, so the two states that make a *claim about work someone else did* verify it rather than take the caller's word:
+**Two transitions carry preconditions, checked on write.** The registry is what every other skill trusts, so the two states that make a *claim about work someone else did* verify it rather than take the caller's word:
 
 | Transition | Refused when | Override |
 |-|-|-|
 | `draft → ready` | `plan.md` records no review verdict — `wf-review-status.sh` reports `REVIEW_LOCATION=none`, or the plan folder does not exist | `WF_ALLOW_UNREVIEWED=1` |
+| `draft → ready` | a `spec-approval` gate is open and unanswered | `WF_ALLOW_UNGATED=1` |
+| `testing → complete` | an unchecked `eyes:blocking` criterion with no PASS in `test-progress.md` and no answered `manual-test` gate | `WF_ALLOW_UNTESTED=1` |
 | `* → complete` | the Branch column names a branch that still exists and is an ancestor of none of `release`, `main`, `develop` (or their `origin/` counterparts) | `WF_ALLOW_UNMERGED=1` |
+
+The two added in v9.19.0 come from the same shape of failure on opposite ends of the pipeline: a transition written as if it *were* the judgement it is supposed to record. client-b' PLN-011 went `draft → ready` on an unattended review's "Approved", leaving the human's own spec-approval gate standing as the last thing between a daemon and a build nobody had signed off (WFI-012). client-d's PLN-004, PLN-005 and PLN-006 went `testing → complete` within minutes of their spec gates closing, 9 human criteria unchecked between them, two of the commits carrying the subject "human test passed — complete" and changing only `REGISTRY.md` (WFI-009). Neither is caught by the review check above: a review says the plan is sound, which is a different question from whether a human approved it or whether anyone tested it.
+
+`testing → complete` asks a deliberately weak question — *did anyone ever execute this*, on any build — because that is the one the three client-d plans could not answer. The stronger per-build question belongs to `wf-manual-gate.sh`, which needs a plan diff and so cannot be asked at completion, by which time the worktree is usually gone. An `eyes:blocking` criterion is the only kind that blocks: somebody judged it as needing eyes *and* as blocking release without them, and `eyes:cosmetic` explicitly files a bug and ships.
 
 `ready` tells a builder the plan was reviewed and approved, and a review that never reached disk turns that into a lie the pipeline cannot detect downstream — client-a's WFI-164 published a `ready` row over a `plan.md` holding the bare template placeholder, because a concurrent worker's stash had swept the review out of the shared checkout seconds before the transition committed. `complete` closes the plan, closes its bug, and licenses a release; WFI-165 reached it with the feature branch merged nowhere at all, and a full deploy shipped green without the fix the plan and the bug both claimed.
 
