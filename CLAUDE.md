@@ -10,6 +10,43 @@ Work in this repo is about building, improving, and maintaining that library, no
 - **Never run skills** directly.
 - Fixing pipeline data (registry, plan files, etc.) is secondary — **always prompt the user** before modifying data.
 
+## Two sessions write here — take the lock first
+
+This repo is no longer worked by one session. A session rooted here works it
+directly, and **an coordinator session reaches in from `~/dev/coordinator`** when a harness
+fault it is chasing across the portfolio turns out to live in the library
+(9.10.0 was written that way). Both edit the same `scripts/`, and a deploy
+publishes whatever is on disk into all nine clients — so the loser of that race
+either has its work overwritten mid-edit or ships a tree it never read.
+
+**`LIBRARY-LOCK.md` at the repo root is the switch.** It exists while somebody
+is working here and does not exist otherwise; presence *is* the state. It is
+gitignored — both sessions are on the same disk, and a lock that travels in a
+commit arrives as a merge conflict.
+
+```bash
+./lock.sh status                       # who holds it, and whether they're alive
+./lock.sh take library "<what you're about to change>"
+./lock.sh release                      # when you stop working here
+```
+
+**Check it before your first edit, every session.** Not before reading: reading,
+reviewing, `./sweep-issues.sh`, `./check-profiles.sh` and filing are always
+fine. Take it before you touch `scripts/`, `skills/`, `templates/`, `tests/`,
+`install.sh` or `deploy-all.sh`, and **never run `./deploy-all.sh` while
+somebody else holds it** — that is the step that turns a private half-edit into
+nine clients' problem.
+
+Held by someone else (`status` exits 1)? Say so and stop; do not work around it.
+Holder's session is gone (`exit 3`, stale)? Tell the operator before taking it —
+the work the lock names may be half-applied — then
+`./lock.sh take library "<why>" --steal`.
+
+The lock is **advisory**, and that is the point: nothing can enforce it when the
+writers are agents and humans with a shell. What it does is make the collision
+visible at the one moment either side is still cheap to redirect.
+
+
 ## Clients
 
 - Deployment targets are listed in `deployments.txt` (one absolute path per line). Each receives copies of skills and scripts via `deploy-all.sh`.

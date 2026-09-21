@@ -641,8 +641,25 @@ candidates_consistency() {
 candidates_implement() {
   # Types: new | resume | fix are actionable; processing (claimed elsewhere)
   # and blocked (deps) are not.
-  local pending out rc=0
+  local pending rows out rc=0
   pending=$(candidates_consistency)
+
+  # EXIT 1 FROM THE LIST IS "NONE FOUND", NOT A FAULT
+  #
+  # wf-list-implementable.sh ends on `exit $((1 - found))` and documents 1 as
+  # "none found" — the ordinary state of a quiet repo. So it runs on its own
+  # here and its status is read BEFORE the filter below: under `pipefail` that
+  # 1 is otherwise the whole pipeline's status, and the filter's own check
+  # would then announce a failure on every idle sweep. At the shipped 60s that
+  # is ~1,440 lines a day of "implement candidate filter failed (rc=1)" with
+  # nothing wrong, which is how a reader learns to skip past the line that
+  # finally says rc=2. Anything above 1 is a real fault and is reported.
+  rows=$("$SELF_DIR/wf-list-implementable.sh" 2>/dev/null) || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "wf-orchestrate: wf-list-implementable.sh failed (rc=$rc) — dispatching no implement this sweep" >&2
+    return 0
+  fi
+  [ -n "$rows" ] || return 0
 
   # A plan still owing a consistency pass is not implementable yet — building
   # it first is what turns a cheap amendment into a migration. One awk pass
@@ -664,7 +681,8 @@ candidates_implement() {
   # trailing newline and a single-element list therefore contains none.
   # ENVIRON has no such parsing step and carries newlines verbatim, on every
   # awk this harness supports (client-b WFI-020).
-  out=$("$SELF_DIR/wf-list-implementable.sh" 2>/dev/null \
+  rc=0
+  out=$(printf '%s\n' "$rows" \
     | awk -F'\t' '$1 == "new" || $1 == "resume" || $1 == "fix" { print $2 }' \
     | WF_PENDING="$pending" awk '
         BEGIN { n = split(ENVIRON["WF_PENDING"], p, "\n"); for (i = 1; i <= n; i++) if (p[i] != "") skip[p[i]] = 1 }
@@ -676,6 +694,8 @@ candidates_implement() {
   # The `|| true` this replaces made those two indistinguishable, which is the
   # only reason the awk fault above survived: a broken filter and a quiet queue
   # produce the same empty string, and the dispatcher believed the quiet queue.
+  # The two awks above are the whole of what this now speaks for — a status
+  # from them means the subtraction itself broke.
   if [ "$rc" -ne 0 ]; then
     echo "wf-orchestrate: implement candidate filter failed (rc=$rc) — dispatching no implement this sweep" >&2
     return 0

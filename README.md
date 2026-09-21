@@ -158,6 +158,24 @@ one report improves the workflow everywhere, instead of each project accumulatin
 its own workarounds. Unattended workers file these too, which is how process bugs
 surface from runs nobody was watching.
 
+## One writer at a time
+
+Two sessions edit this repo: one rooted here, and an coordinator session reaching in from
+`~/dev/coordinator` when a fault it is chasing across the portfolio turns out to live in the
+library. `deploy-all.sh` ships whatever is on disk to every client, so a collision is
+not a merge conflict — it is nine projects running a tree nobody finished.
+
+```bash
+./lock.sh status                      # 0 free · 1 held · 2 yours · 3 stale
+./lock.sh take coordinator "<what you're about to change>"
+./lock.sh release
+```
+
+The switch is `LIBRARY-LOCK.md` at the repo root: present while somebody is working
+here, absent otherwise, and gitignored because both sessions share a disk. Advisory
+by necessity — the writers are agents and humans with a shell — so its job is to make
+the collision visible while either side is still cheap to redirect.
+
 ## Multi-Terminal Workflow (manual mode)
 
 ```

@@ -1177,6 +1177,32 @@ assert_eq "while still being offered a consistency pass" "true" \
 
 mv /tmp/wf-cfg-restore.$$ claude-workflow.yml; rm -f claude-workflow.yml.bak
 
+# A QUIET QUEUE IS NOT A FAILED FILTER EITHER
+#
+# The guard that makes a broken filter visible reads the pipeline's exit
+# status, and under `pipefail` that status is wf-list-implementable.sh's own —
+# which is 1 for "none found", the ordinary state of any repo with nothing
+# ready or active. So the fix above announced "implement candidate filter
+# failed (rc=1)" on every idle sweep, and at the shipped 60s interval that is
+# ~1,440 lines a day of a warning with nothing behind it: exactly how a reader
+# learns to skip past the one that finally says rc=2.
+#
+# A fresh install is the clearest case of an idle repo and the one every new
+# client starts from, so the check runs against a real one rather than against
+# this fixture, whose registry is full by the time the suite reaches here.
+IDLE_DIR=$(mktemp -d)
+(
+  cd "$IDLE_DIR" || exit 1
+  git init -q . && git commit -q --allow-empty -m init
+  "$LIB_ROOT/install.sh" . >/dev/null 2>&1
+  "$SCRIPT_DIR/wf-orchestrate.sh" --sweep --dry-run --force
+) > "$IDLE_DIR/sweep.log" 2>&1
+assert_eq "an idle repo dispatches nothing" "true" \
+  "$(grep -q '0 worker(s) would be dispatched' "$IDLE_DIR/sweep.log" && echo true || echo false)"
+assert_eq "and does not report a filter failure for being idle" "0" \
+  "$(grep -c 'candidate filter failed' "$IDLE_DIR/sweep.log" 2>/dev/null || true)"
+rm -rf "$IDLE_DIR"
+
 section "install.sh reports an untracked registry on every deploy"
 
 # The pipeline's state machine must be in git: plan.md, findings.md and
@@ -1495,6 +1521,117 @@ printf '%s\n%s\n%s\n' "$SWEEP_A" "$TEST_DIR/gone" "$SWEEP_B" > "$TEST_DIR/deploy
 assert_eq "a missing client is skipped, others still counted" "2" \
   "$(sweep --count 2>/dev/null | wc -l | xargs)"
 unset WF_DEPLOYMENTS
+
+section "One writer at a time in the library (lock.sh)"
+
+# The library is edited by its own session AND, since 9.10.0, by coordinator reaching
+# in from ~/dev/coordinator when a portfolio-wide fault turns out to live here. Both
+# touch the same scripts/, and deploy-all.sh ships whatever is on disk to nine
+# clients — so the switch that makes the collision visible has to be right
+# about who holds it.
+#
+# WF_LOCK_FILE keeps the real LIBRARY-LOCK.md out of this: a test that reaches
+# for the switch must not take it away from whoever is actually holding it.
+LOCK_FILE="$TEST_DIR/LIBRARY-LOCK.md"
+lock() { WF_LOCK_FILE="$LOCK_FILE" "$LIB_ROOT/lock.sh" "$@"; }
+rm -f "$LOCK_FILE"
+
+assert_ok "lock.sh is executable" test -x "$LIB_ROOT/lock.sh"
+assert_ok "an absent file means free" lock status
+free_out=$(lock status 2>&1)
+assert_eq "free is what it says" "true" \
+  "$(printf '%s' "$free_out" | grep -q 'free' && echo true || echo false)"
+
+lock take library "a trial edit" >/dev/null 2>&1
+assert_eq "taking it writes the switch at the top level" "true" \
+  "$([ -f "$LOCK_FILE" ] && echo true || echo false)"
+assert_eq "the file names the holder and the reason" "true" \
+  "$(grep -q '^\*\*Holder:\*\* library' "$LOCK_FILE" && grep -q 'a trial edit' "$LOCK_FILE" && echo true || echo false)"
+# The whole point of the file is that a session landing here cold learns what
+# not to touch from the file itself, not from remembering to ask.
+assert_eq "and says what must not be edited while it is held" "true" \
+  "$(grep -q 'deploy-all.sh' "$LOCK_FILE" && echo true || echo false)"
+
+rc=0; lock status >/dev/null 2>&1 || rc=$?
+assert_eq "your own lock reads as yours (exit 2), not as a block" "2" "$rc"
+rc=0; lock take library "a second, narrower edit" >/dev/null 2>&1 || rc=$?
+assert_eq "retaking your own lock succeeds" "0" "$rc"
+assert_eq "and rewrites the reason rather than keeping the stale one" "true" \
+  "$(grep -q 'a second, narrower edit' "$LOCK_FILE" && echo true || echo false)"
+
+# ── Somebody else's live lock ────────────────────────────────────────────
+#
+# A real second session, standing in as a process that is demonstrably alive
+# and demonstrably not us. `cat` on a fifo blocks until the fifo is written,
+# which needs no sleep and no polling.
+FIFO="$TEST_DIR/lock-holder.fifo"
+rm -f "$FIFO"; mkfifo "$FIFO"
+cat "$FIFO" >/dev/null 2>&1 &
+HOLDER=$!
+holder_start=$(ps -o lstart= -p "$HOLDER" 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^ *//; s/ *$//')
+sed "s/^\*\*Session PID:\*\* .*/**Session PID:** $HOLDER/; s|^<!-- pid-start: .*|<!-- pid-start: $holder_start -->|" \
+  "$LOCK_FILE" > "$LOCK_FILE.t" && mv "$LOCK_FILE.t" "$LOCK_FILE"
+
+rc=0; lock status >/dev/null 2>&1 || rc=$?
+assert_eq "a live holder that is not us reads as held (exit 1)" "1" "$rc"
+rc=0; lock take coordinator "barging in" >/dev/null 2>&1 || rc=$?
+assert_eq "take is refused while somebody live holds it" "1" "$rc"
+rc=0; lock release >/dev/null 2>&1 || rc=$?
+assert_eq "release refuses to lift another live session's lock" "1" "$rc"
+assert_eq "and the switch is still up" "true" \
+  "$([ -f "$LOCK_FILE" ] && echo true || echo false)"
+# Captured first, not piped into `grep -q`: this suite runs under `pipefail`
+# and `status` exits 1 BY DESIGN when the lock is held, which would carry out
+# of the pipeline as the grep's own failure.
+held_out=$(lock status 2>&1 || true)
+assert_eq "being held names the holder, so the block is actionable" "true" \
+  "$(printf '%s' "$held_out" | grep -q "HELD by 'library'" && echo true || echo false)"
+
+# ── The holder's session is gone ─────────────────────────────────────────
+#
+# A lock nobody can release is worse than no lock: the next session either
+# works through it or is stopped forever. `wait` reaps the zombie — a killed
+# process still answers `kill -0` until it is, which would read as alive.
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null || true
+rc=0; lock status >/dev/null 2>&1 || rc=$?
+assert_eq "a dead holder reads as stale (exit 3), not as held" "3" "$rc"
+rc=0; lock take coordinator "picking up dropped work" >/dev/null 2>&1 || rc=$?
+assert_eq "a stale lock is still not taken by accident" "3" "$rc"
+rc=0; lock take coordinator "picking up dropped work" --steal >/dev/null 2>&1 || rc=$?
+assert_eq "--steal is what takes it, deliberately" "0" "$rc"
+assert_eq "and the holder is now the stealer" "true" \
+  "$(grep -q '^\*\*Holder:\*\* coordinator' "$LOCK_FILE" && echo true || echo false)"
+
+# ── Identity, not just liveness ──────────────────────────────────────────
+#
+# PIDs are reused. A lock whose number now belongs to some unrelated process
+# would otherwise block the library forever on a session that ended weeks ago,
+# which is why the start time is recorded beside the PID. Here the PID is live
+# and is NOT ours — everything `kill -0` can tell you says "held" — and only
+# the start time says otherwise.
+rm -f "$FIFO"; mkfifo "$FIFO"
+cat "$FIFO" >/dev/null 2>&1 &
+IMPOSTOR=$!
+sed "s/^\*\*Session PID:\*\* .*/**Session PID:** $IMPOSTOR/; s|^<!-- pid-start: .*|<!-- pid-start: Thu 1 Jan 00:00:00 1970 -->|" \
+  "$LOCK_FILE" > "$LOCK_FILE.t" && mv "$LOCK_FILE.t" "$LOCK_FILE"
+rc=0; lock status >/dev/null 2>&1 || rc=$?
+assert_eq "a live PID with the wrong start time is stale, not a holder" "3" "$rc"
+kill "$IMPOSTOR" 2>/dev/null; wait "$IMPOSTOR" 2>/dev/null || true
+
+lock take library "done" --steal >/dev/null 2>&1
+lock release >/dev/null 2>&1
+assert_eq "release takes the switch back down" "false" \
+  "$([ -f "$LOCK_FILE" ] && echo true || echo false)"
+assert_ok "and the library reads free again" lock status
+rm -f "$FIFO"
+
+# The instruction has to reach BOTH sides or the switch is one-sided, and the
+# coordinator half lives in a repo this suite does not own. Assert only our own half;
+# coordinator' copy is prose in ~/dev/coordinator/CLAUDE.md and is checked by reading it.
+assert_eq "CLAUDE.md tells a session here to check the lock first" "true" \
+  "$(grep -q 'LIBRARY-LOCK.md' "$LIB_ROOT/CLAUDE.md" && echo true || echo false)"
+assert_eq "and the lock file itself is gitignored" "true" \
+  "$(grep -qx 'LIBRARY-LOCK.md' "$LIB_ROOT/.gitignore" && echo true || echo false)"
 
 section "Daemon lifecycle (client-a WFI-006, WFI-012)"
 
