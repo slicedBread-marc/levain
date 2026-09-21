@@ -810,7 +810,7 @@ sweep() {
 # condition worth notifying on: unambiguous, never self-correcting, and every
 # minute spent in it is wasted wall-clock.
 stall_note() {
-  local gates sig prev file rc=0 raw
+  local gates sig prev file rc=0 raw errfile footer
   file="$ORCH/stalled"
   # "The pipeline is empty or complete" is an assertion about gates, so it may
   # only be made when the gate list was actually READ. A failing wf-list-gates
@@ -818,14 +818,33 @@ stall_note() {
   # for the same reason everything else did — its build had been deleted — so
   # the daemon announced an empty pipeline over an open RELEASE gate and an
   # active plan. An unreadable gate list is now its own message.
-  raw=$("$SELF_DIR/wf-list-gates.sh" 2>/dev/null) || rc=$?
-  if [ "$rc" -ne 0 ]; then
+  #
+  # READABILITY IS PROVED BY THE FOOTER, NOT INFERRED FROM THE EXIT CODE
+  #
+  # That message keyed on a non-zero exit — but wf-list-gates.sh documents
+  # "exit 0 if any gate is open, 1 if none", so a clean pipeline ALWAYS exits 1
+  # and every idle daemon announced "the gate list is unreadable ... cause
+  # unknown, do not read this as an empty pipeline" over a pipeline that was
+  # simply empty. The `idle — nothing to dispatch` branch below could not be
+  # reached at all, and WFI-257's real case went back to being indistinguishable
+  # from the most ordinary state there is — which is what the message existed to
+  # prevent.
+  #
+  # So ask for evidence instead of for a status. wf-list-gates.sh ends list mode
+  # by printing `GATES: <n>` to STDERR, after the walk, on both paths. That
+  # footer is proof the walk ran to completion; its absence is the thing worth
+  # alarming about, and it stays true if the exit codes are ever renumbered.
+  errfile=$(mktemp)
+  raw=$("$SELF_DIR/wf-list-gates.sh" 2>"$errfile") || rc=$?
+  footer=$(grep -c '^GATES: ' "$errfile" 2>/dev/null || true)
+  rm -f "$errfile"
+  if [ "${footer:-0}" = "0" ]; then
     sig="unreadable"
     prev=$(wf_read1 "$file")
     [ "$sig" = "$prev" ] && return 0
     printf '%s' "$sig" > "$file"
-    wf_event stalled "—" "nothing dispatchable, and the gate list could not be read (wf-list-gates.sh exit $rc) — cause unknown, do not read this as an empty pipeline"
-    echo "$(wf_now)  STALLED — nothing dispatchable and the gate list is unreadable (wf-list-gates.sh exit $rc)"
+    wf_event stalled "—" "nothing dispatchable, and the gate list could not be read (wf-list-gates.sh exit $rc, no GATES: footer) — cause unknown, do not read this as an empty pipeline"
+    echo "$(wf_now)  STALLED — nothing dispatchable and the gate list is unreadable (wf-list-gates.sh exit $rc, no GATES: footer)"
     return 0
   fi
   gates=$(printf '%s\n' "$raw" \

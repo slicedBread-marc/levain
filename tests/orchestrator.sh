@@ -1786,6 +1786,71 @@ assert_eq "a changed stall is announced again" "2" \
 assert_eq "a newly gated plan gets its own skip line" "2" \
   "$(grep -c 'skip.*gate open' "$ORCH/events.log" 2>/dev/null | xargs)"
 
+# ── An empty pipeline is IDLE, not unreadable ────────────────────────────
+#
+# The "gate list could not be read" alarm keyed on a non-zero exit from
+# wf-list-gates.sh. But that script documents "exit 0 if any gate is open, 1 if
+# none" and prints its `GATES: <n>` footer to STDERR, so a perfectly clean
+# pipeline ALWAYS exits 1 — and every idle daemon announced "the gate list is
+# unreadable ... cause unknown, do not read this as an empty pipeline" over a
+# pipeline that was simply empty. The `idle` branch was unreachable, and
+# WFI-257's real case was back to being indistinguishable from the commonest
+# state there is. Readability is now proved by the footer, not inferred from
+# the status.
+rm -rf "$ORCH/gates"; mkdir -p "$ORCH/gates"
+rm -f "$ORCH/stalled"; rm -rf "$ORCH/skips"; : > "$ORCH/events.log"
+cat > plans/REGISTRY.md << 'IDLESEED'
+# Plan Registry
+
+| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |
+|-|-|-|-|-|-|-|-|-|
+| PLN-052 | allover | complete | — | — | 2026-08-02 | 2.00 | — | — |
+
+<!-- Counter: 53 -->
+IDLESEED
+mkdir -p plans/PLN-052-allover
+printf '# PLN-052\n\n## Goal\nnothing left to do\n' > plans/PLN-052-allover/plan.md
+
+"$SCRIPT_DIR/wf-orchestrate.sh" --daemon --interval 1 >>stall.log 2>&1 &
+stall_wrapper=$!
+sleep 3
+"$SCRIPT_DIR/wf-orchestrate.sh" --stop >/dev/null 2>&1
+wait "$stall_wrapper" 2>/dev/null || true
+
+assert_eq "no gates open reads as an empty pipeline, not an unreadable list" "true" \
+  "$(grep 'stalled' "$ORCH/events.log" 2>/dev/null | grep -q 'the pipeline is empty or complete' && echo true || echo false)"
+assert_eq "and the alarm for an unreadable list does not fire" "0" \
+  "$(grep -c 'could not be read' "$ORCH/events.log" 2>/dev/null || true)"
+
+# ── A genuinely unreadable list still alarms (WFI-257) ───────────────────
+#
+# The whole point of keeping the message: when the build really is gone, the
+# daemon must not report an empty pipeline over an open RELEASE gate. Driven
+# from a copy of the scripts with wf-list-gates.sh replaced by one that prints
+# nothing and dies — no footer, which is the evidence that is now missing.
+BROKEN_DIR="$TEST_DIR/broken-scripts"
+rm -rf "$BROKEN_DIR"; mkdir -p "$BROKEN_DIR"
+cp "$SCRIPT_DIR"/*.sh "$BROKEN_DIR"/ 2>/dev/null
+cat > "$BROKEN_DIR/wf-list-gates.sh" << 'BROKEN'
+#!/usr/bin/env bash
+# Stands in for a deleted build: nothing on stdout, no GATES: footer, dead.
+exit 127
+BROKEN
+chmod +x "$BROKEN_DIR"/*.sh
+rm -f "$ORCH/stalled"; rm -rf "$ORCH/skips"; : > "$ORCH/events.log"
+
+"$BROKEN_DIR/wf-orchestrate.sh" --daemon --interval 1 >>stall.log 2>&1 &
+stall_wrapper=$!
+sleep 3
+"$BROKEN_DIR/wf-orchestrate.sh" --stop >/dev/null 2>&1
+wait "$stall_wrapper" 2>/dev/null || true
+
+assert_eq "a missing GATES: footer is still reported as unreadable" "true" \
+  "$(grep 'stalled' "$ORCH/events.log" 2>/dev/null | grep -q 'could not be read' && echo true || echo false)"
+assert_eq "and it does NOT claim the pipeline is empty" "0" \
+  "$(grep -c 'pipeline is empty or complete' "$ORCH/events.log" 2>/dev/null || true)"
+rm -rf "$BROKEN_DIR" plans/PLN-052-allover
+
 rm -rf "$ORCH/gates"
 mv "$ORCH/gates.full" "$ORCH/gates" 2>/dev/null || mkdir -p "$ORCH/gates"
 mv plans/REGISTRY.full plans/REGISTRY.md
