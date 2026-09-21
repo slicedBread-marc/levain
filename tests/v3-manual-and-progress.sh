@@ -310,6 +310,37 @@ eval "$("$SCRIPT_DIR/wf-manual-gate.sh" PLN-007)"
 assert_eq "a rendering-surface diff with open eyes gates" "true" "$GATE"
 assert_eq "and names the file that decided it" "src/App/wwwroot/app.js" "$SURFACE_HIT"
 
+# A criterion wf-test already recorded PASS against THIS build is not open —
+# wf-test writes the result to test-progress.md and deliberately leaves
+# plan.md's checkbox alone, so the two files disagree for every criterion that
+# simply passed. client-b' PLN-011 was parked for a human with 8 of 8 recorded
+# PASS on the build standing there (WFI-013).
+ui_sha=$(git -C feature-branches/PLN-007-ui rev-parse --short HEAD)
+cat > plans/PLN-007-ui/test-progress.md << PROGRESS
+## Test Progress — PLN-007-ui
+
+| # | Criterion | Build | Result | Notes |
+|-|-|-|-|-|
+| 1 | /timer — usable one-handed on a phone | Aug 01 09:15 ($ui_sha) | PASS | |
+| 2 | /board — output contains the file name | Aug 01 09:15 ($ui_sha) | PASS | |
+| 3 | /board — reads clearly | Aug 01 09:15 ($ui_sha) | PASS | |
+| 4 | a patch touching azure-pipelines.yml is refused with a message naming the file | Aug 01 09:15 ($ui_sha) | PASS | |
+PROGRESS
+
+eval "$("$SCRIPT_DIR/wf-manual-gate.sh" PLN-007)"
+assert_eq "every criterion PASS on this build does not stop for a human" "false" "$GATE"
+assert_eq "and all four are counted as settled by the record" "4" "$MANUAL_RESOLVED_RECORD"
+assert_contains "and the reason says where that came from" "already PASS on this build" "$GATE_REASON"
+
+# The Build column is the whole point of that file: a PASS is a measurement of
+# one tree, and this is no longer that tree.
+sed -i.bak "s/$ui_sha/0000000/g" plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+eval "$("$SCRIPT_DIR/wf-manual-gate.sh" PLN-007)"
+assert_eq "a PASS recorded against an older build settles nothing" "true" "$GATE"
+assert_eq "and nothing is subtracted" "0" "$MANUAL_RESOLVED_RECORD"
+
+rm -f plans/PLN-007-ui/test-progress.md
+
 git worktree remove --force feature-branches/PLN-007-ui
 eval "$("$SCRIPT_DIR/wf-manual-gate.sh" PLN-007)"
 assert_eq "an unreadable diff gates rather than assumes" "true" "$GATE"

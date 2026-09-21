@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # wf-manual-lint.sh <plan-id-or-name> [--counts] [--file <plan.md>]
+#                   [--resolved <file>]
 #
 # Lints the `#### Manual` criteria in a plan's Verification Checklist.
 #
@@ -37,6 +38,33 @@
 #                MANUAL_OPEN_UNTAGGED (unchecked criteria carrying no eyes:*
 #                  tag of their own — overlaps MANUAL_OPEN_BLOCKING for a
 #                  pre-v6 plan, where the tag was assumed rather than written)
+#                MANUAL_RESOLVED_RECORD (unchecked criteria that --resolved
+#                  settled — the gap between the two files, see below)
+#
+# --resolved <file>
+#
+#   A file of criterion texts, one per line, that some OTHER record already
+#   settled. An unchecked criterion whose text matches one of them counts as
+#   resolved: out of every MANUAL_OPEN_* count, and into MANUAL_RESOLVED_RECORD.
+#
+#   THE TWO FILES DISAGREE BY DESIGN, WHICH IS THE BUG THIS ANSWERS. wf-test
+#   records a PASS in test-progress.md and deliberately leaves plan.md's
+#   checkbox alone — it only ever ticks a box on a deferral or a cosmetic
+#   failure. This parser reads plan.md. So a plan whose criteria had ALL passed
+#   still counted them open, and the gate opened every time: client-b' PLN-011
+#   recorded 8 of 8 PASS on the current build and was parked for a human
+#   anyway, with GATE_REASON naming an eyes:blocking criterion that had in fact
+#   been judged and passed twenty minutes earlier (WFI-013).
+#
+#   Matching is on normalized text — case, backticks, emphasis, the leading
+#   tag, collapsed whitespace and trailing punctuation all removed — by the ONE
+#   normalizer below, applied to both sides. Equal counts, and so does one
+#   containing the other when both are at least 24 characters, because the
+#   other record is written by hand and reaches this comparison with the route
+#   prefix dropped or a trailing clause summarized. A criterion genuinely
+#   paraphrased beyond that does not match and stays open: the failure mode is
+#   a gate that opens when it needn't, which is the direction this must fail
+#   in.
 #
 # Codes: untagged | unknown-tag | assertable
 
@@ -48,15 +76,22 @@ source "$(dirname "$0")/wf-orch-lib.sh"
 raw_id=""
 mode="lint"
 plan_file=""
+resolved_file=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --counts) mode="counts"; shift ;;
-    --file)   plan_file="${2:?--file requires a path}"; shift 2 ;;
-    -*)       echo "Unknown option: $1" >&2; exit 2 ;;
-    *)        raw_id="$1"; shift ;;
+    --counts)   mode="counts"; shift ;;
+    --file)     plan_file="${2:?--file requires a path}"; shift 2 ;;
+    --resolved) resolved_file="${2:?--resolved requires a path}"; shift 2 ;;
+    -*)         echo "Unknown option: $1" >&2; exit 2 ;;
+    *)          raw_id="$1"; shift ;;
   esac
 done
+
+if [ -n "$resolved_file" ] && [ ! -f "$resolved_file" ]; then
+  echo "Error: --resolved $resolved_file not found" >&2
+  exit 2
+fi
 
 if [ -z "$plan_file" ]; then
   plan_id=$(printf '%s' "$raw_id" | grep -oE 'PLN-[0-9]+' || true)
@@ -152,8 +187,44 @@ fi
 # ── Parse ─────────────────────────────────────────────────────────────────
 # Records are emitted prefixed F (finding) or C (count) and split below, so
 # both modes share one parser and can never disagree about the same plan.
-out=$(awk -v legacy="$legacy" '
+out=$(awk -v legacy="$legacy" -v resolved="$resolved_file" '
+  # One normalizer, applied to both sides of the --resolved comparison, so the
+  # two can never drift into disagreeing about what is the same criterion.
+  function norm(s,   t) {
+    t = tolower(s)
+    gsub(/[`*_]/, "", t)
+    sub(/^[[:space:]]*\([^)]*\)[[:space:]]*/, "", t)
+    gsub(/[[:space:]]+/, " ", t)
+    sub(/^ /, "", t); sub(/ $/, "", t)
+    sub(/[.,;:]+$/, "", t)
+    return t
+  }
+  # Equal after normalization, or one wholly contains the other and both are
+  # long enough for that to mean something. The containment arm is what makes
+  # this usable at all: the other record is written by hand, and the criterion
+  # text reaches it with the route prefix dropped, or the tag kept, or a
+  # trailing clause summarized. MIN_CONTAIN is the whole safety margin, so it
+  # is deliberately longer than any criterion fragment that could belong to two
+  # different criteria in one plan.
+  function settled(nt,   k) {
+    if (nt == "") return 0
+    if (nt in RESOLVED) return 1
+    for (k in RESOLVED) {
+      if (length(nt) >= MIN_CONTAIN && length(k) >= MIN_CONTAIN) {
+        if (index(k, nt) > 0 || index(nt, k) > 0) return 1
+      }
+    }
+    return 0
+  }
   BEGIN {
+    MIN_CONTAIN = 24
+    if (resolved != "") {
+      while ((getline rline < resolved) > 0) {
+        rn = norm(rline)
+        if (rn != "") RESOLVED[rn] = 1
+      }
+      close(resolved)
+    }
     # Patterns are lowercase and applied to tolower(text): IGNORECASE is a GNU
     # awk extension and this has to run on the BSD awk macOS ships.
     # Verbs whose outcome a machine can decide. Deliberately narrow — a false
@@ -187,6 +258,16 @@ out=$(awk -v legacy="$legacy" '
       text = body
     }
     lower_tag = tolower(tag)
+
+    # An unchecked criterion the other record already settled is not open. It
+    # is still counted in the total for its tag — it exists, it was written,
+    # and the lint still grades its wording. Only the OPEN counts change,
+    # because
+    # those are the ones that answer "is a human needed now".
+    if (!checked && settled(norm(text))) {
+      checked = 1
+      resolved_record++
+    }
 
     if (tag == "") {
       # Pre-v6 plan: no tags were ever required, so read it the v5 way.
@@ -227,9 +308,10 @@ out=$(awk -v legacy="$legacy" '
     }
   }
   END {
-    printf "C\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", \
+    printf "C\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", \
       total + 0, eyes_blocking + 0, eyes_cosmetic + 0, external + 0, soak + 0, untagged + 0, \
-      open_eyes + 0, open_blocking + 0, open_cosmetic + 0, unbuilt + 0, open_untagged + 0
+      open_eyes + 0, open_blocking + 0, open_cosmetic + 0, unbuilt + 0, open_untagged + 0, \
+      resolved_record + 0
   }
 ' "$plan_file")
 
@@ -254,6 +336,7 @@ if [ "$mode" = "counts" ]; then
   wf_emit MANUAL_OPEN_BLOCKING "$(printf '%s' "$counts" | cut -f9)"
   wf_emit MANUAL_OPEN_COSMETIC "$(printf '%s' "$counts" | cut -f10)"
   wf_emit MANUAL_OPEN_UNTAGGED "$(printf '%s' "$counts" | cut -f12)"
+  wf_emit MANUAL_RESOLVED_RECORD "$(printf '%s' "$counts" | cut -f13)"
   wf_emit MANUAL_SCHEMA        "${schema:-0}"
   exit 0
 fi

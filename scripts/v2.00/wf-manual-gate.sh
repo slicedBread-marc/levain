@@ -36,7 +36,9 @@
 #   GATE='true|false'
 #   GATE_REASON='<one line, why>'
 #   SURFACE_HIT='<matching path or empty>'
-#   plus every MANUAL_* count from wf-manual-lint.sh --counts
+#   plus every MANUAL_* count from wf-manual-lint.sh --counts, including
+#   MANUAL_RESOLVED_RECORD — criteria left unchecked in plan.md that
+#   test-progress.md already recorded PASS against this very build
 #
 # --explain adds a human-readable summary on stderr.
 
@@ -65,8 +67,72 @@ slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
 [ -n "$slug" ] || { echo "Error: $plan_id not found in registry" >&2; exit 2; }
 plan_name="${plan_id}-${slug}"
 
+# ── Where this plan's work lives ──────────────────────────────────────────
+# Resolved once: both the diff below and the test record above it need the
+# plan's own worktree, and they must never disagree about which one that is.
+worktree=""
+if [ -d "$ROOT/feature-branches/$plan_name" ]; then
+  worktree="$ROOT/feature-branches/$plan_name"
+elif [ "$(git branch --show-current 2>/dev/null || true)" = "feature/$plan_name" ]; then
+  worktree="$PWD"
+fi
+
+# ── Criteria this build already settled ───────────────────────────────────
+#
+# wf-test records a PASS in test-progress.md and leaves plan.md's checkbox
+# alone; it ticks a box only on a deferral or a cosmetic failure. The counts
+# below are parsed out of plan.md. So the two surfaces disagree by construction
+# for every criterion that simply PASSED, and a plan whose every criterion had
+# been judged and passed gated anyway — client-b' PLN-011 recorded 8 of 8 PASS
+# on build e2a923a at 15:32Z and was parked for a human at 15:33Z, with
+# GATE_REASON naming an eyes:blocking criterion that was already green (WFI-013).
+#
+# A row counts only when BOTH hold: the result is PASS, and the build it was
+# recorded against is the build standing here now. A PASS on an older build is
+# a measurement of a tree that no longer exists, which is the whole reason the
+# Build column is in that file.
+#
+# No worktree means no build to compare against — every row is then unverifiable
+# rather than fresh, so nothing is subtracted and the gate behaves as it always
+# did. Same reasoning as `diff_known` below: not knowing is not evidence.
+resolved_file=""
+resolved_args=()
+progress_md="$ROOT/plans/$plan_name/test-progress.md"
+build_sha=""
+[ -n "$worktree" ] && build_sha=$(git -C "$worktree" rev-parse HEAD 2>/dev/null || true)
+
+if [ -f "$progress_md" ] && [ -n "$build_sha" ]; then
+  resolved_file=$(mktemp "${TMPDIR:-/tmp}/wf-manual-gate.XXXXXX")
+  trap 'rm -f "$resolved_file"' EXIT
+  awk -F'|' -v sha="$build_sha" '
+    function trim(x) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", x); return x }
+    NF < 6 { next }
+    {
+      criterion = trim($3); build = trim($4); result = toupper(trim($5))
+      if (result != "PASS") next
+      if (criterion == "" || tolower(criterion) == "criterion") next
+      # Any hex run of 7+ characters in the Build cell is a candidate sha. It
+      # matches when it is a prefix of the tree standing here — the file
+      # abbreviates, and by how much is the writing sessions business.
+      n = split(build, parts, /[^0-9a-fA-F]+/)
+      for (i = 1; i <= n; i++) {
+        if (length(parts[i]) >= 7 && index(sha, tolower(parts[i])) == 1) {
+          print criterion
+          next
+        }
+      }
+    }
+  ' "$progress_md" > "$resolved_file"
+  if [ -s "$resolved_file" ]; then
+    resolved_args=(--resolved "$resolved_file")
+  else
+    rm -f "$resolved_file"
+    resolved_file=""
+  fi
+fi
+
 # ── Criterion counts (single parser, shared with the lint) ────────────────
-eval "$("$(dirname "$0")/wf-manual-lint.sh" "$plan_id" --counts)"
+eval "$("$(dirname "$0")/wf-manual-lint.sh" "$plan_id" --counts ${resolved_args[@]+"${resolved_args[@]}"})"
 
 # ── Config ────────────────────────────────────────────────────────────────
 # Defaults are pre-P-003 behavior on purpose: a client whose config predates
@@ -125,19 +191,13 @@ diff_known=true
 surfaces=$(wf_cfg_list manualTestGate.renderingSurfaces || true)
 
 if [ -n "$surfaces" ]; then
-  # Only ever diff THIS plan's branch. The fallback used to be a bare `$PWD`,
-  # which is right when wf-test calls this from inside the worktree and wrong
-  # everywhere else: from the develop root it diffs develop's own last commit
-  # and reads whatever that touched as "what the plan changed". A registry
-  # commit is enough to make an unreadable diff look readable, and the answer
-  # this script gives decides whether a human ever looks at the feature.
-  worktree=""
-  if [ -d "$ROOT/feature-branches/$plan_name" ]; then
-    worktree="$ROOT/feature-branches/$plan_name"
-  elif [ "$(git branch --show-current 2>/dev/null || true)" = "feature/$plan_name" ]; then
-    worktree="$PWD"
-  fi
-
+  # Only ever diff THIS plan's branch (`$worktree`, resolved once above). The
+  # fallback used to be a bare `$PWD`, which is right when wf-test calls this
+  # from inside the worktree and wrong everywhere else: from the develop root
+  # it diffs develop's own last commit and reads whatever that touched as
+  # "what the plan changed". A registry commit is enough to make an unreadable
+  # diff look readable, and the answer this script gives decides whether a
+  # human ever looks at the feature.
   changed=""
   if [ -n "$worktree" ]; then
     changed=$(git -C "$worktree" diff --name-only develop...HEAD 2>/dev/null || true)
@@ -222,6 +282,14 @@ else
   [ -z "$surfaces" ] && reason="$reason; no renderingSurfaces configured, so every plan can gate"
 fi
 
+# Say it in the reason, not only in the counts. Whoever reads this line is
+# deciding whether to believe the verdict, and "3 of them were already passed
+# on this build" is the fact that makes a `false` credible and a `true` worth
+# a second look.
+if [ "${MANUAL_RESOLVED_RECORD:-0}" -gt 0 ]; then
+  reason="$reason; ${MANUAL_RESOLVED_RECORD} already PASS on this build in test-progress.md"
+fi
+
 wf_emit GATE         "$gate"
 wf_emit GATE_REASON  "$reason"
 wf_emit SURFACE_HIT  "$surface_hit"
@@ -229,6 +297,7 @@ wf_emit MANUAL_TOTAL         "$MANUAL_TOTAL"
 wf_emit MANUAL_OPEN_BLOCKING "$MANUAL_OPEN_BLOCKING"
 wf_emit MANUAL_OPEN_COSMETIC "$MANUAL_OPEN_COSMETIC"
 wf_emit MANUAL_OPEN_UNTAGGED "${MANUAL_OPEN_UNTAGGED:-0}"
+wf_emit MANUAL_RESOLVED_RECORD "${MANUAL_RESOLVED_RECORD:-0}"
 wf_emit MANUAL_EXTERNAL      "$MANUAL_EXTERNAL"
 wf_emit MANUAL_SOAK          "$MANUAL_SOAK"
 wf_emit MANUAL_SCHEMA        "$MANUAL_SCHEMA"
@@ -240,6 +309,7 @@ if $explain; then
     echo "  open eyes: blocking=$MANUAL_OPEN_BLOCKING cosmetic=$MANUAL_OPEN_COSMETIC (counted: $open_count, min: $cfg_min_eyes)"
     echo "  never gate: external=$MANUAL_EXTERNAL soak=$MANUAL_SOAK"
     echo "  untagged open: ${MANUAL_OPEN_UNTAGGED:-0} (if >0 the surface rule does not apply)"
+    echo "  settled by test-progress.md: ${MANUAL_RESOLVED_RECORD:-0} on build ${build_sha:0:7}${build_sha:+ }${resolved_file:+(record read)}${resolved_file:-(no record read)}"
     echo "  surface: requireRenderingSurface=$cfg_require_surface hit=${surface_hit:-none}"
   } >&2
 fi

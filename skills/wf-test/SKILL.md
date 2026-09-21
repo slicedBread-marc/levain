@@ -53,7 +53,11 @@ Order of work:
      **Never put criterion text in double quotes** — backticks in it are commands, and the shell runs them before the script sees them (WFI-194). See [Deferring a criterion](#deferring-a-criterion).
      **Read what it printed.** The DC row is only half the job — the other half is the checkbox in `plan.md`, which is what anyone opening the completed plan actually reads. `ticked in …` means both halves are done. `ACTION REQUIRED: no matching unchecked criterion` means only the row was written: edit `plan.md` yourself, tick the box it listed, append ` — deferred as DC-NNN`, and only then move on. A completed plan with an empty box says "silently dropped", which is the exact ambiguity deferral exists to remove (WFI-056, WFI-137).
    - `(eyes:cosmetic)` — leave untested and unchecked; whether it gates is the gate script's call, not yours.
-6. **Ask the gate script whether a human is needed. Do not decide this yourself. First confirm step 3 actually happened — do not trust that it did:** every `#### Chrome-Assisted` criterion must show PASS, FAIL, or a recorded reason in `test-progress.md`; none may still read `—`. client-c's WFI-022: 8 of 10 Chrome-Assisted criteria were left untested, and the gate that opened next asked about the 2 genuinely Manual ones without ever mentioning the other 8 — correct about what it counts, silent about what it doesn't. If any Chrome-Assisted criterion is still `—`, go back and run it now; do not open a gate that describes only the Manual criteria while Chrome-Assisted work sits undone and unmentioned.
+6. **Write `test-progress.md` first, then ask the gate script whether a human is needed. Do not decide this yourself.**
+
+   **The order is load-bearing: `wf-manual-gate.sh` reads that file.** A `#### Manual` criterion you judged and passed this session stays unchecked in `plan.md` — that is by design, you only ever tick a box on a deferral or a cosmetic failure — so the gate has no way to learn the criterion is settled except from the record. Ask it before writing, and you are asking about a plan whose results do not exist yet: client-b' PLN-011 had 8 of 8 criteria PASS on the current build and opened a manual-test gate naming an `eyes:blocking` criterion that had already been judged and passed (WFI-013). Write every result you hold — the full file, per [Saving test progress](#saving-test-progress), build identifiers included — and only then run the script.
+
+   **Then confirm step 3 actually happened — do not trust that it did:** every `#### Chrome-Assisted` criterion must show PASS, FAIL, or a recorded reason in `test-progress.md`; none may still read `—`. client-c's WFI-022: 8 of 10 Chrome-Assisted criteria were left untested, and the gate that opened next asked about the 2 genuinely Manual ones without ever mentioning the other 8 — correct about what it counts, silent about what it doesn't. If any Chrome-Assisted criterion is still `—`, go back and run it now; do not open a gate that describes only the Manual criteria while Chrome-Assisted work sits undone and unmentioned.
    ```bash
    eval "$(scripts/wf-exec.sh wf-manual-gate.sh <PLN-ID>)"
    ```
@@ -584,7 +588,9 @@ Before completing:
 
 ### Saving test progress
 
-Test progress is saved once at exit, not during testing. The LLM holds in-memory state during the session and writes it all at the end.
+Test progress is written **twice**: once at step 6 before the gate script is asked anything, and again at exit with whatever changed after it. In between, the LLM holds in-memory state.
+
+The step 6 write is not bookkeeping. `wf-manual-gate.sh` decides whether to stop for a human by reading this file and subtracting every criterion it finds recorded PASS against the build standing in the worktree — that subtraction is the only thing that tells it a Manual criterion has been judged, because a passed criterion's checkbox in `plan.md` stays empty (WFI-013). A gate asked before the file is written is asked about a session whose work it cannot see.
 
 **Format** — `../../plans/PLN-NNN-<slug>/test-progress.md`:
 ```markdown
@@ -608,6 +614,7 @@ Last failure: #3 on build Apr 08 14:32 (f4e5d6c)
 - One row per criterion, always present. Result: `PASS`, `FAIL`, `SKIP`, or `—` (untested).
 - **Notes is where an untested (`—`) row's reason ends up at exit.** Held in session memory like every other result until then (see above), but write it here rather than dropping it: the auto-test agent's outcome (`EXISTS`/`PASS` name, or a `FAIL` reason) and step 3c's headless-eval outcome (why it couldn't run, or what it disagreed with) both belong in this column. A reason that never reaches the file does not survive a compaction or a different session resuming the plan — this file is the only thing either reads (WFI-070's own lesson, applied to the reason column, not just the verdict column).
 - Only the most recent result per criterion is stored — overwrite on retest.
+- **The Criterion column is matched against `plan.md` by the gate script**, so copy the criterion text rather than summarizing it. Matching survives a dropped route prefix or a trimmed trailing clause; a criterion rewritten in your own words matches nothing, and the gate counts it open and stops for a human who has already judged it.
 - "Last failure" line records the resume point for the next session.
 - **Start from the file that is already there, and never write `—` over a result you did not retest.** This file is the only record that a criterion was ever executed; a session that regenerates it from scratch erases whatever an earlier session — or a human sitting at the app right now — established. client-a lost a completed 15/15 run to a rewrite exactly like that (WFI-070). Carry forward every row you did not test yourself, build identifier included.
 
