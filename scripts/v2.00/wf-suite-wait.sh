@@ -70,6 +70,14 @@ if [ ! -f "$status" ]; then
   exit 3
 fi
 
+# The verdict reached a caller. Recorded, because the opposite — a suite that
+# finished and whose verdict nobody ever collected — is otherwise invisible,
+# and it is the shape three promotion workers failed in across five days
+# (WFI-255, WFI-265, WFI-266). wf-suite-receipts.sh --abandoned reads this.
+# Best-effort: a read-only log directory must not turn a verdict into an error.
+printf 'READ_AT=%s\nREAD_BY_PID=%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PPID" > "$status.read" 2>/dev/null || true
+
 cat "$status"
 grep -q '^SUITE_RESULT=pass' "$status" && exit 0
 exit 1

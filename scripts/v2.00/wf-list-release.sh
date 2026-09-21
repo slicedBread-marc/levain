@@ -30,6 +30,36 @@ cd "$(wf_develop_root)"
 
 git rev-parse --verify --quiet release >/dev/null 2>&1 || exit 1
 
+# ── An unfinished release is still a release ─────────────────────────────
+#
+# Commits on local `release` that origin/release has never seen mean a
+# /wf-release run merged and then did not push. That is not a finished state in
+# either direction: the suite may have passed and nobody acted on it, or it
+# failed and nobody rolled the merge back.
+#
+# Nothing offered to fix it. RELEASE candidacy needed develop to be AHEAD of
+# release, which after the merge it is not, and wf-list-deploy.sh refuses an
+# unpushed release outright — correctly, since it cannot tell a green batch
+# nobody pushed from a red one. So the pipeline had no candidate at all.
+#
+# client-a WFI-266: two RELEASE workers in one morning ran the 22-minute
+# suite, announced a wait, and exited without pushing. The second one's suite
+# PASSED, 3341 of 3342 with 0 failures, and local release sat 4 commits ahead
+# of origin/release with DEPLOY off the candidate list until a human read the
+# refs by hand.
+#
+# Offered FIRST, and before the work filters below: an unpushed merge is
+# unfinished business whatever the range now looks like. /wf-release fetches
+# and re-verifies on entry (WFI-024, WFI-027, WFI-258) and will either push the
+# batch or roll it back, and wf-suite-receipts.sh --for release tells it which
+# without spending the suite again.
+if git rev-parse --verify --quiet origin/release >/dev/null 2>&1; then
+  if [ -n "$(git rev-list origin/release..release -1 2>/dev/null)" ]; then
+    echo "RELEASE"
+    exit 0
+  fi
+fi
+
 [ -n "$(git rev-list release..develop -1 2>/dev/null)" ] || exit 1
 
 # Commits in range, but do any of them carry WORK? /wf-deploy's bookkeeping —

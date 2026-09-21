@@ -263,6 +263,14 @@ Before starting, confirm E2E passed on release:
 
    **`3` is not a pass and not a failure, and this is the step where that has actually gone wrong.** WFI-255 is a worker that backgrounded the suite, announced it was awaiting results, and exited rc=0 sixty seconds later with `main` merged and the suite red. Under `WF_UNATTENDED=1` there is no session to come back to: a headless run ends the moment it stops producing output and takes every background job with it. So no `run_in_background`, no "I'll check the log later", and no verdict reported that `wf-suite-wait.sh` did not return.
 
+   **And no scheduled wake-up.** It has now happened three times in five days across two roles — WFI-255 here, WFI-265 here again ("Test suite is progressing. System will check again in 90 seconds", then 22 hours of nothing with `main` merged locally and the guard armed), and WFI-266 twice in one morning in /wf-release. Every one of them announced a wait that no mechanism was going to honour. **The `wf-suite-wait.sh` loop is the only wait that exists. Ending the turn is abandoning the run.**
+
+   **Before spending the suite, ask whether its answer already exists:**
+   ```bash
+   scripts/wf-exec.sh wf-suite-receipts.sh --for main
+   ```
+   Exit **0** a run already passed on this exact tip, **1** one failed on it, **2** no receipt — run the suite. The tip is what makes a receipt admissible: a pass measures one tree and says nothing about any other. `SUITE_COLLECTED=never` means the worker that started it walked away, which is the shape above. Quote its `SUITE_RESULT=` and `SUITE_CMD=` lines as the verdict and say which run they came from.
+
 8a. **Sanity-check the branch before anything else commits:**
     ```bash
     git branch --show-current    # must print: main

@@ -5244,6 +5244,59 @@ assert_eq "and disarming settles it" "" \
   "$(cd "$HALF" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A suite nobody stayed for (client-a WFI-266)"
+
+# Two RELEASE workers in one morning ran the 22-minute suite, announced a wait,
+# and exited. The second one's suite PASSED — 3341 of 3342, 0 failed — and
+# nothing was pushed. A green run and a never-run run became indistinguishable,
+# and local release sat 4 commits ahead of origin/release, which downstream
+# reads as "commits /wf-release did not push, therefore commits that did not
+# pass". Exactly wrong, and nothing could tell the two apart.
+cp "$SCRIPT_DIR/wf-list-release.sh" "$SCRIPT_DIR/wf-suite-receipts.sh" "$HALF/scripts/"
+HALF_LOGS="$HALF/.claude/orchestrator/logs"
+mkdir -p "$HALF_LOGS"
+HALF_TIP=$(cd "$HALF" && git rev-parse HEAD)
+cat > "$HALF_LOGS/suite-release-20260921-083248.log.status" << RECEIPT
+SUITE_CMD=dotnet test
+SUITE_LOG=$HALF_LOGS/suite-release-20260921-083248.log
+SUITE_RESULT=pass (exit 0)
+SUITE_BRANCH=release
+SUITE_TIP=$HALF_TIP
+SUITE_ENDED=2026-09-21T08:55:15Z
+RECEIPT
+: > "$HALF_LOGS/suite-release-20260921-083248.log"
+
+recpt=$(cd "$HALF" && ./scripts/wf-suite-receipts.sh --for HEAD 2>/dev/null || true)
+assert_contains "a green run on this tip is found rather than spent again" "SUITE_RESULT=pass" "$recpt"
+assert_contains "and it says nobody ever collected the verdict" "SUITE_COLLECTED=never" "$recpt"
+assert_eq "a pass on this tip exits 0" "0" \
+  "$(cd "$HALF" && ./scripts/wf-suite-receipts.sh --for HEAD >/dev/null 2>&1; echo $?)"
+
+# The tip is what makes a receipt admissible — a pass measures one tree.
+(cd "$HALF" && git checkout -q develop && printf 'later\n' >> app.txt && git add -A && git commit -q -m "feat: PLN-002 more work") >/dev/null 2>&1
+assert_eq "a receipt for a different tree is not a receipt for this one" "2" \
+  "$(cd "$HALF" && ./scripts/wf-suite-receipts.sh --for HEAD >/dev/null 2>&1; echo $?)"
+
+aband=$(cd "$HALF" && ./scripts/wf-suite-receipts.sh --abandoned --min-age 0 2>/dev/null || true)
+assert_contains "an uncollected verdict is listed as abandoned" "suite-release-20260921-083248" "$aband"
+printf 'READ_AT=2026-09-21T08:56:00Z\nREAD_BY_PID=1\n' \
+  > "$HALF_LOGS/suite-release-20260921-083248.log.status.read"
+assert_eq "one somebody waited for is not" "1" \
+  "$(cd "$HALF" && ./scripts/wf-suite-receipts.sh --abandoned --min-age 0 >/dev/null 2>&1; echo $?)"
+
+# And the state those workers left behind is a candidate again: merged into
+# local release, never pushed. RELEASE candidacy needed develop AHEAD of
+# release, which after the merge it is not, so nothing was offered at all.
+(cd "$HALF" && git checkout -q release && git merge -q develop --no-edit && git checkout -q develop) >/dev/null 2>&1
+assert_eq "develop is no longer ahead of release" "" \
+  "$(cd "$HALF" && git rev-list release..develop -1 2>/dev/null)"
+assert_eq "but an unpushed release is unfinished business" "RELEASE" \
+  "$(cd "$HALF" && ./scripts/wf-list-release.sh 2>/dev/null)"
+(cd "$HALF" && git push -q origin release && git fetch -q origin) >/dev/null 2>&1
+assert_eq "and a pushed one is finished" "" \
+  "$(cd "$HALF" && ./scripts/wf-list-release.sh 2>/dev/null)"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "A correct 'nothing to release' is not a stuck pipeline (client-c WFI-035)"
 
 # Three /wf-release runs each exited "Release is up to date with develop —

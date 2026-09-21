@@ -97,11 +97,19 @@ LOG="${child:-$LOG_DIR/suite-$label-$(date +%Y%m%d-%H%M%S).log}"
 # child has none, which is exactly how "still running" is told apart from
 # "finished and passed".
 if $detach && [ -z "$child" ]; then
-  rm -f "$LOG.status"
+  rm -f "$LOG.status" "$LOG.status.read"
   # Create the handle here, not in the child: wf-suite-wait.sh tells "bad
   # handle" from "not finished yet" by whether the log exists, and a child that
   # has not been scheduled yet would otherwise look like a typo.
   : > "$LOG"
+  # What was under test, recorded before the run rather than reconstructed
+  # after it. A verdict nobody collected is only useful if the tree it measured
+  # can still be named — see wf-suite-receipts.sh (client-a WFI-266).
+  printf 'SUITE_LABEL=%s\nSUITE_DIR=%s\nSUITE_BRANCH=%s\nSUITE_TIP=%s\nSUITE_STARTED=%s\n' \
+    "$label" "$(pwd -P)" \
+    "$(git branch --show-current 2>/dev/null || echo '(detached)')" \
+    "$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LOG.meta"
   args=(--label "$label")
   $do_build && args+=(--build)
   launcher=(nohup)
@@ -140,7 +148,16 @@ finish() {
   printf 'SUITE_CMD=%s\nSUITE_LOG=%s\nSUITE_RESULT=%s\n' "$cmd" "$LOG" "$result"
   if [ -n "$child" ]; then
     trap - EXIT
-    printf 'SUITE_CMD=%s\nSUITE_LOG=%s\nSUITE_RESULT=%s\n' "$cmd" "$LOG" "$result" > "$LOG.status"
+    # The tip is stamped into the verdict, not left to be inferred from the
+    # log's first lines. A green run whose caller vanished is re-usable only by
+    # someone who can prove it measured the tree in front of them (WFI-266).
+    {
+      printf 'SUITE_CMD=%s\nSUITE_LOG=%s\nSUITE_RESULT=%s\n' "$cmd" "$LOG" "$result"
+      printf 'SUITE_BRANCH=%s\nSUITE_TIP=%s\nSUITE_ENDED=%s\n' \
+        "$(git branch --show-current 2>/dev/null || echo '(detached)')" \
+        "$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "$LOG.status"
   fi
 }
 

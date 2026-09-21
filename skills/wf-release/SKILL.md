@@ -214,6 +214,16 @@ release-branches/release → release's own permanent worktree — staging enviro
    ```
    `wf-suite-wait.sh` exits **0 pass, 1 fail, 3 still running** — on `3`, call it again with the same handle, as many times as it takes. Each call is its own foreground command under the cap, and each one keeps the session alive. **`3` is neither a pass nor a failure**, and under `WF_UNATTENDED=1` a headless run ends the moment it stops producing output and takes every background job with it — which is how a DEPLOY worker came to announce it was awaiting results and exit sixty seconds later on a red suite (WFI-255). Never report a verdict `wf-suite-wait.sh` did not return.
 
+   **You may not end this turn while the suite you started is unfinished. There is no scheduled wake-up, no "I'll check back", no notification coming.** The loop above is the entire mechanism. client-a WFI-266: two RELEASE workers in one morning reached this step and each wrote a single line — "Waiting for completion with scheduled wakeup at 08:36:00", then "Scheduled to check back on test progress in 5 minutes" — and exited. The second one's suite finished 13 minutes later, 3341 of 3342 passed, 0 failed: a fully green full-suite run nobody acted on. Nothing was pushed. A run 90 minutes earlier did it correctly end to end, same role, same client, same version.
+
+   The cost is not the wasted 22 minutes. Local `release` was left 4 commits ahead of `origin/release`, and that is read downstream as "commits /wf-release did not push, therefore commits that did not pass" — which was exactly wrong, and which no script could tell apart. Until this session's fix the pipeline then had no candidate at all: DEPLOY refuses an unpushed release, and RELEASE needed develop to be ahead.
+
+   **Before spending the suite, ask whether its answer already exists:**
+   ```bash
+   scripts/wf-exec.sh wf-suite-receipts.sh --for release
+   ```
+   Exit **0** a run already passed on this exact tip, **1** one failed on it, **2** no receipt — run the suite. A receipt is admissible only because `SUITE_TIP` is stamped into it: a pass measures one tree and says nothing about any other, so a receipt whose tip is not the tip you are standing on is not yours to use. `SUITE_COLLECTED=never` means the worker that started it walked away — that is the WFI-266 shape, and finding your own predecessor's green run there is the normal way this step ends now. Quote the receipt's `SUITE_RESULT=` and `SUITE_CMD=` lines as the verdict, exactly as if you had waited for them, and say which run they came from.
+
    If tests fail, **first ask whether the suite was even in a position to judge**: re-run
    `scripts/wf-exec.sh wf-preflight.sh`. A prerequisite that went down mid-run implicates the
    environment, not the commits (WFI-028) — report it that way. Either way, do **not** push, and
