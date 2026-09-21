@@ -5193,6 +5193,57 @@ assert_eq "/wf-deploy refuses a release that was never pushed" "true" \
   "$(grep -q 'wf-release-rollback.sh' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A half-finished deploy is still a deploy (client-a WFI-265)"
+
+# A DEPLOY worker merged origin/release into LOCAL main, armed the guard, and
+# exited without pushing. Its own unpushed merge put local main ahead of local
+# release, `main..release` came back empty, and DEPLOY was never a candidate
+# again — with the recovery path sitting behind the door the failure locked.
+# 22 hours, zero spawns, 34 approved commits undeployed, the armed marker
+# unread. --sweep --dry-run printed no deploy line at all.
+HALF="$TEST_DIR/half-deploy"
+HALF_ORIGIN="$TEST_DIR/half-deploy-origin"
+mkdir -p "$HALF/scripts"
+cp "$SCRIPT_DIR/wf-list-deploy.sh" "$SCRIPT_DIR/wf-deploy-guard.sh" \
+   "$SCRIPT_DIR/wf-orch-lib.sh" "$HALF/scripts/"
+(
+  git init -q --bare "$HALF_ORIGIN"
+  cd "$HALF" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf 'app\n' > app.txt && git add -A && git commit -q -m "seed"
+  git branch -q release && git branch -q main
+  git remote add origin "$HALF_ORIGIN" && git push -q origin develop release main
+  git fetch -q origin
+  # An approved batch, released and pushed the normal way.
+  printf 'feature\n' >> app.txt && git add -A && git commit -q -m "feat: PLN-001 the work"
+  git checkout -q release && git merge -q develop --no-edit && git push -q origin release
+  git checkout -q develop && git fetch -q origin
+) >/dev/null 2>&1
+
+assert_eq "a pushed release is deployable, as before" "DEPLOY" \
+  "$(cd "$HALF" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+
+# Now the dead worker: merge into local main, arm the guard, never push.
+(cd "$HALF" && git checkout -q main && git merge -q release --no-edit && git checkout -q develop) >/dev/null 2>&1
+assert_eq "the merge did put local main ahead of release" "" \
+  "$(cd "$HALF" && git rev-list main..release -1 2>/dev/null)"
+assert_eq "and the promotion is still a candidate, because it never reached origin" "DEPLOY" \
+  "$(cd "$HALF" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+
+# The same blindness reached through the guard: everything pushed, but a marker
+# says the tip is provisional. An armed marker means unverified by definition.
+(cd "$HALF" && git push -q origin main && git fetch -q origin) >/dev/null 2>&1
+assert_eq "a fully pushed, unarmed tree is not a candidate" "" \
+  "$(cd "$HALF" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+# --arm only runs in the worktree checked out to main, which is where the
+# worker that arms it is standing.
+(cd "$HALF" && git checkout -q main && ./scripts/wf-deploy-guard.sh --arm && git checkout -q develop) >/dev/null 2>&1
+assert_eq "an armed guard makes it one again" "DEPLOY" \
+  "$(cd "$HALF" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+(cd "$HALF" && ./scripts/wf-deploy-guard.sh --disarm) >/dev/null 2>&1
+assert_eq "and disarming settles it" "" \
+  "$(cd "$HALF" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "A correct 'nothing to release' is not a stuck pipeline (client-c WFI-035)"
 
 # Three /wf-release runs each exited "Release is up to date with develop —
