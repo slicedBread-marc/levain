@@ -13,11 +13,21 @@
 # profile.
 #
 # Usage: wf-headless-screenshot.sh <url> <output-path> [actions-json] [width] [height]
+#                                  [--viewport]
 #   Default viewport is 390x844 (mobile), matching wf-headless-eval.sh — pass
 #   width/height to check a different breakpoint (e.g. 1280 800 for desktop).
 #   output-path should live under the feature worktree (e.g.
 #   /tmp/wf-screenshots/<plan>-<n>.png is fine too) — anywhere the Read tool
 #   can reach it.
+#
+#   --viewport  Capture only what fits in the viewport, instead of the whole
+#   (--no-full-page) scrollable page. THIS IS WHAT AN ABOVE-THE-FOLD CRITERION
+#   NEEDS. The default capture is `fullPage`, which stitches the entire
+#   document into one tall PNG: at 390x844 it returned a 390x1196 image, so a
+#   criterion reading "the running effect is on screen without scrolling"
+#   showed as passing whether or not it actually was. The viewport args size
+#   the layout either way; only this flag decides where the image stops
+#   (client-b WFI-011). Flags may appear anywhere in the argument list.
 #
 # Exit codes:
 #   0 — screenshot saved.             stdout: "OK <output-path>"
@@ -28,6 +38,17 @@
 
 set -uo pipefail
 
+FULL_PAGE=true
+positional=()
+for arg in "$@"; do
+  case "$arg" in
+    --viewport|--no-full-page) FULL_PAGE=false ;;
+    --full-page)               FULL_PAGE=true ;;
+    *)                         positional+=("$arg") ;;
+  esac
+done
+set -- ${positional[@]+"${positional[@]}"}
+
 URL="${1:-}"
 OUT="${2:-}"
 ACTIONS="${3:-[]}"
@@ -35,7 +56,7 @@ WIDTH="${4:-390}"
 HEIGHT="${5:-844}"
 
 if [ -z "$URL" ] || [ -z "$OUT" ]; then
-  echo "ERROR usage: wf-headless-screenshot.sh <url> <output-path> [actions-json] [width] [height]"
+  echo "ERROR usage: wf-headless-screenshot.sh <url> <output-path> [actions-json] [width] [height] [--viewport]"
   exit 2
 fi
 
@@ -51,7 +72,7 @@ cat > "$RUNNER" <<'NODE'
 import { chromium } from 'playwright';
 import { runActions } from './actions.mjs';
 
-const [, , url, out, actionsJson, width, height] = process.argv;
+const [, , url, out, actionsJson, width, height, fullPage] = process.argv;
 
 let browser;
 try {
@@ -60,7 +81,7 @@ try {
   await page.goto(url, { waitUntil: 'load', timeout: 15000 });
   await page.waitForTimeout(300);
   await runActions(page, JSON.parse(actionsJson || '[]'));
-  await page.screenshot({ path: out, fullPage: true });
+  await page.screenshot({ path: out, fullPage: fullPage !== 'false' });
   await browser.close();
   console.log(`OK ${out}`);
   process.exit(0);
@@ -71,5 +92,5 @@ try {
 }
 NODE
 
-node "$RUNNER" "$URL" "$OUT" "$ACTIONS" "$WIDTH" "$HEIGHT"
+node "$RUNNER" "$URL" "$OUT" "$ACTIONS" "$WIDTH" "$HEIGHT" "$FULL_PAGE"
 exit $?
