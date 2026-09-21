@@ -365,6 +365,25 @@ If the user picks a bug BUG-NNN:
    - Acceptance criteria (test command, observable behavior)
 7. **Define tests** — fill in the Tests table with specific test IDs, types, descriptions, and commands.
 
+   **If this project numbers its tests in one flat sequence (`T70`, `T71`, …), ask for the next id. Do not read it off `tests/`.**
+
+   ```bash
+   eval "$(scripts/wf-exec.sh wf-test-id-next.sh --count <how many rows>)"
+   # TEST_ID_NEXT='T83'   TEST_ID_RANGE='T83-T90'   TEST_ID_HIGHEST_FROM='plans/PLN-010-…/plan.md'
+   ```
+
+   `tests/` holds the ids that have **landed**. An id reserved by a plan still in `draft` exists only in that plan's own Tests table — which is exactly the reservation you must not miss. `wf-test-id-next.sh` reads both.
+
+   client-d WFI-010: three plans collided on one range. PLN-011 took T70-T74 and merged them; PLN-010 drafted T70-T77 and was renumbered by hand at its gate to T75-T82; then PLN-009 was drafted the same day stating "highest existing is T69" — true of `tests/` at that moment, and wrong by thirteen — and claimed T70-T77. Nineteen references in the plan body needed renumbering. It was the second collision of the class in one day.
+
+   The range is **not** reserved by asking: write the table and commit the plan. Before the review gate, check it is still yours:
+
+   ```bash
+   WF_VERIFY_SELF=PLN-NNN scripts/wf-exec.sh wf-test-id-next.sh --verify T83-T90
+   ```
+
+   Exit 3 names every colliding id and the file holding it. Renumber from the `TEST_ID_NEXT` it prints — at draft that is one edit, at the gate it is nineteen.
+
    **Get the command shape from the config, not from memory or from the template.** Run:
 
    ```bash

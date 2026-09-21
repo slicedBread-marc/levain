@@ -5999,6 +5999,89 @@ assert_ok "WF_ALLOW_UNTESTED=1 overrides" \
   env WF_ALLOW_UNMERGED=1 WF_ALLOW_UNTESTED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-987 testing complete
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A test id reserved by a draft is still reserved (client-d WFI-010)"
+
+# Three plans collided on one range in a day. PLN-011 took T70-T74 and merged
+# them; PLN-010 drafted T70-T77 and was renumbered by hand to T75-T82; PLN-009
+# was then drafted stating "highest existing is T69" — true of tests/ at that
+# moment, wrong by thirteen — and claimed T70-T77. tests/ holds what LANDED;
+# a draft's reservation lives in its own Tests table and nowhere else.
+TID=$(mktemp -d)
+mkdir -p "$TID/plans" "$TID/tests"
+cd "$TID" || exit 1
+git init -q -b develop && git config user.email t@t.com && git config user.name T
+printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n\n<!-- Counter: 20 -->\n' \
+  > plans/REGISTRY.md
+
+# Landed: T70-T74, as a --test-name-pattern inside a test file.
+{
+  echo "test('T70: the hero renders', () => {})"
+  echo "test('T74: the banner clears the header', () => {})"
+} > tests/brainstorm-tracking.test.ts
+
+id_next() { "$SCRIPT_DIR/wf-test-id-next.sh" "$@"; }
+
+eval "$(id_next)"
+assert_eq "with only landed tests, the ceiling is what tests/ holds" "74" "$TEST_ID_HIGHEST"
+assert_eq "and the next id follows it" "T75" "$TEST_ID_NEXT"
+
+# Now a plan in draft reserves T75-T82. Nothing has landed.
+mkdir -p plans/PLN-010-mock-record-and-thread
+cat > plans/PLN-010-mock-record-and-thread/plan.md <<'P010'
+# PLN-010
+
+## Tests
+
+| ID | Type | Description | Command |
+|-|-|-|-|
+| T75 | Unit | scanIdeas sets pages.plan | `node --test` |
+| T82 | Unit | git check-ignore, table-driven | `node --test` |
+P010
+
+eval "$(id_next --count 8)"
+assert_eq "a draft's reservation raises the ceiling too" "82" "$TEST_ID_HIGHEST"
+assert_eq "and the answer names the file holding it" "plans/PLN-010-mock-record-and-thread/plan.md" \
+  "$TEST_ID_HIGHEST_FROM"
+assert_eq "the next planner is sent past it" "T83" "$TEST_ID_NEXT"
+assert_eq "and gets a contiguous range" "T83-T90" "$TEST_ID_RANGE"
+
+# The exact claim WFI-010 reports, refused with the evidence.
+out=$(id_next --verify T70-T77 2>&1; echo "rc=$?")
+assert_eq "the range PLN-009 claimed is refused" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=3' && echo true || echo false)"
+assert_eq "naming an id held by the landed tests" "true" \
+  "$(printf '%s' "$out" | grep -q 'T70.*tests/brainstorm-tracking.test.ts' && echo true || echo false)"
+assert_eq "and one held by a plan still in draft" "true" \
+  "$(printf '%s' "$out" | grep -q 'T75.*plans/PLN-010' && echo true || echo false)"
+assert_eq "and says where to renumber from" "true" \
+  "$(printf '%s' "$out" | grep -q 'Renumber from T83' && echo true || echo false)"
+
+assert_ok "a free range verifies clean" id_next --verify T83-T90
+
+# A plan verifying its own committed table is not colliding with itself.
+out=$(env WF_VERIFY_SELF=PLN-010 "$SCRIPT_DIR/wf-test-id-next.sh" --verify T75-T82 2>&1; echo "rc=$?")
+assert_eq "a plan does not collide with its own reservation" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=0' && echo true || echo false)"
+
+# Prose mentioning a neighbour's id is a reference, not a reservation — only
+# the first cell of a Tests row claims anything, or a plan could raise the
+# ceiling by discussing the plan next to it.
+mkdir -p plans/PLN-009-idea-threads
+printf '# PLN-009\n\n## Goal\nBuilds on T99 from PLN-020, which is not ours.\n' \
+  > plans/PLN-009-idea-threads/plan.md
+eval "$(id_next)"
+assert_eq "prose does not reserve an id" "82" "$TEST_ID_HIGHEST"
+
+# A project with no test ids at all starts at 1 rather than erroring.
+rm -rf tests plans/PLN-010-mock-record-and-thread plans/PLN-009-idea-threads
+eval "$(id_next)"
+assert_eq "a project with no ids yet starts at the beginning" "0" "$TEST_ID_HIGHEST"
+assert_eq "and hands out the first" "T1" "$TEST_ID_NEXT"
+
+cd "$TEST_DIR/main" || exit 1
+rm -rf "$TID"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"
