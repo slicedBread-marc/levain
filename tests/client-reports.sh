@@ -6082,6 +6082,116 @@ cd "$TEST_DIR/main" || exit 1
 rm -rf "$TID"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A plan blocked on another repo can say so (client-b WFI-015)"
+
+# PLN-011 was blocked on client-d's BRF-009 / BUG-011. wf-set-deps.sh took
+# plan IDs only, and --gating offered `security`, which would have been a false
+# label. So the only thing keeping a live daemon off a plan sitting in `draft`
+# — a dispatchable state — was a wf-claim.sh lease, documented as stealable by
+# any session that judges it stale.
+XDEP=$(mktemp -d)
+mkdir -p "$XDEP/consumer/plans" "$XDEP/provider/plans" "$XDEP/provider/bugs/closed"
+cd "$XDEP/provider" || exit 1
+git init -q -b develop && git config user.email t@t.com && git config user.name T
+printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-009 | copper-tokens | draft | — | — | 2026-09-21 | 2.00 | — | — |\n\n<!-- Counter: 20 -->\n' \
+  > plans/REGISTRY.md
+git add -A && git commit -qm init
+
+cd "$XDEP/consumer" || exit 1
+git init -q -b develop && git config user.email t@t.com && git config user.name T
+printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-011 | public-landing-hero | draft | — | — | 2026-09-21 | 2.00 | ux | — |\n\n<!-- Counter: 20 -->\n' \
+  > plans/REGISTRY.md
+printf 'project_slug: consumer\ndependencies:\n  - "client-d:%s/provider"\n' "$XDEP" > claude-workflow.yml
+git add -A && git commit -qm init
+
+setdeps() { "$SCRIPT_DIR/wf-set-deps.sh" "$@"; }
+chkdeps() { "$SCRIPT_DIR/wf-check-deps.sh" "$@"; }
+
+# A project name that matches no `dependencies:` entry is a typo, and a typo
+# that blocks forever is the bug this fixes wearing a different hat.
+out=$(setdeps PLN-011 "client-dx:BRF-009" 2>&1; echo "rc=$?")
+assert_eq "an undeclared project is refused" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
+assert_eq "and the refusal lists what IS declared" "true" \
+  "$(printf '%s' "$out" | grep -q 'Declared dependencies: client-d' && echo true || echo false)"
+
+out=$(setdeps PLN-011 "client-d:nine" 2>&1; echo "rc=$?")
+assert_eq "a malformed artifact id is refused" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
+
+assert_ok "a declared project and a real id is accepted" setdeps PLN-011 "client-d:BRF-009"
+
+# Parked, and the pipeline says so in its own vocabulary.
+out=$(chkdeps PLN-011 2>/dev/null)
+assert_eq "the plan reports EXTERNAL, not BLOCKED" "true" \
+  "$(printf '%s' "$out" | grep -q '^EXTERNAL client-d:BRF-009' && echo true || echo false)"
+assert_eq "and says where the other side has got to" "true" \
+  "$(printf '%s' "$out" | grep -q 'PLN-009 draft' && echo true || echo false)"
+err=$(chkdeps PLN-011 2>&1 >/dev/null)
+assert_eq "and that nothing here moves it" "true" \
+  "$(printf '%s' "$err" | grep -q 'nothing here moves it' && echo true || echo false)"
+
+# Self-clearing. Nobody edits the column; the other project finishes.
+( cd "$XDEP/provider" && sed -i.bak 's/| PLN-009 | copper-tokens | draft |/| PLN-009 | copper-tokens | complete |/' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak )
+assert_eq "it clears itself when the other project completes" "CLEAR" "$(chkdeps PLN-011 2>/dev/null)"
+
+# Abandoned over there is not patience over here — it is a replan (WFI-008).
+( cd "$XDEP/provider" && sed -i.bak 's/| PLN-009 | copper-tokens | complete |/| PLN-009 | copper-tokens | abandoned |/' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak )
+out=$(chkdeps PLN-011 2>/dev/null)
+assert_eq "an abandoned external dep reports DEAD" "true" \
+  "$(printf '%s' "$out" | grep -q '^DEAD client-d:BRF-009' && echo true || echo false)"
+
+# The number is the identity: BRF-009 is satisfied by a closed BUG-009 too.
+( cd "$XDEP/provider" \
+  && sed -i.bak 's/| PLN-009 | copper-tokens | abandoned |//' plans/REGISTRY.md \
+  && rm -f plans/REGISTRY.md.bak \
+  && printf '# BUG-009\n' > bugs/closed/BUG-009-copper-tokens.md )
+assert_eq "a closed bug of the same number satisfies it" "CLEAR" "$(chkdeps PLN-011 2>/dev/null)"
+
+# A dependency this cannot resolve is not a satisfied one. Reporting it clear
+# would dispatch exactly the plan the operator parked.
+mv "$XDEP/provider" "$XDEP/provider-moved"
+out=$(chkdeps PLN-011 2>/dev/null)
+assert_eq "an unresolvable external dep still blocks" "true" \
+  "$(printf '%s' "$out" | grep -q '^EXTERNAL' && echo true || echo false)"
+assert_eq "and says why it could not be read" "true" \
+  "$(printf '%s' "$out" | grep -q 'is not a directory' && echo true || echo false)"
+mv "$XDEP/provider-moved" "$XDEP/provider"
+
+# Local and external together: BLOCKED wins, because there is work HERE.
+awk '/<!-- Counter:/ && !d { print "| PLN-003 | prerequisite | active | — | — | 2026-09-21 | 2.00 | — | — |"; d=1 } { print }' \
+  plans/REGISTRY.md > plans/R.tmp && mv plans/R.tmp plans/REGISTRY.md
+git add -A && git commit -qm "add PLN-003" >/dev/null 2>&1
+( cd "$XDEP/provider" && printf '# BUG-009\n' > bugs/closed/BUG-009-copper.md )
+rm -f "$XDEP/provider/bugs/closed/BUG-009-copper-tokens.md"
+setdeps PLN-011 "PLN-003,client-d:BRF-011" >/dev/null 2>&1
+out=$(chkdeps PLN-011 2>/dev/null)
+assert_eq "a local block outranks an external one" "BLOCKED PLN-003" "$out"
+err=$(chkdeps PLN-011 2>&1 >/dev/null)
+assert_eq "and the external one is still named" "true" \
+  "$(printf '%s' "$err" | grep -q 'also waiting on client-d:BRF-011' && echo true || echo false)"
+
+# Every other reader gets the same answer, through the shared helper —
+# wf-plan-info.sh from any state, and the eligibility lists once the plan is
+# dispatchable. The point of the helper is that there is one answer.
+mkdir -p plans/PLN-011-public-landing-hero
+printf '# PLN-011\n\n## Goal\nThe public landing hero.\n' > plans/PLN-011-public-landing-hero/plan.md
+eval "$("$SCRIPT_DIR/wf-plan-info.sh" PLN-011 2>/dev/null)"
+assert_eq "wf-plan-info.sh reports the plan blocked" "true" "$PLAN_BLOCKED"
+assert_eq "and names both the local and the external dep" "true" \
+  "$(printf '%s' "$PLAN_BLOCKING" | grep -q 'client-d:BRF-011' && echo true || echo false)"
+
+setdeps PLN-011 "client-d:BRF-011" >/dev/null 2>&1
+sed -i.bak 's/| PLN-011 | public-landing-hero | draft |/| PLN-011 | public-landing-hero | ready |/' plans/REGISTRY.md
+rm -f plans/REGISTRY.md.bak
+list_out=$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null || true)
+assert_eq "wf-list-implementable.sh lists it as blocked, not implementable" "true" \
+  "$(printf '%s' "$list_out" | grep -q '^blocked.*client-d:BRF-011' && echo true || echo false)"
+
+cd "$TEST_DIR/main" || exit 1
+rm -rf "$XDEP"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

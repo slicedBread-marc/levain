@@ -304,3 +304,42 @@ pipeline with no second inbox — but conflating the entry points would mean
 `/wf-bug` asking "is this a bug in this project, in a dependency, or an
 announcement to a dependent?" on every invocation, for a distinction that's
 usually obvious to whoever is already typing the request.
+
+## Waiting on the report you filed
+
+Filing is terminal — the section above says why — but the plan you filed *for*
+is still sitting here, and until now there was nowhere to say what it was
+waiting on. That is client-b WFI-015: PLN-011 was blocked on client-d's
+BRF-009 / BUG-011, `wf-set-deps.sh` took plan IDs only, and `--gating` offered
+`security`, which would have been a false label. The one mechanism that
+actually kept a live daemon off the plan was a `wf-claim.sh` lease, explicitly
+documented as stealable by any session that judges it stale. The plan sat in
+`draft` — a dispatchable state — with a daemon that would have replanned it
+against tokens that did not exist yet.
+
+The `Deps` column takes the same `<project>:<ID>` shape this file's `--host`
+does, resolved through the same `dependencies:` entry:
+
+```bash
+scripts/wf-exec.sh wf-set-deps.sh PLN-011 client-d:BRF-009
+scripts/wf-exec.sh wf-check-deps.sh PLN-011
+# EXTERNAL client-d:BRF-009 (PLN-009 draft)
+```
+
+**It is checked, not declared.** Identity is the *number* — `BRF-009` becomes
+`PLN-009` becomes a closed `BUG-009`, all one artifact — so this reads the other
+project's own `plans/REGISTRY.md` and `bugs/closed/`, and the block lifts by
+itself the moment the work lands there. Nobody has to remember to clear a
+column, which is the whole reason it isn't a flag: a marker only a human can
+clear is the same stall wearing different clothes.
+
+A ref that cannot be resolved — project not in `dependencies:`, checkout
+missing, no registry there — **blocks**. An unresolvable dependency is not a
+satisfied one, and reporting it clear would dispatch exactly the plan somebody
+parked. `wf-set-deps.sh` refuses an undeclared project name outright, for the
+same reason: a typo that blocks forever is indistinguishable from the bug this
+fixes.
+
+The [Limitation](#limitation-no-local-checkout) above applies here unchanged —
+without a local checkout of the dependency there is nothing to read, and the
+dep reports `EXTERNAL … (no registry at …)` rather than pretending to know.

@@ -182,6 +182,110 @@ wf_state_of() {
 # it was written once in wf-list-implementable.sh, pasted into
 # wf-list-testable.sh, and the two are the same eligibility question asked at
 # two pipeline stages — a third stage asking it would have pasted it again.
+# wf_dep_project_path <name> → the local checkout path for a dependency
+# declared in this project's `dependencies:`, or empty. Same join-on-first-colon
+# parse wf-dep-bug.sh uses; factored out once a second caller needed it.
+wf_dep_project_path() {
+  local want="$1" entry
+  local IFS=$' \t\n'   # a caller may be mid-`IFS=,` split of a Deps column
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    [ "${entry%%:*}" = "$want" ] || continue
+    printf '%s' "${entry#*:}"
+    return 0
+  done < <(wf_cfg_list dependencies)
+  return 1
+}
+
+# wf_external_dep_state <project>:<ARTIFACT-ID>
+#
+# Sets two globals and prints NOTHING:
+#   WF_EXTERNAL_DEP_STATE   complete | pending | unknown
+#   WF_EXTERNAL_DEP_DETAIL  a phrase for a human — `PLN-009 testing`,
+#                           `abandoned`, `no 'client-d' in dependencies:`
+#
+# Two returns, so no `$( )`. A subshell would take the detail with it, and the
+# detail is half the answer: `BLOCKED client-d:BRF-009` with no reason is the
+# dead-end client-b was already in.
+#
+# A plan can be blocked on work in ANOTHER repo, and until this existed there
+# was nowhere to say so. client-b WFI-015: PLN-011 was blocked on client-d's
+# BRF-009 / BUG-011. `wf-set-deps.sh` took plan IDs only; `wf-list-tags.sh
+# --gating` offered `security`, which would have been a false label; so the one
+# thing actually keeping the daemon off the plan was a `wf-claim.sh` lease —
+# documented as stealable by any session that judges it stale. The plan sat in
+# `draft`, a dispatchable state, with a live daemon that would have replanned it
+# against copper tokens that do not exist yet.
+#
+# The answer is checkable rather than declarative, which is the point: a
+# permanently-unmet marker would have to be cleared by hand, and a dependency
+# nobody clears is the same stall in a different column. `dependencies:` already
+# names a local checkout of the other project, so the other project's own
+# registry and closed-bugs folder answer the question directly, and the block
+# lifts by itself when the work lands there.
+#
+# Identity is the NUMBER, per the artifact ID system: BRF-009 becomes PLN-009
+# becomes a closed BUG-009. So all three are asked about together, and any one
+# of them being finished satisfies the dependency.
+#
+# `unknown` — no such dependency declared, no local checkout, no registry there
+# — is BLOCKING, deliberately. An unresolvable dependency is not a satisfied
+# one, and reporting it clear would dispatch exactly the plan the operator
+# parked.
+#
+# `abandoned` comes back as `complete` with the detail `abandoned`. It is the
+# one answer patience cannot fix — the dependent needs replanning (WFI-008) —
+# so the caller labels it and a human reads it, rather than waiting forever.
+WF_EXTERNAL_DEP_STATE=""
+WF_EXTERNAL_DEP_DETAIL=""
+wf_external_dep_state() {
+  local ref="$1" proj num path reg state padded
+  local IFS=$' \t\n'   # a caller may be mid-`IFS=,` split of a Deps column
+  WF_EXTERNAL_DEP_STATE="unknown"
+  WF_EXTERNAL_DEP_DETAIL=""
+  proj="${ref%%:*}"
+  num=$(printf '%s' "${ref#*:}" | grep -oE '[0-9]+$' || true)
+  if [ -z "$proj" ] || [ -z "$num" ]; then
+    WF_EXTERNAL_DEP_DETAIL="unparseable"; return 0
+  fi
+  num=$((10#$num))
+  padded=$(printf '%03d' "$num")
+  if ! path=$(wf_dep_project_path "$proj"); then
+    WF_EXTERNAL_DEP_DETAIL="no '$proj' in dependencies:"; return 0
+  fi
+  if [ ! -d "$path" ]; then
+    WF_EXTERNAL_DEP_DETAIL="$path is not a directory"; return 0
+  fi
+  reg="$path/plans/REGISTRY.md"
+  if [ -f "$reg" ]; then
+    state=$(wf_registry_field "PLN-$padded" state "$reg" 2>/dev/null || true)
+    case "$state" in
+      complete)
+        WF_EXTERNAL_DEP_STATE="complete"; WF_EXTERNAL_DEP_DETAIL="PLN-$padded complete"; return 0 ;;
+      abandoned)
+        WF_EXTERNAL_DEP_STATE="complete"; WF_EXTERNAL_DEP_DETAIL="abandoned"; return 0 ;;
+      ?*)
+        WF_EXTERNAL_DEP_STATE="pending"; WF_EXTERNAL_DEP_DETAIL="PLN-$padded $state"; return 0 ;;
+    esac
+  fi
+  if ls "$path"/bugs/closed/BUG-"$padded"-*.md >/dev/null 2>&1; then
+    WF_EXTERNAL_DEP_STATE="complete"; WF_EXTERNAL_DEP_DETAIL="BUG-$padded closed"; return 0
+  fi
+  if [ ! -f "$reg" ]; then
+    WF_EXTERNAL_DEP_DETAIL="no registry at $path"; return 0
+  fi
+  WF_EXTERNAL_DEP_STATE="pending"; WF_EXTERNAL_DEP_DETAIL="not started in $proj"
+}
+
+# wf_is_external_dep <token> → 0 when it names another project's artifact.
+# `client-d:BRF-009`, never a bare `PLN-004`.
+wf_is_external_dep() {
+  case "$1" in
+    *:*) return 0 ;;
+    *)   return 1 ;;
+  esac
+}
+
 wf_blocking_deps() {
   local deps_raw="$1" reg="${2:-}" blocking="" dep_id dep_state
   [ -n "$deps_raw" ] && [ "$deps_raw" != "—" ] || return 1
@@ -190,6 +294,17 @@ wf_blocking_deps() {
     dep_id="${dep_id#"${dep_id%%[![:space:]]*}"}"   # trim, without a subprocess
     dep_id="${dep_id%"${dep_id##*[![:space:]]}"}"
     [ -n "$dep_id" ] || continue
+    if wf_is_external_dep "$dep_id"; then
+      # Another project's artifact (client-b WFI-015). Resolved through that
+      # project's own registry, so the block lifts when the work lands there.
+      wf_external_dep_state "$dep_id"
+      # An `if`, not a `&&` chain: a false test as a standalone list is a
+      # `set -e` exit, and every caller here runs under it.
+      if [ "$WF_EXTERNAL_DEP_STATE" != "complete" ] || [ "$WF_EXTERNAL_DEP_DETAIL" = "abandoned" ]; then
+        blocking="${blocking:+$blocking,}$dep_id ($WF_EXTERNAL_DEP_DETAIL)"
+      fi
+      continue
+    fi
     dep_state=$(wf_state_of "$dep_id" ${reg:+"$reg"})
     [ "$dep_state" = "complete" ] && continue
     [ "$dep_state" = "abandoned" ] && dep_id="$dep_id (abandoned)"

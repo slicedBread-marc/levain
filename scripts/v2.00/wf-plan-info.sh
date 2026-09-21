@@ -104,7 +104,15 @@ if [ "$deps" != "—" ] && [ -n "$deps" ]; then
   IFS=',' read -ra dep_list <<< "$deps"
   for dep_id in "${dep_list[@]}"; do
     dep_id=$(echo "$dep_id" | xargs)
-    dep_state=$(wf_registry_field "$dep_id" state "$REGISTRY")
+    if wf_is_external_dep "$dep_id"; then
+      # Another project's artifact (client-b WFI-015) — resolved through that
+      # project's own registry, not this one, where it has no row at all.
+      wf_external_dep_state "$dep_id"   # two returns, so no $( ) — see the lib
+      dep_state="$WF_EXTERNAL_DEP_STATE"
+      if [ "$WF_EXTERNAL_DEP_DETAIL" = "abandoned" ]; then dep_state=abandoned; fi
+    else
+      dep_state=$(wf_registry_field "$dep_id" state "$REGISTRY")
+    fi
     if [ "$dep_state" != "complete" ]; then
       blocked=true
       [ -n "$blocking" ] && blocking="$blocking,$dep_id" || blocking="$dep_id"

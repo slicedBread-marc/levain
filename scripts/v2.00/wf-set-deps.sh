@@ -6,7 +6,35 @@
 # Examples:
 #   wf-set-deps.sh PLN-004 PLN-001
 #   wf-set-deps.sh PLN-004 PLN-001,PLN-003
+#   wf-set-deps.sh PLN-004 client-d:BRF-009
+#   wf-set-deps.sh PLN-004 PLN-001,client-d:BRF-009
 #   wf-set-deps.sh PLN-004 —
+#
+# A DEPENDENCY IN ANOTHER REPO
+#
+# `<project>:<ARTIFACT-ID>` names an artifact in a project declared under
+# `dependencies:` in this project's claude-workflow.yml — the same key
+# wf-dep-bug.sh files through, and the same local checkout.
+#
+# client-b WFI-015: PLN-011 was blocked on client-d's BRF-009 / BUG-011 and
+# there was nowhere to record it. This script took plan IDs only, and
+# `wf-list-tags.sh --gating` offered `security`, which would have been a false
+# label. So the only thing keeping the daemon off the plan was a wf-claim.sh
+# lease — explicitly documented as stealable by any session that judges it
+# stale. The plan sat in `draft`, a dispatchable state, with a live daemon
+# (pid 84870) that would have replanned it against copper tokens that do not
+# exist yet.
+#
+# It is checked, not merely declared. wf_external_dep_state reads the other
+# project's own REGISTRY.md and bugs/closed/, by NUMBER — BRF-009, PLN-009 and
+# a closed BUG-009 are the same artifact under the ID system — so the block
+# lifts by itself when the work lands over there. A marker that only a human
+# could clear would be the same stall in a different column.
+#
+# Validation here is of the PROJECT, not the artifact: a dependency may
+# legitimately be on work that has not been filed yet. A project name that
+# matches no `dependencies:` entry is a typo, and a typo that blocks forever is
+# indistinguishable from the bug this fixes.
 
 set -euo pipefail
 
@@ -37,11 +65,34 @@ if ! grep -q "^| $plan_id |" "$REGISTRY"; then
   exit 1
 fi
 
-# Validate deps exist in registry (skip for clear)
+# Validate deps (skip for clear). A local dep must have a row here; an
+# external one must name a declared dependency project.
 if [ "$deps" != "—" ]; then
   IFS=',' read -ra dep_list <<< "$deps"
   for dep in "${dep_list[@]}"; do
     dep=$(echo "$dep" | xargs)
+    if wf_is_external_dep "$dep"; then
+      proj="${dep%%:*}"
+      if ! wf_dep_project_path "$proj" >/dev/null; then
+        echo "Error: '$dep' names project '$proj', which is not in dependencies:" >&2
+        configured=$(wf_cfg_list dependencies | sed 's/:.*//' | paste -sd, - 2>/dev/null || true)
+        if [ -n "$configured" ]; then
+          echo "  Declared dependencies: $configured" >&2
+        else
+          echo "  No 'dependencies:' key in claude-workflow.yml. Add one:" >&2
+          echo "    dependencies:" >&2
+          echo "      - \"$proj:/absolute/path/to/$proj\"" >&2
+        fi
+        echo "  A project name that matches nothing blocks this plan forever," >&2
+        echo "  which is the failure this exists to fix (client-b WFI-015)." >&2
+        exit 1
+      fi
+      case "$dep" in
+        *:[A-Z][A-Z][A-Z]-[0-9]*) ;;
+        *) echo "Error: '$dep' — external deps are <project>:<PLN|BUG|BRF>-NNN" >&2; exit 1 ;;
+      esac
+      continue
+    fi
     if ! grep -q "^| $dep |" "$REGISTRY"; then
       echo "Error: dependency '$dep' not found in registry" >&2
       exit 1

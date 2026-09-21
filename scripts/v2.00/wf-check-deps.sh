@@ -6,6 +6,15 @@
 # Output:
 #   CLEAR                           — no deps or all deps complete
 #   BLOCKED <dep1>,<dep2>           — one or more deps not complete
+#   DEAD <dep>                      — a dep is abandoned; it will never complete
+#   EXTERNAL <project:ID>,…         — blocked on another repo's work, and on
+#                                     nothing here (client-b WFI-015). Reported
+#                                     apart from BLOCKED because the answer is
+#                                     different: nothing in this pipeline moves
+#                                     it, and the dependent is correctly parked
+#                                     rather than late. Mixed with a local
+#                                     block it reports BLOCKED, which is the
+#                                     nearer truth — there is work here to do.
 #
 # Exit 0 always (caller checks stdout).
 
@@ -37,9 +46,26 @@ deps=$(wf_registry_field "$plan_id" deps "$REGISTRY")
 # block its dependents forever with no way to clear it (WFI-008).
 blocking=""
 dead=""
+external=""
 IFS=',' read -ra dep_list <<< "$deps"
 for dep_id in "${dep_list[@]}"; do
   dep_id=$(echo "$dep_id" | xargs)
+  # Another repo's artifact. Resolved through that project's own registry and
+  # closed bugs, so this clears itself when the work lands there rather than
+  # waiting for someone to remember to edit a column (client-b WFI-015).
+  if wf_is_external_dep "$dep_id"; then
+    wf_external_dep_state "$dep_id"      # two returns, so no $( ) — see the lib
+    ext_state="$WF_EXTERNAL_DEP_STATE"
+    detail="$WF_EXTERNAL_DEP_DETAIL"
+    # An `if`, not `&&`: a false test as the last command of a case branch
+    # makes the branch exit 1 and `set -e` kills the script.
+    if [ "$ext_state" = "complete" ]; then
+      if [ "$detail" = "abandoned" ]; then dead="${dead:+$dead,}$dep_id"; fi
+    else
+      external="${external:+$external,}$dep_id ($detail)"
+    fi
+    continue
+  fi
   dep_state=$(wf_registry_field "$dep_id" state "$REGISTRY")
   case "$dep_state" in
     complete) ;;
@@ -56,7 +82,22 @@ if [ -n "$dead" ]; then
 fi
 
 if [ -n "$blocking" ]; then
+  # A local block outranks an external one: there is work in THIS pipeline
+  # that has to happen either way, and BLOCKED is what every caller already
+  # routes on. The external refs are still named, on stderr, so the reader is
+  # not surprised later.
   echo "BLOCKED $blocking"
-else
-  echo "CLEAR"
+  [ -n "$external" ] && echo "wf-check-deps.sh: also waiting on $external" >&2
+  exit 0
 fi
+
+if [ -n "$external" ]; then
+  echo "EXTERNAL $external"
+  echo "wf-check-deps.sh: $plan_id is parked on another project's work — nothing here moves it." >&2
+  echo "  It clears by itself when that artifact completes; nothing to edit." >&2
+  echo "  File the work there if it has not been:" >&2
+  echo "    scripts/wf-exec.sh wf-dep-bug.sh --host <project> \"<what you need>\" --kind request" >&2
+  exit 0
+fi
+
+echo "CLEAR"

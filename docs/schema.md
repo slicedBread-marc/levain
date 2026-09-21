@@ -33,7 +33,7 @@ All workflow artifacts (plans, bugs, briefs) carry a `schema_version` field in t
 ### v5 (legacy)
 - `schema_version: 5`
 - **Tags column** in REGISTRY.md — comma-separated category tags per plan (e.g. `security,admin`)
-- **Deps column** in REGISTRY.md — comma-separated plan IDs that must be `complete` before this plan is workable (e.g. `PLN-045,PLN-073`)
+- **Deps column** in REGISTRY.md — comma-separated plan IDs that must be `complete` before this plan is workable (e.g. `PLN-045,PLN-073`), or another project's artifact as `<project>:<ID>` (e.g. `client-d:BRF-009`)
 - **Goal stack** in `plan.md` — `### Goal History` table tracks goal overrides during fix cycles. When findings come back, wf-spec pushes a focused sub-goal; when resolved, the original goal is restored.
 - Allowed tags (extensible): `security`, `arcade`, `admin`, `lessons`, `ux`, `infra`, `e2e`, `bugfix`
 
@@ -116,6 +116,10 @@ The `Tags` column holds comma-separated category tags (no spaces). Default `—`
 **The vocabulary is the project's, not the schema's.** It is derived from the tags plans already carry, plus anything declared in `claude-workflow.yml` (`tags:`, `specApproval.gateTags`). A name outside it is accepted with a warning — this was once a hardcoded allowlist, and a project whose gating tag was not on it could not assign the one tag that gates. Tags are free-form labels; the only one with mechanical meaning is a match against `specApproval.gateTags`.
 
 The `Deps` column holds comma-separated plan IDs that must reach `complete` state before this plan is workable. Default `—`. A plan with incomplete deps shows `[blocked]` in worklist menus. Use `scripts/wf-set-deps.sh <plan-id> <deps>` to set.
+
+**A dep can name another project's artifact**: `client-d:BRF-009`, where the project is one declared under `dependencies:` in this project's `claude-workflow.yml` — the same key `wf-dep-bug.sh` files through, and the same local checkout. client-b WFI-015: PLN-011 was blocked on client-d's BRF-009 / BUG-011 and there was nowhere to record it. `wf-set-deps.sh` took plan IDs only, and the one mechanism that actually kept the daemon off the plan was a `wf-claim.sh` lease — explicitly stealable by any session that judges it stale. The plan sat in `draft`, a dispatchable state, with a live daemon that would have replanned it against tokens that did not exist yet.
+
+It is **checked, not declared**. Identity is the number, per the ID system above — `BRF-009`, `PLN-009` and a closed `BUG-009` are one artifact — so the other project's own `plans/REGISTRY.md` and `bugs/closed/` answer directly, and the block lifts by itself when the work lands there. A marker only a human could clear would be the same stall in a different column. An unresolvable ref (project not declared, checkout missing, no registry there) **blocks**, because an unresolvable dependency is not a satisfied one. `wf-check-deps.sh` reports `EXTERNAL <ref> (<why>)` when the only thing outstanding is elsewhere, and `BLOCKED` when there is also work here — the nearer truth, since something in this pipeline has to happen either way.
 
 ### States
 
