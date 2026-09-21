@@ -1070,6 +1070,113 @@ assert_eq "it warns that releasing is a trigger" "true" \
 assert_eq "install.sh lists it" "true" \
   "$(grep -q '/wf-claim ' "$LIB_ROOT/install.sh" && echo true || echo false)"
 
+section "A live owner outranks the claim TTL (client-b WFI-015)"
+
+# The TTL used to be consulted INSTEAD of the owner, not after it: past 7200s
+# wf_claim_live fell straight to `rm -f` without asking whether the owning
+# process was still running, and reaped the claim of a session sitting right
+# there holding the work. A lease is also the only park the harness offers for
+# a plan blocked on another repo, so that reap silently unparked real work.
+claims_root="$(pwd)/.claude/orchestrator/claims"
+# Read the same way wf_proc_start reads it, so the comparison is like for like.
+mystart=$(ps -o lstart= -p $$ 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^ *//; s/ *$//')
+stale=$(( $(date +%s) - 100 ))
+
+claim_at() {   # <num> <artifact> <pid> <start-time-line-or-empty>
+  mkdir -p "$claims_root/$1"
+  if [ -n "${4:-}" ]; then
+    printf '%s\n%s\n%s\n%s\n' "$stale" "$3" "$2" "$4" > "$claims_root/$1/.wf-claim"
+  else
+    printf '%s\n%s\n%s\n' "$stale" "$3" "$2" > "$claims_root/$1/.wf-claim"
+  fi
+}
+
+# Owner alive, start time matches: kept, however old.
+claim_at 981 PLN-981 "$$" "$mystart"
+out=$(WF_CLAIM_TTL=2 "$SCRIPT_DIR/wf-claim.sh" --list 2>&1)
+assert_eq "a claim past the TTL survives while its owner runs" "true" \
+  "$([ -f "$claims_root/981/.wf-claim" ] && echo true || echo false)"
+case "$out" in *overdue*) r=true ;; *) r=false ;; esac
+assert_eq "and --list marks it overdue rather than hiding it" "true" "$r"
+
+# Same PID, different start time — the shape a recycled PID takes. Still reaped
+# on schedule, which is the case the TTL was really guarding against.
+claim_at 982 PLN-982 "$$" "Mon 1 Jan 00:00:00 1999"
+WF_CLAIM_TTL=2 "$SCRIPT_DIR/wf-claim.sh" --list >/dev/null 2>&1
+assert_eq "a recycled PID does not inherit the claim" "false" \
+  "$([ -f "$claims_root/982/.wf-claim" ] && echo true || echo false)"
+
+# Three-line claim from an older client: no start time to verify, so the TTL
+# alone still decides and the behaviour is exactly what it was. No migration.
+claim_at 983 PLN-983 "$$" ""
+WF_CLAIM_TTL=2 "$SCRIPT_DIR/wf-claim.sh" --list >/dev/null 2>&1
+assert_eq "a pre-v9.10 claim is still aged out on the TTL alone" "false" \
+  "$([ -f "$claims_root/983/.wf-claim" ] && echo true || echo false)"
+
+# A dead owner is reaped inside the TTL, as it always was (WFI-067).
+mkdir -p "$claims_root/984"
+printf '%s\n%s\n%s\n%s\n' "$(date +%s)" "999999" "PLN-984" "whenever" > "$claims_root/984/.wf-claim"
+"$SCRIPT_DIR/wf-claim.sh" --list >/dev/null 2>&1
+assert_eq "a dead owner is still reaped well inside the TTL" "false" \
+  "$([ -f "$claims_root/984/.wf-claim" ] && echo true || echo false)"
+
+# A fresh claim records the start time, so the guarantee holds going forward.
+"$SCRIPT_DIR/wf-claim.sh" PLN-907 >/dev/null 2>&1
+assert_eq "a claim written today carries its owner's start time" "true" \
+  "$([ -n "$(sed -n '4p' "$claims_root/907/.wf-claim" 2>/dev/null)" ] && echo true || echo false)"
+"$SCRIPT_DIR/wf-unclaim.sh" PLN-907 >/dev/null 2>&1
+rm -rf "$claims_root/981" "$claims_root/982" "$claims_root/983" "$claims_root/984"
+
+
+section "Two plans owing consistency do not stop implement (client-b WFI-020)"
+
+# candidates_implement subtracts the consistency-pending list with awk. That
+# list used to arrive via `awk -v pending=…`, which BSD/macOS awk rejects when
+# the value contains a literal newline — rc=2, no output, no implement
+# dispatched at all. ONE pending plan hid it for months, because `$(…)` strips
+# the sole trailing newline; it takes TWO to reproduce, which is why both are
+# seeded here.
+#
+# The two must be consistency-pending AND otherwise implementable, or the
+# subtraction is never reached: a plan whose deps are unmet is already dropped
+# as `blocked` by the type filter above it. So the dep they declare is a plan
+# that is already complete.
+registry_add_row PLN-970 dep-done complete
+for spec in "PLN-971 pend-one ready" "PLN-972 pend-two ready" "PLN-973 buildable ready"; do
+  # shellcheck disable=SC2086
+  set -- $spec
+  registry_add_row "$1" "$2" "$3"
+done
+# Deps + no `## Consistency` marker is what makes a ready plan consistency-pending.
+"$SCRIPT_DIR/wf-set-deps.sh" PLN-971 PLN-970 >/dev/null 2>&1
+"$SCRIPT_DIR/wf-set-deps.sh" PLN-972 PLN-970 >/dev/null 2>&1
+# PLN-973 declares no deps, so it owes no pass and must still be dispatchable.
+
+assert_eq "two plans are consistency-pending" "2" \
+  "$("$SCRIPT_DIR/wf-list-consistency.sh" 2>/dev/null | grep -c 'PLN-97[12]' || echo 0)"
+assert_eq "and both are otherwise implementable, so the subtraction is reached" "2" \
+  "$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null | grep -cE '^new\tPLN-97[12]-' || echo 0)"
+
+# Raise the implement ceiling for this section only: the sweep dispatches in
+# registry order and the earlier fixtures already fill the default 2 slots, so
+# a capped sweep would prove nothing about PLN-973 either way.
+cp claude-workflow.yml /tmp/wf-cfg-restore.$$
+sed -i.bak 's/^    implement: 2$/    implement: 20/' claude-workflow.yml
+
+sweep_err=$(orch --sweep --dry-run 2>&1 >/dev/null)
+case "$sweep_err" in *"newline in string"*) r=true ;; *) r=false ;; esac
+assert_eq "the sweep raises no awk newline error" "false" "$r"
+
+sweep_out=$(orch --sweep --dry-run 2>/dev/null)
+assert_eq "a plan owing no consistency pass is still implemented" "true" \
+  "$(printf '%s' "$sweep_out" | grep -q 'implement PLN-973-buildable' && echo true || echo false)"
+assert_eq "and the two owing one are held back from implement" "false" \
+  "$(printf '%s' "$sweep_out" | grep -qE 'implement PLN-97[12]-' && echo true || echo false)"
+assert_eq "while still being offered a consistency pass" "true" \
+  "$(printf '%s' "$sweep_out" | grep -q 'consistency PLN-971-pend-one' && echo true || echo false)"
+
+mv /tmp/wf-cfg-restore.$$ claude-workflow.yml; rm -f claude-workflow.yml.bak
+
 section "install.sh reports an untracked registry on every deploy"
 
 # The pipeline's state machine must be in git: plan.md, findings.md and

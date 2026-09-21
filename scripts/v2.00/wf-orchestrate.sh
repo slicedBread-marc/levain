@@ -641,19 +641,47 @@ candidates_consistency() {
 candidates_implement() {
   # Types: new | resume | fix are actionable; processing (claimed elsewhere)
   # and blocked (deps) are not.
-  local pending
+  local pending out rc=0
   pending=$(candidates_consistency)
 
   # A plan still owing a consistency pass is not implementable yet — building
   # it first is what turns a cheap amendment into a migration. One awk pass
   # subtracts the list; the `grep -qx` this replaces forked once per
   # implementable plan.
-  "$SELF_DIR/wf-list-implementable.sh" 2>/dev/null \
+  #
+  # THE PENDING LIST GOES THROUGH ENVIRON, NEVER THROUGH `-v`
+  #
+  # `awk -v pending="$pending"` parses its value as an escaped string literal,
+  # and BSD/macOS awk refuses a literal newline in one:
+  #
+  #     awk: newline in string PLN-012-prototypes\nP... at source line 1
+  #
+  # That is a startup failure — rc=2, no output, nothing read. So with TWO OR
+  # MORE plans owing a consistency pass this filter emitted nothing and the
+  # dispatcher silently stopped implementing anything at all, while the sweep
+  # summary reported "0 worker(s) dispatched" and looked merely idle. One
+  # pending plan hid the fault for months, because `$(…)` strips the sole
+  # trailing newline and a single-element list therefore contains none.
+  # ENVIRON has no such parsing step and carries newlines verbatim, on every
+  # awk this harness supports (client-b WFI-020).
+  out=$("$SELF_DIR/wf-list-implementable.sh" 2>/dev/null \
     | awk -F'\t' '$1 == "new" || $1 == "resume" || $1 == "fix" { print $2 }' \
-    | awk -v pending="$pending" '
-        BEGIN { n = split(pending, p, "\n"); for (i = 1; i <= n; i++) if (p[i] != "") skip[p[i]] = 1 }
+    | WF_PENDING="$pending" awk '
+        BEGIN { n = split(ENVIRON["WF_PENDING"], p, "\n"); for (i = 1; i <= n; i++) if (p[i] != "") skip[p[i]] = 1 }
         !($0 in skip)
-      ' || true
+      ') || rc=$?
+
+  # A FILTER THAT FAILED IS NOT AN EMPTY CANDIDATE LIST
+  #
+  # The `|| true` this replaces made those two indistinguishable, which is the
+  # only reason the awk fault above survived: a broken filter and a quiet queue
+  # produce the same empty string, and the dispatcher believed the quiet queue.
+  if [ "$rc" -ne 0 ]; then
+    echo "wf-orchestrate: implement candidate filter failed (rc=$rc) — dispatching no implement this sweep" >&2
+    return 0
+  fi
+  [ -n "$out" ] && printf '%s\n' "$out"
+  return 0
 }
 
 candidates_release() {

@@ -8,7 +8,12 @@
 # <artifact> is any of PLN-NNN, PLN-NNN-slug, BUG-NNN, BRF-NNN. The claim keys
 # on the NUMBER, so a brief and the plan it becomes share one claim and a spec
 # worker can claim before the plan folder exists (WFI-004).
-# Claims expire when the owning process dies or after 2 hours (7200 seconds).
+# Claims expire when the owning process dies, or after 2 hours (7200 seconds)
+# if the harness cannot prove the owner is still running. An owner that IS
+# provably still running — same PID, same start time — keeps its claim past
+# the TTL and is reported as `overdue` by --list, because reaping the claim of
+# a session that is sitting there working is how a deliberate park evaporates
+# (client-b WFI-015). See wf_claim_live in wf-orch-lib.sh.
 #
 #   --list      report every live claim and stop. Reads nothing else and
 #               writes nothing — `/wf-claim` opens with it, and it is the one
@@ -160,7 +165,13 @@ if $list; then
     # whose `a` fails carries that failure out as the statement's status.
     mine=""
     if wf_claim_mine "${d%/}"; then mine="  ← yours"; fi
-    printf '%-56s PID %-8s %sm%s\n' "$label" "${holder:-?}" "$((WF_CLAIM_AGE / 60))" "$mine"
+    # An overdue claim is a live one the TTL would once have reaped out from
+    # under its owner. It is legitimate — the owner is provably the process
+    # that took it — but a claim held this long is worth a human deciding
+    # whether the work is still happening, so it is never merely silent.
+    overdue=""
+    if [ "${WF_CLAIM_OVERDUE:-0}" = "1" ]; then overdue="  ⚠ overdue (owner alive)"; fi
+    printf '%-56s PID %-8s %sm%s%s\n' "$label" "${holder:-?}" "$((WF_CLAIM_AGE / 60))" "$overdue" "$mine"
     found=1
   done
   [ "$found" = "1" ] || echo "No live claims."

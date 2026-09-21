@@ -25,7 +25,9 @@
 #   wf_artifacts_with_number <num>   → "<PREFIX> <where>" per artifact using it
 #   wf_claim_dir <artifact>          → the directory that holds this artifact's claim
 #   wf_claim_write <dir> [pid] [artifact] → write <dir>/.wf-claim
+#   wf_proc_start <pid>              → that process's start time, "" if not running
 #   wf_claim_live <dir>              → 0 if a live claim holds it; sets WF_CLAIM_AGE
+#                                      and WF_CLAIM_OVERDUE
 #   wf_claim_mine <dir>              → 0 if that claim is this caller's own
 #   wf_claim_held <artifact>         → wf_claim_live against wf_claim_dir + legacy
 #   wf_event <type> <artifact> <msg> → append to events.log
@@ -858,11 +860,27 @@ wf_artifacts_with_number() {
 # "PLN-210-publish-path-reports-elision (complete)", a different artifact that
 # happened to share the number (WFI-215). Recording what was asked for costs
 # one line and removes the guess.
+# wf_proc_start <pid> — that process's start time, empty when it is not running.
+#
+# IDENTITY, NOT LIVENESS. A PID is reusable, so `kill -0` answering yes does
+# not prove the answerer is the process that took the claim — after a reboot or
+# a busy fortnight it is routinely somebody else. The start time pins it.
+# Nothing parses the value; it is only ever compared against another reading
+# from the same `ps`, so the format being unspecified costs nothing. Whitespace
+# is squeezed because `ps -o lstart=` pads its column.
+wf_proc_start() {
+  [ -n "${1:-}" ] || return 0
+  ps -o lstart= -p "$1" 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^ *//; s/ *$//'
+}
+
 wf_claim_write() {
   local dir="$1" pid="${2:-}" artifact="${3:-}"
   [ -d "$dir" ] || return 1
   [ -n "$pid" ] || pid=$(wf_session_pid)
-  printf '%s\n%s\n%s\n' "$(date +%s)" "$pid" "$artifact" > "$dir/.wf-claim"
+  # Line 4 is the owner's start time, and like line 3 every reader treats it as
+  # optional — a claim written by an older client has three lines, and is aged
+  # out on the TTL alone exactly as it was before. See wf_claim_live.
+  printf '%s\n%s\n%s\n%s\n' "$(date +%s)" "$pid" "$artifact" "$(wf_proc_start "$pid")" > "$dir/.wf-claim"
 }
 
 # wf_claim_mine <plan-dir> — 0 when the live claim on <plan-dir> belongs to the
@@ -909,22 +927,59 @@ wf_claim_mine() {
 
 # wf_claim_live <plan-dir> — 0 when a live session holds the claim.
 #
-# Sets WF_CLAIM_AGE (seconds) for callers that report "claimed Nm ago". A claim
-# whose PID is gone, or one older than the TTL, is reaped here: a worker killed
+# Sets WF_CLAIM_AGE (seconds) for callers that report "claimed Nm ago", and
+# WF_CLAIM_OVERDUE=1 when the claim is past the TTL but its owner is provably
+# still running. A claim whose owner is gone is reaped here: a worker killed
 # mid-run must not park an artifact forever (WFI-067).
+#
+# THE TTL DOES NOT OUTRANK A LIVE OWNER
+#
+# This used to check the PID only INSIDE the `age < TTL` branch, so at 7200s it
+# fell straight through to `rm -f` without asking whether the owner was alive —
+# and reaped the claim of a session sitting right there doing the work. That
+# inverts what the two signals are worth: a running owner is direct evidence
+# the work is still held, and the TTL is a guess standing in for evidence when
+# the owner cannot be found.
+#
+# The cost was not theoretical. client-b parked PLN-011 — a draft plan blocked
+# on another repo — behind a claim, because a lease is the only park the
+# harness offers (WFI-015). Two hours later the claim would have evaporated
+# under a live session and a spec worker would have replanned the plan against
+# tokens that did not exist yet. The only defence available was stopping the
+# daemon, which is a poor thing for a correct park to require.
+#
+# Reuse is what the TTL was really guarding against, and the start time on line
+# 4 addresses that directly: the owner counts as alive only when the PID is up
+# AND started when the claim says it did. A recycled PID fails that and is
+# reaped on schedule, as is a three-line claim from an older client, which
+# carries no start time and so cannot be verified either way.
+#
+# An overdue claim is kept, NOT refreshed. The age keeps climbing and
+# WF_CLAIM_OVERDUE keeps saying so, because a claim held for six hours is worth
+# a human's attention even when it is legitimate — hiding it by resetting the
+# clock would trade one silent failure for another.
 WF_CLAIM_TTL=${WF_CLAIM_TTL:-7200}
+WF_CLAIM_OVERDUE=0
 wf_claim_live() {
-  local dir="$1" f="$1/.wf-claim" ts pid
+  local dir="$1" f="$1/.wf-claim" ts pid started now_started
   WF_CLAIM_AGE=0
+  WF_CLAIM_OVERDUE=0
   [ -f "$f" ] || return 1
   ts=$(sed -n '1p' "$f" 2>/dev/null | tr -cd '0-9')
   pid=$(sed -n '2p' "$f" 2>/dev/null | tr -cd '0-9')
+  started=$(sed -n '4p' "$f" 2>/dev/null | tr -d '\r' || true)
   [ -n "$ts" ] || ts=0
   WF_CLAIM_AGE=$(( $(date +%s) - ts ))
   if [ "$WF_CLAIM_AGE" -lt "$WF_CLAIM_TTL" ]; then
     # No PID is the pre-v5.1 format: the TTL alone decides.
     [ -z "$pid" ] && return 0
     kill -0 "$pid" 2>/dev/null && return 0
+  elif [ -n "$pid" ] && [ -n "$started" ]; then
+    now_started=$(wf_proc_start "$pid")
+    if [ -n "$now_started" ] && [ "$now_started" = "$started" ]; then
+      WF_CLAIM_OVERDUE=1
+      return 0
+    fi
   fi
   rm -f "$f"
   return 1
