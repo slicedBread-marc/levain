@@ -6192,6 +6192,58 @@ cd "$TEST_DIR/main" || exit 1
 rm -rf "$XDEP"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A sign-in recipe is prose, and prose does not fit on one line (client-b WFI-021)"
+
+# test_account_note held a fifteen-line recipe — don't use the container, run
+# on the host at :8083 against a local client-c at :8084, named dev
+# accounts, a headless /login actions-json recipe. Written as a `|` block,
+# because that is what it is. wf_cfg answered empty, $TEST_ACCOUNT was empty,
+# and a tester opened needs-input asking the question the file already
+# answered — for the third time.
+BLK=$(mktemp -d)
+mkdir -p "$BLK/plans"
+cd "$BLK" || exit 1
+git init -q -b develop && git config user.email t@t.com && git config user.name T
+printf '| ID | Slug | State |\n|-|-|-|\n\n<!-- Counter: 1 -->\n' > plans/REGISTRY.md
+cat > claude-workflow.yml <<'YML'
+project_slug: blocktest
+test_account_command: ""
+test_account_note: |
+  Do NOT sign in against the container — it cannot complete an OIDC round trip.
+
+  Run on the host instead:
+    1. cd src/App && dotnet run     # :8083
+    2. A local platform on :8084
+guest_entry_path: "/welcome"
+YML
+git add -A && git commit -qm init
+
+cfg() { "$SCRIPT_DIR/wf-config-get.sh" "$@"; }
+
+note=$(cfg test_account_note --text)
+assert_eq "a block scalar comes back whole" "true" \
+  "$(printf '%s' "$note" | grep -q 'cannot complete an OIDC round trip' && echo true || echo false)"
+assert_eq "including the lines after the blank one" "true" \
+  "$(printf '%s' "$note" | grep -q 'A local platform on :8084' && echo true || echo false)"
+assert_eq "dedented to its own left margin" "true" \
+  "$(printf '%s' "$note" | grep -qx 'Run on the host instead:' && echo true || echo false)"
+assert_eq "the blank line inside the block survives" "true" \
+  "$(printf '%s\n' "$note" | awk 'NF==0 {found=1} END {print found ? "true" : "false"}')"
+assert_eq "and the key AFTER the block is not swallowed" "/welcome" "$(cfg guest_entry_path)"
+
+# A one-line scalar still reads the same way through --text.
+assert_eq "--text falls back to the ordinary scalar read" "blocktest" "$(cfg project_slug --text)"
+assert_eq "and an absent key gives the default" "fallback" "$(cfg nope.missing fallback --text)"
+
+# The command stays single-line-only. WFI-016 is what happens when a block
+# opener is handed to something that RUNS it.
+out=$(cfg test_account_command 2>&1)
+assert_eq "an empty command is still empty" "" "$out"
+
+cd "$TEST_DIR/main" || exit 1
+rm -rf "$BLK"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

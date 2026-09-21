@@ -202,7 +202,16 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
 
    **`$TEST_ACCOUNT` is the sign-in line** — display it verbatim with the URL in every state below. A fresh container has no account unless `test_account_command` made one.
 
-   **If `$TEST_ACCOUNT` is empty and any criterion needs a signed-in session, stop and say so before walking criteria.** Attended: ask the user how to get an account, and once they answer, tell them to record it as `test_account_command` / `test_account_note` in `claude-workflow.yml` so the next run does not repeat this. Unattended: **[GATE]** `needs-input` with the question "criteria N, M need a signed-in session and the container has no account — what provisions one?".
+   **`$TEST_ACCOUNT` is `test_account_note` verbatim, and it may be several paragraphs.** It is the project's durable sign-in recipe, written once by whoever worked it out. Read it in full and follow it, including when it tells you not to use the container at all — client-b' says to stop the container, run on the host at `:8083` against a local `client-c` at `:8084`, and gives a headless `/login` actions-json recipe.
+
+   **Before you conclude it is empty, check the config yourself:**
+   ```bash
+   scripts/wf-exec.sh wf-config-get.sh test_account_note --text
+   ```
+
+   A non-empty note IS the answer, and asking anyway is the failure: client-b recorded the full recipe at a `/wf-attend` gate after PLN-012's tester asked, and PLN-014's tester opened `needs-input` with the identical question anyway, which a human answered a third time (WFI-021). The durable answer was present and unread. A note that exists satisfies the stop-and-say-so condition below — read it and carry on.
+
+   **If `test_account_note` is genuinely empty and any criterion needs a signed-in session, stop and say so before walking criteria.** Attended: ask the user how to get an account, and once they answer, tell them to record it as `test_account_command` / `test_account_note` in `claude-workflow.yml` so the next run does not repeat this. Unattended: **[GATE]** `needs-input` with the question "criteria N, M need a signed-in session and the container has no account — what provisions one?".
 
    Do not work around it silently and do not mark those criteria skipped, untested or passed. client-a's WFI-072 stalled a run at criterion 5 of 5 for exactly this, and the reporter's read of the earlier runs is the reason this paragraph exists: two prior plans shipped with every criterion behind the login unexecuted, and nothing in the record said so.
 

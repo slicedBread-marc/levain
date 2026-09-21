@@ -478,6 +478,89 @@ wf_cfg() {
   if [ -z "$val" ]; then printf '%s' "$default"; else printf '%s' "$val"; fi
 }
 
+# wf_cfg_block <dotted.path>
+#
+# Reads a YAML BLOCK SCALAR — `key: |` or `key: >` followed by an indented body
+# — and prints it dedented, newlines intact. Prints nothing when the key is
+# absent or its value is an ordinary one-line scalar.
+#
+# wf_cfg deliberately refuses a block opener: it is a one-line-per-key parser,
+# and client-c's WFI-016 was it answering the literal string ">" as though
+# that were the configured command, which then ran verbatim and did nothing.
+# Warning and treating the key as unset is right for a COMMAND. It is wrong for
+# PROSE.
+#
+# client-b WFI-021: `test_account_note` held a fifteen-line sign-in recipe —
+# do not use the container, it cannot complete an OIDC round trip; run on the
+# host at :8083 against a local client-c at :8084; named dev accounts; a
+# headless /login actions-json recipe. Written as a `|` block, because that is
+# what it is. wf_cfg answered empty, so `$TEST_ACCOUNT` was empty, so wf-test
+# stopped and opened a needs-input gate asking the question the file already
+# answered — for the third time, and a human answered it a third time. The
+# durable answer was present and unread. "Flatten it to a single line using a
+# semicolon" is sound advice for a shell command and no advice at all for four
+# paragraphs of instructions.
+#
+# `>` is read the same way as `|`: line breaks are preserved rather than
+# folded. The consumers of this are notes shown verbatim to a human, where the
+# author's line breaks are the formatting, and a folding parser in awk would be
+# more code than the distinction is worth here. Chomping indicators (`-`, `+`)
+# are accepted and the trailing newline is stripped either way, since every
+# caller prints this into a larger message.
+wf_cfg_block() {
+  local path="$1" cfg
+  cfg="$(wf_develop_root)/claude-workflow.yml"
+  [ -f "$cfg" ] || return 0
+
+  awk -v path="$path" '
+    BEGIN { n = split(path, want, "."); level = 0; collecting = 0; body_indent = -1 }
+    {
+      line = $0; sub(/\r$/, "", line)
+
+      if (collecting) {
+        if (line ~ /^[ \t]*$/) { blanks = blanks "\n"; next }
+        match(line, /^[ ]*/); ind = RLENGTH
+        if (ind <= key_indent) { collecting = 0; exit }
+        if (body_indent < 0) body_indent = ind
+        printf "%s", blanks; blanks = ""
+        print substr(line, body_indent + 1)
+        next
+      }
+
+      probe = line; sub(/^[ ]*/, "", probe)
+      if (probe ~ /^#/ || probe == "") next
+      match(line, /^[ ]*/); indent = RLENGTH / 2
+      if (indent > level) next
+      if (indent < level) level = indent
+      key = probe; sub(/:.*/, "", key); gsub(/[ \t]/, "", key)
+      if (key != want[level + 1]) next
+      if (level == n - 1) {
+        rest = probe; sub(/^[^:]*:[ \t]*/, "", rest)
+        gsub(/^[ \t]+|[ \t]+$/, "", rest)
+        if (rest !~ /^[|>][+-]?[0-9]*$/) exit    # an ordinary scalar; not ours
+        match(line, /^[ ]*/); key_indent = RLENGTH
+        collecting = 1; blanks = ""
+        next
+      }
+      level++
+    }
+  ' "$cfg"
+}
+
+# wf_cfg_text <dotted.path> [default]
+# One value, however its author wrote it: a one-line scalar through wf_cfg, or
+# a block scalar through wf_cfg_block. For a config value that is PROSE for a
+# human rather than something a script runs. Never use it for a command — see
+# wf_cfg_block's header, and WFI-016.
+wf_cfg_text() {
+  local path="$1" default="${2:-}" val
+  val=$(wf_cfg_block "$path")
+  if [ -n "$val" ]; then printf '%s' "$val"; return 0; fi
+  # wf_cfg warns on stderr for a block opener it cannot read. We have already
+  # established there is no block body, so anything it says here is real.
+  wf_cfg "$path" "$default"
+}
+
 # wf_cfg_list <dotted.path>
 # Reads a YAML sequence of scalars, one item per output line:
 #

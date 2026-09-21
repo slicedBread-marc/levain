@@ -114,10 +114,18 @@ done
 #   test_account_command: eval'd here with FEATURE_PORT and
 #                         COMPOSE_PROJECT_NAME exported. Must be idempotent —
 #                         it runs on every container start.
-#   test_account_note:    one line handed to the tester, e.g.
-#                         "sign in with dev@example.com / <password>"
+#   test_account_note:    what the tester needs in order to sign in, e.g.
+#                         "sign in with dev@example.com / <password>". Read
+#                         with wf_cfg_text, so a `|` block scalar works — a
+#                         sign-in recipe is prose and is routinely several
+#                         paragraphs. client-b wrote fifteen lines there and
+#                         wf_cfg answered empty, so a tester opened a
+#                         needs-input gate asking what the file already said,
+#                         for the third time (WFI-021). The COMMAND stays
+#                         single-line: WFI-016 is what happens when a block
+#                         opener is run as a command.
 account_cmd=$(wf_cfg test_account_command "")
-account_note=$(wf_cfg test_account_note "")
+account_note=$(wf_cfg_text test_account_note "")
 
 if [ -n "$account_cmd" ]; then
   export FEATURE_PORT COMPOSE_PROJECT_NAME
@@ -131,7 +139,9 @@ fi
 wf_emit TEST_ACCOUNT "$account_note"
 
 if [ -n "$account_note" ]; then
-  echo "wf-docker-up: test account — $account_note" >&2
+  # Printed on its own lines: the note may be a multi-line recipe, and the
+  # author's line breaks are its formatting.
+  printf 'wf-docker-up: test account —\n%s\n' "$account_note" >&2
 elif [ -n "$account_cmd" ]; then
   echo "wf-docker-up: test account provisioned (set test_account_note in claude-workflow.yml to print the credentials here)" >&2
 fi

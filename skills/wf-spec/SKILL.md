@@ -574,6 +574,29 @@ When the user approves the plan (says "looks good", "approved", "ready", etc.):
    - **Clean or Notes only:** proceed to state transition.
 4. **Write the review result** to `plan.md`'s `## Review` section
 
+4b. **Commit the reviewed plan, then open `spec-approval` BEFORE you ask.** Ask in conversation as usual — the gate is not a substitute for asking, it is what makes the question survive you not getting an answer.
+
+   ```bash
+   scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): reviewed — <verdict>, awaiting approval" \
+     --add plans/PLN-NNN-<slug>/ plans/REGISTRY.md
+   scripts/wf-exec.sh wf-gate-open.sh PLN-NNN spec-approval \
+     "<goal> — Review: <verdict> (N rounds). N steps, N automated tests, N manual criteria. Approve?" \
+     --context plans/PLN-NNN-<slug>/plan.md --skill wf-spec
+   ```
+
+   An attended session is not a durable place to keep a question. client-d's PLN-014 (WFI-014) was drafted attended, reviewed Approved at 18:15Z, and the session then moved on to PLN-015 at 18:24Z. The plan sat in `draft` for 49 minutes holding a live claim (PID 27452) with **nothing anywhere saying a human was owed a decision**: `events.log` had no PLN-014 entry at all, `wf-list-gates.sh` listed nothing for it, `/wf-board`'s "GATES — waiting on you" was empty, coordinator' `wf-board-all` attn row was empty for the project, and at 18:42Z the daemon positively announced "nothing dispatchable and no gates open — the pipeline is empty or complete" over a pipeline that was neither. Every plan in that repo drafted **unattended** wrote a `gate-open spec-approval` event and did appear in the stall note. The identical wait was visible unattended and invisible attended.
+
+   A claim is not that signal and cannot be: it says a session holds this plan, not that a person owes it an answer, and no surface reads it as one. The gate is the only mechanism `wf-list-gates.sh`, `/wf-board`, the daemon's stall note and `wf-board-all`'s attn row all read.
+
+   **Then close it with the answer you got, and only then transition.** The answer is the human's; the gate records it.
+
+   ```bash
+   scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "approved — <what they said>" \
+     --gate spec-approval --decision approve
+   ```
+
+   If they do not answer — they go quiet, the session is interrupted, you are diverted to another plan — **leave the gate open and stop.** The plan stays `draft`, the question is on the board, and `/wf-attend` picks it up. That is the outcome this step exists to produce. Do not answer it yourself: `spec-approval` is on `wf-autonomy.sh`'s never-grantable list, and `wf-registry-update.sh` refuses `draft → ready` while it is open and unanswered (client-b WFI-012).
+
 5. **State transition and commit, in one step:**
    ```bash
    # Commit ONLY these paths. On develop the index is shared with other
@@ -639,7 +662,7 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
    - **Approved** / **Approved with notes** → record the verdict, then go to step 6.
    - **Blocked** (or any Critical finding) → revise the plan against the findings, then re-review. Each re-review is one more round.
 
-4. **Round ceiling** — stop after `specApproval.maxReviewRounds` (default 3). A plan still Blocked past that has a problem the reviewer cannot articulate, which is exactly when a human is worth interrupting:
+4. **Round ceiling** — stop after `specApproval.maxReviewRounds` (default 3). **The ceiling counts every round, not only the Blocked ones.** An Approved-with-notes verdict whose notes you then acted on is a revision like any other, and re-reviewing it is round N+1 — the Replanning path's "review the revision" rule and this ceiling are the same rule seen from two ends, not two rules in tension (client-d WFI-012). If acting on the notes would take you past the ceiling, do not: record the notes as unactioned in `## Review`, route on the verdict you have, and let the gate or the builder carry them. A plan still Blocked past the ceiling has a problem the reviewer cannot articulate, which is exactly when a human is worth interrupting:
    ```bash
    scripts/wf-exec.sh wf-gate-open.sh PLN-NNN spec-stuck \
      "Blocked after N review rounds. Unresolved: <the reviewer's remaining Criticals, one line>" \
@@ -858,6 +881,15 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
    scripts/wf-exec.sh wf-commit.sh "spec: PLN-NNN-<slug> — amendment, back to ready" \
      --add plans/PLN-NNN-<slug>/ plans/REGISTRY.md plans/deferred-criteria.md
    ```
+
+9. **Release the claim — after the commit has landed, never before.**
+   ```bash
+   scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
+   ```
+
+   Same ordering contract as the two new-plan exits and for the same reason ([docs/guard-ordering.md](../../docs/guard-ordering.md)): the transition is what the next dispatch reads, the claim is what stops it reading a stale one, and dropping the guard first opens a window up to a full sweep wide where the plan is unguarded *and* behind.
+
+   This step was missing from the Replanning path entirely, so a worker following the section literally exited still holding the claim on a plan it had just moved to `active` — and a claim is exactly what keeps the dispatcher off a plan that now wants a builder. client-d's PLN-015 (WFI-012) was unclaimed by hand afterwards, by analogy with the exits that do say it.
 
 ## Cross-plan consistency
 
