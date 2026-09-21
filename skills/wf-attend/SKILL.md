@@ -121,10 +121,12 @@ The plan is drafted, **already reviewed**, and committed in `draft` state. The o
      ```bash
      scripts/wf-exec.sh wf-claim.sh <plan-name>
      scripts/wf-exec.sh wf-gate-close.sh <PLN-ID> "approved"
-     scripts/wf-exec.sh wf-replan-target.sh <PLN-ID> --apply
+     scripts/wf-exec.sh wf-replan-target.sh <PLN-ID> --apply --note "<why the replan landed here>"
      scripts/wf-exec.sh wf-unclaim.sh <plan-name>
      ```
      Skip step 7 below for this branch — the gate is already closed.
+
+     **`--note` is the same rule as everywhere else in this skill, and it applies here too.** The replan path used to have no way to obey it, so a replan's reason lived only in the gate resolution ledger and progress.md recorded a bare `draft to ready` (client-d WFI-008). It is worth writing here more than almost anywhere: the target state is derived from the worktree and the findings, and once the branch is deleted nothing on the record explains why the plan went back to `active` rather than `ready`, or to `testing` rather than either.
 5. On **edit** — capture what they want changed, then hand to `/wf-spec` to revise and re-review.
 6. On **reject** — ask why, append the reason to the plan's `findings.md` as an ESCALATED item, and leave the state at `draft`.
 7. **New-plan approve only** (the replan branch above already closed it) — close the gate with the outcome:

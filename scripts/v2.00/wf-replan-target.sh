@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wf-replan-target.sh <plan-id> [--apply]
+# wf-replan-target.sh <plan-id> [--apply] [--note "text"]
 #
 # Resolves the state a replanned plan should return to, and optionally writes
 # it.
@@ -44,6 +44,20 @@
 #   - progress.md's `## Steps` checklist is complete, or absent.
 # Anything less falls through to the ready/active rules, unchanged.
 #
+# --note "text"  Passed straight through to wf-registry-update.sh, which writes
+# it to the plan's progress.md under `## Notes`, in the same commit and under
+# the same lock as the transition itself.
+#
+# wf-attend's gate-working rules say: "If the decision changes why the plan is
+# where it is, say so with --note". That rule is not scoped to new plans, but
+# the replan path had no way to obey it — wf-spec step 7 mandates this script
+# for a replan, and this script took only `--apply`. So a replan's reason
+# existed solely in the gate resolution ledger, which nobody reading
+# progress.md ever sees, and client-d's PLN-005 landed `draft to ready` with
+# REGISTRY.md alone (WFI-008). The reason a replan chose its target is exactly
+# the kind a later reader cannot reconstruct: the target is derived from the
+# worktree and the findings, and none of that survives the branch's deletion.
+#
 # stdout: the target state.  With --apply, also performs the transition.
 # Exit 0 on success, 1 on error.
 
@@ -59,10 +73,18 @@ REGISTRY="plans/REGISTRY.md"
 
 raw_id="${1:-}"
 apply=false
-[ "${2:-}" = "--apply" ] && apply=true
+note=""
+shift || true
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --apply) apply=true; shift ;;
+    --note)  note="${2:?--note requires text}"; shift 2 ;;
+    *)       echo "Usage: $0 <PLN-NNN> [--apply] [--note \"text\"]" >&2; exit 1 ;;
+  esac
+done
 
 plan_id=$(printf '%s' "$raw_id" | grep -oE '^PLN-[0-9]+' || true)
-[ -n "$plan_id" ] || { echo "Usage: $0 <PLN-NNN> [--apply]" >&2; exit 1; }
+[ -n "$plan_id" ] || { echo "Usage: $0 <PLN-NNN> [--apply] [--note \"text\"]" >&2; exit 1; }
 [ -f "$REGISTRY" ] || { echo "Error: $REGISTRY not found" >&2; exit 1; }
 
 state=$(wf_registry_field "$plan_id" state "$REGISTRY")
@@ -180,5 +202,7 @@ if $apply; then
     fi
   fi
 
-  "$SELF_DIR/wf-registry-update.sh" "$plan_id" "$state" "$target"
+  update_args=("$plan_id" "$state" "$target")
+  [ -n "$note" ] && update_args+=(--note "$note")
+  "$SELF_DIR/wf-registry-update.sh" "${update_args[@]}"
 fi

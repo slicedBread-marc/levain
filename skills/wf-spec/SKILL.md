@@ -794,8 +794,17 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
 
 7. **Update REGISTRY.md — the target state depends on whether a worktree exists:**
    ```bash
-   scripts/wf-exec.sh wf-replan-target.sh PLN-NNN --apply
+   scripts/wf-exec.sh wf-replan-target.sh PLN-NNN --apply --note "<why the replan landed in this state>"
    ```
+
+   `--note` goes through to `wf-registry-update.sh`, so the reason lands in
+   `progress.md` under `## Notes` in the same commit and under the same lock as
+   the row. Write one: this target is derived from a worktree that will be
+   deleted and findings that will be checked off, so "replanned after the
+   behavior finding; worktree still live, builder resumes the fix cycle" is not
+   reconstructable from the record afterwards. client-d's PLN-005 replan
+   committed `draft to ready` with REGISTRY.md alone and nothing said why
+   (WFI-008).
 
    A replan is not always a fresh build. If the plan still has its worktree and
    branch, the builder resumes a **fix cycle** — and `wf-implement`'s exit runs
