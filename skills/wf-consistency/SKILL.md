@@ -85,6 +85,17 @@ Where a finding lands depends entirely on whether the dependency has been **buil
 
 Amending an unbuilt plan is cheap and correct — that is exactly how the paging mismatch above was fixed, as a dated amendment adding a `before=` parameter to a plan still sitting in `ready`.
 
+### An amendment lands on a plan somebody already reviewed
+
+`wf-review-stamp.sh` anchors a review verdict to a hash of the plan body, and `## Amendments` is part of that body. So every amendment written here makes the amended plan's verdict read `REVIEW_STALE=true`, and the documented handling of a stale verdict is "re-run the review on the plan as it now stands". **Decide which kind of amendment you just wrote, say so in the `## Amendments` entry, and act on it — never leave the next reader to adjudicate it.**
+
+| The amendment | Then |
+|-|-|
+| **Editorial** — corrects a statement about the world, a citation, a doc reference, a wording. Changes no step, test, criterion, design decision or goal. | **Re-stamp it.** You know your own edit changed nothing reviewable, and you are the only one who does. Add `wf-review-stamp.sh <amended-plan> --no-commit` to the exit block below, and write in the entry that the verdict still stands and why. |
+| **Substantive** — changes what the plan promises to build, however small. The `before=` parameter above is this kind. | **Do not stamp.** Say in the entry that the verdict is now stale and needs re-review, so the staleness a later reader sees has a reason attached. |
+
+client-d's PLN-010 is the editorial case going wrong: amendment A-2 corrected a false sentence in a README and told step 6 not to restate it — no step, test, criterion or goal touched — and the pass did not re-stamp. The plan was already `ready` and dispatchable, so the next reader was told to re-run a review over an edit that changed nothing reviewable (WFI-011). The amendment itself was worth writing: it caught a third copy of a claim two plan-level fixes had missed.
+
 **Escalation (built dependency):**
 
 ```bash
@@ -112,8 +123,11 @@ Name the documents as well as the plans — a pass that read three plans and a p
 ## Consistency
 
 > **Checked:** 2026-08-01 — closure: PLN-003, PLN-005 — docs: reference/07-remote-cli.md, reference/20-multi-instance-repos.md
-> **Result:** Amended PLN-003 (list API needs a `before=` parameter for backward paging)
+> **Result:** Amended PLN-003 (list API needs a `before=` parameter for backward paging) — substantive, PLN-003's review is now stale and needs re-review
 ```
+
+The `— substantive, …` / `— editorial, re-stamped` clause is not decoration. It is the only place the amended plan's review status is explained to whoever reads it next.
+
 
 Then:
 
@@ -123,6 +137,11 @@ Then:
 # workers, so a bare `git commit` takes whatever they have staged. This run
 # swept a stranger's BUG-020 open→triaged rename into a consistency commit
 # before it was scoped (WFI-048).
+# An EDITORIAL amendment only — re-stamp the plan you amended, so its verdict
+# is anchored to the text as it now stands. --no-commit leaves the stamp
+# staged for the scoped commit below; letting it commit itself would sweep the
+# amendment into a message describing none of it (WFI-085).
+scripts/wf-exec.sh wf-review-stamp.sh <amended-plan> --no-commit
 # Plus any reference doc you corrected under check 5:
 scripts/wf-exec.sh wf-commit.sh "consistency(PLN-NNN-<slug>): closure checked — <clean | amended PLN-MMM>" \
   --add plans/PLN-NNN-<slug>/ plans/<amended-plan>/ plans/REGISTRY.md <doc-path>
