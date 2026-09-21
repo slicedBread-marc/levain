@@ -167,7 +167,22 @@ if [ -f "$gate_file" ]; then
       fi
       opened_at=$(wf_gate_field "$gate_file" GATE_OPENED)
       prev_prev=$(wf_gate_field "$gate_file" GATE_QUESTION_PREV)
+      # The revision this question is asked ABOUT, refreshed rather than copied
+      # forward. `--requestion` means the question now reports the plan as it
+      # NOW stands — the guard above has already refused the case where the
+      # wording did not change — and WFI-198's rule is that an approval is
+      # scoped to the text the human saw. They will be shown the new question.
+      #
+      # Copying the old fingerprint forward also left the gate reading
+      # `stale` in <qfit> for the rest of its life, even after the very repair
+      # the flag exists to prompt (client-b WFI-018). Falls back to the
+      # recorded value when there is no fingerprint to take — a bug, a brief,
+      # RELEASE/DEPLOY — so a refresh can never ERASE the scoping.
       open_fp=$(wf_gate_field "$gate_file" GATE_PLAN_BODY_FP_AT_OPEN)
+      requestion_fp=$(wf_plan_body_fingerprint "$id" || true)
+      if [ -n "$requestion_fp" ]; then
+        open_fp="$requestion_fp"
+      fi
       {
         wf_emit GATE_ID       "$id"
         wf_emit GATE_ARTIFACT "$artifact"

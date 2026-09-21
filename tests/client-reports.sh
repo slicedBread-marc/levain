@@ -2813,6 +2813,114 @@ assert_eq "the original contract still holds at field 6" "0" \
 "$SCRIPT_DIR/wf-gate-close.sh" PLN-910 "answered" >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A parked question outlives the plan it describes (client-b WFI-018)"
+
+# The question is a claim of fact fixed when the gate opened — here a verdict.
+# Round 1 opened spec-approval carrying "Approved with notes (0 Critical)"; a
+# second review then found a Critical and the plan was rewritten around it. The
+# gate file was untouched, because re-running wf-gate-open.sh on an open gate
+# leaves it as is by design, so the human draining the queue was shown
+# "Approved with notes" as the thing to approve.
+registry_add_row PLN-930 question-drift draft
+printf '\n## Human Test Criteria\n- [ ] it renders\n' >> plans/PLN-930-question-drift/plan.md
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-930 spec-approval \
+  "Review: Approved with notes (0 Critical). Approve?" --skill wf-spec >/dev/null 2>&1
+assert_eq "a question just asked describes its plan" "current" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-930 2>/dev/null | cut -f9)"
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-930 spec-approval)"
+assert_eq "and gate-status says so" "false" "$GATE_QUESTION_STALE"
+
+# Bookkeeping is not a revision. The body fingerprint normalises ticked boxes
+# for the same reason the review stamp does (WFI-095) — a flag that fired on
+# every ticked criterion would be one nobody reads.
+sed -i.bak 's/- \[ \] it renders/- [x] it renders/' plans/PLN-930-question-drift/plan.md
+rm -f plans/PLN-930-question-drift/plan.md.bak
+assert_eq "ticking a criterion is not a revision" "current" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-930 2>/dev/null | cut -f9)"
+
+# An amendment is. This is WFI-018's own shape: the plan is rewritten around a
+# Critical the parked question says does not exist.
+printf '\n## Amendments\nA-1 — restore rehearsal must pin --entrypoint\n' \
+  >> plans/PLN-930-question-drift/plan.md
+assert_eq "an amendment leaves the question behind" "stale" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-930 2>/dev/null | cut -f9)"
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-930 spec-approval)"
+assert_eq "and gate-status agrees" "true" "$GATE_QUESTION_STALE"
+assert_eq "the gate is still ordinary work by state" "ok" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-930 2>/dev/null | cut -f8)"
+
+# --requestion is the repair, and it has to actually clear the flag: copying
+# the at-open fingerprint forward left the row stale for the life of the gate.
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-930 spec-approval \
+  "Review: Blocked, round 2 — scratch machine replicated to the live path. Approve the fix?" \
+  --skill wf-spec --requestion >/dev/null 2>&1
+assert_eq "--requestion re-anchors the question to the current plan" "current" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-930 2>/dev/null | cut -f9)"
+assert_eq "and the superseded wording is kept" "true" \
+  "$(grep -q "GATE_QUESTION_PREV='Review: Approved with notes" \
+      .claude/orchestrator/gates/PLN-930.gate && echo true || echo false)"
+
+# The eight documented fields are untouched — consumers index by position.
+row=$("$SCRIPT_DIR/wf-list-gates.sh" PLN-930 2>/dev/null)
+assert_eq "field 1 is still the id" "PLN-930" "$(printf '%s' "$row" | cut -f1)"
+assert_eq "field 8 is still the state fit" "ok" "$(printf '%s' "$row" | cut -f8)"
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-930 "approved" >/dev/null 2>&1
+
+# ═══════════════════════════════════════════════════════════════════════
+section "The review agent does not hold the pen (client-b WFI-017, WFI-018)"
+
+# A review is a second opinion; its value is entirely in being second. Twice in
+# one afternoon a review agent with an unrestricted tool set wrote its verdict
+# into the plan it was reviewing — once with findings disjoint from the ones it
+# handed back, once "Approved with notes (0 Critical)" over a Critical. The
+# prompt and the read-only agent type are the fix; this is the check that the
+# fix held, because a verdict in plan.md looks identical whoever wrote it.
+registry_add_row PLN-931 pen-holder draft
+git add plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
+git commit -q -m "spec(PLN-931-pen-holder): plan" -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
+"$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --record >/dev/null 2>&1
+assert_ok "an untouched plan passes" "$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --check
+eval "$("$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --check 2>/dev/null)"
+assert_eq "and says so" "clean" "$REVIEW_GUARD"
+
+# The WFI-017 write: a `## Review` block the agent put there itself. Deliberately
+# the section wf_plan_body_fingerprint EXCLUDES — which is why the guard hashes
+# the whole file instead of reusing it.
+printf '\n## Review\n> **Result:** Approved with notes\n' >> plans/PLN-931-pen-holder/plan.md
+assert_fails "a plan the agent wrote to does not" "$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --check
+eval "$("$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --check 2>/dev/null)"
+assert_eq "it names the file" "plan.md" "$REVIEW_GUARD_TOUCHED"
+assert_eq "and a revert would take only the agent's write" "true" "$REVIEW_GUARD_REVERTABLE"
+
+# findings.md is watched too, and a file the agent CREATES is a write.
+git checkout -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
+"$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --record >/dev/null 2>&1
+printf '# Findings\n' > plans/PLN-931-pen-holder/findings.md
+eval "$("$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --check 2>/dev/null)"
+assert_eq "a created findings.md counts" "findings.md" "$REVIEW_GUARD_TOUCHED"
+
+# But a `git checkout --` is only safe where the agent's write is the ONLY one.
+# The attended path reviews a plan the session is still editing, so this is the
+# ordinary case, not the exotic one — saying "revertable" there would cost the
+# session its own uncommitted work.
+rm -f plans/PLN-931-pen-holder/findings.md
+printf '\n## Amendments\nA-1 — the session own edit, not yet committed\n' \
+  >> plans/PLN-931-pen-holder/plan.md
+"$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --record >/dev/null 2>&1
+printf '\n## Review\n> **Result:** Approved\n' >> plans/PLN-931-pen-holder/plan.md
+eval "$("$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --check 2>/dev/null)"
+assert_eq "the write is still caught" "touched" "$REVIEW_GUARD"
+assert_eq "but a revert is not offered" "false" "$REVIEW_GUARD_REVERTABLE"
+git checkout -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
+
+# A guard that was never armed is not evidence of anything, and failing the
+# review over it would be worse than the miss.
+registry_add_row PLN-932 never-armed draft
+assert_ok "an unarmed guard does not fail the review" "$SCRIPT_DIR/wf-review-guard.sh" PLN-932 --check
+eval "$("$SCRIPT_DIR/wf-review-guard.sh" PLN-932 --check 2>/dev/null)"
+assert_eq "but it says it was never armed" "unrecorded" "$REVIEW_GUARD"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "A bounce with nothing to build goes back to the tester (client-a WFI-096)"
 
 # A tester filed a behavior finding, the replan found it did not reproduce, and

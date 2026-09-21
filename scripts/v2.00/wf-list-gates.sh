@@ -7,10 +7,25 @@
 # exit 1 if not. This is the dispatcher's "should I skip this one?" test.
 #
 # stdout, one per line, tab-separated:
-#   <id>\t<gate-name>\t<age>\t<question>\t<context>\t<blocking>\t<state>\t<fit>
+#   <id>\t<gate-name>\t<age>\t<question>\t<context>\t<blocking>\t<state>\t<fit>\t<qfit>
 #
 # <state> is the artifact's current REGISTRY state, and <fit> is `ok` or
 # `mismatch` — whether a gate by that name can still be acted on from there.
+#
+# <qfit> is `current` or `stale`: whether the QUESTION still describes the plan.
+# A question is a claim of fact composed when the gate opened — a verdict, a
+# round count, a test tally — and the plan can move while the gate is parked,
+# because re-running wf-gate-open.sh on an open gate leaves it as is by design.
+# client-b WFI-018: round 1 opened spec-approval carrying "Approved with notes
+# (0 Critical)"; round 2 then rewrote the plan around a Critical an independent
+# review had found, and the parked question still read "Approved with notes".
+# Two different columns for two different failures — <fit> says the gate has
+# outlived its state, <qfit> says the text has outlived its plan — and a row
+# can be `ok` and `stale` at once, which is exactly WFI-018's row.
+#
+# Appended as a NINTH field rather than folded into <fit>, because every caller
+# in the tree reads these rows with `cut -f<n>` for n ≤ 8 and a new column at
+# the end costs them nothing.
 #
 # A gate outlives the state it was opened in. client-a's WFI-082: a
 # `manual-test` gate left behind by an earlier bug sat on a plan that had since
@@ -96,6 +111,24 @@ gate_fit() {
   if [ "$2" = "$want" ]; then printf 'ok'; else printf 'mismatch'; fi
 }
 
+# question_fit <gate-id> <fp-at-open> → current | stale
+#
+# `current` when the gate carries no at-open fingerprint (a record written
+# before wf-gate-open.sh recorded one, or a gate on RELEASE/DEPLOY and on any
+# other artifact with no plan.md) and when the plan cannot be resolved. An
+# absent fingerprint is not evidence the question drifted, and flagging every
+# such row `stale` would train a reader to ignore the column.
+question_fit() {
+  local qid="$1" was="$2" now
+  [ -n "$was" ] || { printf 'current'; return 0; }
+  now=$(wf_plan_body_fingerprint "$qid" 2>/dev/null || true)
+  if [ -n "$now" ] && [ "$now" != "$was" ]; then
+    printf 'stale'
+  else
+    printf 'current'
+  fi
+}
+
 # How many other incomplete plans sit behind each plan in the Deps graph.
 # BFS over the reverse-dependency edges; a plan already `complete` is not
 # blocked by anything, so it and its own dependents are not counted through it.
@@ -158,10 +191,11 @@ if [ -n "$query" ]; then
   # shellcheck disable=SC1090
   eval "$(<"$gate_file")"
   gstate=$(state_of "$GATE_ID")
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$GATE_ID" "$GATE_NAME" "$GATE_OPENED" "$(flatten "$GATE_QUESTION")" \
     "$(flatten "${GATE_CONTEXT:-—}")" "$(blocked_by "$id")" \
-    "$gstate" "$(gate_fit "$GATE_NAME" "$gstate")"
+    "$gstate" "$(gate_fit "$GATE_NAME" "$gstate")" \
+    "$(question_fit "$GATE_ID" "${GATE_PLAN_BODY_FP_AT_OPEN:-}")"
   exit 0
 fi
 
@@ -179,10 +213,11 @@ for gate_file in "$gates_dir"/*.gate; do
     # Blocking count leads, zero-padded, so a plain lexical sort orders by cost
     # first and by opened-timestamp second without a second sort key.
     gstate=$(state_of "$GATE_ID")
-    printf '%06d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%06d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$(blocked_by "$GATE_ID")" "$GATE_OPENED" "$GATE_ID" "$GATE_NAME" \
       "$(flatten "$GATE_QUESTION")" "$(flatten "${GATE_CONTEXT:-—}")" \
-      "$gstate" "$(gate_fit "$GATE_NAME" "$gstate")"
+      "$gstate" "$(gate_fit "$GATE_NAME" "$gstate")" \
+      "$(question_fit "$GATE_ID" "${GATE_PLAN_BODY_FP_AT_OPEN:-}")"
   ) >> "$tmp" 2>/dev/null || true
 done
 
@@ -195,7 +230,7 @@ fi
 # reverses the timestamp too, so sort the count descending as its own key and
 # leave the ISO-8601 timestamp ascending (lexical = oldest first).
 sort -k1,1nr -k2,2 "$tmp" \
-  | awk -F'\t' '{ print $3 "\t" $4 "\t" $2 "\t" $5 "\t" $6 "\t" ($1 + 0) "\t" $7 "\t" $8 }'
+  | awk -F'\t' '{ print $3 "\t" $4 "\t" $2 "\t" $5 "\t" $6 "\t" ($1 + 0) "\t" $7 "\t" $8 "\t" $9 }'
 # `xargs` is not redundant here: BSD `wc -l < file` pads its count with leading
 # spaces, and this line is parsed by callers.
 echo "GATES: $(wc -l < "$tmp" | xargs)" >&2

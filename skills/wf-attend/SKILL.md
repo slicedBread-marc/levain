@@ -19,7 +19,7 @@ Run this first and display the queue before reading further:
 scripts/wf-exec.sh wf-list-gates.sh
 ```
 
-Output is tab-separated: `<id>  <gate>  <opened>  <question>  <context>  <blocking>  <state>  <fit>`.
+Output is tab-separated: `<id>  <gate>  <opened>  <question>  <context>  <blocking>  <state>  <fit>  <qfit>`.
 
 `<blocking>` is how many other incomplete plans cannot start until this gate is answered, and the queue is **ordered by it, costliest first** (ties break oldest-first). A gate at the root of a dependency chain holds everything behind it; one blocking nothing costs only the minute it takes to answer. Present them in the order given — do not re-sort by age.
 
@@ -38,6 +38,23 @@ Show `Blocking` as a plain count, and `—` when it is 0.
 2. Read the plan's `findings.md` and `## Review` to establish what actually happened since the gate was opened.
 3. If the question has already been settled by that history, close the gate as answered, quoting the evidence *and naming it as prior history*: `wf-gate-close.sh <PLN-ID> "already settled: <what settled it, and where>"`. **Never pass an earlier cycle's outcome as though it were this one's.** The resolution is the record of the decision you just made; a verbatim replay of the last cycle's result records a test run, an approval or an escalation that did not happen, and the ledger has no way to tell it from a real one.
 4. If it has not, the gate is on the wrong artifact state — close it and let the skill that owns the plan's current state re-open a gate that fits.
+
+**A row whose `<qfit>` is `stale` carries a question that no longer describes its plan — say so, and do not put it to the human as written.** `<fit>` and `<qfit>` are different failures: `mismatch` means the gate outlived the *state* it was opened in, `stale` means the question outlived the *plan* it was asked about. A row can be `ok` and `stale` at once, and that row is the dangerous one — it presents as ordinary work.
+
+A question is a claim of fact fixed at the moment the gate opened: a verdict, a round count, a test tally. The plan can move while it sits parked, because re-running `wf-gate-open.sh` on an open gate leaves it as is by design. client-b WFI-018: round 1 opened `spec-approval` carrying "Approved with notes (0 Critical)", a second review then found a **Critical** — a restore rehearsal that would have replicated a scratch database into the live production replica path — and the plan was rewritten around three new guards. The parked question still read "Approved with notes". A human answering it would have been approving a sentence, not a plan.
+
+Mark it in the table (`⚠ question is about an earlier revision`) and repair it before asking:
+
+1. Establish what changed — `wf-review-status.sh <PLN-ID>`, the plan's `## Review` and `## Amendments`, and `git log` on the plan folder since the gate's `<opened>`.
+2. Re-state the question from the **recorded fact as it now stands** and refresh it in place:
+   ```bash
+   scripts/wf-exec.sh wf-gate-open.sh <PLN-ID> <gate> "<the question, with the current fact>" \
+     --context plans/<PLN-ID>-<slug>/plan.md --skill wf-attend --requestion
+   ```
+   `--requestion` keeps the original opened-at timestamp and queue position and preserves the old wording in `GATE_QUESTION_PREV`, so the change is auditable. **It is not a licence to re-derive.** Change only the fact that moved on the record; everything else stays word for word. Re-writing a question because you would phrase it better is WFI-180/181/182, and it cost one client-a human five regenerations carrying three errors of fact.
+3. Then put the refreshed question to the human, and work the row normally.
+
+If nothing on the record changed — the fingerprint moved on bookkeeping the question never mentioned — say so on the row and ask it as written. `stale` is reported, never enforced; the script compares two hashes and cannot tell which difference matters.
 
 Never route a `mismatch` row to its normal skill. client-a's WFI-082: a `manual-test` gate left over from a fixed bug sat on a plan that had gone back to `draft` with five unaddressed findings, the queue showed it as ordinary work, and the attendant was sent to `/wf-test` — which cannot run on a draft plan. Worse, the unattended tester that had already reached that plan overwrote a human FAIL with PASS on the way past.
 
@@ -91,6 +108,8 @@ The plan is drafted, **already reviewed**, and committed in `draft` state. The o
 
    Display the verdict, the round count, and any Warnings. A plan reaching this gate should be one the reviewer *approved*; you are deciding whether to build it, not whether it is sound.
 
+   **Check the verdict you just read against the one the question quotes.** `spec-approval`'s question leads with the review result, so those two are the same claim asserted twice, a gate-open apart — and when they disagree, the question is the stale one. That is what `<qfit>` is reporting; this is the row where it bites. Show the human `REVIEW_RESULT`, never the question's copy of it.
+
    **A stale verdict is the dangerous one, because it reads as done.** client-a had two plans at this gate whose only reviews were `Blocked` on the pre-amendment draft; the amendment then resolved every finding and nothing re-reviewed it, so plans carrying six resolved Criticals were presented as reviewed and approved (WFI-046).
 2. Then display the plan's Goal, the step count, the Tests table, and the Human Test Criteria split (Chrome-Assisted vs Manual).
 3. Ask: `approve / edit / reject?`
@@ -117,7 +136,9 @@ The plan is drafted, **already reviewed**, and committed in `draft` state. The o
 
 When the user picks `all` and the queue holds more than two `spec-approval` gates, do **not** work them one at a time. Reviewing serially re-establishes shared context per plan and lets the same defect class be discovered independently N times — in one measured run, a reviewer flagged defects a sibling plan had already fixed, because it had no way to know.
 
-1. **Read the verdicts that are already there.** Each parked plan carries its own `## Review` — round 1 ran unattended before the gate opened. Re-running it burns the tokens the review-before-gate ordering exists to save. Run `wf-review-status.sh` across the queue first and fan out the sonnet review agent only for the plans it reports as `none` or `REVIEW_STALE=true`.
+1. **Read the verdicts that are already there.** Each parked plan carries its own `## Review` — round 1 ran unattended before the gate opened. Re-running it burns the tokens the review-before-gate ordering exists to save. Run `wf-review-status.sh` across the queue first and fan out the review agent only for the plans it reports as `none` or `REVIEW_STALE=true`.
+
+**Use `/wf-spec`'s template verbatim** — `.claude/skills/wf-spec/SKILL.md` § *The review agent* — including the read-only agent type, the `wf-review-guard.sh --record` / `--check` pair around each spawn, and the rule that **you** write `## Review` and stamp it, never the agent. Fanning out multiplies the defect it guards against: client-b had a review agent write a verdict into plan.md that was disjoint from the one it handed back, and a second write "Approved with notes (0 Critical)" over a plan an independent read-only review found Blocked on a Critical (WFI-017, WFI-018). One per plan is a bad afternoon; a fan-out of six is six.
 2. **Read all the verdicts before fixing anything.** Group findings by defect class, not by plan.
 3. **After a defect class appears in 3 or more plans, stop reviewing it and sweep.** A targeted sweep for one known class across every remaining plan is far cheaper than N full reviews, and it catches instances a full review scores as low-priority. Two such sweeps in one 16-plan run caught 13 findings that per-plan review had missed.
 4. **A finding present in 3+ plans is a template defect, not a plan defect.** One run found an ambiguous `git revert -m 1 <sha>` in the rollback section of **all 16 plans**, propagated by copying. Fixing it 16 times fixes nothing — raise it against `plans/TEMPLATE.md` (and report it upstream with `wf-issue.sh` if the defect came from the shipped template), then apply the corrected wording to the affected plans.

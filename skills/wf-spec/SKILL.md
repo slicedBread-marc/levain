@@ -465,6 +465,62 @@ Bad agent tasks (do these yourself):
 
 ---
 
+## The review agent
+
+One template, used by the attended exit, the unattended exit and the replan gate alike. Spawn it exactly as written — the read-only agent type and the REPORT-ONLY framing are the fix for a defect, not house style.
+
+```bash
+scripts/wf-exec.sh wf-review-guard.sh PLN-NNN --record
+```
+
+```
+Agent(model: sonnet, subagent_type: "Explore", prompt: "REPORT ONLY. You are reviewing a
+specification, not editing one. Do not create, edit or stage any file, and do not run any
+wf-*.sh script. Your entire output is your final response; the session that spawned you is
+what records a verdict.
+
+Read plans/PLN-NNN-[name]/plan.md IN FULL — it is the artifact under review, not a search
+target, and a finding you miss because you skimmed is a finding nobody makes. Read whatever
+source files it names, and the project docs it relies on, the same way.
+
+Evaluate against: architecture (project patterns, dependency direction),
+security (auth on endpoints, input sanitization, no hardcoded secrets),
+performance (no unbounded queries, N+1 patterns),
+maintainability (scope matches goal, test coverage),
+rollback (trigger conditions defined, safety assessment complete, steps are specific commands
+not descriptions, irreversible migrations called out explicitly),
+blast radius (what this touches that is LIVE — a step that runs against production data,
+credentials or a shared replica path is Critical unless the plan names the guard that stops it).
+
+Report your findings in your final response, in this format:
+Result: Approved | Approved with notes | Blocked
+Then a table: | # | Severity | Category | Finding | Recommendation |
+Severity: Critical (blocks), Warning (should fix), Note (informational).
+Final response under 2000 characters.")
+```
+
+```bash
+eval "$(scripts/wf-exec.sh wf-review-guard.sh PLN-NNN --check)"
+```
+
+If `Explore` is not an available agent type in this session, spawn the default agent with the same prompt and say so in the `## Review` entry — the guard below is then the only thing standing between a reviewer and the pen, so read its output rather than assuming.
+
+`REVIEW_GUARD=touched` means the agent wrote to the plan despite all of the above. Follow the script's instructions — discard its writes, record the verdict from its **response**, and file it with `wf-issue.sh`. Do not reconcile the two by hand and carry on; they have been observed to disagree.
+
+**Why it is shaped this way.** The review is a second opinion, and its value is entirely in being *second* — something other than the session holding the pen looked at the plan, and the session then decides what to record. Give the reviewer the pen and both halves collapse into one, silently, because a verdict in `plan.md` looks identical whoever wrote it.
+
+client-b saw both failures in one afternoon. WFI-017: the agent wrote its own `## Review` block, ran `wf-review-stamp.sh` itself, and edited a Tests-table row — and the three findings it wrote to the file were **disjoint** from the four it handed back in its response. Two review results for one round, one of them already stamped as the record. It also labelled its block "(unattended, round 1 of 3)" in an attended session, because a spawned agent cannot know which path spawned it. WFI-018, on the next plan: the agent wrote "Approved with notes (0 Critical)", stamped it, and that verdict became the `spec-approval` gate's question. An independent read-only review of the same text returned **Blocked** on a Critical — a restore rehearsal that would have booted a scratch machine on the image's default entrypoint with the app's replication env inherited, and replicated a scratch database into the live production replica path. The project's own docs record that exact thing happening for ~90 seconds. The reviewer had read that file and still missed it; the human was shown "Approved with notes" as the thing to approve.
+
+The old prompt opened "You are a code reviewer" and said "**Write** your findings in this format". With an unrestricted tool set that reads as an instruction to edit the file, and twice it was obeyed.
+
+**Three rules follow, and none of them is optional:**
+
+- **The spawning session writes `## Review`, and stamps it.** Never the agent. That is steps 4-5 of the attended exit and step 5 of the unattended one, and it is why the round label is correct: only the caller knows whether it is attended.
+- **What goes in the file is what came back in the response.** Not a summary of it, not a reconciliation of it with something already in the file.
+- **A `Blocked` verdict is the reviewer doing its job.** The fix loop is identical in every mode; do not re-run the review hoping for a different answer, and do not spawn a second reviewer to break a tie. Revise the plan against the findings and review the revision.
+
+---
+
 ## Exit (complex) — Review Gate
 
 **Self-lint first, always.** Before committing anything, run the same check the verify agent will run:
@@ -483,22 +539,7 @@ When the user approves the plan (says "looks good", "approved", "ready", etc.):
 
 1. **Goal gate** — verify that the first line under `## Goal` in `plan.md` is a concrete one-line summary (not empty, not template placeholder text). If missing or placeholder, ask the user for a one-line goal, write it as the first line under `## Goal` (before any paragraph), and stage the file.
 
-2. **Spawn a sonnet agent** to run the architectural and security review:
-
-```
-Agent(model: sonnet, prompt: "You are a code reviewer. Read plans/PLN-NNN-[name]/plan.md 
-and evaluate against: architecture (project patterns, dependency direction), 
-security (auth on endpoints, input sanitization, no hardcoded secrets), 
-performance (no unbounded queries, N+1 patterns), 
-maintainability (scope matches goal, test coverage),
-rollback (trigger conditions defined, safety assessment complete, steps are specific commands not descriptions, irreversible migrations called out explicitly).
-
-Write your findings in this format:
-Result: Approved | Approved with notes | Blocked
-Then a table: | # | Severity | Category | Finding | Recommendation |
-Severity: Critical (blocks), Warning (should fix), Note (informational).
-Final response under 2000 characters.")
-```
+2. **Run the review** — [the review agent](#the-review-agent) above, verbatim. Arm the guard, spawn it, check the guard.
 
 3. **Process the review result:**
    - **Critical findings:** do NOT move to `ready`. Present findings to the user, revise the plan, and re-review.
@@ -565,7 +606,7 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
 
 1. **Goal gate** — the first line under `## Goal` must be a concrete one-liner. If you cannot write one from the source artifact, **[GATE]** `goal-missing`. Never invent a goal to get past this.
 
-2. **Run the review** — the same sonnet agent as the attended flow, verbatim. This is round 1.
+2. **Run the review** — [the review agent](#the-review-agent), verbatim, guard and all. This is round 1.
 
 3. **Route on `Result:`**
    - **Approved** / **Approved with notes** → record the verdict, then go to step 6.
@@ -684,7 +725,7 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
    - Resolving it yourself in this pass: tick it in the same edit that records the resolution, never in a later one.
 
    **Do not write a `- [ ]` for narrative you are about to answer.** An unchecked box is a claim on a future worker's time. If the resolution is in the same document, the box was never a finding — write it as prose.
-6. **Run the review gate** — same as above, on the plan **as amended**, and write the verdict to `plan.md`'s `## Review` like any other round.
+6. **Run the review gate** — [the review agent](#the-review-agent), guard and all, on the plan **as amended**. You write the verdict to `plan.md`'s `## Review`, like any other round; the agent does not.
 
    Two rules, both learned the hard way (WFI-046):
 

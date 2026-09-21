@@ -50,6 +50,16 @@
 #                                regenerations of one question accumulated three
 #                                errors of fact on client-a (WFI-184)
 #   GATE_RESOLVED_AT=<iso8601>   when (empty if never closed)
+#   GATE_QUESTION_STALE=true|false
+#                                OPEN, but plan.md has changed since the
+#                                question was asked — so the claim of fact the
+#                                question carries (a verdict, a round count, a
+#                                test tally) describes an earlier revision.
+#                                Always false for a gate that is not open, and
+#                                for one whose record predates the at-open
+#                                fingerprint. Refresh with
+#                                `wf-gate-open.sh … --requestion`, and only
+#                                when the recorded fact really changed.
 #   GATE_STALE=true|false        closed, but plan.md has changed since
 #   GATE_DECISION=approve|reject the answer to a `release-approval` /
 #                                `deploy-approval` gate as a value. Empty on
@@ -93,9 +103,19 @@ gate_file=$(wf_gate_file "$id" || true)
 resolved_file=$(wf_gate_resolved_file "$id" "$gate_name" || true)
 
 open=false
+open_fp=""
 if [ -f "$gate_file" ]; then
   existing=$(wf_gate_field "$gate_file" GATE_NAME)
   [ "$existing" = "$gate_name" ] && open=true
+  # The revision the OPEN question was asked about. See GATE_QUESTION_STALE
+  # below — until now this was read only off a resolved record, so a question
+  # could go stale while parked and nothing said so.
+  # An `if`, not `&&`: a false test as the last command of this block makes
+  # the block exit 1 and `set -e` kills the script (wf-gate-open.sh says the
+  # same thing about the same trap).
+  if [ "$open" = "true" ]; then
+    open_fp=$(wf_gate_field "$gate_file" GATE_PLAN_BODY_FP_AT_OPEN)
+  fi
   # The plan the gate is actually about — see wf-gate-close.sh. The
   # fingerprints below are a question about a plan.md, and a brief has none.
   gate_owner=$(wf_gate_field "$gate_file" GATE_ID)
@@ -167,7 +187,48 @@ if [ -f "$resolved_file" ]; then
   fi
 fi
 
+# ── A parked question can go stale where it stands ────────────────────────
+#
+# GATE_STALE is about an ANSWER: the plan moved after a human decided, so the
+# decision no longer covers it. This is the other half, and nothing reported it.
+#
+# The question a gate carries is a claim of fact — a verdict, a round count, a
+# test tally — composed when the gate opened. wf-spec's spec-approval question
+# leads with the review result, so the human draining the queue reads
+# "Approved with notes" and decides on that. Then the plan is amended: a
+# re-review, a consistency pass, a source artifact changed under it. The gate
+# file is untouched, because re-running wf-gate-open.sh on an open gate prints
+# "already open — left as is" by design. The question now describes a document
+# that no longer exists, and the queue presents it as ordinary work.
+#
+# client-b WFI-018 is the sharp version: round 1 opened the gate carrying
+# "Approved with notes (0 Critical)", round 2 then rewrote the plan around a
+# Critical an independent review had found — a rehearsal step that would have
+# replicated a scratch database into the live production replica path. The
+# parked question still said "Approved with notes". client-a's PLN-202 is
+# the same shape benignly: a source bug amended mid-run, the verdict improved,
+# the superseded wording left standing (WFI-200).
+#
+# `--requestion` is the repair and has existed since; what was missing is
+# anything that tells a reader the repair is DUE. So: reported, never enforced.
+# The remedy is a worker's judgement about whether the recorded fact changed,
+# and re-deriving a question from a codebase that has moved is its own defect
+# (WFI-180/181/182). This says only that the text and the plan have parted.
+question_stale=false
+if [ "$open" = "true" ] && [ -n "$open_fp" ]; then
+  now_fp=$(wf_plan_body_fingerprint "$id" || true)
+  if [ -n "$now_fp" ] && [ "$now_fp" != "$open_fp" ]; then
+    question_stale=true
+  fi
+fi
+# An open gate reports the revision it was asked about too, not just a closed
+# one — that is what the check above compares, and a caller may want it.
+if [ "$open" = "true" ] && [ -z "$fp_at_open" ]; then
+  fp_at_open="$open_fp"
+fi
+
 wf_emit GATE_OPEN        "$open"
+wf_emit GATE_QUESTION_STALE "$question_stale"
 wf_emit GATE_ANSWERED    "$answered"
 wf_emit GATE_ANSWERED_BASIS "$basis"
 wf_emit GATE_RESOLUTION  "$resolution"
