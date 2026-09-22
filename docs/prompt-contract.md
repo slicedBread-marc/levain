@@ -215,9 +215,39 @@ recoverable; exiting on none is not.
 
 **Fails as:** a green pipeline over a suite that never ran.
 
+## 13. Assume reasonably — then validate the end state against the goal
+
+**Give the agent permission to choose a sensible reading and proceed, and require it to
+check the result against clause 2 before it stops.**
+
+Two halves, and the first is a counterweight to clause 8.
+
+**Assume reasonably.** "Never guess" governs *state and authority* — what the registry says,
+what the agent may change, whose finding this is. It does not govern *method*. A prompt that
+routes every ambiguity to a gate is as broken as one that guesses at all of them, because a
+gate costs a human and the pipeline stalls until one arrives. Where several readings all
+arrive at the same place, the agent picks one and continues. Say which kind of ambiguity is
+which, and where the assumption is load-bearing, require it recorded — in `findings.md`, in a
+plan's Amendments, in the gate question — so it can be audited later instead of reconstructed.
+
+**Then validate against the goal.** Before exit, the agent re-reads the done-condition and
+compares it against what is *now actually true* — not against the list of steps it performed.
+Those are different checks, and only the second one catches a procedure that ran to completion
+and produced the wrong end state. A mismatch is the agent's remaining work, or its finding; it
+is not something to leave for the next gate to discover.
+
+This closes the loop the other twelve clauses open. Clause 2 states the goal; this one spends
+it. Without it a prompt can be fully compliant and still hand back an artifact nobody checked,
+which is how a completed step list and a broken outcome end up looking identical from outside.
+
+**Fails as:** every step green, the end state wrong, discovered two gates downstream — or
+never, because everything that would have noticed was reading the step list too. Its opposite
+failure is an agent that gates on everything and turns the human into the scheduler, which is
+the condition the harness exists to remove.
+
 ---
 
-## Three principles that cut across all twelve
+## Three principles that cut across all thirteen
 
 **Determinism belongs in bash, not in the prompt.** Every decision expressible as a script
 should be one, and the prompt's job shrinks to producing honest input to it. Routing, ID
@@ -257,8 +287,11 @@ Run down this list before committing a new or edited `SKILL.md`:
 13. Are the environment hazards indexed by symptom?
 14. Is there a rule for a check that cannot run, and one for partial failure?
 15. Could the agent reach a state where it stops with something still running?
+16. Is the agent told where to assume and proceed, rather than routing every ambiguity to a
+    gate — and told to record the assumptions that mattered?
+17. Does anything require it to compare the end state against the goal before it stops?
 
-Question 15 is the one to answer last and hardest. It is the failure that leaves the pipeline
+Questions 15 and 17 are the ones to answer last and hardest. It is the failure that leaves the pipeline
 stuck rather than wrong, and stuck is worse: a wrong result gets found by the next gate, and a
 stranded plan waits for a human to notice.
 
@@ -275,6 +308,7 @@ missing:
 |-|-|
 | 2 Goal / done-condition | Plan stranded in a state with no owner |
 | 8 Catch-all escalation | Silent guess, treated downstream as a decision |
+| 13 Validate against goal | Every step green, end state wrong, found late or never |
 | 5 Authority | Scope creep with commit access |
 | 12 Evidence rules | Green pipeline over a suite that never ran |
 | 6 Procedure order | Race opened by a plausible-looking reorder |
@@ -290,7 +324,7 @@ missing:
 
 It does not set a house style, a length, or a section order. `wf-claim` is 60 lines and
 complete; `wf-test` is over a thousand and needs to be. What it requires is that the twelve
-things are *findable* — not that they appear as twelve headings.
+things are *findable* — not that they appear as thirteen headings.
 
 It also does not cover the client-facing `templates/WORKFLOW.md`, which is a different
 document with a different reader: an agent that has landed in a client repo cold and needs the

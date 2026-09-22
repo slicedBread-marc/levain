@@ -15,10 +15,10 @@ Work in this repo is about building, improving, and maintaining that library, no
 A `skills/*/SKILL.md` is run unattended by the dispatcher, at a plan it picked, in a worktree
 nobody is watching, holding a claim and a commit bit. Whatever the prompt leaves unsaid, the
 model decides — differently each run. [`docs/prompt-contract.md`](docs/prompt-contract.md) is
-the twelve-clause contract every skill is authored and reviewed against: role, done-condition,
+the thirteen-clause contract every skill is authored and reviewed against: role, done-condition,
 operating mode, inputs, authority, procedure order, decision table, one catch-all escalation,
-incident-carrying guardrails, output contract, environment hazards, evidence rules. It ends
-with a 15-question authoring checklist and a cost-ordered table for reviewing an existing
+incident-carrying guardrails, output contract, environment hazards, evidence rules, and
+assume-then-validate. It ends with a 17-question authoring checklist and a cost-ordered table for reviewing an existing
 skill. **Read it before writing or editing any `SKILL.md`.**
 
 ## Two sessions write here — take the lock first
