@@ -392,6 +392,9 @@ export WF_UNATTENDED=1 WF_ROLE="$role" WF_ARTIFACT="$artifact"
 # harness when it is not.
 event_sh="$(cd "$(dirname "$0")" && pwd)/wf-event.sh"
 event_fallback="$ROOT/scripts/wf-exec.sh"
+# Same pinned-then-fallback rule, for the same reason: this runs in the
+# worker's exit clause, hours after the launch, possibly across a deploy.
+refund_sh="$(cd "$(dirname "$0")" && pwd)/wf-attempt-refund.sh"
 
 claimfile="$claim_dir/.wf-claim"
 
@@ -412,6 +415,15 @@ nohup bash -c "
     rc=\$?
     rm -f '$pidfile'
     [ -n '$claimfile' ] && rm -f '$claimfile'
+    # Before the exit event, so the refund is on the record above the rc that
+    # explains it. The marker check below only proves \`bash -c\` began; a
+    # session refused by the API dies after it and looks healthy from outside
+    # (client-d WFI-016).
+    if [ -x '$refund_sh' ]; then
+      '$refund_sh' '$id' '$role' '$log' \"\$rc\" || true
+    else
+      '$event_fallback' wf-attempt-refund.sh '$id' '$role' '$log' \"\$rc\" || true
+    fi
     if [ -x '$event_sh' ]; then
       '$event_sh' exit '$id' \"$role rc=\$rc\"
     else

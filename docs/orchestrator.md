@@ -118,7 +118,7 @@ An artifact is not dispatched when any of these hold:
 | Another session holds its claim | `claims/<NNN>/.wf-claim` (via the list scripts) |
 | Its deps are not `complete` | `PLAN_BLOCKED` / list-script `blocked` rows |
 | Its role is at `max_concurrent` | live pidfiles under `.claude/orchestrator/logs/` |
-| It's over `max_attempts_per_plan` | `.claude/orchestrator/attempts/<ID>.<role>` |
+| It's over `max_attempts_per_plan` | `.claude/orchestrator/attempts/<ID>.<role>` (a launch that never reached a session is refunded there — see *A launch is not a run*) |
 | The hourly spawn budget is spent | `.claude/orchestrator/spawns-<YYYYMMDDHH>` |
 | It still owes a consistency pass (implement only) | `wf-list-consistency.sh` |
 
@@ -316,6 +316,29 @@ Both halves are fixed together:
 So `max_attempts_per_plan: 3` now means what it claims: three launches with *no
 forward progress*. If a plan still parks mid-build, the implementer is not
 calling `wf-progress-tick.sh`; raising the cap hides that rather than fixing it.
+
+### A launch is not a run
+
+The budget is charged at spawn, which is right for what it measures — but a
+charge at spawn assumes the worker it launched got a session. Two ways it does
+not, and each is handled at the only point that can see it:
+
+| It died | Who notices | How |
+|-|-|-|
+| before `bash -c` ran | `wf-spawn.sh`, at launch | a started-marker the wrapper writes as its first act. Absent → exit 3, no attempt, `launch-fails` bumped (WFI-231, WFI-232) |
+| after `bash -c`, before a session | `wf-attempt-refund.sh`, in the worker's exit clause | the marker exists, so the launch looked healthy. The log is what tells: a transient transport failure and nothing else in it → the attempt is given back |
+
+The second is client-d's WFI-016. Three consistency launches for PLN-016, a
+minute apart, each produced a 161-byte log holding one line — `API Error: 500
+Internal server error` — and each was charged. `attempts/PLN-016.consistency`
+reached 3 and a `stuck` gate opened asserting consistency had run three times
+with no forward progress. It had not run once.
+
+The refund is deliberately narrow, because a worker that ran and failed
+*legitimately* must keep its attempt — that is the budget working. It requires
+a non-zero exit **and** a log small enough to prove no session happened **and**
+a transient transport error in it. A model's own refusal, a bad prompt, a usage
+error: all real runs with real answers, all charged.
 
 ## Gates
 

@@ -2903,6 +2903,62 @@ assert_eq "falls back to the local ref when nothing tracks a remote" "true" \
 cd "$TEST_DIR" || exit 1
 rm -rf "$PROG" "$PROG.origin.git"
 
+section "A launch that never reached a session costs no attempt (WFI-016)"
+
+# The started-marker in wf-spawn.sh proves `bash -c` began — not that `claude`
+# got a session. Three consistency launches for client-d's PLN-016 each died
+# on an API 500 a second in, each looked like a healthy spawn, and the third
+# opened a `stuck` gate asserting a worker had run three times with no forward
+# progress. Nothing had run. wf-attempt-refund.sh is the other half of the
+# marker check, at the only point that can see what the run produced.
+REFUND="$SCRIPT_DIR/wf-attempt-refund.sh"
+ATT=".claude/orchestrator/attempts"
+mkdir -p "$ATT" .claude/orchestrator/logs
+RLOG=".claude/orchestrator/logs/refund-test.log"
+
+printf 'API Error: 500 Internal server error. This is a server-side issue, usually temporary — try again in a moment.\n' > "$RLOG"
+
+echo 3 > "$ATT/PLN-016.consistency"
+"$REFUND" PLN-016 consistency "$RLOG" 1 >/dev/null 2>&1
+assert_eq "a transient API failure gives the attempt back" "2" \
+  "$(cat "$ATT/PLN-016.consistency" 2>/dev/null)"
+
+echo 1 > "$ATT/PLN-016.consistency"
+"$REFUND" PLN-016 consistency "$RLOG" 1 >/dev/null 2>&1
+assert_eq "the last attempt back removes the counter rather than writing 0" "GONE" \
+  "$(cat "$ATT/PLN-016.consistency" 2>/dev/null || echo GONE)"
+
+# A successful run is never refunded, however short.
+echo 3 > "$ATT/PLN-016.consistency"
+"$REFUND" PLN-016 consistency "$RLOG" 0 >/dev/null 2>&1
+assert_eq "rc=0 is a run, not a failed launch" "3" \
+  "$(cat "$ATT/PLN-016.consistency" 2>/dev/null)"
+
+# A worker that ran for an hour and hit a 500 on its last call DID run. The
+# size bound is what separates it from a launch that never got a session.
+head -c 9000 /dev/zero | tr '\0' 'x' > "$RLOG.big"
+cat "$RLOG" >> "$RLOG.big"
+echo 3 > "$ATT/PLN-016.consistency"
+"$REFUND" PLN-016 consistency "$RLOG.big" 1 >/dev/null 2>&1
+assert_eq "a real session that ended in a 500 keeps its attempt" "3" \
+  "$(cat "$ATT/PLN-016.consistency" 2>/dev/null)"
+
+# The model's own answer is a real run with a real result. Charged.
+printf 'I was unable to complete this task.\n' > "$RLOG.refusal"
+echo 3 > "$ATT/PLN-016.consistency"
+"$REFUND" PLN-016 consistency "$RLOG.refusal" 1 >/dev/null 2>&1
+assert_eq "a model refusal is not a transport failure" "3" \
+  "$(cat "$ATT/PLN-016.consistency" 2>/dev/null)"
+
+# Bookkeeping in a detached worker's exit path never fails loudly.
+"$REFUND" PLN-999 verify "$RLOG" 1 >/dev/null 2>&1
+assert_eq "no counter to refund exits 0 silently" "0" "$?"
+
+assert_eq "the refund is on the record" "true" \
+  "$(grep -q 'refund.*PLN-016.*never reached a session' .claude/orchestrator/events.log && echo true || echo false)"
+
+rm -rf "$ATT/PLN-016.consistency" "$RLOG" "$RLOG.big" "$RLOG.refusal"
+
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n══════════════════════════════════════════════════════════════\n'
 if [ "$FAIL" -eq 0 ]; then
