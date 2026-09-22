@@ -1157,9 +1157,23 @@ assert_eq "and stays on the retirement list so clients drop their copy" "true" \
 for retired_skill in wf-init wf-next; do
   assert_eq "the retired $retired_skill skill is not back in the library" "true" \
     "$([ ! -d "$LIB_ROOT/skills/$retired_skill" ] && echo true || echo false)"
-  assert_eq "and $retired_skill stays on the retirement list" "true" \
-    "$(grep -q "\"$retired_skill\"" "$LIB_ROOT/install.sh" && echo true || echo false)"
 done
+
+# The list must PARSE to those names, not merely contain them. A bash array is
+# whitespace-separated; written JSON-style with trailing commas, `"wf-review",`
+# is the literal element `wf-review,`, which matches no directory and removes
+# nothing. That shipped in v12.0.0 and left /wf-init invocable in eight clients,
+# because the previous version of this test grepped install.sh for the quoted
+# name — and `"wf-init"` is a substring of `"wf-init",`. The bug was invisible
+# while the list held one element and needed no comma. So expand the real array
+# and compare elements exactly.
+retired_parsed="$(
+  sed -n '/^RETIRED_SKILLS=(/,/^)/p' "$LIB_ROOT/install.sh" |
+    { cat; printf '\nfor r in "${RETIRED_SKILLS[@]}"; do printf "[%%s]" "$r"; done\n'; } |
+    bash 2>/dev/null
+)"
+assert_eq "the retirement list parses to exactly the three retired names" \
+  "[wf-review][wf-init][wf-next]" "$retired_parsed"
 
 # The salvage: wf-init's release-branch warning had to land somewhere, and an
 # install is when a missing `release` is cheap to fix.

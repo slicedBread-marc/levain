@@ -736,7 +736,7 @@ RETIRED_SKILLS=(
     # — nothing in skills/, scripts/, templates/ or docs/ invoked it — while staying
     # user_invocable in nine clients, and its findings.md format was the pre-schema-v4
     # FND table that wf-findings-route.sh cannot read. Review now runs inside wf-spec.
-    "wf-review",
+    "wf-review"
 
     # wf-init, wf-next — retired v12.0.0. /wf-init's job was to set TERMINAL_ROLE
     # for /wf-next to route on, and it did it with `export` inside a ```bash block:
@@ -753,7 +753,7 @@ RETIRED_SKILLS=(
     # (it wrote .logs/SESSION_TIMESTAMP; .logs-utils.sh reads .logs/SESSION_ID, is
     # never deployed, and no skill calls log_start). Its one unique working
     # behaviour — the release-branch warning — is salvaged below.
-    "wf-init",
+    "wf-init"
     "wf-next"
 )
 
