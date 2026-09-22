@@ -257,6 +257,11 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
      ../../scripts/wf-exec.sh wf-headless-eval.sh "http://localhost:$FEATURE_PORT<route>" "<js-boolean-expression>" '<actions-json>'
      ```
      `actions-json` is optional (defaults to `[]`) — a plain "navigate then assert" criterion needs only the URL and expression. `consoleErrors` (an array of strings, collected across navigation and every action) is in scope for "no console errors" style criteria.
+
+     **`wf-exec.sh` is not a prefix you can drop.** These scripts live in the build it resolves — `scripts/gen/<version>-<stamp>/v2.00/` — so `scripts/wf-headless-eval.sh` does not exist, `ls scripts/` shows no headless anything, and reading the file directly to learn its interface fails. client-d's WFI-019 concluded from exactly those two checks that the harness had shipped without them and rebuilt a Playwright driver by hand; both scripts were installed and working. The header comment is the manual, and the dispatcher serves it for every script whether or not that script parses the flag:
+     ```bash
+     ../../scripts/wf-exec.sh wf-headless-eval.sh --help
+     ```
    - **Visual/subjective criteria** ("looks right", "layout correct on mobile", "feels natural") — run the same kind of `actions-json` to reach the state in question, then capture and judge it yourself instead of leaving it for a human:
      ```bash
      ../../scripts/wf-exec.sh wf-headless-screenshot.sh "http://localhost:$FEATURE_PORT<route>" "/tmp/wf-shots/<plan>-<n>.png" '<actions-json>'

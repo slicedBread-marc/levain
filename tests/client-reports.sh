@@ -5641,6 +5641,37 @@ assert_eq "template prose does not block every new brief" "false" \
 assert_eq "wf-spec knows the verb" "true" \
   "$(grep -q 'wf-brief-block.sh' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
 
+# ── The same dead end, reached from the bug side (client-d WFI-018) ───────
+#
+# "A bug leaves the list by MOVING" holds for every bug that CAN move. BUG-017's
+# answered needs-input gate said it stays open pending BRF-018 and is closed by
+# whatever that brief decides — so no plan may be created, so wf-bug-consume.sh
+# never runs, so it never leaves bugs/open/ and is re-offered on every sweep.
+mkdir -p "$BLK/bugs/open/BUG-017-wheat-size" "$BLK/bugs/triaged" "$BLK/bugs/closed"
+printf '# Wheat ear renders too small\n\n> **ID:** BUG-017\n> **Severity:** Medium\n> **Status:** Open\n\n## Symptom\nx\n' \
+  > "$BLK/bugs/open/BUG-017-wheat-size/bug.md"
+(cd "$BLK" && git add -A && git commit -q -m "BUG-017") >/dev/null 2>&1
+
+# `grep -c`, not `grep -q`: under pipefail a -q match on an EARLY line closes
+# the pipe while wf-list-specable.sh is still writing its briefs section, and
+# the producer's SIGPIPE fails the whole pipeline. Bugs are listed before
+# briefs, so every bug assertion here would read `false` on a real match.
+specable_has() { (cd "$BLK" && ./scripts/wf-list-specable.sh 2>/dev/null) | grep -c "^$1" | tr -d ' '; }
+assert_eq "an open bug is offered" "1" "$(specable_has BUG-017)"
+
+(cd "$BLK" && ./scripts/wf-brief-block.sh BUG-017 "closed by whatever BRF-018 decides" --on BRF-018) >/dev/null 2>&1
+assert_eq "a blocked bug leaves the specable list" "0" "$(specable_has BUG-017)"
+assert_eq "and the reason reaches a human on stderr" "true" \
+  "$(cd "$BLK" && ./scripts/wf-list-specable.sh 2>&1 >/dev/null | grep -q 'BUG-017 blocked — BRF-018' && echo true || echo false)"
+assert_eq "the bug did not move to say so" "true" \
+  "$([ -f "$BLK/bugs/open/BUG-017-wheat-size/bug.md" ] && echo true || echo false)"
+
+(cd "$BLK" && ./scripts/wf-brief-block.sh BUG-017 --clear) >/dev/null 2>&1
+assert_eq "clearing puts it straight back" "1" "$(specable_has BUG-017)"
+
+assert_eq "an id that is neither a brief nor a bug is refused" "1" \
+  "$( (cd "$BLK" && ./scripts/wf-brief-block.sh PLN-010 "nope") >/dev/null 2>&1; echo $? )"
+
 # ═══════════════════════════════════════════════════════════════════════
 section "A red suite is only evidence against the commits if it could have passed (client-e WFI-028)"
 

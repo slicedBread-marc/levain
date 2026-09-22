@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# wf-brief-block.sh <BRF-NNN> "<why>" [--on <artifact>] [--repo <name>] [--no-commit]
-# wf-brief-block.sh <BRF-NNN> --clear [--no-commit]
+# wf-brief-block.sh <BRF-NNN|BUG-NNN> "<why>" [--on <artifact>] [--repo <name>] [--no-commit]
+# wf-brief-block.sh <BRF-NNN|BUG-NNN> --clear [--no-commit]
 #
-# Records that a Decided brief cannot be converted to a plan yet, by writing a
-# `> **Blocked:**` field into its header — and clears it again when the blocker
-# lifts. wf-list-specable.sh reads that field and stops offering the brief, so
-# the dispatcher stops sending a spec worker at work that cannot be done.
+# Records that a specable artifact cannot be converted to a plan yet, by
+# writing a `> **Blocked:**` field into its header — and clears it again when
+# the blocker lifts. wf-list-specable.sh reads that field and stops offering
+# the artifact, so the dispatcher stops sending a spec worker at work that
+# cannot be done.
+#
+# The name says `brief` because briefs were the only case when it was written.
+# Bugs turned out to need the identical verb for the identical reason (below),
+# and the field, the reader and the semantics are the same — so it takes both
+# rather than growing a near-duplicate script.
 #
 # WHY THIS EXISTS
 #
@@ -21,6 +27,15 @@
 #   · one that sequences SEVERAL future plans rather than becoming one, whose
 #     Plan: field is a deliberate "(none — …)".
 #
+# A BUG CAN BE IN EXACTLY THE SAME POSITION, and the "bugs move" claim above is
+# what hid it. client-d WFI-018: BUG-017's needs-input gate was answered "stays
+# OPEN pending BRF-018, and is closed by whatever that brief decides". So no
+# plan may be created, so wf-bug-consume.sh never runs, so the bug never leaves
+# bugs/open/ — and wf-list-specable.sh offered it again the moment the worker
+# unclaimed. The next spec worker repeats the run identically: read bug, read
+# answered gate, create nothing, exit. bugs/triaged/ is no escape either, since
+# a triaged bug with an empty Plan: field is re-offered by design (WFI-249).
+#
 # A spec worker was dispatched onto BRF-010 anyway, read the brief, the gate
 # resolution and the blocking bug in the other repo, and exited having created
 # nothing. Every future sweep repeats that run identically. Re-opening the
@@ -33,7 +48,7 @@
 # else in the pipeline changes. Clearing it puts the brief straight back on the
 # list.
 #
-#   --on <artifact>   the blocking artifact, e.g. BUG-002, PLN-014
+#   --on <artifact>   the blocking artifact, e.g. BUG-002, PLN-014, BRF-018
 #   --repo <name>     the project that artifact belongs to, when it is not
 #                     this one — a cross-repo blocker is the common case
 #   --clear           the blocker lifted; remove the field
@@ -46,7 +61,7 @@ SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=wf-orch-lib.sh
 source "$SELF_DIR/wf-orch-lib.sh"
 
-brief_id=""
+artifact_id=""
 why=""
 on_artifact=""
 on_repo=""
@@ -61,40 +76,63 @@ while [ $# -gt 0 ]; do
     --no-commit) do_commit=false; shift ;;
     -h|--help)   wf_usage; exit 0 ;;
     -*)          wf_bad_option "$1" ;;
-    *)  if [ -z "$brief_id" ]; then brief_id="$1"
+    *)  if [ -z "$artifact_id" ]; then artifact_id="$1"
         elif [ -z "$why" ]; then why="$1"
         else echo "Error: unexpected argument '$1' — the reason is one argument, quote it" >&2; exit 1
         fi; shift ;;
   esac
 done
 
-if [ -z "$brief_id" ] || { ! $clear && [ -z "$why" ]; }; then
-  echo "Usage: $0 <BRF-NNN> \"<why>\" [--on <artifact>] [--repo <name>] [--no-commit]" >&2
-  echo "       $0 <BRF-NNN> --clear [--no-commit]" >&2
+if [ -z "$artifact_id" ] || { ! $clear && [ -z "$why" ]; }; then
+  echo "Usage: $0 <BRF-NNN|BUG-NNN> \"<why>\" [--on <artifact>] [--repo <name>] [--no-commit]" >&2
+  echo "       $0 <BRF-NNN|BUG-NNN> --clear [--no-commit]" >&2
   echo >&2
-  echo "A blocker with no reason is a brief nobody can unblock. The reason is required." >&2
+  echo "A blocker with no reason is an artifact nobody can unblock. The reason is required." >&2
   exit 1
 fi
 
 cd "$(wf_develop_root)"
 
+# Where the header lives depends on the artifact. A bug's is bug.md, in
+# whichever folder it currently sits — this verb is for the bug that CANNOT
+# move, so both are in scope.
 brief_md=""
-for f in plans/briefs/${brief_id}*.md; do
-  [ -f "$f" ] && brief_md="$f" && break
-done
-if [ -z "$brief_md" ]; then
-  echo "Error: no brief matching $brief_id in plans/briefs/" >&2
-  exit 1
-fi
+kind=""
+case "$artifact_id" in
+  BUG-*)
+    kind=bug
+    for f in bugs/open/${artifact_id}*/bug.md bugs/triaged/${artifact_id}*/bug.md; do
+      [ -f "$f" ] && brief_md="$f" && break
+    done
+    if [ -z "$brief_md" ]; then
+      echo "Error: no bug matching $artifact_id in bugs/open/ or bugs/triaged/" >&2
+      exit 1
+    fi
+    ;;
+  BRF-*)
+    kind=brief
+    for f in plans/briefs/${artifact_id}*.md; do
+      [ -f "$f" ] && brief_md="$f" && break
+    done
+    if [ -z "$brief_md" ]; then
+      echo "Error: no brief matching $artifact_id in plans/briefs/" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Error: '$artifact_id' is not a BRF-NNN or BUG-NNN id" >&2
+    exit 1
+    ;;
+esac
 
 if $clear; then
   if ! grep -qE '^[ \t]*>?[ \t]*\*\*Blocked:\*\*' "$brief_md"; then
-    echo "$brief_id is not blocked — nothing to clear"
+    echo "$artifact_id is not blocked — nothing to clear"
     exit 0
   fi
   awk '!/^[ \t]*>?[ \t]*\*\*Blocked:\*\*/' "$brief_md" > "$brief_md.tmp" && mv "$brief_md.tmp" "$brief_md"
-  msg="brief($brief_id): unblocked"
-  result="$brief_id unblocked — back on the specable list"
+  msg="$kind($artifact_id): unblocked"
+  result="$artifact_id unblocked — back on the specable list"
 else
   # One line, assembled so a reader of the brief alone can act on it: what is
   # blocking, where it lives, and why it matters here.
@@ -124,8 +162,8 @@ else
     echo "Error: could not write the Blocked field into $brief_md — nothing changed" >&2
     exit 1
   fi
-  msg="brief($brief_id): blocked — $blocked"
-  result="$brief_id blocked — $blocked"
+  msg="$kind($artifact_id): blocked — $blocked"
+  result="$artifact_id blocked — $blocked"
 fi
 
 if $do_commit; then

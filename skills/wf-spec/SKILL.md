@@ -224,23 +224,32 @@ If the user picks a bug BUG-NNN:
 
 1. **Read the input** — if from a brief: read the relevant brief in `plans/briefs/`; if from a bug: the bug's `bug.md` becomes the scope definition
 
-1z. **If the brief cannot be converted to a plan yet, say so in the brief and stop.** Two shapes
-   reach here and neither is work: a brief blocked on something outside this repo (an open bug in
-   another project, a dependency that does not exist yet), and a brief that *sequences several
-   future plans* rather than becoming one — its `Plan:` field a deliberate `(none — …)`. Both are
-   `Decided` by design, so neither can ever reach the plan-exists test that takes a brief off the
-   specable list, and without a verb here the dispatcher sends a worker at it on every sweep
-   forever. client-b BRF-010 did exactly that: read the brief, read the answered gate saying "no
-   PLN-010 yet; BRF-010 stays Decided", read the still-open blocking bug in `client-d`, created
-   nothing, and was dispatched again a minute later (WFI-009).
+1z. **If this artifact cannot be converted to a plan yet, say so on the artifact and stop.**
+   Three shapes reach here and none is work: a brief blocked on something outside this repo (an
+   open bug in another project, a dependency that does not exist yet); a brief that *sequences
+   several future plans* rather than becoming one — its `Plan:` field a deliberate `(none — …)`;
+   and **a bug whose answered gate says no plan may be created for it.** None of them can reach
+   the test that takes an artifact off the specable list, and without a verb here the dispatcher
+   sends a worker at it on every sweep forever.
+
+   client-b BRF-010 did exactly that: read the brief, read the answered gate saying "no PLN-010
+   yet; BRF-010 stays Decided", read the still-open blocking bug in `client-d`, created nothing,
+   and was dispatched again a minute later (WFI-009). client-d BUG-017 is the same dead end from
+   the bug side (WFI-018): its `needs-input` gate was answered "stays OPEN pending BRF-018, and is
+   closed by whatever that brief decides", so no plan may be created, so `wf-bug-consume.sh` never
+   runs, so the bug never leaves `bugs/open/`. "A bug leaves the list by MOVING" is true of every
+   bug that *can* move, and `bugs/triaged/` is no escape either — a triaged bug with an empty
+   `Plan:` field is re-offered by design (WFI-249).
    ```bash
-   scripts/wf-exec.sh wf-brief-block.sh BRF-NNN "<why, in one line>" \
-     [--on <BUG-NNN|PLN-NNN>] [--repo <project>]
+   scripts/wf-exec.sh wf-brief-block.sh <BRF-NNN|BUG-NNN> "<why, in one line>" \
+     [--on <BUG-NNN|BRF-NNN|PLN-NNN>] [--repo <project>]
    ```
-   Then unclaim and finish. The brief stays `Decided`, its INDEX row does not move, and nothing
-   else changes — it simply stops being offered until someone runs `--clear`. **The reason is
-   required**, because a blocker nobody can read is a brief nobody can unblock; name the
-   artifact and the repo whenever there is one.
+   Then unclaim and finish. The artifact does not move and nothing else changes — a brief stays
+   `Decided` with its INDEX row where it was, a bug stays in `bugs/open/` — it simply stops being
+   offered until someone runs `--clear`. **The reason is required**, because a blocker nobody can
+   read is an artifact nobody can unblock; name the artifact and the repo whenever there is one.
+   (The script is called `wf-brief-block.sh` because briefs were the only case when it was
+   written; the verb and the field are identical for both.)
 
    **Do not re-open the answered gate to ask again** — that is the re-derived-question
    anti-pattern (WFI-180/181/182). And do not block a brief you simply find hard: this is for a

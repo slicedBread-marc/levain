@@ -125,6 +125,33 @@ if [ ${#escalated[@]} -gt 0 ] || [ ${#unreviewed[@]} -gt 0 ]; then
   fi
 fi
 
+# ── Blocked: the verb for "known, and not convertible yet" ────────────────
+#
+# Defined here rather than beside the briefs because BUGS need it too. The
+# comment further down explains why a brief cannot leave the specable list on
+# its own; client-d WFI-018 is the same dead end reached from the bug side.
+# BUG-017's answered needs-input gate said "stays OPEN pending BRF-018, closed
+# by whatever that brief decides" — so no plan, so wf-bug-consume.sh never runs,
+# so the bug never moves out of bugs/open/, so it is offered on every sweep
+# forever. "A bug leaves by MOVING" was true of every bug that CAN move.
+#
+# Re-opening the answered gate is not the escape (WFI-180/181/182), and neither
+# is bugs/triaged/: a triaged bug with an empty Plan: field is re-offered by
+# design (WFI-249). wf-brief-block.sh writes and clears the field for both
+# kinds.
+brief_is_blocked() {
+  local brief_md="$1" field
+  field=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Blocked:\*\*' "$brief_md" 2>/dev/null \
+          | sed -E 's/^.*\*\*Blocked:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
+  # A parenthesised value is template prose, not a blocker — the same defence
+  # the Plan: field needs, and for the same reason: a placeholder that reads as
+  # a real value hides work instead of describing it.
+  case "$field" in
+    ""|"("*|*"(none"*|*_none_*|"—") return 1 ;;
+    *) printf '%s' "$field"; return 0 ;;
+  esac
+}
+
 # --- Open bugs ---
 bugs_found=0
 for bug_md in bugs/open/*/bug.md; do
@@ -146,6 +173,13 @@ for bug_md in bugs/open/*/bug.md; do
   # plan folder exists yet to hold the claim (WFI-004). Offering it anyway is
   # how two spec workers end up on one artifact.
   wf_claim_held "$bug_id" && continue
+  # Blocked by a recorded, human-written reason. To stderr, so a human running
+  # this sees what is held back and why, while the stdout a dispatcher parses
+  # carries only work that can be done.
+  if blocked_why=$(brief_is_blocked "$bug_md"); then
+    echo "  ($bug_id blocked — $blocked_why)" >&2
+    continue
+  fi
   if [ $bugs_found -eq 0 ]; then echo "# bugs"; fi
   printf "%s\t%s\t%s\n" "$bug_id" "$severity" "$title"
   bugs_found=1
@@ -189,6 +223,10 @@ for bug_md in bugs/triaged/*/bug.md; do
   severity=$({ grep -E "Severity:" "$bug_md" 2>/dev/null | head -1 | sed 's/.*Severity:\*\*[[:space:]]*//' | sed 's/^> //'; } || true)
   title=$(head -1 "$bug_md" | sed 's/^# //')
   wf_claim_held "$bug_id" && continue
+  if blocked_why=$(brief_is_blocked "$bug_md"); then
+    echo "  ($bug_id blocked — $blocked_why)" >&2
+    continue
+  fi
   if [ $bugs_found -eq 0 ]; then echo "# bugs"; fi
   printf "%s\t%s\t%s (hand-filed into triaged/, no plan)\n" "$bug_id" "$severity" "$title"
   bugs_found=1
@@ -258,18 +296,6 @@ brief_is_planned() {
 # (wf-brief-block.sh writes and clears it). It is not silent: the reason goes
 # to stderr, so a human running this sees what is being held back and why,
 # while the stdout a dispatcher parses carries only work that can be done.
-brief_is_blocked() {
-  local brief_md="$1" field
-  field=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Blocked:\*\*' "$brief_md" 2>/dev/null \
-          | sed -E 's/^.*\*\*Blocked:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
-  # A parenthesised value is template prose, not a blocker — the same defence
-  # the Plan: field needs, and for the same reason: a placeholder that reads as
-  # a real value hides work instead of describing it.
-  case "$field" in
-    ""|"("*|*"(none"*|*_none_*|"—") return 1 ;;
-    *) printf '%s' "$field"; return 0 ;;
-  esac
-}
 
 briefs_found=0
 if [ -f "plans/briefs/INDEX.md" ]; then
