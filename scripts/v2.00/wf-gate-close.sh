@@ -20,8 +20,10 @@
 # `## Decisions` entry in the plan's own findings.md — the ledger is the record,
 # but findings.md is where a dispatched worker actually looks (WFI-181).
 #
-# --gate <name>  Record the resolution under this gate name even when no gate
-#                file is open. This is the backfill path: a decision a human
+# --gate <name>  Record the resolution under this gate name when no gate file
+#                is open. A DIFFERENT gate being open is a refusal (exit 5),
+#                never an overwrite (WFI-025). This is the backfill path: a
+#                decision a human
 #                demonstrably made — in a commit message, in findings.md —
 #                but which the resolved-gate ledger has no record of, because
 #                the gate closed before the ledger existed or was cleared by
@@ -264,6 +266,42 @@ if [ -f "$gate_file" ]; then
 else
   gate_name="$forced_gate"
 fi
+
+# ── --gate is a BACKFILL, and a backfill over a live gate is a forgery ─────
+#
+# `--gate X` exists for the case where NO gate file is open and a decision a
+# human demonstrably made has no record. Over a live gate it did something else
+# entirely: the line below overrides the open gate's real name with the
+# caller's, so everything after it — the resolved record, the ledger line, the
+# `## Decisions` entry in findings.md — is written under X while carrying the
+# OTHER gate's question, and the open file is deleted either way.
+#
+# client-b WFI-025. A `needs-input` gate was open; wf-spec's replan overwrote
+# it with `spec-approval` (which wf-gate-open.sh now refuses); the attendant
+# then ran `wf-gate-close.sh PLN-014 "chose option (a)" --gate needs-input`.
+# Exit 0. `gates/resolved/PLN-014.needs-input` recorded GATE_NAME='needs-input'
+# against GATE_QUESTION='Approve the replan?' — a resolution filed against a
+# question it was never given — and findings.md published it as the decision of
+# record. Both unanswered questions were gone and wf-list-gates.sh reported
+# GATES: 0.
+#
+# So: a `--gate` that disagrees with what is actually open is refused, with the
+# same exit code and the same "nothing was changed" guarantee as `--only`. The
+# two flags now answer the same question from opposite ends — `--only` says
+# "close MY gate", `--gate` says "record an answer for a gate with no file" —
+# and neither can close a question it was not asked.
+if [ -n "$forced_gate" ] && [ -f "$gate_file" ] && [ "$gate_name" != "$forced_gate" ]; then
+  echo "wf-gate-close: $id has '$gate_name' open, and --gate names '$forced_gate'." >&2
+  echo "  --gate is the BACKFILL path, for a decision whose gate file is already gone." >&2
+  echo "  Used here it would delete the open question and file this resolution against it" >&2
+  echo "  under the wrong name (client-b WFI-025)." >&2
+  [ -n "$gate_question" ] && echo "  Open question: $gate_question" >&2
+  echo "  To answer what is actually open:  wf-gate-close.sh $id \"<answer>\" --only $gate_name" >&2
+  echo "  To backfill '$forced_gate', answer the open gate first." >&2
+  wf_event gate-close-refused "$id" "$gate_name open, --gate named $forced_gate (WFI-025)"
+  exit 5
+fi
+
 [ -n "$forced_gate" ] && gate_name="$forced_gate"
 
 # ── --only: this gate, or none ────────────────────────────────────────────

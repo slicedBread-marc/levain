@@ -57,7 +57,9 @@
 # A gate that has already been ANSWERED is refused outright — see below.
 #
 # Exit 0 when a gate is open, 1 on error, 3 when the gate was refused because
-# an answer of record already covers this revision of the plan.
+# an answer of record already covers this revision of the plan, and 5 when a
+# DIFFERENT gate is already open on the artifact — which this refuses rather
+# than overwrites, because one file holds one artifact's gate (WFI-025).
 
 set -euo pipefail
 
@@ -208,6 +210,40 @@ if [ -f "$gate_file" ]; then
     echo "  If the fact behind the question has changed on the record, refresh it with --requestion." >&2
     exit 0
   fi
+
+  # ── A DIFFERENT gate is open on this artifact ───────────────────────────
+  #
+  # Gates are stored one file per ARTIFACT, not one per gate name, so writing
+  # here would not add a second gate — it would silently destroy the first.
+  # This used to fall straight through and do exactly that, exit 0, no output.
+  #
+  # client-b WFI-025 is the whole sequence, and every step of it exited 0:
+  # a `needs-input` gate was open and listed; wf-spec's replan step 6d opened
+  # `spec-approval` on the same plan, overwriting it; and the attendant then
+  # closed `needs-input` by name, which resolved the file that by then held the
+  # spec-approval question. The ledger recorded a `needs-input` resolution
+  # paired with a question it was never given, findings.md published it as "the
+  # decision of record — act on it rather than re-deriving the question", and
+  # the spec-approval gate a human owed an answer to simply did not exist:
+  # wf-list-gates.sh reported GATES: 0 over a plan with two unanswered
+  # questions. That is the fabricated record WFI-100 warns about, manufactured
+  # by the harness rather than by a worker.
+  #
+  # So this refuses. One artifact parks on one question at a time — that is the
+  # model the dispatcher reads (`gate_open <id>` is a boolean per artifact) and
+  # it is not this script's to widen. Answer the open one, or if the new
+  # question supersedes it, close it on its own terms first and say so.
+  echo "Error: $id already has a DIFFERENT gate open — '$existing', not '$gate_name'." >&2
+  echo "       Gates are one per artifact, so opening this one would destroy that" >&2
+  echo "       question without recording it, and closing it later by name would file" >&2
+  echo "       its resolution against the wrong question (client-b WFI-025)." >&2
+  open_q=$(wf_gate_field "$gate_file" GATE_QUESTION 2>/dev/null || true)
+  [ -n "$open_q" ] && echo "       Still unanswered: $open_q" >&2
+  echo "       Answer it first:" >&2
+  echo "         wf-gate-close.sh $id \"<resolution>\" --only $existing" >&2
+  echo "       Or, if this new question supersedes it, close it saying so, then re-run this." >&2
+  echo "       Nothing was changed." >&2
+  exit 5
 fi
 
 # ── An answered question is not asked again ───────────────────────────────

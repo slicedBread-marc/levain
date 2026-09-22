@@ -390,6 +390,16 @@ is first evidence that the setting is costing more than it saves.
 
 Display the question verbatim, get the answer, apply it, close the gate with the answer as the resolution. If applying it means writing code, route to `/wf-implement` — never edit source here.
 
+**If applying the answer means a replan, close this gate FIRST.** An artifact parks on one question at a time — gates are stored one file per artifact — so a `/wf-spec` replan reaching its own `spec-approval` gate while this one is still open is refused (`wf-gate-open.sh`, exit 5). It used to be worse than refused: the second open silently destroyed this question, and closing `needs-input` by name afterwards filed its resolution against the *replan's* question, publishing a decision of record nobody had made. client-b WFI-025, with `wf-list-gates.sh` reporting `GATES: 0` over a plan carrying two unanswered questions.
+
+So for this one shape, the answer has landed the moment it is recorded and the replan is what it *authorizes*, not part of it:
+
+```bash
+scripts/wf-exec.sh wf-gate-close.sh <PLN-ID> "<the answer, and that it sends the plan back to spec>" --only needs-input
+# …then hand off to /wf-spec, which opens its own gate on the replanned plan
+```
+
+Everywhere else in this skill the gate still closes last.
 **If the answer disposes of a bug, use the scripted close.** A `needs-input` gate often resolves as "this bug is a duplicate", "this one is already fixed", or "we are not fixing this", and each has a verb — none of them needs a plan, and none of them should be a hand-edit plus a `git mv`:
 
 ```bash

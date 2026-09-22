@@ -147,6 +147,24 @@ precondition makes transition-then-close impossible to satisfy — today that is
 in both rows of the table above, and nothing else. Everywhere the general rule *can* be
 followed, follow it.
 
+## One artifact, one question
+
+A related constraint, and the reason a second exception exists: gates are stored **one file per
+artifact**, not one per gate name. `gate_open <id>` is a boolean the dispatcher reads about an
+artifact, and an artifact parks on one question at a time.
+
+So a flow that would leave two gates open on one plan cannot. `wf-gate-open.sh` refuses a
+different gate while one is open (exit 5), and `wf-gate-close.sh --gate X` refuses when the open
+gate is not X (exit 5). Before those refusals existed the second open overwrote the first and the
+close filed its resolution against the surviving question: client-b WFI-025 ended with a
+`needs-input` resolution recorded against a `spec-approval` question, published in findings.md as
+the decision of record, and `wf-list-gates.sh` reporting `GATES: 0` over a plan owing two answers.
+
+The practical consequence is one more close-first case, for the same reason as the section above:
+when answering a `needs-input` gate means sending the plan back to `/wf-spec`, the replan opens
+its own `spec-approval` gate, so `needs-input` has to close before the handoff rather than after
+it. The answer is what *authorizes* the replan; it is not waiting on its outcome.
+
 **Adding a guard of this shape is what makes the exception grow, so say so here when you add
 one.** A precondition that refuses a transition until a gate is answered is not a local change
 to one script: it silently inverts the exit ordering of every skill that performs that

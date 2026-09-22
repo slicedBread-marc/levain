@@ -2903,6 +2903,50 @@ assert_eq "falls back to the local ref when nothing tracks a remote" "true" \
 cd "$TEST_DIR" || exit 1
 rm -rf "$PROG" "$PROG.origin.git"
 
+section "One artifact parks on one question at a time (WFI-025, WFI-026)"
+
+# Gates are one file per ARTIFACT. Opening a second one used to overwrite the
+# first silently, and closing the first BY NAME afterwards then filed its
+# resolution against the survivor's question — a decision of record nobody
+# made, published in findings.md, with wf-list-gates.sh reporting GATES: 0 over
+# a plan owing two answers.
+registry_add_row PLN-300 two-gates draft
+git add -A >/dev/null 2>&1 && git commit -qm "PLN-300" >/dev/null 2>&1
+
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-300 needs-input "Which option?" >/dev/null 2>&1
+
+grc=0
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-300 spec-approval "Approve the replan?" >/dev/null 2>&1 || grc=$?
+assert_eq "a second gate over a live one is refused, not written" "5" "$grc"
+gatefile="$(git rev-parse --show-toplevel)/.claude/orchestrator/gates/PLN-300.gate"
+gate_name_on_file() { grep "^GATE_NAME=" "$gatefile" 2>/dev/null | cut -d"'" -f2; }
+assert_eq "and the first question is still the one on file" "needs-input" \
+  "$(gate_name_on_file)"
+assert_eq "still exactly one gate open" "1" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" 2>/dev/null | grep -c '^PLN-300')"
+
+crc=0
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-300 "chose (a)" --gate spec-approval >/dev/null 2>&1 || crc=$?
+assert_eq "a --gate backfill naming a different open gate is refused" "5" "$crc"
+assert_eq "and nothing was recorded under the wrong name" "false" \
+  "$([ -f "$(git rev-parse --show-toplevel)/.claude/orchestrator/gates/resolved/PLN-300.spec-approval" ] && echo true || echo false)"
+assert_eq "and the open gate is still open" "needs-input" "$(gate_name_on_file)"
+
+# The legitimate sequence still runs: answer what is open, then ask the next.
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-300 "chose (a)" --only needs-input >/dev/null 2>&1
+orc=0
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-300 spec-approval "Approve the replan?" >/dev/null 2>&1 || orc=$?
+assert_eq "once it is answered, the next gate opens normally" "0" "$orc"
+assert_eq "and it is the one on file" "spec-approval" "$(gate_name_on_file)"
+
+# WFI-026: open and answered are read from two different places, and a caller
+# keying on ANSWERED must never transition over a live question.
+eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-300 spec-approval)"
+assert_eq "an open gate reads as open" "true" "$GATE_OPEN"
+assert_eq "and an open question is never an answered one" "false" "$GATE_ANSWERED"
+
+"$SCRIPT_DIR/wf-gate-close.sh" PLN-300 "approved" --only spec-approval >/dev/null 2>&1
+
 section "A launch that never reached a session costs no attempt (WFI-016)"
 
 # The started-marker in wf-spawn.sh proves `bash -c` began — not that `claude`

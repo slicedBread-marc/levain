@@ -227,6 +227,26 @@ if [ "$open" = "true" ] && [ -z "$fp_at_open" ]; then
   fp_at_open="$open_fp"
 fi
 
+# ── An open question is not an answered one ───────────────────────────────
+#
+# `open` and `answered` are read from two different places — the live gate file
+# and the resolved ledger — and nothing made them agree. A record from an
+# earlier round that still matches the current revision, next to a gate that is
+# live and unanswered right now, produced GATE_OPEN=true AND GATE_ANSWERED=true
+# together: a contradiction, and callers key on the second one.
+#
+# That is not academic. wf-spec's unattended exit step 6 reads
+# `GATE_ANSWERED=true -> do not gate, transition draft -> ready`, so the pair
+# transitions a plan over a question a human is still being asked — WFI-047's
+# rule arriving from the other direction (client-b WFI-026). Whatever produced
+# the state, the resolution of the contradiction is never in doubt: the ledger
+# describes a round that finished, the open file describes one that has not.
+if [ "$open" = "true" ] && [ "$answered" = "true" ]; then
+  answered=false
+  basis=none
+  stale=false
+fi
+
 wf_emit GATE_OPEN        "$open"
 wf_emit GATE_QUESTION_STALE "$question_stale"
 wf_emit GATE_ANSWERED    "$answered"
