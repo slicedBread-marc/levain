@@ -36,13 +36,44 @@
 # blocked eight dependent plans until a human authorised `draft → testing` by
 # hand — an edge the state machine did not define.
 #
-# It is defined here, and narrowly. All four must hold:
+# It is defined here, and narrowly. All five must hold:
 #   - a live worktree (there is something built to hand back);
 #   - the newest findings section is a `## Human Test` one (the bounce came
 #     from the tester, not from verify — a verify bounce has code to answer);
 #   - every finding in the file is checked off (nothing is outstanding);
-#   - progress.md's `## Steps` checklist is complete, or absent.
+#   - progress.md's `## Steps` checklist is complete, or absent;
+#   - plan.md has gained no amendment since the branch last committed.
 # Anything less falls through to the ready/active rules, unchanged.
+#
+# THE FIFTH CONDITION: THE OTHER FOUR CAN BE SATISFIED BY THE PREVIOUS CYCLE
+#
+# The first four are all readings of state that a completed build leaves
+# behind, and a replan does not reset any of them. client-b' PLN-014
+# (WFI-027): the replan's amendments A-1 and A-2 added a per-join participant
+# token across nine call sites, two columns on an existing migration, a
+# re-entry path and two new tests — none of it written — and this script
+# answered `testing`. Every mechanical condition held, because the Steps boxes
+# and the Build & Tests boxes had been ticked against the PRE-amendment tree,
+# and ticking the two findings the amendments RESOLVED removed the last
+# outstanding signal. Ticking a finding an amendment answered is
+# indistinguishable from ticking one that did not reproduce — and that
+# difference is the whole distance between this script's second answer and its
+# third.
+#
+# So the fifth condition asks the question the other four cannot: did the plan
+# grow an amendment that the built tree predates? The anchor is the branch's
+# own newest non-merge commit — whatever the builder last wrote — compared
+# against the count of amendment headings in plan.md at that moment and now.
+# Headings, not diff lines, so a ticked checkbox or a review stamp is not
+# mistaken for new work (the WFI-005 lesson). Not wf-goal-delta.sh's
+# AMENDMENTS_NEW, though it counts the same headings: that one is a diff
+# against HEAD, so it answers "uncommitted", and by the time a replan reaches
+# this script wf-spec has already committed the plan.
+#
+# Where the answer is in doubt it is `active`, deliberately. A builder
+# dispatched onto an empty work list costs one run; a tester handed a plan
+# whose newest amendments have no implementation is asked to verify something
+# that was never built.
 #
 # --note "text"  Passed straight through to wf-registry-update.sh, which writes
 # it to the plan's progress.md under `## Notes`, in the same commit and under
@@ -93,6 +124,15 @@ state=$(wf_registry_field "$plan_id" state "$REGISTRY")
 slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
 branch=$(wf_registry_field "$plan_id" branch "$REGISTRY")
 
+# Amendment HEADINGS in a plan.md, read from stdin. The id is `A`, an optional
+# separator and a number, or the word `Amendment` and a number, optionally
+# behind a bracketed date — the three heading styles wf-goal-delta.sh learned
+# the hard way (WFI-051, WFI-201, WFI-230). Headings only: a bullet in prose
+# that cites A-1 is a reference, not an amendment.
+amendment_headings() {
+  grep -cE '^#+[[:space:]]*(\[[^]]*\])?[[:space:]]*([^A-Za-z]*A[-_ ]?[0-9]+([^0-9]|$)|[Aa]mendment[[:space:]]+A?[-_ ]?[0-9]+)' || true
+}
+
 target="ready"
 if [ -n "$branch" ] && [ "$branch" != "—" ]; then
   if git worktree list --porcelain 2>/dev/null \
@@ -141,7 +181,30 @@ if [ "$target" = "active" ]; then
         END { print n + 0 }
       ' "$plan_md")
     fi
-    [ "$steps_open" = "0" ] && [ "$plan_open" = "0" ] && target="testing"
+    # Amendments the built tree predates — see THE FIFTH CONDITION above.
+    # `--no-merges` so a develop merge into the branch does not read as build
+    # work; `@<epoch>` is a date git's approxidate parser accepts.
+    amend_new=0
+    if [ -f "$plan_md" ]; then
+      tip_ct=$(git log -1 --no-merges --format=%ct "$branch" 2>/dev/null || true)
+      if [ -n "$tip_ct" ]; then
+        was_sha=$(git rev-list -1 --before="@$tip_ct" HEAD -- "$plan_md" 2>/dev/null || true)
+        now_n=$(amendment_headings < "$plan_md")
+        was_n=0
+        if [ -n "$was_sha" ]; then
+          was_n=$(git show "$was_sha:$plan_md" 2>/dev/null | amendment_headings || true)
+        fi
+        if [ "${now_n:-0}" -gt "${was_n:-0}" ]; then
+          amend_new=$(( now_n - was_n ))
+        fi
+      fi
+    fi
+    if [ "$amend_new" != "0" ]; then
+      echo "$plan_id: $amend_new amendment(s) added since $branch last committed — there is" >&2
+      echo "  work outstanding, so this is not a bounce with nothing to build (WFI-027)." >&2
+    elif [ "$steps_open" = "0" ] && [ "$plan_open" = "0" ]; then
+      target="testing"
+    fi
   fi
 fi
 

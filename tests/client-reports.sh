@@ -3013,6 +3013,69 @@ assert_eq "an unfinished checklist keeps it with the builder" "active" \
 git worktree remove --force "$TEST_DIR/wt-911" >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A replan that added work is not a bounce with nothing to build (client-b WFI-027)"
+
+# The four conditions above are all readings of state a FINISHED build leaves
+# behind, and a replan resets none of them: the Steps boxes and the plan's own
+# Build & Tests boxes were ticked against the pre-amendment tree, and ticking
+# the findings the amendments RESOLVED removed the last outstanding signal. So
+# client-b' PLN-014 answered `testing` with two amendments' worth of code
+# unwritten. The fifth condition is the one signal the others cannot carry:
+# plan.md grew an amendment that the built tree predates.
+registry_add_row PLN-912 token-rework draft feature/PLN-912-token-rework
+cat > plans/PLN-912-token-rework/plan.md << 'MEOF'
+# PLN-912-token-rework
+
+## Goal
+Test goal for PLN-912
+
+## Amendments
+
+### [2026-09-01] — A-1: the amendment the builder did build
+MEOF
+git add -A >/dev/null 2>&1
+GIT_AUTHOR_DATE="2026-09-01T10:00:00" GIT_COMMITTER_DATE="2026-09-01T10:00:00"   git commit -qm "add PLN-912" >/dev/null 2>&1
+git worktree add -q -b feature/PLN-912-token-rework "$TEST_DIR/wt-912" develop 2>/dev/null
+GIT_AUTHOR_DATE="2026-09-02T10:00:00" GIT_COMMITTER_DATE="2026-09-02T10:00:00"   git -C "$TEST_DIR/wt-912" commit -q --allow-empty -m "build A-1" >/dev/null 2>&1
+cat > plans/PLN-912-token-rework/findings.md << 'FEOF'
+## Human Test — 2026-09-02
+
+- [x] **Behavior**: the join token is reused across tabs — answered by A-1
+FEOF
+cat > plans/PLN-912-token-rework/progress.md << 'PEOF'
+# Progress — PLN-912
+
+## Steps
+- [x] Step 1: build A-1
+PEOF
+assert_eq "an amendment the build already carries still goes to the tester" "testing"   "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-912)"
+
+# Now the replan writes a new amendment. Nothing else changes — every box stays
+# ticked, the newest findings section is still the tester's, the worktree is
+# still live — and that is exactly the point.
+printf '\n### [2026-09-03] — A-2: per-join participant token, nine call sites, two new tests\n' \
+  >> plans/PLN-912-token-rework/plan.md
+assert_eq "an amendment the build predates is work outstanding" "active" \
+  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-912)"
+assert_eq "and it says why on stderr" "1" \
+  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-912 2>&1 >/dev/null | grep -c 'WFI-027')"
+
+# A ticked checkbox is not an amendment — the WFI-005 lesson, which is why the
+# count is of HEADINGS and not of diff lines.
+git checkout -- plans/PLN-912-token-rework/plan.md >/dev/null 2>&1
+printf -- '\n## Verification Checklist\n\n### Build & Tests\n- [x] dotnet test\n' \
+  >> plans/PLN-912-token-rework/plan.md
+assert_eq "bookkeeping written after the build is not new work" "testing" \
+  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-912)"
+
+# And a plan that cites A-1 in prose has not amended itself by saying so.
+printf -- '- [x] regression: A-1 covered by the existing suite\n' \
+  >> plans/PLN-912-token-rework/plan.md
+assert_eq "a bullet citing an amendment is a reference, not one" "testing" \
+  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-912)"
+git worktree remove --force "$TEST_DIR/wt-912" >/dev/null 2>&1
+
+# ═══════════════════════════════════════════════════════════════════════
 section "A resolved issue is not re-resolved (this sweep)"
 
 # --resolve rewrote whatever Status line it found, so re-running it over an
