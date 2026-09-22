@@ -61,7 +61,10 @@ Order of work:
    ```bash
    eval "$(scripts/wf-exec.sh wf-manual-gate.sh <PLN-ID>)"
    ```
-   - `GATE='false'` → **do not stop.** Record the remaining criteria as untested with `$GATE_REASON` in `test-progress.md`, and continue to the exit path as if all criteria passed. A plan whose diff renders nothing to a human never stops for a human.
+   - `GATE='false'` → **do not stop for a human.** A plan whose diff renders nothing to a human never stops for a human. But `GATE='false'` is a statement about *human eyes*, not about test results, and it does not turn an untested criterion into a PASS:
+     - Any criterion recorded **FAIL** → take the **findings** exit and route back to the builder. Scope is not reduced here and `GATE='false'` does not authorize it.
+     - Each remaining untested criterion → defer it with `wf-defer-criterion.sh`, giving `$GATE_REASON`, per [Deferring a criterion](#deferring-a-criterion) — and mind the quoting rule above (WFI-194). A deferral is the form the completion guard can read; a free-text "untested" note in `test-progress.md` is not, and `wf-registry-update.sh` refuses `testing → complete` when an `eyes:blocking` criterion has no PASS, no deferral and no answered gate (client-d WFI-009).
+     - Only then take the all-pass exit path (step 4). The **Completion gate** below governs that exit, and this bullet is not an exception to it.
    - `GATE='true'` → **[GATE]** once, with everything that is left listed together:
      ```bash
      scripts/wf-exec.sh wf-gate-open.sh <PLN-ID> manual-test \
@@ -943,6 +946,17 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    scripts/wf-exec.sh wf-gate-close.sh PLN-NNN "manual test passed" --only manual-test
    scripts/wf-exec.sh wf-unclaim.sh PLN-NNN-<slug>
    ```
+
+   **If `wf-registry-update.sh` exits non-zero here, stop — do not run the two lines
+   below it.** They are the guards, and dropping them on a plan the registry still
+   reads as `testing` is the race `docs/guard-ordering.md` exists to prevent. The
+   refusal you will see here is the `eyes:blocking` completion guard: a Manual
+   criterion has no PASS, no deferral and no answered gate, and by this point the
+   PR is already merged to `release`, so the work is shipped and only the bookkeeping
+   is wrong. Resolve what it names — `wf-manual-lint.sh PLN-NNN` lists the open
+   criteria — then re-run this step. If you cannot resolve it, **[GATE]**
+   `needs-input` naming the refusal verbatim and exit still holding the claim; a
+   claimed plan a human is brought to beats an unguarded one in a state nobody owns.
 
    **Say what actually happened in that message.** "human test passed" is the
    attended wording and it is a claim about a person. An unattended run that

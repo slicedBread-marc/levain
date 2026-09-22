@@ -1,6 +1,6 @@
 ---
 name: wf-rollback
-description: Execute a rollback for a completed or active plan. Reads the plan's rollback section, walks through steps interactively, moves the plan to rolled-back/, and optionally files a bug. Use when a deployed feature needs to be reverted.
+description: Execute a rollback for a completed or active plan. Reads the plan's rollback section, walks through steps interactively, records the rollback in REGISTRY.md, and optionally files a bug. Use when a deployed feature needs to be reverted.
 user_invocable: true
 model: haiku
 ---
@@ -115,7 +115,7 @@ After the rollback is recorded:
 
 - **Do NOT** execute deployment commands, git pushes, or database migrations yourself — guide the user to run them
 - **Do NOT** skip the safety assessment for irreversible migrations — always surface this explicitly
-- **Do NOT** move the plan folder until all steps are confirmed complete and verification is done
+- **Do NOT** move the plan folder. Ever. Plans are immovable (`CLAUDE.md` Design Principle 1): `plans/PLN-NNN-<slug>/` is the plan's address forever, and every script that resolves a plan builds that path literally — `wf-list-rollbacks.sh` among them. A `git mv` here permanently breaks path resolution for that plan and leaves an orphaned registry row that `wf-registry-audit.sh` reports at the top of every `/wf-status` thereafter. Rolling back changes the **state**, not the location
 - Steps must be walked through in order — do not skip ahead
 - If the user aborts mid-rollback, note the partial state in `plan.md` Amendments before exiting
 
@@ -143,4 +143,6 @@ When a plan is rolled back:
 
 ## Committing work
 
-The commit is done immediately after `git mv` during step 5 (Record the rollback). Use `git mv` to track the plan folder move explicitly.
+The commit is done during step 5 (Record the rollback), after the registry row is
+updated. **There is no `git mv`** — see the Rules above. The plan folder stays exactly
+where it has always been; only the REGISTRY state and the plan's `## Amendments` change.

@@ -284,12 +284,18 @@ git add plans/PLN-NNN-<slug>/test-progress.md
 
 ### Scope reduction (edge cases filed separately)
 
-**IMPORTANT: This is a pass, not a failure. Use the "If all pass" exit path.**
+**Only a human may reduce scope.** The single trigger is an explicit instruction from the
+user to pass the remaining criteria or reduce scope. Nothing you conclude on your own
+qualifies — not "most criteria pass and the core fix works", and least of all "this criterion
+has failed across multiple fix cycles", which is evidence the fix does not work, not grounds
+to ship it. Repeated failure is a **failure**: take the findings exit and route back to the
+builder.
 
-Trigger conditions (any one is sufficient):
-- The user explicitly asks to pass remaining criteria or reduce scope
-- Most criteria pass but one or two edge cases fail, and the core fix works
-- The same criterion has failed across multiple fix cycles
+You are a haiku model holding `gh pr merge` over `release`, and every guard in `/wf-deploy`
+rests on `release` containing only validated work. A criterion you passed on your own judgment
+arrives there indistinguishable from one that was tested.
+
+With that explicit instruction, this is a pass — use the "If all pass" exit path.
 
 When triggered:
 1. Mark the failing/untestable criteria as **skip** (not fail)
