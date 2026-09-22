@@ -10,6 +10,17 @@ Work in this repo is about building, improving, and maintaining that library, no
 - **Never run skills** directly.
 - Fixing pipeline data (registry, plan files, etc.) is secondary — **always prompt the user** before modifying data.
 
+## Skills are prompts, and a prompt is a contract
+
+A `skills/*/SKILL.md` is run unattended by the dispatcher, at a plan it picked, in a worktree
+nobody is watching, holding a claim and a commit bit. Whatever the prompt leaves unsaid, the
+model decides — differently each run. [`docs/prompt-contract.md`](docs/prompt-contract.md) is
+the twelve-clause contract every skill is authored and reviewed against: role, done-condition,
+operating mode, inputs, authority, procedure order, decision table, one catch-all escalation,
+incident-carrying guardrails, output contract, environment hazards, evidence rules. It ends
+with a 15-question authoring checklist and a cost-ordered table for reviewing an existing
+skill. **Read it before writing or editing any `SKILL.md`.**
+
 ## Two sessions write here — take the lock first
 
 This repo is no longer worked by one session. A session rooted here works it
