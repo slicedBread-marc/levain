@@ -703,6 +703,17 @@ for f in "$SCRIPT_DIR/templates/plans/TEMPLATE.md" "$SCRIPT_DIR/templates/plans/
     fi
 done
 
+# ── Release branch present? ───────────────────────────────────────────────
+#
+# Salvaged from /wf-init, which is retired below. It was the only thing in that
+# skill that worked and was not duplicated elsewhere, and it belongs here: an
+# install is when a project is being set up, which is when a missing `release`
+# is cheap to fix. /wf-release and /wf-deploy both assume the branch exists.
+if ! git -C "$TARGET_DIR" show-ref --verify --quiet refs/heads/release 2>/dev/null; then
+    echo -e "${YELLOW}  ⚠️  No local 'release' branch — /wf-release and /wf-deploy need one:${NC}"
+    echo "       git checkout develop && git checkout -b release && git push origin release"
+fi
+
 # ── Retired skills ────────────────────────────────────────────────────────
 #
 # Deleting a skill directory from the library does NOT remove it from a client.
@@ -725,7 +736,25 @@ RETIRED_SKILLS=(
     # — nothing in skills/, scripts/, templates/ or docs/ invoked it — while staying
     # user_invocable in nine clients, and its findings.md format was the pre-schema-v4
     # FND table that wf-findings-route.sh cannot read. Review now runs inside wf-spec.
-    "wf-review"
+    "wf-review",
+
+    # wf-init, wf-next — retired v12.0.0. /wf-init's job was to set TERMINAL_ROLE
+    # for /wf-next to route on, and it did it with `export` inside a ```bash block:
+    # a fresh shell per call, so the value never survived to the next one. No file,
+    # no script and no hook ever recorded a role — /wf-next's "not set" branch was
+    # the only branch reachable, and it told the user to run /wf-init. Unbuildable
+    # as designed rather than broken: no skill can set an env var that outlives its
+    # own call, so any fix is a rewrite wearing the old name, to restore "type
+    # /wf-next instead of /wf-spec" in a library whose orchestrator already routes
+    # by registry state. Neither file had been touched since April, across six
+    # major versions. The 4-terminal manual mode is unaffected: no skill requires
+    # a role, every one enters on a REGISTRY grep, and /wf-spec, /wf-implement and
+    # /wf-test are invoked directly. wf-init's logging setup was already dead too
+    # (it wrote .logs/SESSION_TIMESTAMP; .logs-utils.sh reads .logs/SESSION_ID, is
+    # never deployed, and no skill calls log_start). Its one unique working
+    # behaviour — the release-branch warning — is salvaged below.
+    "wf-init",
+    "wf-next"
 )
 
 for retired in "${RETIRED_SKILLS[@]}"; do
@@ -1378,8 +1407,6 @@ echo ""
 echo -e "${GREEN}Installation complete!${NC}"
 echo ""
 echo "Available skills:"
-echo "  /wf-init        — one-time setup (logging, terminal role)"
-echo "  /wf-next        — run your role's skill automatically"
 echo "  /wf-help        — display workflow strategy & architecture"
 echo "  /wf-status      — see pipeline status and next action"
 echo "  /wf-brainstorm  — capture and explore ideas"
@@ -1402,5 +1429,5 @@ echo "  The orchestrator ships DISABLED. Preview it before enabling:"
 echo "    scripts/wf-exec.sh wf-orchestrate.sh --sweep --dry-run"
 echo "  Then set orchestrator.enabled: true in claude-workflow.yml."
 echo ""
-echo "Start with: /wf-init (setup) → /wf-next (run your role)"
+echo "Start with: /wf-status (see the pipeline) → the skill for the work in front of you"
 echo "See WORKFLOW.md in the project root for the full entry-point contract."

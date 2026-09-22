@@ -327,6 +327,35 @@ if [ -n "$cur_state" ]; then
   fi
 fi
 
+# ── Gate guard ────────────────────────────────────────────────────────────
+#
+# A gate means a human has to decide, and until they have, nothing may be
+# dispatched at the artifact. The DISPATCHER already knows that — it lists a
+# gate as a standing skip reason (wf-orchestrate.sh) — but the dispatcher is not
+# the only way a worker is launched. wf-unclaim.sh serves deferred spawn markers
+# the moment a claim drops, and that path never consulted a gate at all.
+#
+# So the sequence that mattered was: something tries to spawn while the plan is
+# claimed, gets deferred to .claude/orchestrator/pending/, the holder then parks
+# the plan on a gate and releases its claim — and the release serves the marker,
+# launching a worker at a plan that is sitting on an unanswered human decision.
+# That is WFI-079's false dispatch reached by a different door: a worker running
+# on a decision nobody has made, whose own gate-open then lands on top of the
+# one already there.
+#
+# Checked here rather than in wf-unclaim.sh because this is where every launch
+# path converges, and because the same read answers for the dispatcher's own
+# calls — redundantly, which is the point: a guard that only one caller performs
+# is a guard the next caller forgets.
+for gated in "$id" "$state_id"; do
+  [ -n "$gated" ] || continue
+  if "$SELF_DIR/wf-list-gates.sh" "$gated" >/dev/null 2>&1; then
+    echo "wf-spawn: $gated has an open gate — $role is not dispatched until a human answers it; not spawning" >&2
+    wf_event skip "$id" "$role: gate open on $gated before launch"
+    exit 2
+  fi
+done
+
 # ── Worker prompt ─────────────────────────────────────────────────────────
 # Skills live at .claude/skills/wf-<role>/SKILL.md on a client checkout.
 case "$role" in

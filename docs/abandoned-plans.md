@@ -66,8 +66,7 @@ whole point: `complete` asserts the work landed, `abandoned` asserts it never wi
 - The four dep-check sites — distinguish *not yet complete* from *never will be*.
 - `wf-board.sh` — count and display it.
 - Docs that publish the state machine: `README.md`, `CLAUDE.md`, `docs/schema.md`,
-  `docs/eligibility.md`, `claude-md/workflow-snippet.md`, `templates/WORKFLOW.md`,
-  `skills/wf-init/SKILL.md`.
+  `docs/eligibility.md`, `claude-md/workflow-snippet.md`, `templates/WORKFLOW.md`.
 - `tests/e2e-pipeline.sh` — cover the transition and the dependent-blocked path.
 - `wf-abandon.sh <ID> --reason "..."` captures the reason at the point of decision and
   appends it to the plan's `progress.md` under `## Abandoned — <date>`, with the state it

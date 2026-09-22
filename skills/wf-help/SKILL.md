@@ -145,12 +145,9 @@ Rule 4: T1 keeps the intake flowing
 
 GETTING STARTED:
 
-1. Terminal 1: /wf-init → select T1 (Intake), follow prompts
-2. Terminal 2: /wf-init → select T2 (Planner), follow prompts
-3. Terminal 3: /wf-init → select T3 (Builder), follow prompts
-4. Terminal 4: /wf-init → select T4 (Tester), follow prompts
+Open a terminal per role and invoke its skill directly — there is no setup
+step and no role to declare. Each skill finds its own work by state:
 
-Then:
   T1: /loop 10m /wf-status (monitor queue) + /wf-brainstorm (feed work)
   T2: /wf-spec BRF-001 (convert briefs to plans)
   T3: /wf-implement (auto-picks ready plans, includes code/arch review + E2E tests)

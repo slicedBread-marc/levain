@@ -189,3 +189,61 @@ close with no claim taken before it is the other bug.
 
 - [`eligibility.md`](eligibility.md) — what the dispatcher checks and where each rule lives
 - [`orchestrator.md`](orchestrator.md) — sweep loop, gates, claims, attempt budgets
+
+---
+
+## The same contract at park time
+
+Everything above is about an exit that *advances* a plan. A plan parked on a gate exits too,
+and it has the same two guards in the same relationship — just reached from the other side:
+
+```
+1. open the gate        wf-gate-open.sh …      ← guard UP
+2. release the claim    (wf-gate-open.sh does it)  ← guard DOWN
+```
+
+**Gate up before claim down.** At no instant is the artifact both unguarded and parked. Reverse
+it and there is a window in which the plan has no gate and no claim while its worker walks away
+— which is the two seconds WFI-079 dispatched a tester into, entered from a different door.
+
+### Why the script does it and the skill does not
+
+A review of all 25 skills against [`docs/prompt-contract.md`](prompt-contract.md) found the
+claim disposition missing from every `[GATE]` exit in `wf-spec`, seven stop/gate exits in
+`wf-test`, four in `wf-deploy`, and the approve path in `wf-attend`. `wf-consistency` repeated
+it on its escalated exit. That is roughly twenty exit paths across six skills, each of which
+had to remember the second half of a two-part action.
+
+`wf-spec:913` is the tell. The library hit this exact failure, wrote it down as WFI-012, fixed
+the one path it bit on — the Replanning exit, which had left a worker holding a claim on a plan
+it had just moved to `active` — and never propagated the fix to the five gate exits in the same
+file. Prose guarantees erode toward the shape of whichever path someone last debugged.
+
+So `wf-gate-open.sh` releases the claim itself. A caller that has opened a gate has parked the
+work by definition, and the claim it still holds is redundant from that moment: the gate is
+already a standing skip reason for the dispatcher **and**, since v12.0.0, for `wf-spawn.sh`.
+The twenty decisions collapse into one script behaviour that cannot be got wrong, which is the
+contract's own principle — determinism belongs in bash, and judgment is spent only where
+nothing cheaper will do.
+
+### The two exceptions
+
+**`--hold-claim`** is for a caller that keeps working the artifact after the gate is up — an
+attended skill mid-procedure, `/wf-attend` answering in place.
+
+**`RELEASE` and `DEPLOY` hold by default.** Their skills resume in place after an answer, and
+the claim is what keeps a second promotion out while a human is deciding on the first.
+
+### The other door
+
+`wf-spawn.sh` never checked gates. The dispatcher did — a gate is one of its standing skip
+reasons — but the dispatcher is not the only way a worker is launched. `wf-unclaim.sh` serves
+deferred spawn markers the moment a claim drops, and that path consulted nothing.
+
+Which made the sequence: something tries to spawn while the plan is claimed and is deferred to
+`pending/`; the holder parks the plan on a gate and releases its claim; the release serves the
+marker and launches a worker at a plan sitting on an unanswered human decision. Making
+`wf-gate-open.sh` release the claim would have widened that hole rather than closing it, so the
+guard went into `wf-spawn.sh` first — where every launch path converges, and where the same
+read also answers redundantly for the dispatcher's own calls. A guard only one caller performs
+is a guard the next caller forgets.

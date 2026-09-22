@@ -174,7 +174,7 @@ The workflow is designed to run across 4 terminal sessions, each with a dedicate
 | Any | Claims | `/wf-claim` | Haiku |
 | Any | Release | `/wf-release`, `/wf-deploy` | Haiku |
 
-Each terminal runs `/wf-init` once per session to establish its role. `/wf-next` auto-routes to the correct skill based on `TERMINAL_ROLE`.
+Each terminal invokes its own skill directly — `/wf-spec`, `/wf-implement`, `/wf-test`. No skill requires a role to be set: every one enters on a `grep` of REGISTRY.md and picks up whatever is in the state it acts on. (`/wf-init` and `/wf-next` were retired in v12.0.0 — the role they passed between them travelled in an `export` that could not outlive its own Bash call, so it never arrived.)
 
 ### Orchestrated mode (one terminal)
 

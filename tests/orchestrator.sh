@@ -3004,6 +3004,45 @@ assert_eq "the refund is on the record" "true" \
 rm -rf "$ATT/PLN-016.consistency" "$RLOG" "$RLOG.big" "$RLOG.refusal"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "Claim disposition at park time (prompt-contract clause 2)"
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Parking and releasing the claim are one action, so wf-gate-open.sh does both:
+# gate UP, then claim DOWN. Runs last and on artifact numbers no other assertion
+# touches — it writes events, and the event-log counts earlier in this file are
+# exact.
+cd_claims="$(pwd)/.claude/orchestrator/claims"
+
+assert_ok "a plan can be claimed before parking" "$SCRIPT_DIR/wf-claim.sh" PLN-940
+assert_eq "the claim is on disk" "true" "$([ -f "$cd_claims/940/.wf-claim" ] && echo true || echo false)"
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-940 needs-input "parked; claim should drop" --skill wf-spec >/dev/null 2>&1
+assert_eq "opening a plan gate releases the claim" "false" \
+  "$([ -f "$cd_claims/940/.wf-claim" ] && echo true || echo false)"
+assert_ok "and the gate is still up — guard UP before guard DOWN" \
+  "$SCRIPT_DIR/wf-list-gates.sh" PLN-940
+
+# The path the first implementation missed: a worker that calls gate-open and
+# finds a gate already there exits 0 early. It has still parked its work, so it
+# must still not walk away holding the claim.
+assert_ok "re-claimed on an already-gated plan" "$SCRIPT_DIR/wf-claim.sh" PLN-940
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-940 needs-input "parked; claim should drop" --skill wf-spec >/dev/null 2>&1
+assert_eq "an already-open gate releases the claim too" "false" \
+  "$([ -f "$cd_claims/940/.wf-claim" ] && echo true || echo false)"
+
+assert_ok "another plan claimed" "$SCRIPT_DIR/wf-claim.sh" PLN-941
+"$SCRIPT_DIR/wf-gate-open.sh" PLN-941 needs-input "held" --skill wf-attend --hold-claim >/dev/null 2>&1
+assert_eq "--hold-claim keeps it for a caller still working the artifact" "true" \
+  "$([ -f "$cd_claims/941/.wf-claim" ] && echo true || echo false)"
+
+# A gated artifact is not dispatched, whichever door the launch comes through.
+# wf-unclaim.sh serves deferred spawn markers the moment a claim drops, and that
+# path never consulted a gate before v12.0.0.
+assert_fails "wf-spawn refuses a role at a gated plan" \
+  "$SCRIPT_DIR/wf-spawn.sh" spec PLN-941
+
+"$SCRIPT_DIR/wf-unclaim.sh" PLN-941 >/dev/null 2>&1 || true
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n══════════════════════════════════════════════════════════════\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[32mResults: %d/%d passed\033[0m\n' "$PASS" "$((PASS + FAIL))"

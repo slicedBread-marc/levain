@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # wf-gate-open.sh <artifact-id> <gate-name> <question> [--context <path>] [--skill <name>]
-#                 [--requestion] [--force]
+#                 [--requestion] [--force] [--unclaim | --hold-claim]
+#
+# --unclaim     Release this artifact's claim once the gate is up. THE DEFAULT
+#               for a plan-scoped gate; see "Claim disposition" below.
+# --hold-claim  Keep the claim. For a caller that is going to keep working the
+#               artifact after the gate is open — /wf-attend answering in place,
+#               an attended skill mid-procedure.
 #
 # --requestion  Replace the question on a gate that is ALREADY OPEN and still
 #               unanswered, keeping its opened-at timestamp and queue position.
@@ -64,6 +70,45 @@
 set -euo pipefail
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── Claim disposition ─────────────────────────────────────────────────────
+#
+# Parking an artifact and releasing its claim are one action. Asking twenty exit
+# paths across six skills to remember the second half is how the library ended up
+# with gate exits that say "park and exit" and nothing about the claim — a review
+# of every skill against docs/prompt-contract.md found the omission in wf-spec
+# (every gate exit), wf-test, wf-deploy, wf-attend and wf-consistency. wf-spec:913
+# shows the shape: the lesson was learned once, written down as WFI-012, fixed on
+# the one path it bit on, and never propagated to the five gate exits in the same
+# file. So the script does it.
+#
+# ORDER IS docs/guard-ordering.md's contract at park time instead of exit time:
+# the gate goes UP before the claim comes DOWN, so the artifact is never both
+# unguarded and parked. Reverse it and there is a window with no gate and no
+# claim while the worker walks away — the two seconds WFI-079 dispatched into.
+#
+# CALLED ON EVERY PATH THAT LEAVES A GATE UP, which includes the three that find
+# one already open and exit 0. Those are the ones that matter most: a worker
+# that parks onto somebody else's gate and walks away still holding its claim is
+# precisely the stranding this exists to prevent, and it was the path the first
+# implementation of this missed.
+#
+# RELEASE and DEPLOY hold across a gate on purpose: their skills resume in place
+# after an answer, and the claim keeps a second promotion out while a human is
+# deciding on the first.
+release_claim_if_parked() {
+  local disposition="$claim_disposition"
+  if [ "$disposition" = "default" ]; then
+    case "$id" in
+      RELEASE|DEPLOY) disposition=hold ;;
+      *)              disposition=release ;;
+    esac
+  fi
+  [ "$disposition" = "release" ] || return 0
+  # Idempotent, so a skill that also unclaims on its own exit path is not an
+  # error — the second call is a no-op and that prose stays true.
+  "$SELF_DIR/wf-unclaim.sh" "$id" >&2 || true
+}
 # shellcheck source=wf-orch-lib.sh
 source "$SELF_DIR/wf-orch-lib.sh"
 
@@ -76,12 +121,15 @@ context=""
 skill=""
 force=false
 requestion=false
+claim_disposition=default
 while [ $# -gt 0 ]; do
   case "$1" in
     --context)    context="${2:?--context requires a path}"; shift 2 ;;
     --skill)      skill="${2:?--skill requires a name}"; shift 2 ;;
     --force)      force=true; shift ;;
     --requestion) requestion=true; shift ;;
+    --unclaim) claim_disposition=release; shift ;;
+    --hold-claim) claim_disposition=hold; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -165,6 +213,7 @@ if [ -f "$gate_file" ]; then
       prev_q=$(wf_gate_field "$gate_file" GATE_QUESTION)
       if [ "$prev_q" = "$question" ]; then
         echo "$id: gate '$gate_name' already open — question unchanged, left as is"
+        release_claim_if_parked
         exit 0
       fi
       opened_at=$(wf_gate_field "$gate_file" GATE_OPENED)
@@ -204,10 +253,12 @@ if [ -f "$gate_file" ]; then
       } > "$gate_file"
       wf_event gate-requestion "$id" "$gate_name: $question"
       echo "$id: gate '$gate_name' question updated (opened $opened_at, still unanswered) — $question"
+      release_claim_if_parked
       exit 0
     fi
     echo "$id: gate '$gate_name' already open — left as is"
     echo "  If the fact behind the question has changed on the record, refresh it with --requestion." >&2
+    release_claim_if_parked
     exit 0
   fi
 
@@ -396,3 +447,5 @@ fi
 
 wf_event gate-open "$id" "$gate_name: $question"
 echo "$id: gate '$gate_name' opened — $question"
+
+release_claim_if_parked

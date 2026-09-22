@@ -29,6 +29,10 @@ Rules, in force for the whole session:
    scripts/wf-exec.sh wf-gate-open.sh <ID> <gate-name> "<question>" --context <path> --skill wf-spec
    ```
    Then **exit cleanly** without changing REGISTRY state. The dispatcher skips gated artifacts; `/wf-attend` will bring a human to it.
+
+   **The claim is released for you.** `wf-gate-open.sh` drops it once the gate is up — gate first, claim second, so the plan is never both unguarded and parked (`docs/guard-ordering.md`). You do not call `wf-unclaim.sh` on a gate exit, and calling it anyway is harmless: the release is idempotent.
+
+   **Whatever happens — a finished plan, a blocked brief, nothing to do, or a parked gate — this skill never ends holding a claim.** Every exit path below says so again where it applies, but the rule is unconditional. It is written here because it was once true of only some of them: the Replanning path left a worker holding a claim on a plan it had just moved to `active`, which is WFI-012, and the fix went in there and nowhere else.
 4. **Never guess.** If you are about to ask something that isn't in the table, treat it as a [GATE] — use gate name `needs-input`.
 
 | Step | Prompt | Mode | Unattended behavior |

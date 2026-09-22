@@ -1151,6 +1151,21 @@ assert_eq "the retired wf-review skill is not back in the library" "true" \
 assert_eq "and stays on the retirement list so clients drop their copy" "true" \
   "$(grep -q '"wf-review"' "$LIB_ROOT/install.sh" && echo true || echo false)"
 
+# wf-init/wf-next retired in v12.0.0: the role they passed between them travelled
+# in an `export` that cannot outlive its own Bash call, so /wf-next's "not set"
+# branch was the only one reachable. Same two-part guard as wf-review.
+for retired_skill in wf-init wf-next; do
+  assert_eq "the retired $retired_skill skill is not back in the library" "true" \
+    "$([ ! -d "$LIB_ROOT/skills/$retired_skill" ] && echo true || echo false)"
+  assert_eq "and $retired_skill stays on the retirement list" "true" \
+    "$(grep -q "\"$retired_skill\"" "$LIB_ROOT/install.sh" && echo true || echo false)"
+done
+
+# The salvage: wf-init's release-branch warning had to land somewhere, and an
+# install is when a missing `release` is cheap to fix.
+assert_eq "the release-branch warning survived the retirement" "true" \
+  "$(grep -q "No local 'release' branch" "$LIB_ROOT/install.sh" && echo true || echo false)"
+
 # ═══════════════════════════════════════════════════════════════════════
 section "Consuming a freshly filed bug (client-a WFI-037)"
 
