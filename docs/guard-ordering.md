@@ -104,16 +104,30 @@ both — the marker is a low-latency nudge, never the only path.
 ## The one exception: a gate that GATES the transition itself
 
 The rule above assumes closing the gate is a downstream *record* of a decision the transition
-already carried out. `spec-approval` on a gating-tagged **replan** is not that shape: closing
-it is not a record of the transition, it is a *precondition* `wf-replan-target.sh` checks
-before it will perform the transition at all (added for WFI-178, so a widened replan cannot
-transition on a stale approval). Transition-then-close is impossible there by construction —
-`wf-replan-target.sh --apply` refuses with exit 2 until the gate reads `GATE_ANSWERED=true`,
-and the ordinary way to make it read that is to close it, which the rule above says to do only
-*after* a transition that cannot happen yet. client-c hit exactly this deadlock (WFI-021),
+already carried out. **`spec-approval` is not that shape, on any plan.** Closing it is not a
+record of the transition, it is a *precondition* that both scripts able to perform the
+transition check first:
+
+| Transition | Script | Refuses until the gate reads answered |
+|-|-|-|
+| `draft → ready`, any plan | `wf-registry-update.sh` | exit 1 (client-b WFI-012) |
+| a gating-tagged **replan**, to `ready`/`active`/`testing` | `wf-replan-target.sh --apply` | exit 2 (WFI-178, WFI-021) |
+
+Transition-then-close is impossible on either — the ordinary way to make a gate read
+`GATE_ANSWERED=true` is to close it, which the rule above says to do only *after* a transition
+that cannot happen yet. client-c hit the deadlock first on the replan half (WFI-021),
 worked around by chaining `wf-gate-close.sh && wf-replan-target.sh --apply` in one shell call
 to shrink the unguarded window as far as a shell invocation allows — which is not the same as
 closing it.
+
+**The second row is the one this document got wrong.** When the WFI-012 guard was added to
+`wf-registry-update.sh` it made the exception universal for `spec-approval`, and nothing said
+so here: this section still read "the replan path, and nothing else", and `/wf-attend` still
+documented a brand-new plan's approve as transition-then-close with the close deferred to a
+later step. That instruction cannot be followed by any plan sitting at the gate, because the
+guard reads neither tags nor worktrees — only whether the gate is open and unanswered, which
+is what "sitting at the gate" means. client-d's PLN-016 (WFI-015) and client-b' PLN-015
+(WFI-023) hit the refusal six hours apart and each reinvented the same workaround by hand.
 
 **The actual fix is not a different order, it's the guard the order exists to approximate.**
 Nothing above requires the transition-first order for its own sake; it requires that no
@@ -129,9 +143,15 @@ above — so for this one case, hold the claim across both calls instead of orde
 ```
 
 This is not a license to reorder anything else. It applies only where a script's own
-precondition makes transition-then-close impossible to satisfy — today that is `spec-approval`
-checked by `wf-replan-target.sh` on the replan path, and nothing else. Everywhere the general
-rule *can* be followed, follow it.
+precondition makes transition-then-close impossible to satisfy — today that is `spec-approval`,
+in both rows of the table above, and nothing else. Everywhere the general rule *can* be
+followed, follow it.
+
+**Adding a guard of this shape is what makes the exception grow, so say so here when you add
+one.** A precondition that refuses a transition until a gate is answered is not a local change
+to one script: it silently inverts the exit ordering of every skill that performs that
+transition, and those skills are written in prose that no test reads. The check when adding
+one is the sweep below, plus this section.
 
 ## Reviewing a change
 
@@ -143,7 +163,9 @@ grep -n 'wf-gate-close\.sh\|wf-unclaim\.sh\|wf-registry-update\.sh' skills/*/SKI
 ```
 
 An `wf-unclaim.sh` or `wf-gate-close.sh` line appearing *above* the transition that it
-belongs with is the bug.
+belongs with is the bug — **unless** the gate being closed is `spec-approval`, where it is
+the fix, and the line that should appear above *both* is `wf-claim.sh`. A `spec-approval`
+close with no claim taken before it is the other bug.
 
 ## Related
 
