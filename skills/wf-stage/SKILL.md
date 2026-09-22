@@ -1,35 +1,54 @@
 ---
 name: wf-stage
-description: Start release branch staging environment for 60 minutes on port 8081
+description: Start the release-branch staging environment and report its URL and auto-stop deadline. Returns immediately; the timer runs detached.
 user_invocable: true
 model: haiku
 ---
 
 # Stage Skill
 
-You are in **stage mode**. Your job is to deploy the release branch to a local staging container for 60 minutes.
+You are in **stage mode**. Your job is to bring the release branch up in a local staging container, report where it is and when it stops, and return. You do not edit source code, you do not change REGISTRY state, you do not claim anything, and you do not wait for the environment to expire.
+
+## Operating mode
+
+Either. A human usually runs this before `/wf-release` validation; the orchestrator may run it unattended. Nothing below differs between the two, because nothing below asks a question.
 
 ## What you do
 
-1. **Confirm you are on `release` branch** — `scripts/wf-exec.sh wf-branch-check.sh release`
-2. **Display status:**
-   ```
-   ✓ Release branch staging environment starting...
-   ```
-3. **Run the start script:**
+1. **Start it** — one call, which returns as soon as the container is healthy:
    ```bash
-   ./scripts/stage-start.sh
+   eval "$(scripts/wf-exec.sh wf-stage-start.sh)"
    ```
-4. **Script handles:**
-   - Starting Docker container on port 8081
-   - 60-minute auto-stop timer
-   - Displaying staging URL (http://localhost:8081)
-   - Countdown feedback
-5. **When 60 minutes elapse** — container auto-stops
-6. **User can stop early** — run `/wf-stage-stop` or `./scripts/stage-stop.sh`
+   This sets `STAGE_URL`, `STAGE_PORT`, `STAGE_PROJECT`, `STAGE_TREE`, `STAGE_DEADLINE`, `STAGE_ALREADY`. Read the values out of the output — a later Bash call is a fresh shell and will not have them.
 
-## Rules
+2. **Report to the user**, always including the deadline and which tree was staged:
+   ```
+   ✓ Staging <STAGE_TREE> at <STAGE_URL>
+     Auto-stops at <STAGE_DEADLINE>. Stop early with /wf-stage-stop.
+   ```
 
-- Do NOT edit source code
-- Display container URL so tester knows where to point browser
-- If script fails, capture error and display it
+That is the whole job. **The auto-stop is detached — do not sleep, wait, poll, or background a wait for it.** The script returns and so do you; the container's teardown is not your work and nothing is left running on your side. An agent that sits in a 60-minute wait produces no output and gets killed with the wait unfinished (WFI-012's shape, one hour wide) — which is exactly what the previous version of this skill described when it said "when 60 minutes elapse, the container auto-stops".
+
+## Exit codes
+
+| Exit | Situation | Mode | Behavior |
+|-|-|-|-|
+| 0, `STAGE_ALREADY=false` | Up and healthy | [AUTO] | Report as above |
+| 0, `STAGE_ALREADY=true` | A stack was already up | [AUTO] | Report it, say the deadline is **unchanged**, and offer `/wf-stage-stop` then `/wf-stage` for a fresh build. Do not restart it — somebody may be testing against it |
+| 1 | `docker compose up` failed | [AUTO] | Nothing is staged. Show compose's output verbatim and stop. Do not retry |
+| 2 | Started, health probe silent | [AUTO] | The stack **is** running and still auto-stops. Report the URL, say health did not answer, and show the `logs --tail 50` line the script printed. Not a pass — say so plainly |
+| 3 | No compose file | [AUTO] | This project has no staging stack, or it lives elsewhere. Report the path tried and name `staging.composeFile` |
+
+**Never guess.** Anything not in that table is a [GATE]:
+```bash
+scripts/wf-exec.sh wf-gate-open.sh <PLN-ID> needs-input "<question>" --skill wf-stage
+```
+If no plan is in play, there is nothing to gate — report the situation to the user and stop.
+
+## Configuration
+
+All optional, in `claude-workflow.yml`, all with working defaults: `staging.port` (8081), `staging.minutes` (60), `staging.composeFile` (`docker/docker-compose.yml`), `staging.healthPath` (`/health`). The compose project name is `<project_slug>-staging`, which is what keeps nine clients' staging stacks off each other on one Docker daemon.
+
+## Done
+
+You are finished when the user has been told the URL **and** the deadline, or told why there is neither. Nothing is claimed, nothing is committed, and nothing is still running on your side.

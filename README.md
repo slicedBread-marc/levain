@@ -31,7 +31,6 @@ your-project/
     wf-status/SKILL.md     # /wf-status — pipeline dashboard
     wf-brainstorm/SKILL.md # /wf-brainstorm — capture ideas
     wf-spec/SKILL.md       # /wf-spec — write implementation specs
-    wf-review/SKILL.md     # /wf-review — architecture & security review
     wf-implement/SKILL.md  # /wf-implement — build from specs
     wf-verify/SKILL.md     # wf-verify — autonomous verify agent (not user-invocable)
     wf-consistency/SKILL.md# /wf-consistency — cross-plan contract check
@@ -68,7 +67,6 @@ draft → ready → active → verify ──[agent]──→ testing → complet
 | `/wf-status` | haiku | Read REGISTRY.md, recommend next action |
 | `/wf-brainstorm` | sonnet | Capture and explore ideas |
 | `/wf-spec` | opus | Convert decided brief → implementation spec |
-| `/wf-review` | sonnet | Architecture & security review (auto-gate + manual) |
 | `/wf-implement` | sonnet | Build from plan, fix findings |
 | `wf-verify` | sonnet | Autonomous verify agent (triggered by state change) |
 | `/wf-consistency` | sonnet | Check a plan against its dependency closure (automatic on `ready` + Deps) |

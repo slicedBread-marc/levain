@@ -703,6 +703,38 @@ for f in "$SCRIPT_DIR/templates/plans/TEMPLATE.md" "$SCRIPT_DIR/templates/plans/
     fi
 done
 
+# ── Retired skills ────────────────────────────────────────────────────────
+#
+# Deleting a skill directory from the library does NOT remove it from a client.
+# The install loop below copies what exists and prunes nothing; the only prune
+# in this script is the coordinator one, which strips pipeline skills from a
+# coordinator and never runs for an ordinary client. So a skill dropped from the
+# library stays invocable in all nine clients forever, at whatever version it
+# was last deployed at — still in their skill list, still doing whatever it said.
+#
+# Retiring one is therefore an explicit act. A name listed here is removed from
+# every client on every deploy, and stays listed: the list is the record of what
+# was retired and why, and dropping a name from it would let an old copy survive
+# in any client that missed the deploy that removed it.
+RETIRED_SKILLS=(
+    # wf-review — retired v10.6.0. It instructed the agent to write the `## Review`
+    # verdict, decide Approved/Blocked, advance the plan to `ready` and commit.
+    # wf-spec:566 states the opposite as non-optional ("The spawning session writes
+    # `## Review`, and stamps it. Never the agent"), earned by client-b WFI-017/018,
+    # and wf-review-guard.sh exists solely to catch that write. It was also orphaned
+    # — nothing in skills/, scripts/, templates/ or docs/ invoked it — while staying
+    # user_invocable in nine clients, and its findings.md format was the pre-schema-v4
+    # FND table that wf-findings-route.sh cannot read. Review now runs inside wf-spec.
+    "wf-review"
+)
+
+for retired in "${RETIRED_SKILLS[@]}"; do
+    if [ -d "$TARGET_DIR/.claude/skills/$retired" ]; then
+        rm -rf "$TARGET_DIR/.claude/skills/$retired"
+        echo -e "${YELLOW}  Removed /$retired — retired from the library${NC}"
+    fi
+done
+
 # Copy and templatize skills
 echo "Installing skills..."
 mkdir -p "$TARGET_DIR/.claude/skills"
@@ -1352,7 +1384,6 @@ echo "  /wf-help        — display workflow strategy & architecture"
 echo "  /wf-status      — see pipeline status and next action"
 echo "  /wf-brainstorm  — capture and explore ideas"
 echo "  /wf-spec        — create implementation plan from a brief"
-echo "  /wf-review      — architecture and security review"
 echo "  /wf-implement   — build from a plan"
 echo "  /wf-verify      — check implementation against plan"
 echo "  /wf-debug       — interactive debug session"

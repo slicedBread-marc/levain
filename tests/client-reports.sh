@@ -1142,8 +1142,14 @@ assert_eq "and re-reviews a plan amended since its verdict" "true" \
 assert_eq "the replan path is told where the verdict goes" "true" \
   "$(awk '/^## Replanning/, /^## Cross-plan consistency/' "$LIB_ROOT/skills/wf-spec/SKILL.md" \
      | grep -q 'Never in `findings.md`' && echo true || echo false)"
-assert_eq "and wf-review names one home for it" "true" \
-  "$(grep -q 'verdict of record' "$LIB_ROOT/skills/wf-review/SKILL.md" && echo true || echo false)"
+# wf-review was retired in v10.6.0 — it told the agent to write the verdict that
+# wf-spec:566 reserves for the spawning session and wf-review-guard.sh exists to
+# block. Guard both halves: the skill stays gone, and it stays on the retirement
+# list so clients that missed one deploy still get their copy removed.
+assert_eq "the retired wf-review skill is not back in the library" "true" \
+  "$([ ! -d "$LIB_ROOT/skills/wf-review" ] && echo true || echo false)"
+assert_eq "and stays on the retirement list so clients drop their copy" "true" \
+  "$(grep -q '"wf-review"' "$LIB_ROOT/install.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Consuming a freshly filed bug (client-a WFI-037)"
