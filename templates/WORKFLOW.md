@@ -271,8 +271,8 @@ claiming again; `wf-implement` does this on every step commit.
 A second `PreToolUse` hook (`wf-guard-promote.sh`), on `Bash`, refuses `git push origin release`
 while `RELEASE.gate` is open and `git push origin main` while `DEPLOY.gate` is open — the
 mechanical stop for a `/wf-release` or `/wf-deploy` run that was refused promotion and is
-supposed to end there. See `docs/orchestrator.md` → "A refused release/deploy is enforced, not
-just instructed."
+supposed to end there. See `docs/orchestrator.md` in the workflow library → "A refused
+release/deploy is enforced, not just instructed."
 
 Manual acceptance criteria carry a tag saying why a machine cannot check them —
 `(eyes:blocking)`, `(eyes:cosmetic)`, `(external)`, `(soak)`, `(unbuilt)`. Only unresolved
