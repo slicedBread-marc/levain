@@ -10,6 +10,8 @@
 # a session there cannot function:
 #
 #   .claude/skills/wf-*/          Claude Code reads skills from the tree it runs in
+#   .claude/docs/*.md             the contracts those skills link, at the path
+#                                 `../../docs/…` resolves to from a SKILL.md
 #   .claude/workflow.md           the same, for the workflow reference
 #   scripts/wf-exec.sh            skills invoke it by relative path
 #   .claude/settings.local.json   the session's own write permissions (WFI-015)
@@ -71,6 +73,20 @@ for rel in .claude/workflow.md scripts/wf-exec.sh; do
     cp -p "$MAIN/$rel" "$rel" 2>/dev/null && copied=$((copied + 1)) || true
   fi
 done
+
+# The docs those skills link. A skill's link to `../../docs/guard-ordering.md`
+# resolves inside whichever tree the session is running in, and an implementer
+# or a tester reading one is, by definition, running in a feature worktree.
+# Copied for the same reason the skills themselves are: gitignored on the
+# client, so git never materialises them here, and nothing else would
+# (client-b WFI-022).
+if [ -d "$MAIN/.claude/docs" ]; then
+  mkdir -p .claude/docs
+  for src in "$MAIN"/.claude/docs/*.md; do
+    [ -f "$src" ] || continue
+    cp -p "$src" ".claude/docs/$(basename "$src")" 2>/dev/null && copied=$((copied + 1)) || true
+  done
+fi
 
 # docker/.env: a project-local secret (a staging API key, a signing cert
 # passphrase) that `docker-compose.yml`'s `env_file:` requires to bring the

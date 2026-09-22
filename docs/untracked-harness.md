@@ -52,10 +52,12 @@ files — the entire hazard class the header describes evaporates rather than be
 
 ## The constraint that is real
 
-Three paths must **physically exist** inside a feature worktree or a session there cannot
+Four paths must **physically exist** inside a feature worktree or a session there cannot
 function:
 
 - `.claude/skills/**` — Claude Code reads skills from the tree it is running in
+- `.claude/docs/*.md` — the contracts those skills link, at the path `../../docs/…` resolves
+  to from a `SKILL.md`. A worker following one is by definition running in a worktree
 - `scripts/wf-exec.sh` — skills invoke it by relative path
 - `.claude/workflow.md`
 
@@ -93,6 +95,7 @@ by name (`wf-*`), never all skills, so a project's own hand-written skills stay 
 | Path | Why |
 |-|-|
 | `.claude/skills/wf-*/` | Generated per deploy. Note the `wf-` prefix: a project's own skills are its source and stay tracked |
+| `.claude/docs/` | The library docs the installed skills link, copied per deploy and pruned to exactly that set. The library is the source; a client copy that outlived its link reads as current and is not (client-b WFI-022) |
 | `.claude/workflow.md` | Generated from `claude-md/workflow-snippet.md` |
 | `.claude/workflow-source` | The library path this harness was installed from — a fact about this machine, not about the repo. Untracked also means no checkout can delete it, which is what makes it usable as a recovery route (WFI-119) |
 | `.claude/on-implement-commit.sh`, `.claude/on-verify-trigger.sh` | Generated, templated with project config |

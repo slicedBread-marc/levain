@@ -49,6 +49,48 @@ atomic_write() {
     mv -f "$tmp" "$dest"
 }
 
+# ── The docs a skill links, on the client's disk ─────────────────────────────
+#
+# Skills cite `docs/*.md` as the authority for the contracts they follow — guard
+# ordering for an exit path, worktrees for what a feature checkout may hold —
+# and link them relatively from `.claude/skills/wf-*/SKILL.md`, which resolves
+# to `.claude/docs/`. Nothing ever put them there. Every one of those links has
+# been dead in every client since the day it was written, and a worker that
+# follows one to settle a question finds no file and no directory: client-b
+# WFI-022 reached for guard-ordering.md mid-replan, found neither, and had to
+# reconstruct the rule from the fragments the skills restate inline — which is
+# exactly the half that omits the race-safety argument.
+#
+# The set is DERIVED from what the installed skills actually link, never listed
+# here. A list is a second place to update, and forgetting to is precisely the
+# dead link this exists to prevent.
+install_referenced_docs() {
+    # install_referenced_docs <skills-root> <docs-dest>
+    local skills_root="$1" docs_dest="$2" wanted name existing count=0
+    [ -d "$skills_root" ] || return 0
+    wanted=$(grep -rhoE 'docs/[a-z0-9-]+\.md' "$skills_root" 2>/dev/null \
+             | sed 's|^docs/||' | sort -u)
+    mkdir -p "$docs_dest"
+    for name in $wanted; do
+        [ -f "$SCRIPT_DIR/docs/$name" ] || continue
+        atomic_install "$SCRIPT_DIR/docs/$name" "$docs_dest/$name"
+        count=$((count + 1))
+    done
+    # Subtractive, like the rest of the generated harness: a doc the skills
+    # stopped citing, or one renamed upstream, is a stale copy that still reads
+    # as current. This directory holds generated content and nothing else.
+    for existing in "$docs_dest"/*.md; do
+        [ -f "$existing" ] || continue
+        if ! printf '%s\n' "$wanted" | grep -qxF "$(basename "$existing")"; then
+            rm -f "$existing"
+        fi
+    done
+    if [ "$count" -gt 0 ]; then
+        echo -e "${GREEN}  Installed $count referenced doc(s) → ${docs_dest#"$TARGET_DIR"/}${NC}"
+    fi
+    return 0
+}
+
 atomic_install() {
     # atomic_install <src> <dest> [mode]
     local src="$1" dest="$2" mode="${3:-}" tmp="$2.wftmp.$$"
@@ -336,6 +378,11 @@ if [ "$ROLE" = "coordinator" ]; then
         "$SCRIPT_DIR/skills/wf-dep-notify/SKILL.md" | atomic_write "$COORD_SKILL_DIR/SKILL.md"
     echo -e "${GREEN}  Installed /wf-dep-notify${NC}"
 
+    # Same rule as a client, over a set of one skill: a coordinator gets only
+    # the docs /wf-dep-notify actually cites, and loses the pipeline docs a
+    # former client install left behind.
+    install_referenced_docs "$COORD_SKILL_DIR" "$TARGET_DIR/.claude/docs"
+
     # Pipeline skills from a former client install. Left in place they are
     # invocable, and every one of them starts by grepping a REGISTRY.md that
     # does not exist here.
@@ -377,6 +424,7 @@ if [ "$ROLE" = "coordinator" ]; then
     COORD_IGNORED=0
     for pattern in \
         ".claude/skills/wf-*/" \
+        ".claude/docs/" \
         ".claude/workflow-source" \
         "scripts/wf-exec.sh" \
         "scripts/version-map.txt" \
@@ -679,6 +727,8 @@ for skill_dir in "$SCRIPT_DIR/skills"/*/; do
     echo -e "${GREEN}  Installed /$(basename "$skill_dir")${NC}"
 done
 
+install_referenced_docs "$TARGET_DIR/.claude/skills" "$TARGET_DIR/.claude/docs"
+
 # Install local env script (only if local_deploy_command is set)
 if [ -n "$LOCAL_DEPLOY" ]; then
     sed -e "s|{{local_start_command}}|$LOCAL_START|g" \
@@ -732,6 +782,7 @@ HARNESS_IGNORED=0
 # sit in the same directory and are its source, not ours.
 for pattern in \
     ".claude/skills/wf-*/" \
+    ".claude/docs/" \
     ".claude/workflow.md" \
     ".claude/workflow-source" \
     ".claude/settings.local.json" \

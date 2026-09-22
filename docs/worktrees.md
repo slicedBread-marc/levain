@@ -40,11 +40,13 @@ bought nothing and cost the exclusion.
 
 ## Gitignored — a session reads these off its own disk
 
-`.claude/workflow.md`, `.claude/skills/wf-*/`, `scripts/wf-exec.sh`, `.plan-ref`.
+`.claude/workflow.md`, `.claude/skills/wf-*/`, `.claude/docs/`, `scripts/wf-exec.sh`,
+`.plan-ref`.
 
-Claude Code loads skills from the tree it is running in, and skills invoke
-`scripts/wf-exec.sh` by relative path, so these three must **physically exist**
-in every feature worktree.
+Claude Code loads skills from the tree it is running in, skills invoke
+`scripts/wf-exec.sh` by relative path, and a skill's link to
+`../../docs/<name>.md` resolves to `.claude/docs/` in that same tree — so these
+must **physically exist** in every feature worktree.
 
 They used to be tracked, which is one way to get a file into a new worktree —
 git materialises tracked files on `git worktree add`. `install.sh` also wrote
