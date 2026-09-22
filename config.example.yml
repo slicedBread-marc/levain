@@ -327,6 +327,35 @@ projectProfile: {}
 #   set_on: 2026-09-10
 
 # ── Manual-test gate ────────────────────────────────────────────────────────
+# ── Test ids ────────────────────────────────────────────────────────────────
+#
+# How this project numbers the test ids in a plan's `## Tests` table. Read by
+# wf-test-id-next.sh, which is what /wf-spec asks for the next free id.
+#
+# Getting this wrong is not cosmetic. Under the wrong scope the script's advice
+# is confidently backwards: a `flat` reading of a per-plan project reports every
+# sibling plan as a collision and tells the planner to renumber tests that are
+# already written and passing (client-b WFI-024 — ~70 false collisions on a
+# replan whose seven tests were green on its own branch).
+testIds:
+  # flat      one sequence for the whole project: T70, T71, T72 … Every plan
+  #           and every landed test file is in scope, and a repeat is a
+  #           collision. This is the default, and it is what the collision
+  #           check exists for (client-d WFI-010: three plans on one range,
+  #           nineteen references renumbered by hand).
+  #
+  # per-plan  each plan numbers its own tests from T1. A sibling plan holding
+  #           T1 is the convention working, not a collision. The only clash
+  #           that can exist is one plan using an id on two rows.
+  #
+  # Declare what the project ACTUALLY does. Converting between them is a
+  # renumbering exercise across every plan and test file, not a config change.
+  scope: flat
+
+  # The letter the ids carry, and where landed tests live.
+  prefix: T
+  dir: tests
+
 # When an unattended /wf-test run stops for a human. See projectProfile above
 # for what tier recommends blockOnCosmetic: true vs false.
 #

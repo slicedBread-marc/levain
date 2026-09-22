@@ -365,12 +365,22 @@ If the user picks a bug BUG-NNN:
    - Acceptance criteria (test command, observable behavior)
 7. **Define tests** — fill in the Tests table with specific test IDs, types, descriptions, and commands.
 
-   **If this project numbers its tests in one flat sequence (`T70`, `T71`, …), ask for the next id. Do not read it off `tests/`.**
+   **Ask for the next id. Do not read it off `tests/`, and do not assume which convention this project uses.**
 
    ```bash
-   eval "$(scripts/wf-exec.sh wf-test-id-next.sh --count <how many rows>)"
-   # TEST_ID_NEXT='T83'   TEST_ID_RANGE='T83-T90'   TEST_ID_HIGHEST_FROM='plans/PLN-010-…/plan.md'
+   eval "$(scripts/wf-exec.sh wf-test-id-next.sh --plan PLN-NNN --count <how many rows>)"
+   # TEST_ID_SCOPE='flat'   TEST_ID_NEXT='T83'   TEST_ID_RANGE='T83-T90'
+   # TEST_ID_HIGHEST_FROM='plans/PLN-010-…/plan.md'
    ```
+
+   `TEST_ID_SCOPE` is the convention, read from `testIds.scope` and defaulting to `flat`:
+
+   | Scope | Ids mean | The answer is |
+   |-|-|-|
+   | `flat` | one sequence for the whole project (`T70`, `T71`, …) | the next id nobody else has reserved or landed |
+   | `per-plan` | each plan numbers from `T1` | the next id **this plan** has not used |
+
+   Pass `--plan`; under `per-plan` the script cannot answer without it, and under `flat` it is what stops your own rows reading as collisions with yourself.
 
    `tests/` holds the ids that have **landed**. An id reserved by a plan still in `draft` exists only in that plan's own Tests table — which is exactly the reservation you must not miss. `wf-test-id-next.sh` reads both.
 
@@ -379,10 +389,12 @@ If the user picks a bug BUG-NNN:
    The range is **not** reserved by asking: write the table and commit the plan. Before the review gate, check it is still yours:
 
    ```bash
-   WF_VERIFY_SELF=PLN-NNN scripts/wf-exec.sh wf-test-id-next.sh --verify T83-T90
+   scripts/wf-exec.sh wf-test-id-next.sh --plan PLN-NNN --verify T83-T90
    ```
 
    Exit 3 names every colliding id and the file holding it. Renumber from the `TEST_ID_NEXT` it prints — at draft that is one edit, at the gate it is nineteen.
+
+   **Read what exit 3 says before you obey it.** On a project whose plans each number from `T1`, a flat reading reports every sibling plan as a collision and advises renumbering ids that are already written and green — client-b WFI-024 got ~70 collisions across ten plans and five landed test files on a replan mid-fix-cycle, where obeying would have renumbered seven passing tests to fix nothing. The script now says so itself when the collisions have that shape (four or more different plans in one range), and the fix is to declare `testIds.scope: per-plan` in `claude-workflow.yml`, not to renumber. If it does not say so, the collisions are real.
 
    **Get the command shape from the config, not from memory or from the template.** Run:
 
