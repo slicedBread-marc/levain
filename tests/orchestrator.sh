@@ -2503,6 +2503,17 @@ assert_eq "deploy-approval open: step-7 merge in the main checkout blocked (curr
 assert_eq "closed: both merges allowed again" "0" \
   "$(promote_guard_rc "git merge -X theirs --no-ff release -m release-promote-to-main")"
 
+# coordinator WFI-008: the push has its own question. While it is open the push is
+# refused; the promotion it follows is already done, so the merges are not.
+"$SCRIPT_DIR/wf-gate-open.sh" DEPLOY production-push "push main abc1234 to origin?" >/dev/null 2>&1
+assert_eq "production-push open: push main blocked" "2" \
+  "$(promote_guard_rc 'git push origin main')"
+assert_eq "production-push open: the step-12 back-merge is unaffected" "0" \
+  "$(promote_guard_rc "git merge -X ours main -m sync-bring-completed-plans-back-to-develop")"
+"$SCRIPT_DIR/wf-gate-close.sh" DEPLOY "approved — push it" --decision approve >/dev/null 2>&1
+assert_eq "production-push answered: push main allowed" "0" \
+  "$(promote_guard_rc 'git push origin main')"
+
 # Fail open on anything it cannot read.
 assert_eq "malformed payload allows" "0" \
   "$(printf 'not json at all' | "$SCRIPT_DIR/wf-guard-promote.sh" >/dev/null 2>&1; echo $?)"

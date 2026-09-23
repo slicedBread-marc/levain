@@ -50,6 +50,10 @@
 #                     release tip like deploy-approval, so the answer lapses
 #                     when the batch changes (client-a WFI-260). Use this
 #                     name — a worker that invents its own gets no scoping.
+#   production-push   an unattended /wf-deploy finished the promotion but found
+#                     no standing grant for `git push origin main` (step 14).
+#                     Scoped to LOCAL main's tip — the commit the push would
+#                     send (coordinator WFI-008).
 #   deploy-suite-red  /wf-deploy step 2b found that this exact release tip has
 #                     already merged and failed the full suite
 #                     (wf-deploy-suite-memo.sh). Not an approval question: no

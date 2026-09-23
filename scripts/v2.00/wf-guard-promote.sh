@@ -330,7 +330,10 @@ git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 #     unapproved `main` INTO develop, which the literal ref name does catch.
 case "$kind:$ref" in
   push:release)       gate_id="RELEASE"; gate_name="release-approval" ;;
-  push:main)          gate_id="DEPLOY";  gate_name="deploy-approval" ;;
+  # Either DEPLOY gate forbids the push: `deploy-approval` because the batch
+  # was never cleared, `production-push` because the push itself was asked
+  # about and is not yet answered (coordinator WFI-008).
+  push:main)          gate_id="DEPLOY";  gate_name="deploy-approval production-push" ;;
   merge-into:release) gate_id="RELEASE"; gate_name="release-approval" ;;
   merge-into:main)    gate_id="DEPLOY";  gate_name="deploy-approval" ;;
   merge-ref:release)  gate_id="DEPLOY";  gate_name="deploy-approval" ;;
@@ -344,7 +347,7 @@ gate_file=$(wf_gate_file "$gate_id" 2>/dev/null); rc=$?
 # gate type opened on the same fixed artifact — belt and suspenders, since
 # today nothing else ever gates RELEASE or DEPLOY.
 existing_name=$(wf_gate_field "$gate_file" GATE_NAME 2>/dev/null || true)
-[ "$existing_name" = "$gate_name" ] || exit 0
+case " $gate_name " in *" $existing_name "*) gate_name="$existing_name" ;; *) exit 0 ;; esac
 
 question=$(wf_gate_field "$gate_file" GATE_QUESTION --unescape 2>/dev/null || true)
 

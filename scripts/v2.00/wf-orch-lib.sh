@@ -1554,11 +1554,21 @@ wf_gate_revision_scoped() {
 # commits carrying two plans (PLN-279, PLN-280) whose deferred criteria that
 # question never showed. Scoping it to the release tip lapses the answer the
 # moment the batch changes, exactly as it does for deploy-approval.
+#
+# `production-push` asks the last question — "push local `main` to origin?" —
+# and is scoped to LOCAL `main`, because that is the thing the push sends and
+# nothing has pushed it yet. /wf-deploy step 14 opens it when an unattended run
+# finished the promotion but holds no `production-push` grant. Without it the
+# push had no way to be asked for: the worker stopped with main unpushed, which
+# wf-list-deploy.sh reads as unfinished work, so the daemon re-dispatched it
+# until the attempt budget parked a `stuck` gate on a deploy that had worked
+# (coordinator WFI-008, client-b 2026-09-23).
 wf_promote_tip_ref() {
   case "${1:-}" in
     release-approval) printf 'develop' ;;
     deploy-approval)  printf 'release' ;;
     deploy-deferred-criteria) printf 'release' ;;
+    production-push)  printf 'main' ;;
     *) printf '' ;;
   esac
 }
@@ -1571,10 +1581,11 @@ wf_promote_tip() {
   # develop is the branch every skill commits to locally, and /wf-release
   # pushes it as part of the promotion — so the LOCAL tip is what the commit
   # list was taken from. release is only ever advanced by a push, so its remote
-  # ref is the authoritative one.
+  # ref is the authoritative one. `main` is read locally for the same reason
+  # `develop` is: production-push asks about the tip that has NOT been pushed.
   case "$ref" in
-    develop)
-      sha=$(git -C "$root" rev-parse --verify -q refs/heads/develop 2>/dev/null || true) ;;
+    develop|main)
+      sha=$(git -C "$root" rev-parse --verify -q "refs/heads/$ref" 2>/dev/null || true) ;;
     *)
       sha=$(git -C "$root" rev-parse --verify -q "refs/remotes/origin/$ref" 2>/dev/null || true)
       [ -n "$sha" ] || sha=$(git -C "$root" rev-parse --verify -q "refs/heads/$ref" 2>/dev/null || true) ;;
@@ -1608,7 +1619,7 @@ wf_promote_fetch() {
   local ref root
   ref=$(wf_promote_tip_ref "${1:-}")
   [ -n "$ref" ] || return 0
-  [ "$ref" = "develop" ] && return 0
+  case "$ref" in develop|main) return 0 ;; esac
   root="$(wf_develop_root)"
   git -C "$root" fetch --quiet origin \
     "+refs/heads/$ref:refs/remotes/origin/$ref" 2>/dev/null || true

@@ -214,6 +214,50 @@ printf 'project_slug: "promote-test"\nbuild_command: "true"\ntest_command: "true
 "$SCRIPTS/wf-post-merge-check.sh" --label t >/dev/null 2>&1; rc=$?
 assert_eq "an unrecognized value is refused, never defaulted past" "2" "$rc"
 
+# ── 6. production-push: the push is asked for, and the answer acts ─────────
+echo ""
+echo "6. production-push gate (coordinator WFI-008)"
+new_client
+git -C "$CLIENT" worktree add -q "$TEST_DIR/wt-main" main
+git -C "$TEST_DIR/wt-main" config user.email t@t
+git -C "$TEST_DIR/wt-main" config user.name t
+echo promoted >> "$TEST_DIR/wt-main/log.txt"
+git -C "$TEST_DIR/wt-main" add -A
+git -C "$TEST_DIR/wt-main" commit -qm "release: promote to main"
+local_main=$(git -C "$CLIENT" rev-parse main)
+cd "$CLIENT" || exit 1
+
+assert_eq "unpushed main is a DEPLOY candidate" "DEPLOY" "$("$SCRIPTS/wf-list-deploy.sh" 2>/dev/null)"
+
+"$SCRIPTS/wf-gate-open.sh" DEPLOY production-push "push main?" >/dev/null 2>&1
+stamped=$(sed -n "s/^GATE_PROMOTE_TIP='\(.*\)'$/\1/p" "$CLIENT/.claude/orchestrator/gates/DEPLOY.gate")
+assert_eq "the gate is stamped with LOCAL main — the commit the push sends" "$local_main" "$stamped"
+
+"$SCRIPTS/wf-promote-approval.sh" push --quiet; rc=$?
+assert_eq "open and unanswered → not authorized" "1" "$rc"
+
+"$SCRIPTS/wf-gate-close.sh" DEPLOY "approved — push it" --decision approve >/dev/null 2>&1; rc=$?
+assert_eq "the approval closes cleanly" "0" "$rc"
+"$SCRIPTS/wf-promote-approval.sh" push --quiet; rc=$?
+assert_eq "approved for this tip → authorized" "0" "$rc"
+
+echo more >> "$TEST_DIR/wt-main/log.txt"
+git -C "$TEST_DIR/wt-main" commit -qam "another promotion"
+"$SCRIPTS/wf-promote-approval.sh" push --quiet; rc=$?
+assert_eq "main moved since the answer → ask again (exit 2)" "2" "$rc"
+
+"$SCRIPTS/wf-gate-open.sh" DEPLOY production-push "push main again?" >/dev/null 2>&1
+"$SCRIPTS/wf-gate-close.sh" DEPLOY "declined — not tonight" --decision reject >/dev/null 2>&1
+assert_eq "a rejected push for this tip is no longer a candidate" "" "$("$SCRIPTS/wf-list-deploy.sh" 2>/dev/null)"
+
+echo later >> "$TEST_DIR/wt-main/log.txt"
+git -C "$TEST_DIR/wt-main" commit -qam "a newer promotion"
+assert_eq "a new main tip is a new question" "DEPLOY" "$("$SCRIPTS/wf-list-deploy.sh" 2>/dev/null)"
+
+git -C "$TEST_DIR/wt-main" push -q origin main
+git -C "$CLIENT" fetch -q origin
+assert_eq "pushed → nothing left to deploy" "" "$("$SCRIPTS/wf-list-deploy.sh" 2>/dev/null)"
+
 echo ""
 echo "=================="
 echo "$PASS passed, $FAIL failed"

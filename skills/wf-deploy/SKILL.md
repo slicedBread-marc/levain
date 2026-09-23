@@ -396,6 +396,10 @@ Before starting, confirm E2E passed on release:
     grant did it and which one. Anything else — print the manual instruction above and stop.
     Attended runs never call this: a human who is present is asked, not looked up.
 
+    **Unattended, with no grant, the push is asked for at a gate** — see
+    [Unattended mode](#unattended-mode). The human accepts it at `/wf-attend`, and the next
+    dispatch pushes.
+
 15. **Unclaim, then display success:**
     ```bash
     scripts/wf-exec.sh wf-unclaim.sh DEPLOY
@@ -461,21 +465,42 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   above, full stop, never at step 6 or anywhere past it.
 
   This authorizes promoting `release` to `main` **locally only**. It never authorizes step 14's
-  push to the production remote — that step still looks up `production-push` separately, and an
-  unattended run that gets `0` there pushes and says so; anything else, it leaves `main` unpushed
-  and reports that in the completion message, same as an attended run.
+  push to the production remote — that is a second, separate question.
 
-  **Step 14 never opens a gate, in either outcome.** A deploy that reaches step 14 has already
-  succeeded — `deploy-approval` (or a standing `deploy` grant) already covers everything this run
-  did. The production push is deliberately a *second*, separate grant (`production-push`), not a
-  second approval of the same work, and "no grant for it" is not a blocked or parked state — it's
-  the designed default: finish normally, report the deploy as complete, and say the push is still
-  manual. Re-opening `deploy-approval` here — reusing its name, or replaying its original
-  step-3 commit list as the question — parks a *finished* deploy behind a gate that describes
-  work already done, and the next `deploy-approval` answer frees a dispatch that finds nothing
-  left to do but hit this same non-gate again (client-c WFI-029). Nothing in the "resolve
-  every other gate" bullet below applies to step 14; it is not a would-ask-a-human point, it is a
-  documented no-op.
+- **Already promoted, only the push left — check right after claiming, before step 2.** If `release` has nothing `main` lacks
+  (`git rev-list main..release` is empty), the guard is not armed, and `main` is ahead of
+  `origin/main`, an earlier run finished steps 6–13 and stopped at step 14. Skip straight to step
+  14 below — do not re-run the promotion, the suite, or the bookkeeping, and do not ask the step-5
+  questions about a batch that is already merged.
+
+- **Step 14, unattended — the push.** Ask, in this order, and stop at the first `0`:
+  ```bash
+  scripts/wf-exec.sh wf-promote-approval.sh push      # a human approved THIS main tip at the gate
+  scripts/wf-exec.sh wf-autonomy.sh production-push   # a standing grant
+  ```
+  Either `0` → `git push origin main` from `release-branches/main`, and say in the completion
+  message which one authorized it (quote the script's line). `wf-promote-approval.sh push` exit
+  `2` means `main` moved since the answer — treat it as no answer.
+
+  Neither → **open the push gate**, then unclaim and finish normally:
+  ```bash
+  scripts/wf-exec.sh wf-gate-open.sh DEPLOY production-push \
+    "Push main $(git rev-parse --short main) to origin? <N> commits not on origin/main; <what the push triggers — name the workflow, or 'CI only, nothing is deployed'>" \
+    --skill wf-deploy
+  scripts/wf-exec.sh wf-unclaim.sh DEPLOY
+  ```
+  Report the deploy as **complete, push awaiting approval at `/wf-attend`** — not as blocked.
+  The promotion succeeded; the gate asks only about the push. That is why it has its own name:
+  re-opening `deploy-approval` here, or replaying step 3's commit list as the question, parks a
+  finished deploy behind a question about work already done (client-c WFI-029). And it must
+  be a gate, not just a line in the completion message: `main` ahead of `origin/main` keeps
+  `DEPLOY` a candidate, so a run that only *says* "push manually" is re-dispatched until the
+  attempt budget parks it as `stuck` (coordinator WFI-008, client-b 2026-09-23 — three identical runs,
+  then a stuck gate on a deploy that had worked).
+
+  `wf-gate-open.sh` exiting 3 means `production-push` already has an answer of record: an
+  `approve` for this tip was caught above, so it is a `reject` — leave `main` unpushed, say so,
+  and finish. `wf-list-deploy.sh` stops offering `DEPLOY` while that rejection covers the tip.
 - **Step 4a has its own named gate and its own answer-of-record check** — `deploy-deferred-criteria`,
   read back with `wf-promote-approval.sh deferred`. It is written out at step 4a; do not re-derive
   it here and do not give it another name.
@@ -483,7 +508,8 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   open a gate naming the question, unclaim, and exit 0. Never guess, never hang. A question that
   is about *the batch* rather than about one plan needs a gate name this harness knows
   (`wf_promote_tip_ref` in `wf-orch-lib.sh`), or its answer is recorded against no commit set and
-  cannot lapse when the batch moves — that is client-a WFI-260. If you find yourself needing a
+  cannot lapse when the batch moves — that is client-a WFI-260 (`production-push` is one such
+  name, for step 14). If you find yourself needing a
   new one, file it with `wf-issue.sh` rather than inventing it.
 - **On every exit path** — grant found and the run proceeds to completion, gate opened, or an
   error stops the run early — `scripts/wf-exec.sh wf-unclaim.sh DEPLOY` is the last action before

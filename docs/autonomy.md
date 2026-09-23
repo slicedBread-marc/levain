@@ -63,7 +63,11 @@ orchestrator:
 - `max_unattended_per_day` bounds the default the way `max_per_day` bounds a grant: a role
   dispatching in a loop is still stopped, per action, per UTC day.
 - A standing grant still works as before for anything listed under `attended_for`, and is
-  still the only unattended route to `production-push`.
+  still the only *standing* route to `production-push`. Without one, an unattended deploy
+  that finishes the promotion opens a `production-push` gate naming `main`'s tip; approving
+  it at `/wf-attend` (`--decision approve`) lets the next dispatch push exactly that commit
+  (coordinator WFI-008). Before that gate existed, the finished deploy was re-dispatched until it
+  parked as `stuck`.
 
 ## What may be granted
 
@@ -75,7 +79,7 @@ is good.
 |-|-|-|
 | `release` | `develop` → `release` and the E2E suite | `/wf-release` step 4 |
 | `deploy` | `release` → `main`, **locally** | `/wf-deploy` step 4 |
-| `production-push` | `git push origin main` | `/wf-deploy` step 13 |
+| `production-push` | `git push origin main` | `/wf-deploy` step 14 — ungranted, an unattended run opens a `production-push` gate the operator accepts at `/wf-attend` |
 
 `deploy` and `production-push` are deliberately two grants. A wrong `main` that never left
 the machine is fixed with `git reset`; a pushed one is already running for users.

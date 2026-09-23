@@ -281,6 +281,26 @@ The plan burned its attempt budget without changing state — a retry will not h
    - **escalate** — write an ESCALATED finding describing the loop, set state to `draft`, then close the gate.
    - **stop** — leave the gate open and say so. It stays parked.
 
+### `production-push`
+
+An unattended `/wf-deploy` finished promoting `release` to `main` locally, and holds no standing `production-push` grant, so it is asking whether to push `main` to origin. The deploy itself is **done** — the suite passed on `main` before this gate could open. The only question is the push, which is what reaches users.
+
+1. Show what the push sends and what it triggers:
+   ```bash
+   git fetch origin main
+   git log --oneline origin/main..main | head -20; git rev-list --count origin/main..main
+   ```
+   Name what `main` triggers (the gate's question says; `.github/workflows/*.yml` confirms). Ask the plain question: "push `main` <sha> to origin?"
+2. **You do not push here.** Close with the answer and `--decision` — the next dispatch reads it back with `wf-promote-approval.sh push` and pushes that exact tip:
+   ```bash
+   scripts/wf-exec.sh wf-gate-close.sh DEPLOY "approved — <what they said>" --decision approve
+   scripts/wf-exec.sh wf-gate-close.sh DEPLOY "declined — <why>"          --decision reject
+   ```
+   A `reject` leaves `main` unpushed and stops `DEPLOY` being dispatched until `main` moves. Exit 5 ("batch has moved") means `main` has a new tip — re-derive it and follow the `--batch-moved-ok` rule in the next section.
+3. Check the daemon exactly as the next section's table says — exit `0`, it pushes on its next sweep; exit `1`, tell them to run `/wf-deploy`, which skips straight to the push.
+
+If the artifact is instead parked on a **`stuck`** gate that says *"nothing was pushed to origin/main"*, it is this same situation from before the `production-push` gate existed (coordinator WFI-008): the promotion finished and every retry stopped at the push. Close the stuck gate (`--decision approve` is not needed there; the resolution says the deploy completed and the push is being asked for) and the next dispatch opens `production-push` for them to answer.
+
 ### `release-approval` / `deploy-approval` / `deploy-deferred-criteria`
 
 An unattended `/wf-release` or `/wf-deploy` reached its promotion prompt with nobody to prompt, asked `wf-autonomy.sh`, and was told no. The question holds the commit list; read it out.

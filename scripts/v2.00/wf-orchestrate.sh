@@ -484,10 +484,14 @@ dispatch() {
   # minute later on the strength of the gate being closed, and refused by this
   # very pre-flight's logic downstream, which re-opened the gate. So the
   # one-off approval is asked about first, and it dispatches on its own.
+  # An approved `production-push` authorizes a deploy dispatch too: by then
+  # the promotion is done and the push is the only work left, and the human
+  # answered exactly that (coordinator WFI-008).
   case "$role" in
     release|deploy)
       local arc=0 awhy
-      if ! "$SELF_DIR/wf-promote-approval.sh" "$role" --quiet 2>/dev/null; then
+      if ! "$SELF_DIR/wf-promote-approval.sh" "$role" --quiet 2>/dev/null \
+         && ! { [ "$role" = deploy ] && "$SELF_DIR/wf-promote-approval.sh" push --quiet 2>/dev/null; }; then
         awhy=$("$SELF_DIR/wf-autonomy.sh" "$role" --check 2>&1 >/dev/null) || arc=$?
         if [ "$arc" -ne 0 ]; then
           awhy=$(printf '%s' "$awhy" | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g; s/[[:space:]]*$//')

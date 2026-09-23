@@ -71,7 +71,9 @@
 #                reported on stderr rather than silently left to route.
 #
 # --decision <d> `approve` or `reject` — the ANSWER, as a value rather than as
-#                prose. Only `release-approval` and `deploy-approval` read it,
+#                prose. Only the promotion gates (`release-approval`,
+#                `deploy-approval`, `deploy-deferred-criteria`,
+#                `production-push`) read it,
 #                and for those it is what makes the answer act.
 #
 #                A resolution is free text, and free text is the one thing no
@@ -421,6 +423,7 @@ if [ "$decision" = "approve" ] && [ -n "$promote_tip" ]; then
       # local (the skill pushes it), release and main are read from origin.
       case "$gate_name" in
         release-approval) hint_range='develop --not origin/release' ;;
+        production-push)  hint_range='main --not origin/main' ;;
         *)                hint_range='origin/release --not origin/main' ;;
       esac
       echo "  Re-derive the batch against the current tip and answer that:" >&2

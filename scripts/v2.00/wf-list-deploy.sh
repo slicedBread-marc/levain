@@ -90,8 +90,20 @@ if [ -x "$SELF_DIR/wf-deploy-guard.sh" ] \
 fi
 
 # Merged locally, never pushed — the promotion is unfinished, not done.
+#
+# Unless a human already said "don't push this" at the `production-push` gate
+# for this exact tip. /wf-deploy step 14 asks that question when it holds no
+# standing grant, and an `approve` is what the next dispatch acts on — but a
+# `reject` leaves main unpushed on purpose, and a dispatch would only open the
+# same question again (coordinator WFI-008). A new tip on main is a new question.
 if git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
   if [ -n "$(git rev-list origin/main..main -1 2>/dev/null)" ]; then
+    push_rec=$(wf_gate_resolved_file DEPLOY production-push 2>/dev/null || true)
+    if [ -n "$push_rec" ] && [ -f "$push_rec" ] \
+       && [ "$(wf_gate_field "$push_rec" GATE_DECISION)" = "reject" ] \
+       && [ "$(wf_gate_field "$push_rec" GATE_PROMOTE_TIP)" = "$(git rev-parse main)" ]; then
+      exit 1
+    fi
     echo "DEPLOY"
     exit 0
   fi

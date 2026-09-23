@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wf-promote-approval.sh <release|deploy|deferred>
+# wf-promote-approval.sh <release|deploy|deferred|push>
 #
 # Did a human already approve THIS promotion at a gate?
 #
@@ -11,6 +11,10 @@
 #             re-ran wf-deferred-check.sh, got the same exit 1, and re-opened
 #             the gate a human had already answered. That is client-b WFI-005's
 #             loop in a second place, found by client-a WFI-260.
+#   push      local main -> origin/main, at `production-push` — /wf-deploy
+#             step 14, when no standing `production-push` grant exists. Scoped
+#             to local main's tip: the approval covers exactly the commit the
+#             push would send (coordinator WFI-008).
 #
 # WHY THIS EXISTS
 #
@@ -67,8 +71,9 @@ case "$action" in
   release)  id=RELEASE; gate=release-approval ;;
   deploy)   id=DEPLOY;  gate=deploy-approval ;;
   deferred) id=DEPLOY;  gate=deploy-deferred-criteria ;;
+  push)     id=DEPLOY;  gate=production-push ;;
   *)
-    echo "Usage: $0 <release|deploy|deferred> [--quiet]" >&2
+    echo "Usage: $0 <release|deploy|deferred|push> [--quiet]" >&2
     exit 1 ;;
 esac
 
