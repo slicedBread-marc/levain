@@ -276,16 +276,35 @@ Before starting, confirm E2E passed on release:
     git branch --show-current    # must print: main
     ```
     `release-branches/main` is pinned — nothing else in this pipeline ever checks it out to anything else, so this should always pass. If it doesn't, a human touched this worktree by hand; stop and sort that out before continuing rather than guess.
-9. **Update REGISTRY.md** — for each plan **in state `testing`** whose folder is on the release branch, transition it to `complete`:
+9. **Update REGISTRY.md** — ask which plans this deploy actually shipped, then transition those:
+   ```bash
+   scripts/wf-exec.sh wf-list-completable.sh --ref release
+   ```
+   Each line is `<plan-name>\t<merged|unmerged|no-branch>\t<branch>\t<detail>`. Run the transition
+   for the `merged` rows **and only those**:
    ```bash
    scripts/wf-exec.sh wf-registry-update.sh PLN-NNN testing complete -
    ```
-   **Select by registry state, not by folder presence.** A plan's `plan.md` can reach the release
-   branch on its own through a planning-only commit while the plan itself is still `draft` or
-   `ready` (WFI-001) — "every plan folder on release" and "every plan this deploy shipped" are not
-   the same set. Running this on a plan that isn't `testing` is refused anyway
-   (`wf-registry-update.sh` requires `testing → complete`, WFI-003), but a refused command from an
-   unattended worker still logs an error and interrupts the run; select the right set going in.
+   Exit 1 means no plan is completable. That is the **normal** outcome and not a failure — say so
+   and go to step 10. Report any `unmerged` or `no-branch` row in your summary, with its detail
+   text; do not transition it and do not try to merge it here.
+
+   **Do not select this set yourself.** The rule has been written in prose twice and been wrong
+   both times, in the same direction, on the same plan:
+
+   - "every plan folder on release" — a `plan.md` reaches release on its own through a
+     planning-only commit on develop, while the plan is still `draft` or `ready` (WFI-001).
+   - "every plan in state `testing` whose folder is on release" — client-b' PLN-012 satisfied
+     that exactly while `feature/PLN-012-prototypes` carried 10 commits that were not an ancestor
+     of release and had shipped nothing. The 33 PLN-012 commits inside `release --not origin/main`
+     were all spec, registry, progress and gate bookkeeping (WFI-030, WFI-035).
+
+   The direction of the error is why it matters. `testing` means *passed verify, needs a human* —
+   precisely the state whose code is normally **not** yet on release, because `/wf-test` is what
+   merges the PR and sets `complete`. Every plan whose code did ship is already `complete` before
+   you get here. So this step fires rarely, and left to a prose rule it fires on exactly the plan
+   whose human acceptance test has not happened yet — marking it `complete` removes it from
+   `/wf-test`'s queue and records production content that does not exist.
 10. **Close linked bugs** — for each completed plan, check `plan.md` Goal for `**Bug:**` line:
    ```bash
    scripts/wf-exec.sh wf-bug-close.sh BUG-NNN PLN-NNN-<slug>
