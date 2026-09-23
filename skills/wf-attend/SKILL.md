@@ -13,6 +13,14 @@ This is the one terminal where the human actually has to be. Respect their time:
 
 ## IMMEDIATE STARTUP
 
+**Name the project before anything else, and keep naming it.** Ids repeat across projects (every one has a `PLN-033` and a `DEPLOY`), and a session is no longer tied to one project's terminal window, so nothing on screen says which project a bare id belongs to. Resolve the name once — the main checkout's folder name, correct from a worktree too:
+
+```bash
+basename "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+```
+
+Then write every artifact id in anything you show the human as `<project> <ID>` (`client-d PLN-033`, `client-b DEPLOY`): the queue heading and its rows, the gate you are working, the question you put, the "N gates remaining" line, and the closing summary. Resolution text passed to `wf-gate-close.sh` stays as it is — the ledger already lives in the project.
+
 **Invoked with an id** (`/wf-attend PLN-123`, `BUG-45`, `BRF-6`, `RELEASE`, `DEPLOY`)? Then this session is for that one artifact — see [One artifact](#one-artifact). A UI that drilled to a plan starts a session this way: coordinator' `wf-board-all` launches `claude "/wf-attend <ID>"` in the project from its `t` key (coordinator WFI-007).
 
 Otherwise run this first and display the queue before reading further:
@@ -25,11 +33,14 @@ Output is tab-separated: `<id>  <gate>  <opened>  <question>  <context>  <blocki
 
 `<blocking>` is how many other incomplete plans cannot start until this gate is answered, and the queue is **ordered by it, costliest first** (ties break oldest-first). A gate at the root of a dependency chain holds everything behind it; one blocking nothing costs only the minute it takes to answer. Present them in the order given — do not re-sort by age.
 
-Render it as a numbered table and stop:
+Render it under a heading that names the project, as a numbered table, and stop:
 
 ```
+**<project> — N gates waiting**
+
 | # | Plan | Gate | Blocking | Waiting | Question |
 |-|-|-|-|-|-|
+| 1 | <project> PLN-033 | spec-approval | — | 2h | … |
 ```
 
 Show `Blocking` as a plain count, and `—` when it is 0.
@@ -91,7 +102,7 @@ scripts/wf-exec.sh wf-list-gates.sh <ID>
 The same row format as the whole queue, for that artifact only — an artifact holds at most one open gate, and the lookup is by number, so `BUG-45` finds the `spec-approval` its plan `PLN-45` opened (WFI-187).
 
 - **Exit 0:** render the one-row table, apply the `mismatch` and `stale` checks above exactly as for a full queue, and go straight to working it — do not ask "which one?".
-- **Exit 1:** say "`<ID>` has no open gate — nothing is waiting on you there." and stop. It was answered, or the plan moved on since the caller looked. **Do not fall back to the whole queue:** the caller asked about one artifact, and showing everything else in its place is answering a question nobody asked. Point at `/wf-attend` (no id) for the queue and `/wf-info <ID>` for where the artifact stands.
+- **Exit 1:** say "`<project> <ID>` has no open gate — nothing is waiting on you there." and stop. It was answered, or the plan moved on since the caller looked. **Do not fall back to the whole queue:** the caller asked about one artifact, and showing everything else in its place is answering a question nobody asked. Point at `/wf-attend` (no id) for the queue and `/wf-info <ID>` for where the artifact stands.
 - **Exit 2:** the argument is not an id. Say so, quoting it, and stop.
 
 When that gate is answered, the session is done. Say how many gates remain elsewhere (the `GATES: N` line `wf-list-gates.sh` prints on stderr), and do not start on them.
@@ -459,7 +470,7 @@ All of them find the bug in `bugs/open/` as readily as `bugs/triaged/`, write th
 
 ## After each gate
 
-Scoped to one artifact: see [One artifact](#one-artifact) — stop after it. Otherwise say what's left: "N gates remaining." If the user chose `all`, go straight to the next one without re-asking.
+Scoped to one artifact: see [One artifact](#one-artifact) — stop after it. Otherwise say what's left: "<project>: N gates remaining." If the user chose `all`, go straight to the next one without re-asking.
 
 When the queue is empty: "Queue clear. The daemon will pick these up on its next sweep." If the daemon isn't running (check `/wf-board`), mention that too.
 
