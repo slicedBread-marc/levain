@@ -82,50 +82,19 @@ fi
 # the tag right there, and the only way out was to reflow the finding by hand
 # (client-a WFI-142).
 #
-# Markdown does not promise that a list item is one line, so the parser stops
-# assuming it. Each finding is flattened to a single line before any tag test
-# runs: a block opens at `- [ ]` / `- [x]` and closes at the next such line, at
-# a heading, at a blank line, or at EOF. WFI-142's own case — a hard-wrapped
-# paragraph, 25 physical lines — had continuations on consecutive
-# non-blank lines, so closing on blank is enough to fix it without also
-# swallowing whatever comes after the checklist. An earlier version of this
-# script instead kept the block open across blank lines too, on the
-# speculative case of a finding written as two blank-line-separated
-# paragraphs; no producer in this repo writes findings that way, and it had
-# a real cost — a plain narrative sentence appended after the last finding,
-# separated only by a blank line, got folded into that finding's block and
-# pushed its trailing routing tag off the end of the line, un-tagging it
-# (client-f WFI-001).
+# Every tag test below runs against FLATTENED findings — one physical line per
+# finding — because markdown does not promise that a list item is one line. The
+# flattener is wf_findings_flat() in wf-orch-lib.sh; its comment carries the
+# block rules and the two WFIs that set them. It lived here, privately, which
+# is exactly why the routing test read a hard-wrapped `← ESCALATED` correctly
+# while every display count in the worklists did not (client-d WFI-031).
 #
-# The tags therefore keep their exact meaning: a tag ends the FINDING. What
-# changes is that a finding may now be as long, and as wrapped, as its author
-# needed — and that "prose quoting a tag" stays unmatched for the reason it
-# always was, the closing backtick after it.
+# The tags keep their exact meaning: a tag ends the FINDING. A finding may be
+# as long and as wrapped as its author needed, and "prose quoting a tag" stays
+# unmatched for the reason it always was — the closing backtick after it.
 flat=$(mktemp "${TMPDIR:-/tmp}/wf-findings.XXXXXX")
 trap 'rm -f "$flat"' EXIT
-
-awk '
-  function flush() { if (open) { print buf; open = 0; buf = "" } }
-  # Any checkbox line closes the block before it. Only a column-0 one opens a
-  # new block: an INDENTED checkbox has never been a finding here (every test
-  # below anchors at `^`), and folding one into its parent would push the
-  # parent tag off the end of the line and un-tag a finding that was tagged.
-  /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ {
-    flush()
-    if ($0 ~ /^- \[[ xX]\]/) { buf = $0; open = 1 }
-    next
-  }
-  /^[[:space:]]*#{1,6}[[:space:]]/ { flush(); next }
-  /^[[:space:]]*$/ { flush(); next }
-  {
-    if (!open) next
-    line = $0
-    gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-    if (line != "") buf = buf " " line
-  }
-  END { flush() }
-' "$findings" > "$flat"
-
+wf_findings_flat "$findings" > "$flat"
 findings="$flat"
 
 # A routing tag is a TRAILING tag, not a substring.

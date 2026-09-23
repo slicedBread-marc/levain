@@ -442,9 +442,70 @@ wf_step_counts() {
 # note in the findings.md header, an already-checked ("- [x]") item's own
 # hint text. A plan with one live escalation read as "4 escalated
 # finding(s)" (WFI-026). Scoped to unchecked checkbox lines only.
+# wf_findings_flat <findings.md> — each finding as ONE line, on stdout.
+#
+# Markdown does not promise that a list item is one line. A block opens at a
+# column-0 `- [ ]` / `- [x]` and closes at the next such line, at a heading,
+# at a blank line, or at EOF; continuations are appended with a single space.
+# An INDENTED checkbox never opens a block — every tag test anchors at `^`,
+# and folding a nested item into its parent would push the parent's trailing
+# tag off the end of the line and un-tag a finding that was tagged. Closing on
+# a blank line is deliberate too: keeping the block open across one folded a
+# plain narrative sentence written after the last finding into that finding,
+# un-tagging it the same way (client-f WFI-001).
+#
+# This lived only in wf-findings-route.sh, which is why the ROUTING test read
+# wrapped findings correctly while every DISPLAY count did not.
+# wf_escalated_count matched `^- \[ \].*ESCALATED` against physical lines, so
+# a finding hard-wrapped with its `← ESCALATED` tag on a continuation line
+# counted zero. In wf-list-specable.sh that is not a wrong number on a menu:
+# an escalated draft with a zero count also scores zero behavior findings, so
+# `parts[]` comes up empty and the entry is `continue`d past WITHOUT falling
+# through to the unreviewed branch — the plan disappears from the spec role
+# entirely while still holding unchecked findings, and a plan can only leave
+# `draft` through a spec run (client-d WFI-031).
+wf_findings_flat() {
+  [ -f "$1" ] || return 0
+  awk '
+    function flush() { if (open) { print buf; open = 0; buf = "" } }
+    /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ {
+      flush()
+      if ($0 ~ /^- \[[ xX]\]/) { buf = $0; open = 1 }
+      next
+    }
+    /^[[:space:]]*#{1,6}[[:space:]]/ { flush(); next }
+    /^[[:space:]]*$/ { flush(); next }
+    {
+      if (!open) next
+      line = $0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line != "") buf = buf " " line
+    }
+    END { flush() }
+  ' "$1" 2>/dev/null || true
+}
+
 wf_escalated_count() {
   [ -f "$1" ] || { printf '0'; return 0; }
-  grep -cE '^- \[ \].*ESCALATED' "$1" 2>/dev/null || true
+  wf_findings_flat "$1" | grep -cE '^- \[ \].*ESCALATED' || true
+}
+
+# wf_unchecked_count <findings.md> — how many UNCHECKED findings there are at
+# all, wrapped or not. The denominator wf-list-specable.sh needs: a draft with
+# unchecked findings that match no display category is still replanning work,
+# and must never be silently dropped from the worklist.
+wf_unchecked_count() {
+  [ -f "$1" ] || { printf '0'; return 0; }
+  wf_findings_flat "$1" | grep -cE '^- \[ \]' || true
+}
+
+# wf_behavior_count <findings.md> — unchecked findings mentioning Behavior.
+# Scoped to unchecked checkbox lines for the same reason as ESCALATED
+# (WFI-026): a bare `grep -c Behavior` counted the findings.md header's own
+# schema note and every already-checked item's hint text.
+wf_behavior_count() {
+  [ -f "$1" ] || { printf '0'; return 0; }
+  wf_findings_flat "$1" | grep -cE '^- \[ \].*Behavior' || true
 }
 
 wf_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -1282,11 +1343,20 @@ wf_claim_live() {
   local dir="$1" f="$1/.wf-claim" ts pid started now_started
   WF_CLAIM_AGE=0
   WF_CLAIM_OVERDUE=0
+  # Exported so a caller can SAY WHO. A worklist that silently drops a claimed
+  # artifact is indistinguishable from one that has no work: client-d's
+  # BRF-020 vanished from wf-list-specable.sh with nothing on stdout or stderr
+  # because the daemon had spawned a spec worker on it 90 seconds earlier, and
+  # the attended operator — seeing an empty menu and no explanation —
+  # investigated by running wf-unclaim.sh on it, deleting the live worker's
+  # claim (WFI-019). Blocked briefs explain themselves; claimed ones must too.
+  WF_CLAIM_PID=""
   [ -f "$f" ] || return 1
   ts=$(sed -n '1p' "$f" 2>/dev/null | tr -cd '0-9')
   pid=$(sed -n '2p' "$f" 2>/dev/null | tr -cd '0-9')
   started=$(sed -n '4p' "$f" 2>/dev/null | tr -d '\r' || true)
   [ -n "$ts" ] || ts=0
+  WF_CLAIM_PID="$pid"
   WF_CLAIM_AGE=$(( $(date +%s) - ts ))
   if [ "$WF_CLAIM_AGE" -lt "$WF_CLAIM_TTL" ]; then
     # No PID is the pre-v5.1 format: the TTL alone decides.

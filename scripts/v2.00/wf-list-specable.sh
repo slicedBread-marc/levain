@@ -15,6 +15,50 @@ cd "$(wf_develop_root)"   # plans/* is develop-root work — see wf-orch-lib.sh
 REGISTRY="plans/REGISTRY.md"
 found=0
 
+# ── Why an artifact is NOT offered has to be sayable ──────────────────────
+#
+# Every filter below drops work off the menu. A blocked brief says so on
+# stderr; until these two, a claimed or gated one said nothing at all, and the
+# two failures that followed were different but had the same shape.
+#
+# client-d WFI-019: BRF-020 was absent because the daemon had spawned a spec
+# worker on it 90s earlier. The attended operator saw an empty worklist, went
+# looking for the cause, and ran wf-unclaim.sh on it — deleting the live
+# worker's claim. A one-line note would have ended that investigation before
+# it started.
+#
+# client-b WFI-036: the opposite — an artifact offered that should not have
+# been. PLN-021 sat in `draft` on an OPEN, unanswered spec-approval gate and
+# was listed under `# replanning` anyway. Claiming it and following the menu
+# enters Replanning with nothing to triage, and step 6d then re-opens the
+# very gate that is already parked. The dispatcher has skipped gated
+# artifacts since it had a gate test at all (wf-orchestrate.sh's gate_open);
+# the attended menu simply never asked. stderr, not silence, because /wf-attend
+# is where that plan actually belongs and the operator needs to be told so.
+not_offered() {   # not_offered <id> <reason>
+  echo "  ($1 not offered — $2)" >&2
+}
+
+# 0 when this artifact is parked on a human decision. Same test the dispatcher
+# uses, so the two surfaces cannot disagree about what is dispatchable.
+gate_parked() {   # gate_parked <artifact-id>
+  "$SELF_DIR/wf-list-gates.sh" "$1" >/dev/null 2>&1
+}
+
+# 0 when the artifact should be skipped, having already said why.
+skip_with_reason() {   # skip_with_reason <artifact-id> [claim-key]
+  local id="$1" claim_key="${2:-$1}"
+  if wf_claim_held "$claim_key"; then
+    not_offered "$id" "claimed by PID ${WF_CLAIM_PID:-?} ($(wf_human_age "${WF_CLAIM_AGE:-0}") ago), in flight elsewhere"
+    return 0
+  fi
+  if gate_parked "$id"; then
+    not_offered "$id" "parked on an open gate — answer it at /wf-attend"
+    return 0
+  fi
+  return 1
+}
+
 # --- Plans in draft state ---
 #
 # Two shapes land here, and until WFI-058 only the first was emitted.
@@ -52,21 +96,33 @@ while IFS=$'\037' read -r id slug state priority _rest; do
   plan_dir="plans/${id}-${slug}"
   [ -d "$plan_dir" ] || continue
 
-  # Claimed by a live session? Not ours to offer.
-  wf_claim_held "${id}-${slug}" && continue
+  # Claimed by a live session, or parked on a gate? Not ours to offer — and
+  # say which, on stderr. See not_offered above.
+  skip_with_reason "${id}-${slug}" && continue
 
   findings="$plan_dir/findings.md"
-  if [ -f "$findings" ] && grep -q '^\- \[ \]' "$findings" 2>/dev/null; then
+  unchecked=$(wf_unchecked_count "$findings")
+  if [ "$unchecked" -gt 0 ]; then
     esc_count=$(wf_escalated_count "$findings")
-    bhv_count=$(grep -c "Behavior" "$findings" 2>/dev/null || true)
+    bhv_count=$(wf_behavior_count "$findings")
     parts=()
     [ "$esc_count" -gt 0 ] && parts+=("$esc_count escalated")
     [ "$bhv_count" -gt 0 ] && parts+=("$bhv_count behavior")
-    if [ ${#parts[@]} -gt 0 ]; then
-      detail=$(IFS=', '; echo "${parts[*]}")
-      escalated+=("${id}-${slug}	${detail} finding(s)	$priority")
-      found=1
-    fi
+    # NO CATEGORY IS NOT NO WORK.
+    #
+    # This used to `continue` when parts[] came up empty, which drops the
+    # entry without adding it to escalated[] AND without falling through to
+    # the unreviewed[] branch below — the plan disappears from the spec role
+    # while still holding unchecked findings, and `draft` is a state a plan
+    # can only leave through a spec run. client-d's PLN-011 was invisible
+    # that way with two live escalations, because both were hard-wrapped and
+    # the counter read physical lines (WFI-031). The counter is fixed, but a
+    # count is a display detail and must not decide visibility: any unchecked
+    # finding is replanning work, whatever it is tagged.
+    if [ ${#parts[@]} -eq 0 ]; then parts+=("$unchecked unchecked"); fi
+    detail=$(IFS=', '; echo "${parts[*]}")
+    escalated+=("${id}-${slug}	${detail} finding(s)	$priority")
+    found=1
     continue
   fi
 
@@ -172,7 +228,7 @@ for bug_md in bugs/open/*/bug.md; do
   # A bug being specced right now is claimed under its number, even though no
   # plan folder exists yet to hold the claim (WFI-004). Offering it anyway is
   # how two spec workers end up on one artifact.
-  wf_claim_held "$bug_id" && continue
+  skip_with_reason "$bug_id" && continue
   # Blocked by a recorded, human-written reason. To stderr, so a human running
   # this sees what is held back and why, while the stdout a dispatcher parses
   # carries only work that can be done.
@@ -222,7 +278,7 @@ for bug_md in bugs/triaged/*/bug.md; do
   # triaged/ scan started reading it too).
   severity=$({ grep -E "Severity:" "$bug_md" 2>/dev/null | head -1 | sed 's/.*Severity:\*\*[[:space:]]*//' | sed 's/^> //'; } || true)
   title=$(head -1 "$bug_md" | sed 's/^# //')
-  wf_claim_held "$bug_id" && continue
+  skip_with_reason "$bug_id" && continue
   if blocked_why=$(brief_is_blocked "$bug_md"); then
     echo "  ($bug_id blocked — $blocked_why)" >&2
     continue
@@ -324,7 +380,7 @@ if [ -f "plans/briefs/INDEX.md" ]; then
       fi
 
       # Same claim check as bugs: a brief under spec has no plan folder yet.
-      if [ "$brief_id" != "—" ] && wf_claim_held "$brief_id"; then continue; fi
+      if [ "$brief_id" != "—" ] && skip_with_reason "$brief_id"; then continue; fi
       desc=$(echo "$line" | sed 's/^[^—]*— //')
       if [ $briefs_found -eq 0 ]; then echo "# briefs"; fi
       printf "%s\t%s\t%s\n" "$brief_id" "$name" "$desc"
