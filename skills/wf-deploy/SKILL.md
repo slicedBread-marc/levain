@@ -208,6 +208,28 @@ Before starting, confirm E2E passed on release:
    ```
    Exit 1 means there was nothing to recover — the normal case. Exit 0 means a previous `/wf-deploy` merged into `main` and stopped before its suite returned a verdict, and `main` has just been put back to where it was; say so, and carry on with this run from a clean base. Exit 2 means it refused and `main` needs a human — stop there.
 
+6b. **Confirm the tree is clean before you arm anything:**
+   ```bash
+   git status --porcelain
+   ```
+   Empty is the expected result — go to step 7. Anything printed means the merge in step 7 will
+   abort, and arming first turns a merge that could not run into a `main` left **armed but
+   unmerged**, which is the state step 6a of the *next* run has to undo.
+
+   client-b WFI-029 hit this: the harness refresh in step 6 rewrote the tracked
+   `.claude/settings.json`, and `git merge` refused with *"Your local changes to the following
+   files would be overwritten by merge"* — after `--arm` had already succeeded. The installer no
+   longer writes tracked files in a linked worktree, so this should not recur; the check stays
+   because it costs one command and the failure it catches costs a recovery.
+
+   If something *is* dirty: for each path, compare it against the incoming branch —
+   ```bash
+   git diff release -- <path>
+   ```
+   Empty means the working copy already matches what the merge would bring, and
+   `git checkout -- <path>` discards nothing; take that and carry on. Anything else is a real
+   local change nobody in this pipeline made — **stop and tell the user**, naming the paths. Do
+   not stash it, do not commit it onto `main`, and do not arm.
 7. **Arm the guard, then merge `release` into `main`** (auto-resolve in favor of release) — **in one call, in this order:**
    ```bash
    scripts/wf-exec.sh wf-deploy-guard.sh --arm

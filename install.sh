@@ -1030,12 +1030,45 @@ fi
 # in templates/hooks/settings-merge.py, which is where to look before changing
 # what gets written.
 SETTINGS="$TARGET_DIR/.claude/settings.json"
+# ── …but only in the MAIN worktree ────────────────────────────────────────
+#
+# settings.json is TRACKED (see the note below this block), and this merge
+# writes it. In the main worktree that is fine: the write is committed there
+# and git carries it into every worktree afterwards.
+#
+# In a LINKED worktree it is the collision wf-worktree-sparse.sh names —
+# "excluding a file you also write is not a stricter policy than tracking it;
+# it is a broken one" — with `tracked` in place of `excluded`. Writing a
+# tracked path leaves that worktree dirty against its own branch, and the
+# dirt is invisible until something tries to merge.
+#
+# client-b WFI-029: /wf-deploy step 6 runs wf-harness-restore.sh inside
+# release-branches/main, which re-runs this installer there; the merge wrote
+# the promote-guard block that the incoming `release` ALSO carried. Step 7's
+# `git merge -X theirs --no-ff release` then aborted — "Your local changes to
+# .claude/settings.json would be overwritten by merge" — AFTER
+# wf-deploy-guard.sh --arm had already succeeded, leaving main armed but
+# unmerged. The local change was byte-identical to `git show
+# release:.claude/settings.json`; the merge could not know that, and refused.
+#
+# So: in a linked worktree the hooks arrive the way every other tracked file
+# does, through git. Nothing is lost by not writing them here, and the case
+# where they would genuinely be absent — an untracked settings.json — is the
+# one the warning below already covers.
+IS_LINKED_WORKTREE=0
+if git -C "$TARGET_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    _gd=$(cd "$TARGET_DIR" && cd "$(git rev-parse --git-dir)" && pwd -P)
+    _gc=$(cd "$TARGET_DIR" && cd "$(git rev-parse --git-common-dir)" && pwd -P)
+    [ "$_gd" = "$_gc" ] || IS_LINKED_WORKTREE=1
+fi
 REHYDRATE_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-rehydrate.sh --hook"
 GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-guard-write.sh"
 PROMOTE_GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-guard-promote.sh"
 GUARD_LINE="    PreToolUse    matcher Edit|Write|NotebookEdit  → $GUARD_CMD"
 PROMOTE_GUARD_LINE="    PreToolUse    matcher Bash                    → $PROMOTE_GUARD_CMD"
-if command -v python3 >/dev/null 2>&1; then
+if [ "$IS_LINKED_WORKTREE" -eq 1 ]; then
+    echo -e "${YELLOW}  Linked worktree — leaving .claude/settings.json to git (WFI-029)${NC}"
+elif command -v python3 >/dev/null 2>&1; then
     # `|| true` for the same reason the git hook above is non-fatal (WFI-191):
     # a merge that dies must not abort the install before scripts/wf-exec.sh is
     # written. An empty result falls through to the catch-all below and warns.
@@ -1076,7 +1109,8 @@ fi
 # worktree, and an untracked settings.json means every feature worktree runs
 # WITHOUT the rehydration hooks. That is exactly the session most likely to
 # compact mid-implementation.
-if [ -f "$SETTINGS" ] && ! git -C "$TARGET_DIR" ls-files --error-unmatch ".claude/settings.json" >/dev/null 2>&1; then
+if [ "$IS_LINKED_WORKTREE" -eq 0 ] && [ -f "$SETTINGS" ] \
+   && ! git -C "$TARGET_DIR" ls-files --error-unmatch ".claude/settings.json" >/dev/null 2>&1; then
     echo -e "${YELLOW}  .claude/settings.json is untracked — commit it, or feature worktrees${NC}"
     echo -e "${YELLOW}  will start without the rehydration hooks:${NC}"
     echo "    git add .claude/settings.json && git commit -m 'chore: workflow session hooks'"
