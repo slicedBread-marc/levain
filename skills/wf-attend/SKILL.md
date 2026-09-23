@@ -33,7 +33,7 @@ Output is tab-separated: `<id>  <gate>  <opened>  <question>  <context>  <blocki
 
 `<blocking>` is how many other incomplete plans cannot start until this gate is answered, and the queue is **ordered by it, costliest first** (ties break oldest-first). A gate at the root of a dependency chain holds everything behind it; one blocking nothing costs only the minute it takes to answer. Present them in the order given — do not re-sort by age.
 
-Render it under a heading that names the project, as a numbered table, and stop:
+Render it under a heading that names the project, as a numbered table:
 
 ```
 **<project> — N gates waiting**
@@ -89,7 +89,9 @@ Dedup cannot catch this by itself. Each cycle's wording differs in its specifics
 
 **If the human says it is the same question, the answer did not stick, and the fix is upstream of the gate.** Answering it a fourth time buys one more cycle. File a workflow issue with `wf-issue.sh` naming what re-asks it, then answer the gate.
 
-Then: "Which one? (number, or `all` to work through them in order)"
+Then, **if the queue has more than one gate**: "Which one? (number, or `all` to work through them in order)", and stop for the answer.
+
+**If it has exactly one, do not ask which.** Show the table so the human sees the project, the id and the question, then go straight to [Working a gate](#working-a-gate) on that row — the `mismatch` and `stale` checks above still come first. A choice between one option is a wasted round trip (operator, 2026-09-23, on a lone `client-c DEPLOY`). The gate's own decision is still put to the human; only the "which one?" is skipped.
 
 If the script exits non-zero, say "No gates open — nothing is waiting on you" and stop. Do not go looking for work; that's `/wf-status`.
 
