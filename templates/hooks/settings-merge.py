@@ -20,7 +20,11 @@ second entry running the same script twice on every compaction.
 Writes nothing when the result is byte-identical to what is already there — a
 deploy that dirties a clean tree is a deploy nobody can verify afterwards.
 
-Usage: SETTINGS_PATH=... REHYDRATE_CMD=... GUARD_CMD=... PROMOTE_GUARD_CMD=... settings-merge.py
+It also adds the permission baseline's deny rules to `permissions.deny`
+(BASELINE_DENY below). Those are added when missing and never removed, and the
+project's own deny and allow rules are left as they are.
+
+Usage: SETTINGS_PATH=... REHYDRATE_CMD=... GUARD_CMD=... PROMOTE_GUARD_CMD=... BASELINE_GUARD_CMD=... settings-merge.py
 """
 
 import json
@@ -46,7 +50,27 @@ HOOK_SPECS = [
     {"event": "SessionStart", "matcher": "compact|clear|resume", "kind": "rehydrate", "arg": "session-start"},
     {"event": "PostCompact", "matcher": "manual|auto", "kind": "rehydrate", "arg": "post-compact"},
     {"event": "PreToolUse", "matcher": "Edit|Write|NotebookEdit", "kind": "guard", "env": "GUARD_CMD", "script": "wf-guard-write.sh"},
-    {"event": "PreToolUse", "matcher": "Bash", "kind": "guard", "env": "PROMOTE_GUARD_CMD", "script": "wf-guard-promote.sh"},
+    {"event": "PreToolUse", "matcher": "Bash", "kind": "failclosed", "env": "PROMOTE_GUARD_CMD", "script": "wf-guard-promote.sh"},
+    # The permission baseline (coordinator WFI-005). Every tool, because a secret can be
+    # read with Read, Grep, Glob or Bash alike. It is a no-op outside unattended
+    # workers (WF_UNATTENDED=1), so interactive sessions pay one env test.
+    {"event": "PreToolUse", "matcher": "*", "kind": "failclosed", "env": "BASELINE_GUARD_CMD", "script": "wf-guard-baseline.sh"},
+]
+
+# Secret reads refused to EVERY session, attended or not, at the permission
+# layer. coordinator' rule is that no agent ever reads a key file, so these hold for
+# the operator's own sessions too. Everything else in the baseline is the
+# hook's, and applies to unattended workers only. Proven on Claude Code
+# 2.1.280 to hold under --dangerously-skip-permissions, and to refuse a Bash
+# read of the same file as well as the Read tool.
+BASELINE_DENY = [
+    "Read(~/.ssh/**)",
+    "Read(~/.aws/credentials)",
+    "Read(~/.config/gh/hosts.yml)",
+    "Read(~/.fly/config.yml)",
+    "Read(~/.netrc)",
+    "Read(~/.client-c-keyring/**)",
+    "Read(~/dev/coordinator/secrets/**)",
 ]
 
 # Silence and a zero exit if the harness is not on disk.
@@ -73,9 +97,23 @@ def guard_command(cmd):
     return f"[ -x {exe} ] || exit 0; {cmd}"
 
 
+# A guard that must not fail open for an unattended worker. Exit 2 passes
+# through for everyone, as it always did. Any OTHER failure, including a
+# harness that is not on disk, refuses for a worker (WF_UNATTENDED=1) and
+# allows for an interactive session, whose own permission prompts still stand
+# and whose editor must not be bricked by a broken guard.
+def failclosed_command(cmd):
+    exe = cmd.split()[0]
+    worker = '[ "${WF_UNATTENDED:-}" = 1 ]'
+    return (
+        f"if [ ! -x {exe} ]; then {worker} && {{ echo 'permission baseline: harness not on disk; refusing' >&2; exit 2; }}; exit 0; fi; "
+        f"{cmd}; rc=$?; [ $rc -eq 0 ] && exit 0; [ $rc -eq 2 ] && exit 2; {worker} && exit 2; exit $rc"
+    )
+
+
 # Every script this file installs. Entries are matched by script NAME so a
 # matcher or wrapper change updates in place rather than stacking a duplicate.
-OURS = ("wf-rehydrate.sh", "wf-guard-write.sh", "wf-guard-promote.sh")
+OURS = ("wf-rehydrate.sh", "wf-guard-write.sh", "wf-guard-promote.sh", "wf-guard-baseline.sh")
 
 
 def is_ours(entry):
@@ -91,7 +129,12 @@ def main():
     cmd = os.environ["REHYDRATE_CMD"]
     guard = os.environ.get("GUARD_CMD", "")
     promote_guard = os.environ.get("PROMOTE_GUARD_CMD", "")
-    guard_by_env = {"GUARD_CMD": guard, "PROMOTE_GUARD_CMD": promote_guard}
+    baseline_guard = os.environ.get("BASELINE_GUARD_CMD", "")
+    guard_by_env = {
+        "GUARD_CMD": guard,
+        "PROMOTE_GUARD_CMD": promote_guard,
+        "BASELINE_GUARD_CMD": baseline_guard,
+    }
 
     try:
         with open(path) as fh:
@@ -128,14 +171,15 @@ def main():
 
     for spec in HOOK_SPECS:
         event, matcher = spec["event"], spec["matcher"]
-        if spec["kind"] == "guard":
+        if spec["kind"] in ("guard", "failclosed"):
             # No command configured for this guard — leave the event as the
             # project had it (minus our own stale entries, stripped above). An
             # older install.sh must not install a half-configured blocking hook.
             g = guard_by_env[spec["env"]]
             if not g:
                 continue
-            command, timeout = guard_command(g), 10
+            wrap = failclosed_command if spec["kind"] == "failclosed" else guard_command
+            command, timeout = wrap(g), 10
         else:
             command, timeout = f"{cmd} {spec['arg']}{TOLERATE_MISSING}", 10
         hooks[event].append(
@@ -144,6 +188,19 @@ def main():
                 "hooks": [{"type": "command", "command": command, "timeout": timeout}],
             }
         )
+
+    # The baseline's deny rules: add what is missing, keep everything else.
+    perms = data.setdefault("permissions", {})
+    if not isinstance(perms, dict):
+        print("unparseable:'permissions' is not an object")
+        return
+    deny = perms.setdefault("deny", [])
+    if not isinstance(deny, list):
+        print("unparseable:'permissions.deny' is not an array")
+        return
+    for rule in BASELINE_DENY:
+        if rule not in deny:
+            deny.append(rule)
 
     # Drop any event this pass left empty (a guard event that started with
     # only our own entry, and had no command configured to replace it).

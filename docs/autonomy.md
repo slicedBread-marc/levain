@@ -276,6 +276,63 @@ those is what made the same gate quote "205 commits" for a batch of 353.
 
 ---
 
+## Permission baseline: what an unattended worker may never do
+
+Standing grants decide when the pipeline may act **without asking**. The baseline decides
+what an unattended worker may **never** do, asked or not. It exists because every worker
+runs `claude -p --dangerously-skip-permissions` (`wf-spawn.sh`), and until it shipped no
+client had a single deny rule (coordinator WFI-005). The pipeline is meant to stop for a person
+only when security needs one, so security lives here, in code, and not in pauses.
+
+Two layers, both installed into every client's `.claude/settings.json` by
+`templates/hooks/settings-merge.py`:
+
+| Layer | Applies to | Refuses |
+|-|-|-|
+| `permissions.deny` | every session, attended or not | reading `~/.ssh`, cloud and CLI credential files, the secrets archive, a signing key ring |
+| `wf-guard-baseline.sh` (PreToolUse, every tool) | unattended workers only (`WF_UNATTENDED=1`) | the rules below |
+
+| Rule id | Refuses |
+|-|-|
+| `secret-read` | `.env` files (not `.example`/`.sample`/`.template`/`.dist`), private keys and certificates, credential stores, the secrets archive, by any tool |
+| `secrets-tool-value` | `secrets-tool value` |
+| `provider-secrets` | `fly secrets set/import/unset`, `gh secret set/delete`; secrets are deployed by `secrets-tool deploy` from coordinator |
+| `provider-shell` | `fly ssh` / `fly console` into a running app |
+| `provider-destroy` | destroying Fly apps, volumes, machines or storage; deleting, archiving, renaming or re-publishing a GitHub repo; `gh api` DELETE |
+| `force-push` | `git push` with `--force`, `-f`, `--force-with-lease`, `--mirror`, `--delete`, `--prune`, a `+refspec` or a `:branch` |
+| `history-rewrite` | `git filter-repo`, `git filter-branch` |
+| `rm-outside` | `rm -r` on anything outside the worktree and the temp dirs, or on a path it cannot check (`$VAR`) |
+| `pipe-to-shell` | `curl`/`wget` piped into a shell or interpreter |
+
+**Fail closed, for workers only.** A worker's guard that crashes, times out, cannot parse its
+payload or is not on disk refuses. The hook command's wrapper turns any non-zero exit into
+2 when `WF_UNATTENDED=1`. `wf-guard-promote.sh` now runs under the same wrapper. An
+interactive session is never blocked by a broken guard: its own permission prompts still
+stand, and a bricked editor is worse than the prompt.
+
+**Proven, not assumed.** On Claude Code 2.1.280, under `--dangerously-skip-permissions`, both a
+PreToolUse exit 2 and a `permissions.deny` rule refuse the call, and a Read deny also
+refuses a Bash `cat`/`head` of the same file. `tests/permission-baseline.sh` covers every
+rule; `WF_LIVE_CLAUDE=1 tests/permission-baseline.sh` starts a real skip-permissions worker
+in a fixture client and checks it is refused `.env`. Re-run the live check after a Claude
+Code upgrade.
+
+**Lifting a rule** is the client's call, in its own `claude-workflow.yml`, and only with all
+four keys. A partial block lifts nothing, and the refusal says so:
+
+```yaml
+permissionBaseline:
+  allow:
+    - provider-shell
+  reason: "deploy smoke test needs fly ssh on staging"
+  set_by: "Marc Blais"
+  set_on: 2026-09-23
+```
+
+**What it is not.** A text match stops a mistaken or misled agent, not a hostile one: a
+command assembled at run time (`eval`, base64, variables) can get past it. The deny rules and
+each provider's own credential scoping are the deeper layers.
+
 ## What this does *not* do
 
 - **The daemon does not decide policy — it only dispatches.** `wf-orchestrate.sh`'s sweep

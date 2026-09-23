@@ -1066,6 +1066,8 @@ GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-guard-write.sh"
 PROMOTE_GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-guard-promote.sh"
 GUARD_LINE="    PreToolUse    matcher Edit|Write|NotebookEdit  → $GUARD_CMD"
 PROMOTE_GUARD_LINE="    PreToolUse    matcher Bash                    → $PROMOTE_GUARD_CMD"
+BASELINE_GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-guard-baseline.sh"
+BASELINE_GUARD_LINE="    PreToolUse    matcher *                       → $BASELINE_GUARD_CMD  (fail closed for workers; coordinator WFI-005)"
 if [ "$IS_LINKED_WORKTREE" -eq 1 ]; then
     echo -e "${YELLOW}  Linked worktree — leaving .claude/settings.json to git (WFI-029)${NC}"
 elif command -v python3 >/dev/null 2>&1; then
@@ -1074,6 +1076,7 @@ elif command -v python3 >/dev/null 2>&1; then
     # written. An empty result falls through to the catch-all below and warns.
     SETTINGS_RESULT=$(SETTINGS_PATH="$SETTINGS" REHYDRATE_CMD="$REHYDRATE_CMD" \
         GUARD_CMD="$GUARD_CMD" PROMOTE_GUARD_CMD="$PROMOTE_GUARD_CMD" \
+        BASELINE_GUARD_CMD="$BASELINE_GUARD_CMD" \
         python3 "$SCRIPT_DIR/templates/hooks/settings-merge.py") || true
     case "$SETTINGS_RESULT" in
         created)      echo -e "${GREEN}  Created .claude/settings.json with the rehydration and guard hooks${NC}" ;;
@@ -1085,11 +1088,13 @@ elif command -v python3 >/dev/null 2>&1; then
             echo "    SessionStart  matcher compact|clear|resume  → $REHYDRATE_CMD session-start 2>/dev/null || true"
             echo "    PostCompact   matcher manual|auto           → $REHYDRATE_CMD post-compact 2>/dev/null || true"
             echo "$GUARD_LINE"
-            echo "$PROMOTE_GUARD_LINE" ;;
+            echo "$PROMOTE_GUARD_LINE"
+            echo "$BASELINE_GUARD_LINE" ;;
         "")           echo -e "${YELLOW}  .claude/settings.json merge failed (see the error above) — hooks NOT installed${NC}"
                       echo -e "${YELLOW}  Continuing; add them by hand (see docs/rehydration.md):${NC}"
                       echo "$GUARD_LINE"
-                      echo "$PROMOTE_GUARD_LINE" ;;
+                      echo "$PROMOTE_GUARD_LINE"
+                      echo "$BASELINE_GUARD_LINE" ;;
         *)            echo -e "${YELLOW}  .claude/settings.json: unexpected result '$SETTINGS_RESULT'${NC}" ;;
     esac
 else
@@ -1099,6 +1104,7 @@ else
     echo "    PostCompact   matcher manual|auto           → $REHYDRATE_CMD post-compact 2>/dev/null || true"
     echo "$GUARD_LINE"
     echo "$PROMOTE_GUARD_LINE"
+    echo "$BASELINE_GUARD_LINE"
 fi
 
 # .claude/settings.json stays TRACKED, deliberately.
