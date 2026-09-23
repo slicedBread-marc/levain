@@ -429,6 +429,17 @@ assert_eq "ties break oldest-first" "PLN-010" \
 
 assert_ok "close a gate" "$SCRIPT_DIR/wf-gate-close.sh" PLN-010 approved
 assert_fails "closed gate no longer probes open" "$SCRIPT_DIR/wf-list-gates.sh" PLN-010
+
+# coordinator WFI-007: /wf-attend <ID> scopes a session to one artifact, and tells
+# "no gate here" (1) from "that is not an id" (2) — the second must not read as
+# the first, or a UI's typo looks like an answered gate.
+assert_eq "a non-id is exit 2, not 'no gate'" "2" \
+  "$("$SCRIPT_DIR/wf-list-gates.sh" "not-an-id" >/dev/null 2>&1; echo $?)"
+ATTEND_SKILL=$(cat "$LIB_ROOT/skills/wf-attend/SKILL.md")
+assert_eq "wf-attend takes an id and looks up only that artifact" "true" \
+  "$([[ "$ATTEND_SKILL" == *'wf-list-gates.sh <ID>'* ]] && echo true || echo false)"
+assert_eq "and never falls back to the whole queue when it has no gate" "true" \
+  "$([[ "$ATTEND_SKILL" == *'Do not fall back to the whole queue'* ]] && echo true || echo false)"
 assert_ok "closing an already-closed gate is a no-op" "$SCRIPT_DIR/wf-gate-close.sh" PLN-010
 assert_fails "a bad artifact id is rejected" "$SCRIPT_DIR/wf-gate-open.sh" NOPE-1 x "y"
 
