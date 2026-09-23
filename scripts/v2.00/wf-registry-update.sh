@@ -386,7 +386,14 @@ if [ "$from_state" = "testing" ] && [ "$to_state" = "complete" ] \
         echo "       An eyes:blocking criterion blocks release without eyes by definition; a" >&2
         echo "       commit saying 'human test passed' does not make one true (client-d WFI-009)." >&2
         echo "       Run /wf-test, or record the result where it can be read:" >&2
-        echo "         wf-manual-lint.sh $plan_id            # which criteria are open" >&2
+        # --open, not the bare lint. The default mode grades WORDING and is
+        # silent about open criteria, so the diagnostic this refusal named
+        # exited 0 while the refusal stood — client-b WFI-033 lost a
+        # diagnosis to that, on a test-progress.md row holding a paraphrase
+        # of the criterion rather than plan.md wording. --open shares this
+        # guard parser, this normalizer and this --resolved set, and reports
+        # a near-miss as a near-miss.
+        echo "         wf-manual-lint.sh $plan_id --open      # which criteria are open, and why" >&2
         echo "         wf-defer-criterion.sh $plan_id …      # if it cannot be tested yet" >&2
         echo "       Nothing was changed. WF_ALLOW_UNTESTED=1 overrides." >&2
         exit 1

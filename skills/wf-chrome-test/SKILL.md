@@ -351,8 +351,9 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    **Ask "is it merged?", never "is the log empty?".** `git log release..$CURRENT_BRANCH` prints nothing when `release` does not resolve locally, and that emptiness is indistinguishable from "no new commits" — client-a's WFI-165 skipped the PR for a branch merged nowhere, and the plan still reached `complete`. `merge-base --is-ancestor` exits non-zero on a broken ref, routing to the PR, which is the safe direction.
    Create PR (skip if one already exists for this branch):
    ```bash
-     EXISTING_PR=$(gh pr view "$CURRENT_BRANCH" --json url -q .url 2>/dev/null || echo "")
-     if [ -z "$EXISTING_PR" ]; then
+     OPEN_PR=$(gh pr list --head "$CURRENT_BRANCH" --state open \
+                 --json url -q '.[0].url' 2>/dev/null || echo "")
+     if [ -z "$OPEN_PR" ]; then
        gh pr create \
          --base release \
          --head "$CURRENT_BRANCH" \
@@ -366,12 +367,15 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    **Plan:** plans/$PLAN_NAME/
    
    Ready for staging validation."
+       OPEN_PR=$(gh pr list --head "$CURRENT_BRANCH" --state open \
+                   --json url -q '.[0].url')
      fi
    ```
+   **"A PR exists" is not the test — "an OPEN PR exists" is.** `gh pr view <branch>` answers with that branch's most recent PR *in any state*, so a branch whose earlier PR was **merged** and which has since gained more commits reads as "already has a PR". client-d WFI-022: PR #17 was merged before Amendment A1 was written, the branch carried 9 further commits and was not an ancestor of `origin/release`, and following this step literally skipped `gh pr create` and then ran `gh pr merge` against an already-merged PR — which fails, and routes a **passing** plan back to the builder. `gh pr list --state open` returns `[]` there, which is the truth. Merge by URL, too: a bare `gh pr merge` re-resolves the branch through the same `gh pr view` semantics and lands back on the merged one.
    **Merge the PR.** If merge fails (conflicts, branch protection, required checks), **stop and route to builder:**
    ```bash
-     if ! gh pr merge --merge 2>/tmp/wf-pr-merge-err; then
-       PR_URL=$(gh pr view --json url -q .url)
+     if ! gh pr merge "$OPEN_PR" --merge 2>/tmp/wf-pr-merge-err; then
+       PR_URL="$OPEN_PR"
        echo "MERGE FAILED: PR $PR_URL — see error above."
        echo "Routing back to builder."
    ```

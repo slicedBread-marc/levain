@@ -729,10 +729,14 @@ Every `#### Manual` criterion in a schema v6 plan carries a tag saying why a mac
 
 | Tag | On PASS | On FAIL |
 |-|-|-|
-| `(eyes:blocking)` | Check it off | Write a finding, route the plan back as normal — current behavior |
-| `(eyes:cosmetic)` | Check it off | **File a bug, check the criterion off, let the plan complete** |
+| `(eyes:blocking)` | Record the PASS in `test-progress.md` | Write a finding, route the plan back as normal — current behavior |
+| `(eyes:cosmetic)` | Record the PASS in `test-progress.md` | **File a bug, tick the box in `plan.md`, let the plan complete** |
 | `(external)` | — | — |
 | `(soak)` | — | — |
+
+**On PASS you record; you do not tick.** This column used to read *"Check it off"*, which contradicts [Saving test progress](#saving-test-progress) — *"a `#### Manual` criterion you judged and passed this session stays unchecked in `plan.md` … you only ever tick a box on a deferral or a cosmetic failure"* — flatly, with no stated precedence, and `wf-manual-lint.sh` exits 0 either way so nothing disambiguated it (client-b WFI-032). **The absolute statement wins, and it is the one the machinery is built on:** `wf-manual-gate.sh` decides whether to stop for a human by subtracting the criteria recorded PASS in `test-progress.md` against the build in the worktree, and an empty checkbox is what makes that subtraction the only signal (WFI-013). Tick on PASS and the record the gate reads is the one you skipped writing.
+
+Ticking on a **cosmetic failure** is not an exception to that — it is the opposite move for the opposite reason. There is no PASS to record, and the box is what tells `wf-registry-update.sh`'s `testing → complete` guard the criterion is settled. A deferral works the same way.
 
 **Cosmetic failures fail soft.** When an `eyes:cosmetic` criterion fails, do not write a finding and do not block the plan. Instead file it as a normal bug and move on:
 
@@ -839,8 +843,9 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    `merge-base --is-ancestor` cannot fail that way: a broken ref makes it exit non-zero, which routes to the PR — the safe direction. `wf-registry-update.sh` refuses `testing → complete` for an unmerged branch as the backstop, so this now stops at a refused transition rather than a green deploy.
    Create PR (skip if one already exists for this branch):
    ```bash
-     EXISTING_PR=$(gh pr view "$CURRENT_BRANCH" --json url -q .url 2>/dev/null || echo "")
-     if [ -z "$EXISTING_PR" ]; then
+     OPEN_PR=$(gh pr list --head "$CURRENT_BRANCH" --state open \
+                 --json url -q '.[0].url' 2>/dev/null || echo "")
+     if [ -z "$OPEN_PR" ]; then
        ../../scripts/wf-exec.sh wf-retry.sh --label "gh pr create" -- gh pr create \
          --base release \
          --head "$CURRENT_BRANCH" \
@@ -854,12 +859,15 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    **Plan:** plans/$PLAN_NAME/
    
    Ready for staging validation."
+       OPEN_PR=$(gh pr list --head "$CURRENT_BRANCH" --state open \
+                   --json url -q '.[0].url')
      fi
    ```
+   **"A PR exists" is not the test — "an OPEN PR exists" is.** `gh pr view <branch>` answers with that branch's most recent PR *in any state*, so a branch whose earlier PR was **merged** and which has since gained more commits reads as "already has a PR". client-d WFI-022: PR #17 was merged before Amendment A1 was written, the branch carried 9 further commits and was not an ancestor of `origin/release`, and following this step literally skipped `gh pr create` and then ran `gh pr merge` against an already-merged PR — which fails, and routes a **passing** plan back to the builder. `gh pr list --state open` returns `[]` there, which is the truth. Merge by URL, too: a bare `gh pr merge` re-resolves the branch through the same `gh pr view` semantics and lands back on the merged one.
    **Merge the PR.** If merge fails (conflicts, branch protection, required checks), **stop and route to builder:**
    ```bash
-     if ! ../../scripts/wf-exec.sh wf-retry.sh --label "gh pr merge" -- gh pr merge --merge 2>/tmp/wf-pr-merge-err; then
-       PR_URL=$(gh pr view --json url -q .url)
+     if ! ../../scripts/wf-exec.sh wf-retry.sh --label "gh pr merge" -- gh pr merge "$OPEN_PR" --merge 2>/tmp/wf-pr-merge-err; then
+       PR_URL="$OPEN_PR"
        echo "MERGE FAILED: PR $PR_URL — see error above."
        echo "Routing back to builder."
    ```
@@ -953,8 +961,13 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    refusal you will see here is the `eyes:blocking` completion guard: a Manual
    criterion has no PASS, no deferral and no answered gate, and by this point the
    PR is already merged to `release`, so the work is shipped and only the bookkeeping
-   is wrong. Resolve what it names — `wf-manual-lint.sh PLN-NNN` lists the open
-   criteria — then re-run this step. If you cannot resolve it, **[GATE]**
+   is wrong. Resolve what it names — `wf-manual-lint.sh PLN-NNN --open` lists the open
+   criteria and, where `test-progress.md` holds a row that nearly matches one, says
+   so. The bare `wf-manual-lint.sh PLN-NNN` grades criterion *wording* and exits 0
+   with a criterion still open, which is a contradiction that has cost a diagnosis
+   (client-b WFI-033) — **the most likely cause of this refusal is a
+   `test-progress.md` Criterion column holding a paraphrase rather than `plan.md`'s
+   exact text.** Then re-run this step. If you cannot resolve it, **[GATE]**
    `needs-input` naming the refusal verbatim and exit still holding the claim; a
    claimed plan a human is brought to beats an unguarded one in a state nobody owns.
 

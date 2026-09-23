@@ -31,6 +31,27 @@
 #   (default)  print one finding per line, tab-separated:
 #                <line-no> <TAB> <code> <TAB> <criterion> <TAB> <message>
 #              exit 1 if any findings, 0 if clean.
+#   --open     print the criteria the `testing -> complete` guard would refuse
+#              on — one per line, tab-separated:
+#                <line-no> <TAB> <tag> <TAB> <criterion> <TAB> <near-miss note>
+#              exit 1 if any are open, 0 if none. Same parser, same normalizer
+#              and the same --resolved set the guard itself uses; with no
+#              --resolved it builds one from the plan's test-progress.md
+#              exactly as wf-registry-update.sh does.
+#
+#              THE DIAGNOSTIC HAS TO ANSWER THE QUESTION THE REFUSAL ASKS.
+#              wf-registry-update.sh's refusal names `wf-manual-lint.sh <id>`
+#              as "which criteria are open" — but the DEFAULT mode lints
+#              WORDING (untagged / unknown-tag / assertable) and says nothing
+#              about open criteria. client-b WFI-033: the guard refused
+#              PLN-011 with "1 eyes:blocking criterion(s) are unchecked",
+#              and the lint it pointed at exited 0 with no output, run
+#              immediately before and immediately after. The guard was right —
+#              a test-progress.md row held a paraphrase of criterion 6 rather
+#              than plan.md's wording — and the diagnostic reported clean,
+#              which is what made it expensive to find. A near-miss is now
+#              reported AS a near-miss rather than as silence.
+#
 #   --counts   print eval-safe KEY='value' lines and exit 0:
 #                MANUAL_TOTAL, MANUAL_EYES_BLOCKING, MANUAL_EYES_COSMETIC,
 #                MANUAL_EXTERNAL, MANUAL_SOAK, MANUAL_UNBUILT, MANUAL_UNTAGGED,
@@ -81,6 +102,7 @@ resolved_file=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --counts)   mode="counts"; shift ;;
+    --open)     mode="open"; shift ;;
     --file)     plan_file="${2:?--file requires a path}"; shift 2 ;;
     --resolved) resolved_file="${2:?--resolved requires a path}"; shift 2 ;;
     -*)         echo "Unknown option: $1" >&2; exit 2 ;;
@@ -92,6 +114,13 @@ if [ -n "$resolved_file" ] && [ ! -f "$resolved_file" ]; then
   echo "Error: --resolved $resolved_file not found" >&2
   exit 2
 fi
+
+# --open with no --resolved builds the same set the guard builds. Anything
+# else and the two answer different questions again, which is the whole of
+# WFI-033.
+derived_resolved=""
+cleanup_resolved() { [ -n "$derived_resolved" ] && rm -f "$derived_resolved"; return 0; }
+trap cleanup_resolved EXIT
 
 if [ -z "$plan_file" ]; then
   plan_id=$(printf '%s' "$raw_id" | grep -oE 'PLN-[0-9]+' || true)
@@ -106,6 +135,12 @@ if [ -z "$plan_file" ]; then
 fi
 
 [ -f "$plan_file" ] || { echo "Error: $plan_file not found" >&2; exit 2; }
+
+if [ "$mode" = "open" ] && [ -z "$resolved_file" ]; then
+  derived_resolved=$(mktemp "${TMPDIR:-/tmp}/wf-manual-open.XXXXXX")
+  wf_test_progress_passes "$(dirname "$plan_file")/test-progress.md" > "$derived_resolved" 2>/dev/null || true
+  resolved_file="$derived_resolved"
+fi
 
 # ── Is it text at all? ────────────────────────────────────────────────────
 #
@@ -216,12 +251,49 @@ out=$(awk -v legacy="$legacy" -v resolved="$resolved_file" '
     }
     return 0
   }
+  # THE NEAR MISS IS THE EXPENSIVE CASE, SO IT GETS ITS OWN ANSWER.
+  #
+  # settled() is deliberately strict: it must fail toward "still open", because
+  # a paraphrase that matched would dismiss a criterion nobody judged. The cost
+  # of that strictness is silence — a row IS there for this criterion, worded
+  # by another hand, and nothing said so. client-b WFI-033 spent a whole
+  # diagnosis on exactly that gap.
+  #
+  # So: word overlap, reported and never acted on. It cannot settle anything;
+  # it only names the row that was probably meant.
+  function nearest(nt,   k, n, i, w, shared, best, bestk, score) {
+    if (nt == "") return ""
+    n = split(nt, W, " ")
+    if (n < 3) return ""
+    for (i = 1; i <= n; i++) WANT[W[i]] = 1
+    best = 0; bestk = ""
+    for (k in RESOLVED) {
+      shared = 0
+      split(k, K, " ")
+      for (i in K) if (K[i] in WANT) shared++
+      score = shared / n
+      if (score > best) { best = score; bestk = k }
+    }
+    for (i in WANT) delete WANT[i]
+    if (best >= 0.4 && bestk != "") {
+      return sprintf("test-progress.md has a row %d%% matching this text but not matching it: \"%s\" — restore plan.md\047s exact wording", int(best * 100), (bestk in RAW ? RAW[bestk] : bestk))
+    }
+    return ""
+  }
+  # One line per still-open criterion, carrying the near-miss when there is
+  # one. Emitted unconditionally and filtered by the caller, so --open and
+  # --counts can never disagree about which criteria are open: they are two
+  # renderings of the same pass.
+  function report_open(nr, tagname, txt,   miss) {
+    miss = nearest(norm(txt))
+    printf "O\t%d\t%s\t%s\t%s\n", nr, tagname, txt, miss
+  }
   BEGIN {
     MIN_CONTAIN = 24
     if (resolved != "") {
       while ((getline rline < resolved) > 0) {
         rn = norm(rline)
-        if (rn != "") RESOLVED[rn] = 1
+        if (rn != "") { RESOLVED[rn] = 1; RAW[rn] = rline }
       }
       close(resolved)
     }
@@ -277,15 +349,15 @@ out=$(awk -v legacy="$legacy" -v resolved="$resolved_file" '
       # need EYES, or did a compatibility rule say so on its behalf?" — and the
       # manual gate needs that to decide whether a rendering-surface miss is
       # evidence of anything. See wf-manual-gate.sh (WFI-054).
-      if (legacy) { eyes_blocking++; if (!checked) { open_eyes++; open_blocking++; open_untagged++ } ; next }
+      if (legacy) { eyes_blocking++; if (!checked) { open_eyes++; open_blocking++; open_untagged++; report_open(NR, "untagged/v5", text) } ; next }
       printf "F\t%d\tuntagged\t%s\t%s\n", NR, text, "no reason tag — add (eyes:blocking), (eyes:cosmetic), (external), (soak) or (unbuilt), or move it to the Tests table"
       untagged++
       if (!checked) open_untagged++
       next
     }
 
-    if (lower_tag == "eyes:blocking")      { eyes_blocking++; if (!checked) { open_eyes++; open_blocking++ } }
-    else if (lower_tag == "eyes:cosmetic") { eyes_cosmetic++; if (!checked) { open_eyes++; open_cosmetic++ } }
+    if (lower_tag == "eyes:blocking")      { eyes_blocking++; if (!checked) { open_eyes++; open_blocking++; report_open(NR, lower_tag, text) } }
+    else if (lower_tag == "eyes:cosmetic") { eyes_cosmetic++; if (!checked) { open_eyes++; open_cosmetic++; report_open(NR, lower_tag, text) } }
     else if (lower_tag == "external")      { external++ }
     else if (lower_tag == "soak")          { soak++ }
     # Written by wf-defer-criterion.sh when the prerequisite feature does not
@@ -317,6 +389,18 @@ out=$(awk -v legacy="$legacy" -v resolved="$resolved_file" '
 
 counts=$(printf '%s\n' "$out" | grep '^C	' | tail -1)
 findings=$(printf '%s\n' "$out" | grep '^F	' || true)
+opens=$(printf '%s\n' "$out" | grep '^O	' || true)
+
+if [ "$mode" = "open" ]; then
+  # eyes:* only — the guard refuses on MANUAL_OPEN_BLOCKING, and an (external)
+  # or (soak) criterion is not something a human can close at this gate.
+  if [ -z "$opens" ]; then
+    echo "wf-manual-lint: no open eyes:* criteria in $(basename "$(dirname "$plan_file")")" >&2
+    exit 0
+  fi
+  printf '%s\n' "$opens" | cut -f2-
+  exit 1
+fi
 
 # The review finding is not a Manual-criterion finding, so it plays no part in
 # --counts; it only ever affects the lint verdict.
