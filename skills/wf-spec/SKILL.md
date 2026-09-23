@@ -106,6 +106,13 @@ Format as TWO markdown tables:
 - Bugs: priority = '—', second field = severity, third = title. Type = Bug.
 - Briefs: priority = '—', second field = name, third = description. Type = Brief.
   If a brief's detail says 'Already has plan PLN-NNN', put it in Table 2 instead.
+- A detail beginning 'GATED(<name>)' means the artifact is parked on an open gate.
+  Put it in Table 3 instead of Table 1, and do NOT give it a number.
+
+**Table 3 — Parked on a gate** (informational, no numbering):
+| Type | ID | Name | Gate |
+|-|-|-|-|
+Omit this table if empty.
 
 **Table 2 — Already planned** (informational, no numbering):
 | Type | ID | Name | Plan |
@@ -114,7 +121,7 @@ Only briefs that already have a plan go here. Omit this table if empty.
 
 After the tables add: Mark a plan urgent: \`u <number>\` (replans only)
 
-If no actionable items, say 'No specable work found.'
+If no actionable items, say 'No specable work found.' — but still print Table 3 if it has rows.
 
 Final response: ONLY the formatted tables and footer line. No commentary.")
 ```
@@ -124,6 +131,10 @@ Display the subagent's output verbatim, then tell the user: "Run `/model opus`, 
 **Handling `u <N>` commands:**
 If the user types `u <N>` for a replan: run `scripts/wf-exec.sh wf-set-priority.sh <plan-id> urgent`, then re-run the haiku subagent above to re-display the updated menu.
 If the user types `u <N>` for an already-urgent replan: run `scripts/wf-exec.sh wf-set-priority.sh <plan-id> —` to clear it, then re-run the subagent.
+
+**An artifact whose detail is `GATED(...)` is not yours to pick up, in either mode.** It is waiting on a human's answer, not on a planner, and the gate's own question is the thing that has to move first. Say which gate, point at `/wf-attend`, and stand down without claiming it; under `WF_UNATTENDED=1` exit 0.
+
+client-b WFI-036: PLN-021 was listed under `# replanning` with detail `reviewed: Approved` while its spec-approval gate had been open and unanswered for eight hours, and `findings.md` held no findings at all. Following the menu literally claims it and enters [Replanning](#replanning), which has nothing to triage — and step 6d then re-opens the very gate that is already parked. There is no stand-down verb for this shape either: `wf-brief-block.sh` is documented for briefs and bugs, not for a plan. The row now names the gate; not claiming it is the whole verb.
 
 **Claim whatever they pick, before you read it** — the same rule as unattended rule 0, and it is not a mode-specific rule (see [Claiming](#claiming)):
 

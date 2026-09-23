@@ -39,24 +39,45 @@ not_offered() {   # not_offered <id> <reason>
   echo "  ($1 not offered — $2)" >&2
 }
 
-# 0 when this artifact is parked on a human decision. Same test the dispatcher
-# uses, so the two surfaces cannot disagree about what is dispatchable.
-gate_parked() {   # gate_parked <artifact-id>
-  "$SELF_DIR/wf-list-gates.sh" "$1" >/dev/null 2>&1
-}
-
 # 0 when the artifact should be skipped, having already said why.
 skip_with_reason() {   # skip_with_reason <artifact-id> [claim-key]
   local id="$1" claim_key="${2:-$1}"
   if wf_claim_held "$claim_key"; then
-    not_offered "$id" "claimed by PID ${WF_CLAIM_PID:-?} ($(wf_human_age "${WF_CLAIM_AGE:-0}") ago), in flight elsewhere"
-    return 0
-  fi
-  if gate_parked "$id"; then
-    not_offered "$id" "parked on an open gate — answer it at /wf-attend"
+    not_offered "$id" "claimed by PID ${WF_CLAIM_HOLDER_PID:-?} ($(wf_human_age "${WF_CLAIM_AGE:-0}") ago), in flight elsewhere"
     return 0
   fi
   return 1
+}
+
+# ── A gated artifact is ANNOTATED, not withheld ───────────────────────────
+#
+# It would be easy to drop a gated row the way a claimed one is dropped. It is
+# also wrong, because this list has two audiences and they need opposite
+# things from it.
+#
+#   the dispatcher  reaches spec through this script, applies its OWN gate
+#                   test, and logs `skip <id> spec: gate open` — once, as a
+#                   standing condition, which is also what lets the `stalled`
+#                   event name the gate responsible (client-a WFI-023).
+#                   Withhold the row and the daemon reports a pipeline that is
+#                   empty for no stated reason.
+#   the wf-spec menu renders these rows for a human or an attended worker to
+#                   pick from. client-b WFI-036: PLN-021 appeared under
+#                   `# replanning` with detail `reviewed: Approved` while it
+#                   sat on an OPEN, unanswered spec-approval gate and an empty
+#                   findings.md. Following the menu literally claims it and
+#                   enters Replanning with nothing to triage; step 6d then
+#                   re-opens the gate that is already parked.
+#
+# So the row stays and the DETAIL COLUMN stops lying. That column exists to
+# tell shapes apart, every consumer already reads it, and `GATED(...)` is the
+# one fact that decides whether this artifact is anyone's to pick up.
+gate_note() {   # gate_note <artifact-id> → "GATED(<name>) …; " or nothing
+  local row name
+  row=$("$SELF_DIR/wf-list-gates.sh" "$1" 2>/dev/null) || return 0
+  [ -n "$row" ] || return 0
+  name=$(printf '%s\n' "$row" | head -1 | cut -f2)
+  printf 'GATED(%s) — answer at /wf-attend, do not claim; ' "${name:-open gate}"
 }
 
 # --- Plans in draft state ---
@@ -121,7 +142,7 @@ while IFS=$'\037' read -r id slug state priority _rest; do
     # finding is replanning work, whatever it is tagged.
     if [ ${#parts[@]} -eq 0 ]; then parts+=("$unchecked unchecked"); fi
     detail=$(IFS=', '; echo "${parts[*]}")
-    escalated+=("${id}-${slug}	${detail} finding(s)	$priority")
+    escalated+=("${id}-${slug}	$(gate_note "$id")${detail} finding(s)	$priority")
     found=1
     continue
   fi
@@ -155,7 +176,7 @@ while IFS=$'\037' read -r id slug state priority _rest; do
         detail="review stale (${REVIEW_RESULT:-—})"
       fi ;;
   esac
-  unreviewed+=("${id}-${slug}	${detail}	$priority")
+  unreviewed+=("${id}-${slug}	$(gate_note "$id")${detail}	$priority")
   found=1
 done < <(wf_registry_rows "$REGISTRY")
 
@@ -237,7 +258,7 @@ for bug_md in bugs/open/*/bug.md; do
     continue
   fi
   if [ $bugs_found -eq 0 ]; then echo "# bugs"; fi
-  printf "%s\t%s\t%s\n" "$bug_id" "$severity" "$title"
+  printf "%s\t%s\t%s%s\n" "$bug_id" "$severity" "$(gate_note "$bug_id")" "$title"
   bugs_found=1
   found=1
 done
@@ -284,7 +305,7 @@ for bug_md in bugs/triaged/*/bug.md; do
     continue
   fi
   if [ $bugs_found -eq 0 ]; then echo "# bugs"; fi
-  printf "%s\t%s\t%s (hand-filed into triaged/, no plan)\n" "$bug_id" "$severity" "$title"
+  printf "%s\t%s\t%s%s (hand-filed into triaged/, no plan)\n" "$bug_id" "$severity" "$(gate_note "$bug_id")" "$title"
   bugs_found=1
   found=1
 done
@@ -383,7 +404,7 @@ if [ -f "plans/briefs/INDEX.md" ]; then
       if [ "$brief_id" != "—" ] && skip_with_reason "$brief_id"; then continue; fi
       desc=$(echo "$line" | sed 's/^[^—]*— //')
       if [ $briefs_found -eq 0 ]; then echo "# briefs"; fi
-      printf "%s\t%s\t%s\n" "$brief_id" "$name" "$desc"
+      printf "%s\t%s\t%s%s\n" "$brief_id" "$name" "$(gate_note "$brief_id")" "$desc"
       briefs_found=1
       found=1
     fi

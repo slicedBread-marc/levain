@@ -17,12 +17,30 @@ source "$(dirname "$0")/wf-orch-lib.sh"
 branch=$(git branch --show-current)
 [[ "$branch" == feature/* ]] || { echo "Error: not on a feature branch (on $branch)" >&2; exit 1; }
 
-# Auto-claim: mark this plan as actively being worked on
+# ── The auto-claim goes to the CANONICAL path ─────────────────────────────
+#
+# It used to be written at plans/<artifact>/.wf-claim — the pre-v5.6 location
+# claims were moved out of in the first place, because a claim keyed on the
+# plan FOLDER cannot cover a brief or a bug, which have none (WFI-004).
+# Everything else moved; these two writers did not, and nothing noticed,
+# because wf_claim_held still reads the old path as a compatibility fallback.
+# So the harness kept manufacturing the very "pre-v5.6 claim left over from an
+# upgrade" that the fallback exists to tolerate.
+#
+# client-d WFI-021 is that claim, seen from the other end. A live claim sat at
+# plans/PLN-020-tile-claude-handoff/.wf-claim while claims/20/ was empty: every
+# daemon sweep deferred the implement spawn and wf-claim.sh --list answered "No
+# live claims", so PLN-020 went undispatched for ten minutes with the daemon
+# logging "stalled — nothing dispatchable". The report ends "Not investigated:
+# what wrote a legacy-path claim at 14:33 today, given wf-claim.sh migrates
+# legacy claims to the canonical dir." This did.
+#
+# Auto-claim: mark this plan as actively being worked on.
 develop_root=$(wf_develop_root)
 plan_name=$(echo "$branch" | sed 's#^feature/##')
-claim_dir="$develop_root/plans/$plan_name"
-if [ -d "$claim_dir" ]; then
-  wf_claim_write "$claim_dir"
+if [ -d "$develop_root/plans/$plan_name" ] \
+   && claim_dir=$(wf_claim_dir "$plan_name"); then
+  wf_claim_write "$claim_dir" "" "$plan_name"
 fi
 
 # ── Refresh the harness, before and after ───────────────────────────────────

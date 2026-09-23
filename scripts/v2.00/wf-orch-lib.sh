@@ -1343,20 +1343,29 @@ wf_claim_live() {
   local dir="$1" f="$1/.wf-claim" ts pid started now_started
   WF_CLAIM_AGE=0
   WF_CLAIM_OVERDUE=0
-  # Exported so a caller can SAY WHO. A worklist that silently drops a claimed
+  # Set so a caller can SAY WHO. A worklist that silently drops a claimed
   # artifact is indistinguishable from one that has no work: client-d's
   # BRF-020 vanished from wf-list-specable.sh with nothing on stdout or stderr
   # because the daemon had spawned a spec worker on it 90 seconds earlier, and
   # the attended operator — seeing an empty menu and no explanation —
   # investigated by running wf-unclaim.sh on it, deleting the live worker's
   # claim (WFI-019). Blocked briefs explain themselves; claimed ones must too.
-  WF_CLAIM_PID=""
+  #
+  # HOLDER, not WF_CLAIM_PID. That name is taken, by an INPUT: wf-spawn.sh
+  # exports the PID it recorded into the worker it launches, and wf_claim_mine
+  # compares a claim against it to answer "is this mine". Writing the claim's
+  # own PID there makes that comparison compare the claim to itself, so every
+  # claim reads as ours — the write guard stops refusing, --if-free stops
+  # standing down, and a second claimant is admitted onto a live worker's plan.
+  # The orchestrator and client-reports suites caught it; nothing else would
+  # have until two workers were on one artifact.
+  WF_CLAIM_HOLDER_PID=""
   [ -f "$f" ] || return 1
   ts=$(sed -n '1p' "$f" 2>/dev/null | tr -cd '0-9')
   pid=$(sed -n '2p' "$f" 2>/dev/null | tr -cd '0-9')
   started=$(sed -n '4p' "$f" 2>/dev/null | tr -d '\r' || true)
   [ -n "$ts" ] || ts=0
-  WF_CLAIM_PID="$pid"
+  WF_CLAIM_HOLDER_PID="$pid"
   WF_CLAIM_AGE=$(( $(date +%s) - ts ))
   if [ "$WF_CLAIM_AGE" -lt "$WF_CLAIM_TTL" ]; then
     # No PID is the pre-v5.1 format: the TTL alone decides.

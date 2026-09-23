@@ -2214,8 +2214,30 @@ printf '%s\n%s\n' "$(date +%s)" "$legacy_holder" > "plans/PLN-901-legacy-claim/.
 legacy_type=$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null \
   | awk -F'\t' '$2 == "PLN-901-legacy-claim" {print $1}')
 assert_eq "a pre-v5.6 claim in the plan folder is still honoured" "processing" "$legacy_type"
+# ...and --list SEES it. wf-claim.sh's header calls --list "the one way to see
+# what the write guard is enforcing", and it scanned only the canonical dir
+# while wf_claim_held also reads this path. client-d WFI-021: a legacy claim
+# deferred every implement spawn for ten minutes while --list said "No live
+# claims" and the daemon logged "stalled — nothing dispatchable".
+legacy_listed=$("$SCRIPT_DIR/wf-claim.sh" --list 2>/dev/null \
+  | grep -c 'PLN-901-legacy-claim (LEGACY path)' || true)
+assert_eq "a legacy-path claim is visible to --list" "1" "$legacy_listed"
+
 { kill "$legacy_holder"; wait "$legacy_holder"; } 2>/dev/null
 rm -f "plans/PLN-901-legacy-claim/.wf-claim"
+
+# ...and NOTHING IN THE HARNESS WRITES ONE. The fallback above exists to
+# tolerate a claim left over from a pre-v5.6 upgrade; wf-registry-update.sh's
+# auto-claim on `-> active` and wf-merge-develop.sh were still manufacturing
+# them, which is what put WFI-021's mystery claim on disk ("not investigated:
+# what wrote a legacy-path claim at 14:33 today").
+registry_add_row PLN-908 autoclaim ready
+"$SCRIPT_DIR/wf-registry-update.sh" PLN-908 ready active >/dev/null 2>&1
+assert_eq "the auto-claim on -> active is NOT written to the legacy path" "false" \
+  "$([ -f "plans/PLN-908-autoclaim/.wf-claim" ] && echo true || echo false)"
+assert_eq "it is written to the canonical claims dir" "true" \
+  "$([ -f "$ORCH/claims/908/.wf-claim" ] && echo true || echo false)"
+rm -f "$ORCH/claims/908/.wf-claim"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Ticking a criterion does not invalidate an answered gate (WFI-005)"

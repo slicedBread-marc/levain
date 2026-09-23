@@ -204,7 +204,7 @@ if $list; then
     mine=""
     if wf_claim_mine "${d%/}"; then mine="  ← yours"; fi
     printf '%-56s PID %-8s %sm%s%s\n' \
-      "$artifact (LEGACY path)" "${WF_CLAIM_PID:-?}" "$((WF_CLAIM_AGE / 60))" "$overdue" "$mine"
+      "$artifact (LEGACY path)" "${WF_CLAIM_HOLDER_PID:-?}" "$((WF_CLAIM_AGE / 60))" "$overdue" "$mine"
     echo "    at plans/$artifact/.wf-claim — enforced by the write guard, invisible to claims/." >&2
     echo "    Clear it with: wf-unclaim.sh $artifact   (clears both paths)" >&2
     found=1

@@ -498,11 +498,29 @@ fi
 # and reuse it, rather than two separate greps of the same line.
 slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
 
-# Auto-claim when entering active state
+# ── The auto-claim goes to the CANONICAL path ─────────────────────────────
+#
+# It used to be written at plans/<artifact>/.wf-claim — the pre-v5.6 location
+# claims were moved out of in the first place, because a claim keyed on the
+# plan FOLDER cannot cover a brief or a bug, which have none (WFI-004).
+# Everything else moved; these two writers did not, and nothing noticed,
+# because wf_claim_held still reads the old path as a compatibility fallback.
+# So the harness kept manufacturing the very "pre-v5.6 claim left over from an
+# upgrade" that the fallback exists to tolerate.
+#
+# client-d WFI-021 is that claim, seen from the other end. A live claim sat at
+# plans/PLN-020-tile-claude-handoff/.wf-claim while claims/20/ was empty: every
+# daemon sweep deferred the implement spawn and wf-claim.sh --list answered "No
+# live claims", so PLN-020 went undispatched for ten minutes with the daemon
+# logging "stalled — nothing dispatchable". The report ends "Not investigated:
+# what wrote a legacy-path claim at 14:33 today, given wf-claim.sh migrates
+# legacy claims to the canonical dir." This did.
+#
+# Auto-claim when entering active state.
 if [ "$to_state" = "active" ]; then
-  claim_dir="plans/${plan_id}-${slug}"
-  if [ -d "$claim_dir" ]; then
-    wf_claim_write "$claim_dir"
+  if [ -d "plans/${plan_id}-${slug}" ] \
+     && claim_dir=$(wf_claim_dir "${plan_id}-${slug}"); then
+    wf_claim_write "$claim_dir" "" "${plan_id}-${slug}"
   fi
 fi
 
