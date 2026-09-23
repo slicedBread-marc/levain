@@ -123,22 +123,25 @@ The plan is drafted, **already reviewed**, and committed in `draft` state. The o
    scripts/wf-exec.sh wf-claim.sh <plan-name>
    scripts/wf-exec.sh wf-gate-close.sh <PLN-ID> "approved — <what they said>" \
      --only spec-approval --decision approve
-   # ── then exactly ONE transition from the table below ──
+   scripts/wf-exec.sh wf-replan-target.sh <PLN-ID> --apply \
+     --note "<what the approval turned on, and why the plan landed where it did>"
    scripts/wf-exec.sh wf-unclaim.sh <plan-name>
    ```
 
-   | The plan | The transition, between the close and the unclaim |
-   |-|-|
-   | A brand-new plan, or a replan on a plan with **no** gating tag | `wf-registry-update.sh <PLN-ID> draft ready --commit "spec: <plan-name> — approved at the gate" --note "<what the approval turned on>"` |
-   | A replan on a **gating-tagged** plan | `wf-replan-target.sh <PLN-ID> --apply --note "<why the replan landed here>"` |
+   **You do not choose the target state, and there is no table here to pick a row from.** `wf-replan-target.sh` derives it — `no worktree → ready`, `live worktree → active`, `a bounce with nothing left to build → testing` — and `--apply` performs that transition. A brand-new plan has no worktree, so it derives `ready` and the command reduces to the `draft → ready` you would have typed anyway. Without `--commit` the transition still commits, under an auto-generated message; `--note` is what a later reader actually needs.
 
-   **Which row applies is decided by one question: is this a replan of a plan carrying a gating tag?** Not by whether a worktree exists, and not by the target state. `wf-replan-target.sh --apply` refuses on the gating tag and the open-or-stale gate alone, for target `ready` and `active` alike — so a gating-tagged replan with no worktree, whose target is `ready`, still takes the second row. client-a's PLN-281 was exactly that shape, took the first on the strength of "no worktree yet", and hit the refusal (WFI-262). Check it with `wf-list-tags.sh --gating` against the plan's Tags column when it is not obvious.
+   **This step used to be two rows split on the gating tag, and a hardcoded `draft ready` in the first.** The tag was the wrong question twice over:
 
-   **The tag decides the command. It never decided the ordering.** This step used to be two branches split on that same question, with the first ordered transition-then-close and its close deferred to a step 7 — and that half was unrunnable as written, because the WFI-012 guard does not read tags, worktrees or targets. It reads one fact: a `spec-approval` gate is open and unanswered, which is true of *every* plan sitting at this gate, by construction. Two clients hit the identical refusal six hours apart, and both worked around it by hand in exactly the order above: client-d's PLN-016 (WFI-015), and client-b' PLN-015 (WFI-023) — a brand-new plan that carried a gating tag, which the old wording sent down the unrunnable branch twice over.
+   - A gating-tagged replan with no worktree, target `ready`, took row 1 on the strength of "no worktree yet" and hit `wf-replan-target.sh`'s refusal — which reads the tag and the gate, not the target (client-a WFI-262).
+   - A replan with **no** gating tag took row 1 correctly by the stated rule, and row 1's hardcoded target was wrong for it. client-d's PLN-020 was tagged `tooling,site`, had a live worktree and three unchecked human-test defects the amendment fixed; `wf-replan-target.sh` computed `active` and the gate's own question said so. `draft → ready` would have sent an in-flight fix cycle to a builder who creates a **fresh branch and worktree** (WFI-020). Nothing would have errored.
+
+   The first failure is loud, the second is silent, and neither is about tags: the target state is derived from the worktree and the findings, and a hardcoded one is a guess at that derivation. Ask the script that owns it. Its gating-tag guard is still there and still self-clearing — the gate you just closed is what clears it.
+
+   **The ordering was never the tag's business either.** This step used to be two branches split on that same question, with the first ordered transition-then-close and its close deferred to a step 7 — and that half was unrunnable as written, because the WFI-012 guard does not read tags, worktrees or targets. It reads one fact: a `spec-approval` gate is open and unanswered, which is true of *every* plan sitting at this gate, by construction. Two clients hit the identical refusal six hours apart, and both worked around it by hand in exactly the order above: client-d's PLN-016 (WFI-015), and client-b' PLN-015 (WFI-023) — a brand-new plan that carried a gating tag, which the old wording sent down the unrunnable branch twice over.
 
    **Do not hand this off to `/wf-spec`, and do not re-run a review step 1 already found current.** The plan folder and its REGISTRY row were committed before the gate opened (`/wf-spec`'s unattended exit, step 6), so the transition is the only thing left to write. Handing it across a session boundary also drops the claim that is covering the window this ordering opens — and `/wf-spec` greps for `draft`, which is a plan to *write*, not one already approved.
 
-   **`--note` is the same rule as everywhere else in this skill, and it applies to both rows.** The replan path used to have no way to obey it, so a replan's reason lived only in the gate resolution ledger and progress.md recorded a bare `draft to ready` (client-d WFI-008). It is worth writing here more than almost anywhere: the target state is derived from the worktree and the findings, and once the branch is deleted nothing on the record explains why the plan went back to `active` rather than `ready`, or to `testing` rather than either.
+   **`--note` is the same rule as everywhere else in this skill.** The replan path used to have no way to obey it, so a replan's reason lived only in the gate resolution ledger and progress.md recorded a bare `draft to ready` (client-d WFI-008). It is worth writing here more than almost anywhere: the target state is derived from the worktree and the findings, and once the branch is deleted nothing on the record explains why the plan went back to `active` rather than `ready`, or to `testing` rather than either.
 5. On **edit** — capture what they want changed, then hand to `/wf-spec` to revise and re-review.
 6. On **reject** — ask why, append the reason to the plan's `findings.md` as an ESCALATED item, and leave the state at `draft`. The gate is closed with the rejection as its resolution (`--only spec-approval --decision reject`), under the claim, exactly as above — a rejected question is still an answered one, and left open it re-asks itself on the next sweep.
 
