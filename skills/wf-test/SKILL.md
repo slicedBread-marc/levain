@@ -85,7 +85,8 @@ Order of work:
 | Step 7.3 | Deferring a criterion | [AUTO] | Defer `(external)` and `(soak)` criteria — that is mechanical. Never defer anything else unattended |
 | Step 6 | Whether to open `manual-test` | [AUTO] | `wf-manual-gate.sh` decides. Do not second-guess it in either direction |
 | Completion | "All criteria pass — proceed?" | [AUTO] | Proceed when every criterion is PASS on the current build |
-| Exit | `git push` failed | **[GATE]** | `merge-failed` — question is the git error verbatim |
+| Exit | `git push` still failing transiently (`wf-retry.sh --tempfail` exit 75) | [AUTO] | No gate. Leave the plan in `testing`, unclaim, exit 0 — the next sweep retries (coordinator WFI-006) |
+| Exit | `git push` refused (protected branch, non-fast-forward, permission) | **[GATE]** | `merge-failed` — question is the git error verbatim |
 | Exit | `gh pr merge` failed | [AUTO] | Already routes to the builder on its own — follow that path, don't gate |
 
 **Never guess.** You have no eyes on the running app beyond what Chrome and the test suites report. If a criterion's outcome is not something you established from a test result, a Chrome observation, or a build log, it is **not** a PASS — defer it to the `manual-test` gate. Recording an unverified PASS is worse than recording nothing, because it ships. A test result you did not produce yourself, in this plan's stamped tree, is in the same category as a guess — and a FAIL copied out of the bug report that motivated the plan is the shape this actually took (WFI-132). Anything you are about to ask that isn't in the table above is a [GATE] with gate name `needs-input`.
@@ -126,13 +127,13 @@ Final response: ONLY the formatted table, footer line, and any claimed-plans not
 Display the subagent's output verbatim, then:
 
 - If output is `NO_PLANS`: say "No plans ready for testing. Run /wf-status to see pipeline state."
-- If output starts with `CLAIMED_PLANS:`: show the claimed plans and ask "These plans have stale claims from a previous session. Clear claims and continue?" On yes, run `scripts/wf-exec.sh wf-unclaim.sh <plan-name>` for each, then re-run the haiku subagent.
+- If output starts with `CLAIMED_PLANS:`: show the claimed plans and stop — clearing another session's claim is a claim-steal, and that stays with a human (WFI-146). If the operator says those sessions are finished, run `scripts/wf-exec.sh wf-unclaim.sh <plan-name>` for each, then re-run the haiku subagent.
 - If the user types `u <N>`: run `scripts/wf-exec.sh wf-set-priority.sh <plan-id> urgent`, then re-run the haiku subagent to re-display the updated menu.
 - If the user types `u <N>` for an already-urgent plan: run `scripts/wf-exec.sh wf-set-priority.sh <plan-id> —` to clear it, then re-run the subagent.
 
-Tell the user: "Run `/model sonnet`, then pick a number."
+**Do not wait for a pick (WFI-006).** Take the plan the invocation named, else the first row (urgent rows come first). Print one line saying which you took and proceed.
 
-After user picks:
+Then, for the chosen plan:
 1. `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"` to get plan details
 2. If `$PLAN_GOAL_MISSING` is `true`: under `WF_UNATTENDED=1` this is a **[GATE]** — open gate `goal-missing` and exit 0. Otherwise ask the user: "This plan has no goal summary. Please provide a one-line goal." Then write their answer as the first line under `## Goal` in `$PLAN_DIR/plan.md`, commit it scoped: `scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): add missing goal" --add plans/PLN-NNN-<slug>/plan.md` — a bare `git commit` takes the whole shared index (WFI-048/049). Re-run the eval to pick up the goal.
 3. `scripts/wf-exec.sh wf-claim.sh PLN-NNN` — **exit 2 means a live session already holds it.** Stop, say who holds it, and offer another plan. Take it only if the user says the holder is finished or wedged: `wf-claim.sh PLN-NNN --steal` (WFI-146).
@@ -844,9 +845,11 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
 
    Push to remote. **Wrap every call that talks to GitHub in `wf-retry.sh`** — it retries only transient failures (timeouts, 5xx, resets, rate limits) and returns a real refusal immediately:
    ```bash
-   ../../scripts/wf-exec.sh wf-retry.sh --label "git push" -- git push -u origin "$CURRENT_BRANCH"
+   ../../scripts/wf-exec.sh wf-retry.sh --tempfail --label "git push" -- git push -u origin "$CURRENT_BRANCH"
    ```
-   If it still fails, display the error and **stop** — ask the user to resolve manually. Under `WF_UNATTENDED=1` this is a **[GATE]** — open gate `merge-failed` with the error verbatim as the question, then exit 0.
+   **Exit 75 means GitHub was still down after every retry — not a question for a person** (coordinator WFI-006). Leave the plan in `testing`, open no gate, and stop: `scripts/wf-exec.sh wf-unclaim.sh $PLAN_NAME`, then exit 0. The next sweep re-dispatches the tester, which is the retry; a plan relaunched too many times without progress still reaches the loop breaker's `stuck` gate, so a long outage does get to a human. Attended, say that GitHub is still failing and to re-run `/wf-test` later.
+
+   **Any other non-zero exit is a refusal** (a protected branch, a rejected non-fast-forward, a permission denial). Display the error and **stop** — ask the user to resolve manually. Under `WF_UNATTENDED=1` this is a **[GATE]** — open gate `merge-failed` with the error verbatim as the question, then exit 0.
 
    client-a's PLN-157 (WFI-186) finished 1734 of 1734 tests green and then lost its exit path to GitHub: `git push` timed out after 2m, `gh` answered HTTP 503, the release fetch timed out. Each of those parked the plan on a gate whose only correct answer was "try again" — a person doing a computer's retry. **A weather report about github.com is not a fact about the plan.** What must NOT be retried is the other half: a protected branch, a rejected non-fast-forward, a permission denial. Those are answers, and `wf-retry.sh` passes them straight back so the gate question still describes what actually happened.
    Then check whether this branch is **already on release**, before creating a PR:
@@ -887,9 +890,14 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
      fi
    ```
    **"A PR exists" is not the test — "an OPEN PR exists" is.** `gh pr view <branch>` answers with that branch's most recent PR *in any state*, so a branch whose earlier PR was **merged** and which has since gained more commits reads as "already has a PR". client-d WFI-022: PR #17 was merged before Amendment A1 was written, the branch carried 9 further commits and was not an ancestor of `origin/release`, and following this step literally skipped `gh pr create` and then ran `gh pr merge` against an already-merged PR — which fails, and routes a **passing** plan back to the builder. `gh pr list --state open` returns `[]` there, which is the truth. Merge by URL, too: a bare `gh pr merge` re-resolves the branch through the same `gh pr view` semantics and lands back on the merged one.
-   **Merge the PR.** If merge fails (conflicts, branch protection, required checks), **stop and route to builder:**
+   **Merge the PR.** Exit 75 is GitHub still down, the same as the push above: `scripts/wf-exec.sh wf-unclaim.sh $PLAN_NAME`, exit 0, and let the next sweep retry — routing a passing plan back to its builder over a 503 costs a whole build cycle (coordinator WFI-006). Any other failure (conflicts, branch protection, required checks) **stops and routes to builder:**
    ```bash
-     if ! ../../scripts/wf-exec.sh wf-retry.sh --label "gh pr merge" -- gh pr merge "$OPEN_PR" --merge 2>/tmp/wf-pr-merge-err; then
+     ../../scripts/wf-exec.sh wf-retry.sh --tempfail --label "gh pr merge" -- gh pr merge "$OPEN_PR" --merge 2>/tmp/wf-pr-merge-err
+     MERGE_RC=$?
+     if [ "$MERGE_RC" -eq 75 ]; then
+       echo "GitHub still failing after retries — leaving $PLAN_NAME in testing for the next sweep."
+       # unclaim and exit 0: no gate, no route back (coordinator WFI-006)
+     elif [ "$MERGE_RC" -ne 0 ]; then
        PR_URL="$OPEN_PR"
        echo "MERGE FAILED: PR $PR_URL — see error above."
        echo "Routing back to builder."

@@ -100,7 +100,23 @@ release-branches/release → release's own permanent worktree — staging enviro
    certificate, a required external service) can crash production if `/wf-deploy` promotes it
    before that dependency exists (WFI-011). Surfacing here gives `/wf-deploy` a second, earlier
    read of the same list.
-5. **Show commits to user** — display the commit list from step 3. Tell the user: "Run `/model haiku` if not already on it, then confirm to proceed." Then prompt: "These commits are staged for E2E. Proceed? (y/n)"
+5. **Ask whether this promotion needs a person at all** (coordinator WFI-006):
+   ```bash
+   scripts/wf-exec.sh wf-autonomy.sh release
+   ```
+   `release` runs unattended by default: it does not leave this machine, and the permission
+   baseline, not a pause, is what keeps it safe. **Exit `0`:** show the commit list from step 3,
+   say "release runs unattended by default — proceeding", and do not prompt. If a stale
+   `release-approval` gate is open, close it with the setting as its basis, then continue at step 6:
+   ```bash
+   if scripts/wf-exec.sh wf-list-gates.sh RELEASE 2>/dev/null | grep -q "$(printf '\t')release-approval$(printf '\t')"; then
+     scripts/wf-exec.sh wf-gate-close.sh RELEASE "orchestrator.autonomy: release unattended by default (WFI-006)" --decision approve --basis config
+   fi
+   ```
+   **Exit `1` or `2`:** the project has put `release` back under `attended_for`, or its daily
+   ceiling is spent. Prompt as below.
+
+   **Show commits to user** — display the commit list from step 3. Tell the user: "Run `/model haiku` if not already on it, then confirm to proceed." Then prompt: "These commits are staged for E2E. Proceed? (y/n)"
    Wait for explicit confirmation before continuing. If they decline, stop here — do not proceed to step 6.
 
    On "yes", **close a stale `release-approval` gate before continuing**, if one is open — an
@@ -334,7 +350,7 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   ```
   | Exit | What it means | What you do |
   |-|-|-|
-  | `0` | A dated, unexpired, human-authored grant covers `release` | Say which grant authorized it, quoting the script's line, and continue at step 6 |
+  | `0` | `release` runs unattended by default (WFI-006), or a dated, unexpired, human-authored grant covers it | Quote the script's line and continue at step 6 |
   | `1` | No grant, or it does not cover `release`, or it has expired or hit its daily ceiling | Open the gate below, then unclaim and exit 0 — **STOP. Do not merge, push, or run step 6 or anything after it.** |
   | `2` | The grant is malformed — it is not a refusal, it is a broken config | Open the gate below with the script's stderr in the question verbatim, then unclaim and exit 0 — **STOP, same as exit 1.** |
 

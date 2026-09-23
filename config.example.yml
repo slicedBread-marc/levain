@@ -391,11 +391,12 @@ manualTestGate:
 # Who decides a drafted plan may be built.
 #
 #   gate     every plan parks as a `spec-approval` gate and waits for a human.
-#            The default, and the pre-3.0 behavior.
-#   verdict  the architecture review runs unattended and its VERDICT is the
-#            gate: Approved / Approved-with-notes advances to `ready`, Blocked
-#            goes round the fix loop, and only a plan still Blocked after
-#            maxReviewRounds parks for a human.
+#            The pre-3.0 behavior, and the default until WFI-006.
+#   verdict  the default. The architecture review runs unattended and its
+#            VERDICT is the gate: Approved / Approved-with-notes advances to
+#            `ready`, Blocked goes round the fix loop, and only a plan still
+#            Blocked after maxReviewRounds — or tagged with one of gateTags
+#            (security by default) — parks for a human.
 #
 # `verdict` exists because the human decision was measured and found empty: in
 # one 16-plan program the review found Critical findings in 8 of 8 plans, so the
@@ -408,7 +409,7 @@ manualTestGate:
 # compensating control — leave it on. See projectProfile above for which mode
 # each governance tier recommends.
 specApproval:
-  mode: gate
+  mode: verdict
 
   # Blocked rounds allowed before parking as a `spec-stuck` gate. A plan needing
   # a 4th round has a problem the reviewer cannot articulate, which is exactly

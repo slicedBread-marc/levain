@@ -41,7 +41,7 @@ Rules, in force for the whole session:
 | 1 | Deferred criteria to include | [AUTO] | Include none — do not widen scope unattended |
 | 4b | Goal confirmation | [AUTO] | Accept your own draft if it is concrete and specific. If you cannot write a concrete goal from the source artifact, [GATE] `goal-missing` |
 | 4c | Tag assignment | [AUTO] | Assign from `wf-list-tags.sh` based on slug, goal, and touched paths |
-| 7c | Auto-test promotion (y/n) | [AUTO] | **Yes** — promote. Maximizing automation is the standing direction; this overrides "never auto-promote" in step 7c |
+| 7c | Auto-test promotion (y/n) | [AUTO] | **Yes** — promote, the same as attended since WFI-006 |
 | Review gate | Plan approval | **[GATE]** or [AUTO] | Depends on `specApproval.mode` — see below |
 | 6a (replan) | An amendment narrows the Goal | **[GATE]** | `scope-reduction` — always, whatever the verdict and whatever the mode |
 
@@ -50,14 +50,14 @@ Rules, in force for the whole session:
 Read the mode before you exit — do not assume either behavior:
 
 ```bash
-SPEC_MODE=$(scripts/wf-exec.sh wf-config-get.sh specApproval.mode gate)
+SPEC_MODE=$(scripts/wf-exec.sh wf-config-get.sh specApproval.mode verdict)
 MAX_ROUNDS=$(scripts/wf-exec.sh wf-config-get.sh specApproval.maxReviewRounds 3)
 GATE_TAGS=$(scripts/wf-exec.sh wf-config-get.sh specApproval.gateTags --list)
 ```
 
-**`gate` (default)** — the hard stop on *approval*. A spec may be written unattended; it may not be **approved** unattended. Park as `spec-approval` and exit.
+**`gate`** — the hard stop on *approval*. A spec may be written unattended; it may not be **approved** unattended. Park as `spec-approval` and exit.
 
-**`verdict`** — **the verdict is the gate**, not the plan's existence. An approved plan goes to `ready` with no human.
+**`verdict` (default since WFI-006)** — **the verdict is the gate**, not the plan's existence. An approved plan goes to `ready` with no human.
 
 **`gateTags`** — plans carrying one of these tags always gate, whatever the verdict. The escape hatch, and not overridable.
 
@@ -468,9 +468,9 @@ If the user picks a bug BUG-NNN:
     Automation opportunity: criterion "<text>" resembles past realized auto-tests:
       - PLN-NNN "<prior criterion>" → <test name> (<file>)
     Consider classifying this as automated (Tests table + Build & Tests checklist)
-    instead of Human Test Criteria. Promote? (y/n)
+    instead of Human Test Criteria. Promoting.
     ```
-    If yes, add the test to the Tests table (step 7) and skip adding it under Human Test Criteria. If no, proceed normally. **Never auto-promote — always ask** (except under `WF_UNATTENDED=1`, where this is an [AUTO] yes — see [Unattended mode](#unattended-mode)). If the log doesn't exist or has no relevant matches, skip this step silently.
+    Then add the test to the Tests table (step 7) and skip adding it under Human Test Criteria. **Promote without asking** (WFI-006): maximizing automation is the standing direction, and the answer was always yes. The printed line is the record; the operator can say "keep it manual" and you move it back. If the log doesn't exist or has no relevant matches, skip this step silently.
 8. **Fill verification checklist** — the verify agent needs to know exactly what to check. For `### Human Test Criteria`, split into two subsections:
    - `#### Chrome-Assisted` — objectively verifiable behavior (navigations, clicks, form submissions, error states, persistence). Each criterion starts with a route: `- [ ] /login — redirects to /dashboard after valid credentials`
    - `#### Manual` — checks no machine can make. **Every one carries a reason tag, written first on the line.** Exactly four tags are legal:
@@ -683,7 +683,7 @@ Columns, for reading the table: `ID | Slug | State | Priority | Branch | Updated
 |-|-|-|
 | `mode: verdict`, no gating tag | `draft → ready` — no gate, no human | fix, re-review, up to `maxReviewRounds` |
 | carries a `specApproval.gateTags` tag | **[GATE]** `spec-approval`, with the review attached | same fix loop |
-| `mode: gate` (the default) | **[GATE]** `spec-approval`, with the review attached | same fix loop |
+| `mode: gate` | **[GATE]** `spec-approval`, with the review attached | same fix loop |
 
 ```
 draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-approval] (state stays draft)
@@ -733,7 +733,7 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
 
 6. **Route the approved plan.** Read the mode and the gating tags — don't assume either:
    ```bash
-   SPEC_MODE=$(scripts/wf-exec.sh wf-config-get.sh specApproval.mode gate)
+   SPEC_MODE=$(scripts/wf-exec.sh wf-config-get.sh specApproval.mode verdict)
    GATE_TAGS=$(scripts/wf-exec.sh wf-list-tags.sh --gating)
    ```
 

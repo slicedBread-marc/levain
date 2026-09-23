@@ -2631,8 +2631,11 @@ mkdir -p "$AUTH/plans" "$AUTH/.claude"
   printf 'y\n' > src.txt && git commit -qam "real work"
 ) >/dev/null 2>&1
 
+# Every fixture below lists release and deploy under attended_for: they test
+# what a project that took those gates back gets. The WFI-006 default, where
+# neither needs a grant, is asserted first on its own.
 auth_cfg() {   # auth_cfg <mode> [standing_for...]
-  { printf 'project_slug: "auth-demo"\norchestrator:\n  enabled: true\n  autonomy:\n    mode: %s\n' "$1"
+  { printf 'project_slug: "auth-demo"\norchestrator:\n  enabled: true\n  autonomy:\n    attended_for:\n      - release\n      - deploy\n    mode: %s\n' "$1"
     if [ "$1" = standing ]; then
       printf '    granted_by: "A Tester"\n    granted_on: 2026-01-01\n    expires_on: 2099-01-01\n    max_per_day: 4\n    standing_for:\n'
       shift; for a in "$@"; do printf '      - %s\n' "$a"; done
@@ -2651,8 +2654,13 @@ auth_dispatches_release() {
   case "$out" in *"would spawn: release RELEASE"*) echo true ;; *) echo false ;; esac
 }
 
-# attended is the default and the shipping posture — every promotion stops for
-# a human, so there is nothing for an unattended worker to do.
+# coordinator WFI-006: with no autonomy config at all, release (and a local deploy)
+# needs no grant — only production-push reaches users.
+printf 'project_slug: "auth-demo"\norchestrator:\n  enabled: true\n' > "$AUTH/claude-workflow.yml"
+assert_eq "by default, release is dispatched with no grant" "true" "$(auth_dispatches_release)"
+
+# attended_for takes the gate back — every listed promotion stops for a human,
+# so there is nothing for an unattended worker to do.
 auth_cfg attended
 assert_eq "attended: release is not dispatched" "false" "$(auth_dispatches_release)"
 

@@ -173,7 +173,23 @@ Before starting, confirm E2E passed on release:
    — two plans whose deferred criteria the question never showed. Step 2a's fast-forward means the
    *merge* is never stale; the **question** is what ages, and only the tip scoping catches it. On
    exit `2`, say in the gate question that new commits landed on `release` after the earlier answer.
-5. **Prompt user**: "These commits will be promoted to main. Proceed? (y/n)"
+5. **Ask whether this promotion needs a person at all** (coordinator WFI-006):
+   ```bash
+   scripts/wf-exec.sh wf-autonomy.sh deploy
+   ```
+   `deploy` runs unattended by default: it does not leave this machine, and the permission
+   baseline, not a pause, is what keeps it safe. **Exit `0`:** show the commit list from step 3,
+   say "deploy runs unattended by default — proceeding", and do not prompt. If a stale
+   `deploy-approval` gate is open, close it with the setting as its basis, then continue at step 6:
+   ```bash
+   if scripts/wf-exec.sh wf-list-gates.sh DEPLOY 2>/dev/null | grep -q "$(printf '\t')deploy-approval$(printf '\t')"; then
+     scripts/wf-exec.sh wf-gate-close.sh DEPLOY "orchestrator.autonomy: deploy unattended by default (WFI-006)" --decision approve --basis config
+   fi
+   ```
+   **Exit `1` or `2`:** the project has put `deploy` back under `attended_for`, or its daily
+   ceiling is spent. Prompt as below.
+
+   **Prompt user**: "These commits will be promoted to main. Proceed? (y/n)"
    Wait for explicit confirmation before continuing. If they decline, stop here — do not proceed
    to step 6.
 
@@ -427,7 +443,7 @@ Set when `WF_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   ```
   | Exit | What it means | What you do |
   |-|-|-|
-  | `0` | A dated, unexpired grant covers `deploy` | Name the grant, continue at step 6 |
+  | `0` | `deploy` runs unattended by default (WFI-006), or a dated, unexpired grant covers it | Quote the script's line and continue at step 6 |
   | `1` or `2` | No grant, or malformed | Open the gate below (exit 2: include the script's stderr verbatim — a malformed grant is a broken file, not a refusal), then unclaim and exit 0 — **STOP. Do not merge, push, or run step 6 or anything after it.** |
 
   ```bash

@@ -1,8 +1,8 @@
 # Standing authorization
 
-**Status:** ships **off**. Absent config means `mode: attended`, which is exactly the
-behaviour every client had before this existed. Nothing changes on deploy until a project
-writes a grant.
+**Status:** `release` and `deploy` are **unattended by default** since coordinator WFI-006.
+Absent config means `mode: attended`, which now stops only `production-push` for a human.
+A project that wants the release or deploy gate back lists it under `attended_for`.
 
 Answers client-a's WFI-159: a person granted standing merge/deploy authorization in
 conversation, asked where to record it, and there was nowhere. The authorization survived
@@ -34,6 +34,36 @@ the log with a decision no skill ever acted on.
 **Exit 2 is never "proceed".** A grant nobody can parse authorized nothing.
 
 ---
+
+## Unattended by default: release and deploy
+
+`release` (develop → release, plus the E2E suite) and `deploy` (release → main, **locally**)
+need no grant. `wf-autonomy.sh` answers 0 for them with no config, logs an `autonomy-use`
+line that says *authorized by default*, and counts them against their own ceiling.
+
+Why: neither leaves the machine. A wrong local `main` is undone with `git reset`, and a red
+suite routes back to the builder as it always did. The pipeline stops for a person only
+where security or an irreversible external act needs one, and since the permission
+baseline (below, coordinator WFI-005) the security lives in code, not in a pause. The approval
+gates in front of these two were answered "approve" every time they were asked.
+`production-push` is the step that reaches users, so it keeps its gate.
+
+```yaml
+orchestrator:
+  autonomy:
+    # Taking a gate back. Say why in the comment — an unexplained attended_for
+    # is a pause nobody can later judge the need for.
+    attended_for:
+      - release     # e.g. the E2E suite is shared and slow; batch releases by hand
+    max_unattended_per_day: 12   # per action, default 12
+```
+
+- `attended_for` accepts only `release` and `deploy`; anything else is reported by
+  `--show` as changing nothing.
+- `max_unattended_per_day` bounds the default the way `max_per_day` bounds a grant: a role
+  dispatching in a loop is still stopped, per action, per UTC day.
+- A standing grant still works as before for anything listed under `attended_for`, and is
+  still the only unattended route to `production-push`.
 
 ## What may be granted
 

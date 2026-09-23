@@ -148,7 +148,7 @@ scripts/wf-exec.sh wf-orchestrate.sh PLN-097 --json     # machine-readable
   "state": "draft",
   "result": "blocked-on-human",
   "gate": { "name": "spec-approval", "question": "…", "context": "plans/PLN-094-…/plan.md" },
-  "autonomy": { "mode": "attended", "covers": "", "expires": "" },
+  "autonomy": { "mode": "attended", "unattended": "release deploy", "covers": "", "expires": "" },
   "steps": ["spec:rc=0"]
 }
 ```
@@ -156,13 +156,13 @@ scripts/wf-exec.sh wf-orchestrate.sh PLN-097 --json     # machine-readable
 `autonomy` reports how far this project has authorized the harness to go **after**
 `complete` — the `/wf-release`, `/wf-deploy` and production-push promotions. The
 orchestrator's sweep *does* dispatch `/wf-release` and `/wf-deploy` today, the moment
-`release`/`main` has something to promote — but dispatch is not authorization: the
-dispatched worker still checks this same grant itself, and with `"mode": "attended"`
-(the default, and what you get with no config at all) it opens a
-`release-approval`/`deploy-approval` gate and stops for a person, same as an attended run
-that got no confirmation. Only `production-push` is never dispatched by the sweep at
-all — pushing `main` is a human-initiated step even when the local promotion is
-unattended.
+`release`/`main` has something to promote. Since coordinator WFI-006 neither needs a grant:
+`unattended` lists them, and both run to completion with no person, because neither
+leaves the machine — a wrong local `main` is undone with `git reset`. A project takes
+either gate back by listing it under `orchestrator.autonomy.attended_for`, and then the
+worker opens a `release-approval`/`deploy-approval` gate and stops. `production-push` is
+the step that reaches users: it still needs a standing grant (`covers`) or a person, and
+the sweep never dispatches it.
 
 It is a **ceiling report, not a permission**. Exit 20 is still a hard stop whatever it
 says: the field exists so a caller can tell "nobody has authorized anything here" from
@@ -232,7 +232,7 @@ The orchestrator parks work rather than guessing. These never run unattended:
 | `consistency-migration` | A plan contradicts an already-built dependency — that is a migration, not an amendment |
 | `goal-missing` | The goal is quoted in PRs and by the tester — it is not invented |
 | `migration` | Pending workflow-upgrade actions |
-| `merge-failed` | `git push` was rejected |
+| `merge-failed` | `git push` or the PR merge was **refused**. A GitHub outage that outlasts `wf-retry.sh` opens no gate — the plan waits for the next sweep |
 | `stuck` | A plan burned its attempt budget **with no forward progress** — neither its state nor its `progress.md` step checklist moved. Retrying will not help |
 
 Queued gates are drained with `/wf-attend`.

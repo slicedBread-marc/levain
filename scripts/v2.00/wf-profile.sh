@@ -54,7 +54,7 @@ case "$mode" in
         ;;
     esac
 
-    spec_mode=$(wf_cfg specApproval.mode gate)
+    spec_mode=$(wf_cfg specApproval.mode verdict)
     block_cosmetic=$(wf_cfg manualTestGate.blockOnCosmetic true)
     autonomy_mode=$(wf_cfg orchestrator.autonomy.mode attended)
     production_url=$(wf_cfg production_url "")

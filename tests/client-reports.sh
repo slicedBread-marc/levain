@@ -4070,17 +4070,57 @@ section "Standing authorization is recorded, scoped and expiring (client-a WFI-1
 AUTONOMY_CFG_BACKUP=""
 [ -f claude-workflow.yml ] && AUTONOMY_CFG_BACKUP=$(cat claude-workflow.yml)
 
-# Absent config is the pre-v6.18 behaviour exactly: everything stops for a human.
-rm -f claude-workflow.yml
-assert_fails "with no config at all, nothing is authorized" \
+# Absent config: release and deploy run unattended, production-push stops for a
+# human (coordinator WFI-006). Neither of the first two leaves the machine; the push is
+# the step that reaches users.
+rm -f claude-workflow.yml .claude/orchestrator/events.log
+assert_ok "with no config at all, release is authorized by default" \
   "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+assert_ok "and so is a local deploy" \
+  "$SCRIPT_DIR/wf-autonomy.sh" deploy --quiet
+assert_eq "but the production push is exit 1 — it still needs a person" "1" \
+  "$("$SCRIPT_DIR/wf-autonomy.sh" production-push --quiet; echo $?)"
+assert_eq "a default authorization is on the event log, and says it was the default" "true" \
+  "$(grep 'autonomy-use' .claude/orchestrator/events.log \
+     | grep -q 'authorized by default' && echo true || echo false)"
+
+# A project takes a gate back by listing it under attended_for.
+cat > claude-workflow.yml <<'YML'
+orchestrator:
+  autonomy:
+    attended_for:
+      - release
+YML
+assert_eq "attended_for restores the release gate" "1" \
+  "$("$SCRIPT_DIR/wf-autonomy.sh" release --quiet; echo $?)"
+assert_ok "and leaves deploy unattended" \
+  "$SCRIPT_DIR/wf-autonomy.sh" deploy --quiet
+
+# The default still has a ceiling, or a role dispatching in a loop is unbounded.
+rm -f .claude/orchestrator/events.log
+cat > claude-workflow.yml <<'YML'
+orchestrator:
+  autonomy:
+    max_unattended_per_day: 1
+YML
+assert_ok "the default is spent against max_unattended_per_day..." \
+  "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+assert_eq "...and the one past it is refused" "1" \
+  "$("$SCRIPT_DIR/wf-autonomy.sh" release --quiet; echo $?)"
+rm -f claude-workflow.yml .claude/orchestrator/events.log
 assert_eq "and --show says so without calling it a fault" "0" \
   "$("$SCRIPT_DIR/wf-autonomy.sh" --show >/dev/null 2>&1; echo $?)"
 
+# The grants below exercise standing semantics for release and deploy, so each
+# one also lists them under attended_for — otherwise the WFI-006 default would
+# authorize them before the grant was ever read.
 write_grant() {
   cat > claude-workflow.yml <<YML
 orchestrator:
   autonomy:
+    attended_for:
+      - release
+      - deploy
     mode: $1
     granted_by: "$2"
     granted_on: 2026-08-16
@@ -4503,15 +4543,33 @@ assert_eq "a permission denial keeps its own exit status" "128" \
   "$("$SCRIPT_DIR/wf-retry.sh" --attempts 3 --label "git push" -- ./retry-fixtures/denied.sh >/dev/null 2>&1; echo $?)"
 assert_eq "and is not retried — no backoff was paid" "true" \
   "$([ $(( $(date +%s) - RETRY_START )) -lt 5 ] && echo true || echo false)"
+
+# coordinator WFI-006: an outage that outlasts the retries still is not a human's
+# question. --tempfail tells the caller "still down" (75) from "refused" (the
+# command's own status), so wf-test can leave the plan for the next sweep.
+cat > retry-fixtures/down.sh <<'EOF'
+#!/usr/bin/env bash
+echo "error: HTTP 503 Service Unavailable" >&2
+exit 1
+EOF
+chmod +x retry-fixtures/down.sh
+assert_eq "--tempfail: an outage that never lifts exits 75" "75" \
+  "$("$SCRIPT_DIR/wf-retry.sh" --attempts 1 --tempfail --label "git push" -- ./retry-fixtures/down.sh >/dev/null 2>&1; echo $?)"
+assert_eq "--tempfail: a refusal keeps its own status" "128" \
+  "$("$SCRIPT_DIR/wf-retry.sh" --attempts 1 --tempfail --label "git push" -- ./retry-fixtures/denied.sh >/dev/null 2>&1; echo $?)"
+assert_eq "without --tempfail the outage is the command's status" "1" \
+  "$("$SCRIPT_DIR/wf-retry.sh" --attempts 1 --label "git push" -- ./retry-fixtures/down.sh >/dev/null 2>&1; echo $?)"
+assert_ok "wf-test leaves a still-down push for the next sweep, not a gate" \
+  grep -q 'Exit 75' "$LIB_ROOT/skills/wf-test/SKILL.md"
 rm -rf retry-fixtures
 
 # The two callers that lost PLN-157's exit path.
 assert_ok "wf-merge-release retries its fetch" \
   grep -q 'wf-retry.sh" --label "git fetch origin release"' "$SCRIPT_DIR/wf-merge-release.sh"
 assert_ok "wf-test wraps the push" \
-  grep -q 'wf-retry.sh --label "git push"' "$LIB_ROOT/skills/wf-test/SKILL.md"
+  grep -q 'wf-retry.sh --tempfail --label "git push"' "$LIB_ROOT/skills/wf-test/SKILL.md"
 assert_ok "and the PR merge" \
-  grep -q 'wf-retry.sh --label "gh pr merge"' "$LIB_ROOT/skills/wf-test/SKILL.md"
+  grep -q 'wf-retry.sh --tempfail --label "gh pr merge"' "$LIB_ROOT/skills/wf-test/SKILL.md"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A gate belongs to the number, not the name (client-a WFI-187)"

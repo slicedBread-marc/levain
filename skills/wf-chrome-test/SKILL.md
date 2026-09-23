@@ -38,11 +38,11 @@ Show menu from script output as a **numbered table** — always use table format
 | 2 | PLN-007-bug-006-province-puzzle-bleedthrough | Fix province puzzle bleedthrough |
 ```
 
-If exit code 1: check stderr for "CLAIMED:" lines. If stale claims are listed, show them and ask: "These plans have stale claims from a previous session. Clear claims and continue?" On yes, run `scripts/wf-exec.sh wf-unclaim.sh <plan-name>` for each, then re-run `scripts/wf-exec.sh wf-list-testable.sh`. If no claimed plans in stderr, say "No plans ready for testing. Run /wf-status to see pipeline state."
+If exit code 1: check stderr for "CLAIMED:" lines. If stale claims are listed, show them and stop — clearing them is a claim-steal and stays with a human (WFI-146). If the operator says those sessions are finished, run `scripts/wf-exec.sh wf-unclaim.sh <plan-name>` for each, then re-run `scripts/wf-exec.sh wf-list-testable.sh`. If no claimed plans in stderr, say "No plans ready for testing. Run /wf-status to see pipeline state."
 
-Then tell the user: "Run `/model sonnet`, then pick a number."
+**Do not wait for a pick (WFI-006).** Take the plan the invocation named, else the first row. Print one line saying which you took and proceed.
 
-After user picks:
+Then, for the chosen plan:
 1. `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"` to get plan details
 2. If `$PLAN_GOAL_MISSING` is `true`, ask the user: "This plan has no goal summary. Please provide a one-line goal." Then write their answer as the first line under `## Goal` in `$PLAN_DIR/plan.md`, commit it scoped: `scripts/wf-exec.sh wf-commit.sh "spec(PLN-NNN-<slug>): add missing goal" --add plans/PLN-NNN-<slug>/plan.md` — a bare `git commit` takes the whole shared index (WFI-048/049). Re-run the eval to pick up the goal.
 3. `scripts/wf-exec.sh wf-claim.sh PLN-NNN` — exit 2 means a live session holds it: stop and say so; `--steal` only if the user says that session is finished (WFI-146)

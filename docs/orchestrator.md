@@ -349,7 +349,7 @@ artifacts; `/wf-attend` drains the queue.
 
 | Gate | Opened when |
 |-|-|
-| `spec-approval` | A spec is drafted **and reviewed**, under `specApproval.mode: gate` (the default) — writing and reviewing a spec unattended is fine, approving one is not. Also opened in `verdict` mode for plans tagged in `specApproval.gateTags`. The review always runs before the gate opens, in every mode: gating first meant a tagged plan got *less* automated scrutiny than an untagged one, and a human was spent obtaining a review a machine could have run immediately |
+| `spec-approval` | A spec is drafted **and reviewed**, under `specApproval.mode: gate` — writing and reviewing a spec unattended is fine, approving one is not. Also opened in `verdict` mode for plans tagged in `specApproval.gateTags`. The review always runs before the gate opens, in every mode: gating first meant a tagged plan got *less* automated scrutiny than an untagged one, and a human was spent obtaining a review a machine could have run immediately |
 | `spec-stuck` | The review blocked the plan for `maxReviewRounds` rounds running. Any mode — the fix loop is the same everywhere |
 | `scope-reduction` | A replan's amendment drops or qualifies a capability the plan's `## Goal` promises. Fires whatever the review verdict says: a reviewer judges whether a plan is sound, and a narrowing is very often sound engineering, but whether a capability the user asked for may be dropped is a product decision no verdict answers |
 | `consistency-migration` | A plan contradicts an **already-built** dependency — an amendment can't fix it |

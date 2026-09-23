@@ -129,6 +129,30 @@ cfg_exp=$(wf_cfg orchestrator.autonomy.expires_on "")
 cfg_max=$(wf_cfg orchestrator.autonomy.max_per_day 4)
 cfg_for=$(wf_cfg_list orchestrator.autonomy.standing_for | tr '\n' ' ')
 
+# ── Unattended by default (coordinator WFI-006) ────────────────────────────────────
+#
+# `release` (develop → release plus the E2E suite) and `deploy` (release →
+# main, LOCALLY) need no grant any more. Neither leaves the machine: a wrong
+# local main is undone with `git reset`, and a red suite routes back to the
+# builder as it always did. The pipeline is meant to stop for a person only
+# when security needs one, and since the permission baseline (WFI-005) that
+# security lives in code. `production-push` is the step that reaches users,
+# so it still needs a standing grant or a human at its gate.
+#
+# A project that wants either gate back lists it, with a reason in a comment:
+#
+#   orchestrator:
+#     autonomy:
+#       attended_for:
+#         - release     # e.g. "E2E suite is slow and shared; batch releases by hand"
+#
+# The per-action daily ceiling still applies, so a role dispatching in a loop
+# is still stopped. It is max_unattended_per_day (default 12), separate from a
+# standing grant's max_per_day.
+DEFAULT_UNATTENDED="release deploy"
+cfg_attended_for=$(wf_cfg_list orchestrator.autonomy.attended_for | tr '\n' ' ')
+cfg_max_unattended=$(wf_cfg orchestrator.autonomy.max_unattended_per_day 12)
+
 # ── --list ─────────────────────────────────────────────────────────────────
 if [ "$mode" = "list" ]; then
   cat <<EOF
@@ -172,6 +196,11 @@ for a in $cfg_for; do
   fi
 done
 
+for a in $cfg_attended_for; do
+  in_list "$a" "$DEFAULT_UNATTENDED" \
+    || note "attended_for lists '$a' — only '$DEFAULT_UNATTENDED' run unattended by default, so it changes nothing"
+done
+
 if [ "$cfg_mode" = "standing" ]; then
   [ -n "$cfg_by" ]  || note "mode is 'standing' but granted_by is empty — a grant needs an author"
   [ -n "$cfg_on" ]  || note "mode is 'standing' but granted_on is empty"
@@ -211,7 +240,7 @@ if [ "$mode" = "show" ]; then
   if [ "$cfg_mode" = "standing" ]; then
     echo "Coherent. Every action above is read by a script."
   else
-    echo "Attended: every promotion stops for a human. This is the default."
+    echo "Attended: production-push stops for a human. release and deploy run unattended by default (WFI-006)."
   fi
   exit 0
 fi
@@ -250,14 +279,21 @@ refuse() {
   exit 1
 }
 
-[ "$cfg_mode" = "standing" ] || \
-  refuse "autonomy is 'attended' — $action needs a human. Park a gate and stop." "mode is attended"
+by_default=false
+if in_list "$action" "$DEFAULT_UNATTENDED" && ! in_list "$action" "$cfg_attended_for"; then
+  by_default=true
+fi
 
-in_list "$action" "$cfg_for" || \
-  refuse "the standing grant covers '${cfg_for% }' — not $action. Park a gate and stop." "not in standing_for"
+if ! $by_default; then
+  [ "$cfg_mode" = "standing" ] || \
+    refuse "autonomy is 'attended' — $action needs a human. Park a gate and stop." "mode is attended"
 
-[ "$cfg_exp" \< "$today" ] && \
-  refuse "the standing grant expired on $cfg_exp (today is $today). Ask for a fresh one." "grant expired $cfg_exp"
+  in_list "$action" "$cfg_for" || \
+    refuse "the standing grant covers '${cfg_for% }' — not $action. Park a gate and stop." "not in standing_for"
+
+  [ "$cfg_exp" \< "$today" ] && \
+    refuse "the standing grant expired on $cfg_exp (today is $today). Ask for a fresh one." "grant expired $cfg_exp"
+fi
 
 # ── Ceiling ────────────────────────────────────────────────────────────────
 #
@@ -298,6 +334,19 @@ if [ -f "$log" ]; then
     END { print n + 0 }' "$log" 2>/dev/null || true)
   used=${used:-0}
 fi
+if $by_default; then
+  if [ "$used" -ge "$cfg_max_unattended" ]; then
+    refuse "the unattended ceiling of $cfg_max_unattended $action(s)/day is spent ($used used today). Park a gate and stop." \
+           "daily $action ceiling $cfg_max_unattended reached"
+  fi
+  if $record; then
+    wf_event autonomy-use "${artifact:-—}" \
+      "$action authorized by default (unattended since WFI-006) — $((used + 1))/$cfg_max_unattended $action today"
+  fi
+  say "$action authorized — unattended by default ($((used + 1))/$cfg_max_unattended $action today)."
+  exit 0
+fi
+
 if [ "$used" -ge "$cfg_max" ]; then
   refuse "the standing grant's ceiling of $cfg_max $action(s)/day is spent ($used used today). Park a gate and stop." \
          "daily $action ceiling $cfg_max reached"

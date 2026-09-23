@@ -128,7 +128,7 @@ If no actionable items (or exit code 1), output: 'No plans ready to implement. R
 Final response: ONLY the formatted tables. No commentary. No paragraphs.")
 ```
 
-Display the subagent's output verbatim, then tell the user: "Run `/model sonnet`, then pick a number."
+Display the subagent's output verbatim, then take a row as described in Entry below.
 
 ---
 
@@ -150,7 +150,7 @@ Do NOT use agents for writing code — implementation is inherently sequential a
 
 Display the subagent output from IMMEDIATE STARTUP. **`wf-list-implementable.sh` is the ONLY source of truth for plan availability. Do NOT write your own detection logic, check worktree ages, or query claim files manually.**
 
-Wait for the user to pick a number. Then check the **Type** column for that row:
+**Do not wait for a pick (WFI-006).** If the invocation named a plan (`/wf-implement PLN-NNN`), take that row. Otherwise take the **first selectable row** — `new`, `resume` or `fix`; the script already lists urgent before normal. Print one line saying which you took and why (`Taking PLN-NNN (urgent, resume) — first selectable row.`) and proceed. The operator can interrupt and name another; a menu that waits for a number is a pause security does not justify. Then check the **Type** column for that row:
 
 | Type | Action |
 |-|-|

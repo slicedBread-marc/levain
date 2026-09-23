@@ -748,10 +748,11 @@ candidates_spec() {
 # behind a queue of freshly specced plans.
 # `release`/`deploy` sit ahead of everything else: they are logically PAST
 # `complete` — a plan that finished testing days ago and is sitting on develop
-# is further along than one just reaching verify. Only dispatched when a
-# standing grant actually covers them — dispatch() asks wf-autonomy.sh
-# --check first and skips otherwise, so the approval gate is parked by a human
-# running the skill attended, not by a worker spawned only to be refused. See
+# is further along than one just reaching verify. Only dispatched when
+# wf-autonomy.sh --check says yes — which, since coordinator WFI-006, it does by
+# default for both unless the project lists them under attended_for — so an
+# attended project's approval gate is parked by a human running the skill,
+# not by a worker spawned only to be refused. See
 # docs/autonomy.md and skills/wf-release, wf-deploy's "Unattended mode".
 # `consistency` sits ahead of `implement`: a cross-plan contradiction caught
 # while both plans are still documents is an amendment; caught after one is
@@ -1263,8 +1264,16 @@ case "$mode" in
       # opposite behaviour: one waits for a person, the other carries on into
       # /wf-release. Reporting the posture is what lets exit 20 stay a hard
       # stop while still telling the caller where the ceiling actually is.
-      printf '  "autonomy": { "mode": "%s", "covers": "%s", "expires": "%s" },\n' \
+      # `unattended` is what needs no grant at all since coordinator WFI-006: release
+      # and deploy, minus whatever the project took back with attended_for.
+      auto_un=""
+      auto_att=" $(wf_cfg_list orchestrator.autonomy.attended_for | tr '\n' ' ') "
+      for auto_a in release deploy; do
+        case "$auto_att" in *" $auto_a "*) ;; *) auto_un="${auto_un:+$auto_un }$auto_a" ;; esac
+      done
+      printf '  "autonomy": { "mode": "%s", "unattended": "%s", "covers": "%s", "expires": "%s" },\n' \
         "$(wf_cfg orchestrator.autonomy.mode attended)" \
+        "$auto_un" \
         "$(wf_cfg_list orchestrator.autonomy.standing_for | tr '\n' ' ' | sed 's/ $//')" \
         "$(wf_cfg orchestrator.autonomy.expires_on '')"
       printf '  "steps": ['

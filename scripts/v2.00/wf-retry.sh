@@ -34,8 +34,13 @@
 #
 # --attempts N   total tries, including the first (default 3)
 # --label TEXT   what to call this in the retry notice (default: the command)
+# --tempfail     when every attempt failed transiently, exit 75 (EX_TEMPFAIL)
+#                instead of the command's status. Lets a caller tell "GitHub is
+#                still down" from "GitHub said no": the first is left for the
+#                next sweep to retry, the second is a gate (coordinator WFI-006).
 #
-# Exit: the command's status. 64 for bad usage here.
+# Exit: the command's status; 75 with --tempfail when it never stopped being
+# transient. 64 for bad usage here.
 
 set -uo pipefail
 
@@ -45,18 +50,20 @@ source "$SELF_DIR/wf-orch-lib.sh"
 
 attempts=3
 label=""
+tempfail=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --attempts) attempts="${2:?--attempts requires a number}"; shift 2 ;;
     --label)    label="${2:?--label requires text}"; shift 2 ;;
+    --tempfail) tempfail=true; shift ;;
     --)         shift; break ;;
     -*)         echo "wf-retry: unknown option '$1'" >&2; exit 64 ;;
     *)          break ;;
   esac
 done
 
-[ $# -gt 0 ] || { echo "Usage: $0 [--attempts N] [--label TEXT] -- <command> [args...]" >&2; exit 64; }
+[ $# -gt 0 ] || { echo "Usage: $0 [--attempts N] [--label TEXT] [--tempfail] -- <command> [args...]" >&2; exit 64; }
 case "$attempts" in
   ''|*[!0-9]*) echo "wf-retry: --attempts must be a number, got '$attempts'" >&2; exit 64 ;;
 esac
@@ -101,6 +108,10 @@ while : ; do
     if [ "$attempt" -gt 1 ]; then
       echo "wf-retry: $label failed $attempt times — giving up (rc=$rc)" >&2
       wf_event retry-exhausted "—" "$label failed $attempt times, rc=$rc"
+    fi
+    if $tempfail && is_transient "$out"; then
+      echo "wf-retry: $label is still failing transiently — exit 75 (try again later)" >&2
+      exit 75
     fi
     exit "$rc"
   fi
