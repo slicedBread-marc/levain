@@ -1228,10 +1228,19 @@ fi
 # as wf-exec.sh. Only that folder (plus the unversioned dispatcher + map) gets
 # copied into the worktree — so an in-flight plan keeps running the scripts it
 # was built against, even after we publish newer generations.
+# A version is dotted digits and nothing else — the same test wf-exec.sh:73
+# makes, and for the same reason. `sort -V` places any non-numeric string
+# ABOVE every numeric version, so an unstamped marker like the registry's
+# em-dash satisfies EVERY row of version-map.txt and resolves to the NEWEST
+# folder — the precise opposite of what the WF column exists to guarantee.
+# This copy of the walk shipped without the test; a worktree whose plan row
+# carried `—` was handed the newest generation rather than the baseline.
+is_version() { [[ "$1" =~ ^[0-9]+(\.[0-9]+)*$ ]]; }
+
 resolve_script_folder() {
     local wf="$1"
     local map="$TARGET_ABS/scripts/version-map.txt"
-    [ -z "$wf" ] && wf="0.00"
+    is_version "$wf" || wf="0.00"
     [ -f "$map" ] || { echo ""; return; }
     local folder=""
     while IFS= read -r line; do

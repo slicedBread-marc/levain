@@ -40,13 +40,8 @@ if ! grep -q "^| $plan_id |" "$REGISTRY"; then
   exit 1
 fi
 
-# Replace the Priority column ($5). Exact ID match on $2 — a `~` regex match
-# would also hit PLN-041 when asked for PLN-04.
-awk -F'|' -v OFS='|' -v id="$plan_id" -v pri="$priority" '
-  function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-  trim($2) == id { $5 = " " pri " " }
-  { print }
-' "$REGISTRY" > "$REGISTRY.tmp" && mv "$REGISTRY.tmp" "$REGISTRY"
+# Replace the Priority column.
+wf_registry_set_field "$plan_id" priority "$priority" "$REGISTRY"
 
 if grep -q "^| $plan_id |.*| $priority |" "$REGISTRY"; then
   wf_registry_commit "registry($plan_id): priority → $priority"

@@ -67,14 +67,7 @@ done
 # Where is `release` checked out? Its own pinned worktree normally
 # (release-branches/release), but a client that has not migrated may hold it
 # in the shared checkout. Ask git rather than assume a path.
-wt=""
-_wt=""
-while IFS= read -r line; do
-  case "$line" in
-    worktree\ *) _wt="${line#worktree }" ;;
-    branch\ refs/heads/release) wt="$_wt" ;;
-  esac
-done < <(git worktree list --porcelain 2>/dev/null || true)
+wt=$(wf_worktree_for_branch release)
 
 if [ -z "$wt" ]; then
   # Not checked out anywhere. The ref can still be reset — a bare ref update

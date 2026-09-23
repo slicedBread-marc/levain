@@ -138,7 +138,16 @@ question_fit() {
 # gate loop below calls it once per open gate. On a queue of N gates that was
 # N full re-reads of REGISTRY.md rebuilding the identical graph each time.
 _blocked_map=""
-if [ -f "$REGISTRY" ]; then
+_blocked_map_built=""
+# Built on FIRST USE, not at startup. The dispatcher calls this script once per
+# candidate per tick only to ask whether that artifact has a gate open, and
+# `wf_gate_file` in the probe below exits before any blocked_by call when it
+# has none — so the common answer used to cost a full walk of the registry,
+# rebuilding a graph nothing then read.
+_ensure_blocked_map() {
+  if [ -n "$_blocked_map_built" ]; then return 0; fi
+  _blocked_map_built=1
+  if [ ! -f "$REGISTRY" ]; then return 0; fi
   _blocked_map=" $(awk -F'|' '
     function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
     /^\|/ {
@@ -171,8 +180,10 @@ if [ -f "$REGISTRY" ]; then
       }
     }
   ' "$REGISTRY")"
-fi
+}
+
 blocked_by() {
+  _ensure_blocked_map
   local rest="${_blocked_map##* $1=}"
   [ "$rest" = "$_blocked_map" ] && { printf '0'; return 0; }
   printf '%s' "${rest%% *}"
@@ -201,6 +212,12 @@ fi
 
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
+
+# Warm the map HERE, in this shell. Each iteration below evaluates its gate in
+# a subshell, so a first touch from inside one would build the map in that
+# subshell and discard it — every gate re-running the identical walk, which is
+# the exact cost the map exists to pay once.
+_ensure_blocked_map
 
 for gate_file in "$gates_dir"/*.gate; do
   [ -f "$gate_file" ] || continue

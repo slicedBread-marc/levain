@@ -219,6 +219,28 @@ launch_fails_get() { cat "$ORCH/launch-fails" 2>/dev/null || echo 0; }
 launch_fails_bump() { echo $(( $(launch_fails_get) + 1 )) > "$ORCH/launch-fails"; }
 launch_fails_reset() { rm -f "$ORCH/launch-fails" 2>/dev/null || true; }
 
+# step_counts_of <id> → "3/11", or "0/0" when there is no plan or no
+# progress.md — the same reading wf-progress-count.sh gives.
+#
+# Done in-process rather than by forking that script. It is a thin wrapper
+# around wf_step_counts, which this file has already sourced, and the fork
+# paid for a fresh bash, a re-source of the whole orchestrator lib and a
+# re-resolution of the develop root — once per candidate, on every tick, for
+# a two-integer reading.
+#
+# The `PLN-` match is the wrapper's own rule and is kept exactly: an id with
+# no plan number in it (a bug or brief not yet converted) has no progress.md
+# to count and reads as 0/0.
+step_counts_of() {
+  local id="$1" plan_id slug progress
+  if [[ "$id" =~ PLN-[0-9]+ ]]; then plan_id="${BASH_REMATCH[0]}"; else printf '0/0'; return 0; fi
+  slug=$(wf_registry_field "$plan_id" slug "$ROOT/plans/REGISTRY.md")
+  if [ -z "$slug" ]; then printf '0/0'; return 0; fi
+  progress="$ROOT/plans/${plan_id}-${slug}/progress.md"
+  if [ ! -f "$progress" ]; then printf '0/0'; return 0; fi
+  wf_step_counts "$progress"
+}
+
 # Forward progress — what makes the attempt budget mean something.
 #
 # The budget counts worker LAUNCHES. Without this, a clean resume of an 11-step
@@ -267,7 +289,7 @@ progress_sig() {
     DEPLOY)  printf 'deploy:%s'  "$(progress_ref main)";    return 0 ;;
   esac
   st=$(plan_state "$id")
-  cnt=$("$SELF_DIR/wf-progress-count.sh" "$id" 2>/dev/null || echo "0/0")
+  cnt=$(step_counts_of "$id")
   # A finished consistency pass moves nothing else — the plan stays `ready` —
   # so it has to appear here or a successful pass reads as a stalled worker.
   "$SELF_DIR/wf-list-consistency.sh" "$id" >/dev/null 2>&1 && con="c"

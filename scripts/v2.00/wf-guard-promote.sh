@@ -130,13 +130,18 @@
 
 set -uo pipefail   # deliberately NOT -e: a failing probe must allow, not block
 
-payload=$(cat 2>/dev/null || true)
+payload=$(</dev/stdin)
 [ -n "$payload" ] || exit 0
 
 # Cheap pre-filter before python3 forks: the overwhelming majority of Bash
 # calls are neither `git push` nor `git merge` — this is a hot path, running
 # before every Bash tool call in the repo.
-printf '%s' "$payload" | grep -qE 'push|merge' || exit 0
+#
+# Both the read and the filter are bash builtins on purpose. `$(cat)` piped
+# into `grep -qE` is three forks, paid by every Bash call in the project to
+# answer a question a glob settles for free, and the overwhelming majority of
+# those calls bail on the very next line.
+[[ "$payload" == *push* || "$payload" == *merge* ]] || exit 0
 
 # Classify the command as one of the four protected actions, if it is one.
 # Splits on shell separators and tokenizes each piece with shlex rather than a

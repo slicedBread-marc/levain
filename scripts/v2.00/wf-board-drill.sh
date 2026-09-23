@@ -77,19 +77,6 @@ emit() {
   emitted=$((emitted + 1))
 }
 
-# macOS and GNU stat disagree; try both.
-file_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
-file_size()  { stat -f %z "$1" 2>/dev/null || stat -c %s "$1" 2>/dev/null || echo 0; }
-
-human_age() {
-  local secs="$1"
-  if   [ "$secs" -lt 60 ]    ; then printf '%ds' "$secs"
-  elif [ "$secs" -lt 3600 ]  ; then printf '%dm' "$((secs / 60))"
-  elif [ "$secs" -lt 86400 ] ; then printf '%dh%dm' "$((secs / 3600))" "$(((secs % 3600) / 60))"
-  else printf '%dd' "$((secs / 86400))"
-  fi
-}
-
 # plan_dir <ID> — plans/PLN-NNN-<slug>/, found by number so a caller holding
 # the bug's name (BUG-043) still reaches the plan it became (PLN-043). Empty
 # when there is no plan folder yet, which is the normal state of a brief.
@@ -175,8 +162,8 @@ row_running() {
     else
       artifact="$num"
     fi
-    age=$(( $(date +%s) - $(file_mtime "$pf") ))
-    emit "$(printf '%-11s %-22s %6s  pid %s' "$role" "$artifact" "$(human_age "$age")" "$pid")" \
+    age=$(( $(date +%s) - $(wf_file_mtime "$pf") ))
+    emit "$(printf '%-11s %-22s %6s  pid %s' "$role" "$artifact" "$(wf_human_age "$age")" "$pid")" \
       list "worker $base $artifact"
   done
 }
@@ -290,8 +277,8 @@ case "$node" in
     now=$(date +%s)
     while IFS= read -r f; do
       [ -f "$f" ] || continue
-      emit "$(printf '%-44s %7sB  %s ago' "$(basename "$f")" "$(file_size "$f")" \
-        "$(human_age $(( now - $(file_mtime "$f") )))")" log "$f"
+      emit "$(printf '%-44s %7sB  %s ago' "$(basename "$f")" "$(wf_file_size "$f")" \
+        "$(wf_human_age $(( now - $(wf_file_mtime "$f") )))")" log "$f"
     done < <(artifact_logs "$id")
     ;;
 

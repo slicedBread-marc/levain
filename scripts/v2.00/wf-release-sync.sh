@@ -76,16 +76,8 @@ done
 
 # Where is `release` checked out? Its own pinned worktree normally, the shared
 # checkout on a client that has not migrated, nowhere at all on one that has
-# never released. Ask git rather than assume a path — same walk as
-# wf-release-rollback.sh, for the same reason.
-wt=""
-_wt=""
-while IFS= read -r line; do
-  case "$line" in
-    worktree\ *) _wt="${line#worktree }" ;;
-    branch\ refs/heads/release) wt="$_wt" ;;
-  esac
-done < <(git worktree list --porcelain 2>/dev/null || true)
+# never released. Ask git rather than assume a path.
+wt=$(wf_worktree_for_branch release)
 
 git_in() { if [ -n "$wt" ]; then git -C "$wt" "$@"; else git "$@"; fi; }
 

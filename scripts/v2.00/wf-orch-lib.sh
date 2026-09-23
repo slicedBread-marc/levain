@@ -32,6 +32,11 @@
 #   wf_claim_held <artifact>         → wf_claim_live against wf_claim_dir + legacy
 #   wf_event <type> <artifact> <msg> → append to events.log
 #   wf_now                           → ISO-8601 UTC timestamp
+#   wf_file_mtime <file>             → mtime as epoch seconds, 0 if unreadable
+#   wf_file_size <file>              → size in bytes, 0 if unreadable
+#   wf_human_age <seconds>           → that duration as 45s / 12m / 3h20m / 6d
+#   wf_worktree_for_branch <branch>  → the worktree holding it, empty if none
+#   wf_registry_set_field <id> <col> <value> [reg] → write one column of one row
 
 # ── Paths ─────────────────────────────────────────────────────────────────
 
@@ -129,6 +134,42 @@ wf_registry_field() {
     }
     trim($2) == id { print trim($(idx[col])); exit }
   ' "$reg"
+}
+
+# wf_registry_set_field <id> <column> <value> [registry-path]
+#
+# The write half of wf_registry_field, sharing its column-name → index map.
+# Four scripts each carried their own awk-to-tmp copy naming the column by raw
+# field NUMBER ($5, $9, $10), so the schema change the map exists to absorb
+# would have had to be chased through every writer by hand — the very audit
+# wf_registry_field was introduced to end, left half-done on the write side.
+#
+# A pre-v5 row has no Tags or Deps column (10 fields, so NF < 11 with the
+# leading and trailing empties). Writing either one to such a row APPENDS
+# both — the named column set, the other left `—` — so the table stays
+# rectangular. That upgrade was duplicated too, once per column, each copy
+# spelling the same append differently.
+wf_registry_set_field() {
+  local id="$1" col="$2" val="$3" reg="${4:-$(wf_develop_root)/plans/REGISTRY.md}"
+  [ -f "$reg" ] || return 1
+  awk -F'|' -v OFS='|' -v id="$id" -v col="$col" -v val="$val" '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    BEGIN {
+      idx["slug"]=3; idx["state"]=4; idx["priority"]=5; idx["branch"]=6
+      idx["updated"]=7; idx["wf"]=8; idx["tags"]=9; idx["deps"]=10
+    }
+    # Exact ID match: `$2 ~ id` also matches PLN-041 when asked for PLN-04.
+    trim($2) == id {
+      if (NF < 11 && (col == "tags" || col == "deps")) {
+        sub(/[ \t]*$/, "", $0)
+        if (col == "tags") print $0 " " val " | — |"
+        else               print $0 " — | " val " |"
+        next
+      }
+      $(idx[col]) = " " val " "
+    }
+    { print }
+  ' "$reg" > "$reg.tmp" && mv "$reg.tmp" "$reg"
 }
 
 # wf_state_of <id> [registry-path] → the artifact's REGISTRY state, or `—`
@@ -407,6 +448,39 @@ wf_escalated_count() {
 }
 
 wf_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# macOS and GNU stat disagree on the flag for every field; try both. Lived in
+# wf-board.sh and wf-board-drill.sh as byte-identical copies, and the drill
+# renders the same worker rows the board does — so the two had to agree about
+# what "3h20m" means, by convention rather than by construction.
+wf_file_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+wf_file_size()  { stat -f %z "$1" 2>/dev/null || stat -c %s "$1" 2>/dev/null || echo 0; }
+
+wf_human_age() {
+  local secs="$1"
+  if   [ "$secs" -lt 60 ]    ; then printf '%ds' "$secs"
+  elif [ "$secs" -lt 3600 ]  ; then printf '%dm' "$((secs / 60))"
+  elif [ "$secs" -lt 86400 ] ; then printf '%dh%dm' "$((secs / 3600))" "$(((secs % 3600) / 60))"
+  else printf '%dd' "$((secs / 86400))"
+  fi
+}
+
+# wf_worktree_for_branch <branch> — the worktree that has <branch> checked out,
+# or empty when no worktree does (the ref may still exist as a bare ref).
+#
+# Parsing `git worktree list --porcelain` means tracking the `worktree` line
+# that PRECEDES the `branch` line, which is the part each hand-rolled copy got
+# subtly differently.
+wf_worktree_for_branch() {
+  local want="refs/heads/$1" wt="" cur=""
+  while IFS= read -r line; do
+    case "$line" in
+      worktree\ *) cur="${line#worktree }" ;;
+      branch\ *)   if [ "${line#branch }" = "$want" ]; then wt="$cur"; fi ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null || true)
+  printf '%s' "$wt"
+}
 
 # wf_read1 <file> [default] — the first line of a one-line file, or the default
 # (empty) when it is missing or unreadable. Never fails.

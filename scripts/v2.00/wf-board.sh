@@ -71,16 +71,28 @@ ROOT="$(wf_develop_root)"
 ORCH="$(wf_orch_dir)"
 REGISTRY="$ROOT/plans/REGISTRY.md"
 
-# macOS and GNU stat disagree; try both.
-file_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+has_ref() { git -C "$ROOT" rev-parse --verify "$1" >/dev/null 2>&1; }
 
-human_age() {
-  local secs="$1"
-  if   [ "$secs" -lt 60 ]    ; then printf '%ds' "$secs"
-  elif [ "$secs" -lt 3600 ]  ; then printf '%dm' "$((secs / 60))"
-  elif [ "$secs" -lt 86400 ] ; then printf '%dh%dm' "$((secs / 3600))" "$(((secs % 3600) / 60))"
-  else printf '%dd' "$((secs / 86400))"
-  fi
+# plans_ahead <a> <b> — how many DISTINCT plan IDs appear in commits on <a>
+# that are not on <b>.
+#
+# One `git log` into one awk. The `--oneline | grep -oE | sort -u | wc -l |
+# tr -d ' '` form this replaces was five processes per counter, twice per
+# render, and coordinator' wf-board-all renders this board for nine projects at once.
+# `--format=%s` rather than `--oneline` because the abbreviated SHA an
+# --oneline line carries is hex and can never hold a PLN id anyway.
+# The seen-count is kept in a variable, not `length(array)`, which is a gawk
+# extension and not available in the awk that ships on macOS.
+plans_ahead() {
+  git -C "$ROOT" log --format=%s "$1" --not "$2" 2>/dev/null | awk '
+    {
+      while (match($0, /PLN-[0-9]+/)) {
+        k = substr($0, RSTART, RLENGTH)
+        if (!(k in seen)) { seen[k] = 1; n++ }
+        $0 = substr($0, RSTART + RLENGTH)
+      }
+    }
+    END { print n + 0 }'
 }
 
 render() {
@@ -131,9 +143,9 @@ render() {
         }' "$ROOT/plans/REGISTRY.md" 2>/dev/null || true)
       [ -n "$artifact" ] || artifact="${base%-*}"
     fi
-    age=$(( now - $(file_mtime "$pf") ))
+    age=$(( now - $(wf_file_mtime "$pf") ))
     running_lines+=("$(printf '  %s%-11s%s %-34s %s  %spid %s%s' \
-      "$CYN" "$role" "$R" "$artifact" "$(human_age "$age")" "$DIM" "$pid" "$R")")
+      "$CYN" "$role" "$R" "$artifact" "$(wf_human_age "$age")" "$DIM" "$pid" "$R")")
     running_n=$((running_n + 1))
   done
 
@@ -223,11 +235,14 @@ render() {
   # "done, but not yet promoted." Same distinct-plan-ID convention as
   # deploy_pending below; same `-1`/`-` meaning for a project with no
   # release branch at all.
+  # `release` is asked about once and the answer reused by deploy_pending
+  # below, which needed the same fact.
+  local has_release=false
+  if has_ref release; then has_release=true; fi
+
   local release_pending=-1
-  if git -C "$ROOT" rev-parse --verify develop >/dev/null 2>&1 \
-     && git -C "$ROOT" rev-parse --verify release >/dev/null 2>&1; then
-    release_pending=$(git -C "$ROOT" log --oneline develop --not release 2>/dev/null \
-      | grep -oE 'PLN-[0-9]+' | sort -u | wc -l | tr -d ' ')
+  if [ "$has_release" = true ] && has_ref develop; then
+    release_pending=$(plans_ahead develop release)
   fi
 
   # ── Deploy pending ────────────────────────────────────────────────────
@@ -237,10 +252,8 @@ render() {
   # (rendered `-`) means this project doesn't have both refs, not "zero
   # pending" — client-i and friends have no release/main split.
   local deploy_pending=-1
-  if git -C "$ROOT" rev-parse --verify release >/dev/null 2>&1 \
-     && git -C "$ROOT" rev-parse --verify main >/dev/null 2>&1; then
-    deploy_pending=$(git -C "$ROOT" log --oneline release --not main 2>/dev/null \
-      | grep -oE 'PLN-[0-9]+' | sort -u | wc -l | tr -d ' ')
+  if [ "$has_release" = true ] && has_ref main; then
+    deploy_pending=$(plans_ahead release main)
   fi
 
   # ── Registry integrity ──────────────────────────────────────────────

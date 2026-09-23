@@ -103,26 +103,9 @@ fi
 # Read-modify-write from here down.
 wf_lock_acquire registry
 
-# Check if row has v5 columns (10+ pipes) or v4 (8 pipes)
-row=$(grep "^| $plan_id |" "$REGISTRY" | head -1)
-pipe_count=$(echo "$row" | tr -cd '|' | wc -c | xargs)
-
-if [ "$pipe_count" -lt 10 ]; then
-  # v4 row — append Tags and Deps columns
-  awk -F'|' -v id="$plan_id" -v deps="$deps" '
-    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-    trim($2) == id { sub(/[ \t]*$/, "", $0); print $0 " — | " deps " |"; next }
-    { print }
-  ' "$REGISTRY" > "$REGISTRY.tmp" && mv "$REGISTRY.tmp" "$REGISTRY"
-else
-  # v5 row — update the Deps column ($10) in place.
-  # Exact ID match: `$2 ~ id` also matches PLN-041 when asked for PLN-04.
-  awk -F'|' -v OFS='|' -v id="$plan_id" -v newdeps=" $deps " '
-    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-    trim($2) == id { $10 = newdeps }
-    { print }
-  ' "$REGISTRY" > "$REGISTRY.tmp" && mv "$REGISTRY.tmp" "$REGISTRY"
-fi
+# Writes the Deps column, upgrading a pre-v5 row that has no Tags/Deps columns
+# on the way past. Both of those rules live in wf_registry_set_field.
+wf_registry_set_field "$plan_id" deps "$deps" "$REGISTRY"
 
 wf_registry_commit "registry($plan_id): deps → $deps"
 

@@ -107,13 +107,17 @@ print(p if isinstance(p, str) else "")
 #
 # `bugs/` is the one layout with a segment in between — `bugs/open/BUG-013…`,
 # `bugs/triaged/…`, `bugs/closed/…` — so it is asked second and only for itself.
-artifact=$(printf '%s' "$target" \
-  | grep -oE '(^|/)(plans|briefs|feature-branches)/(PLN|BUG|BRF)-[0-9]+' \
-  | head -1 | grep -oE '(PLN|BUG|BRF)-[0-9]+$')
-if [ -z "$artifact" ]; then
-  artifact=$(printf '%s' "$target" \
-    | grep -oE '(^|/)bugs/([^/]+/)?(PLN|BUG|BRF)-[0-9]+' \
-    | head -1 | grep -oE '(PLN|BUG|BRF)-[0-9]+$')
+#
+# Matched with bash's own `=~` rather than a grep pipeline: this runs before
+# every Edit/Write/NotebookEdit in the project, and the four-stage pipe per
+# layout was up to eight forks to read one id out of a string already in a
+# variable. The two tests stay in this order — that ordering IS the
+# precedence rule described above, not an optimization.
+artifact=""
+if [[ "$target" =~ (^|/)(plans|briefs|feature-branches)/((PLN|BUG|BRF)-[0-9]+) ]]; then
+  artifact="${BASH_REMATCH[3]}"
+elif [[ "$target" =~ (^|/)bugs/([^/]+/)?((PLN|BUG|BRF)-[0-9]+) ]]; then
+  artifact="${BASH_REMATCH[3]}"
 fi
 [ -n "$artifact" ] || exit 0
 

@@ -83,18 +83,23 @@ if [ -n "${WF_VERSION:-}" ]; then
   fi
   effective="$WF_VERSION"
 elif [ $# -ge 1 ] && [[ "$1" =~ ^PLN-[0-9]+ ]]; then
-  # Extract bare PLN-NNN from the arg (handles both PLN-041 and PLN-041-slug forms)
-  plan_id=$(echo "$1" | grep -oE '^PLN-[0-9]+')
+  # Extract bare PLN-NNN from the arg (handles both PLN-041 and PLN-041-slug forms).
+  # The `=~` in the elif above already matched it, so BASH_REMATCH has it and
+  # no `grep` fork is needed — this runs on every single harness call.
+  plan_id="${BASH_REMATCH[0]}"
   if [ -f "$ROOT/plans/REGISTRY.md" ]; then
     # Row format: | PLN-NNN | slug | state | priority | branch | updated | WF |
     # awk -F'|' fields:  $2    $3      $4       $5       $6       $7     $8
-    row=$(grep "^| ${plan_id} " "$ROOT/plans/REGISTRY.md" | head -1 || true)
-    if [ -n "$row" ]; then
-      effective=$(echo "$row" | awk -F'|' '{print $8}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-      # "—", "?", "n/a" and friends all mean the same thing as blank: this plan
-      # was never stamped. Fall through to the project's current version.
-      is_version "$effective" || effective=""
-    fi
+    #
+    # One awk does the row match, the field pick and the trim that used to be
+    # a grep|head|awk|sed chain of four processes.
+    effective=$(awk -F'|' -v id="$plan_id" '
+      function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+      trim($2) == id { print trim($8); exit }
+    ' "$ROOT/plans/REGISTRY.md")
+    # "—", "?", "n/a" and friends all mean the same thing as blank: this plan
+    # was never stamped. Fall through to the project's current version.
+    is_version "$effective" || effective=""
   fi
 fi
 
@@ -114,17 +119,36 @@ fi
 map="$ROOT/scripts/version-map.txt"
 [ -f "$map" ] || { echo "wf-exec.sh: missing $map" >&2; exit 1; }
 
+# ver_le <a> <b> — true when version a <= version b, comparing dotted numeric
+# components. Replaces a `printf | sort -V | head` subshell that was spawned
+# once per map row, per harness call, to order two strings is_version() has
+# already proved are dotted digits. A missing component reads as 0, so
+# `2` <= `2.0` <= `2.00`, which is what sort -V did for these inputs too.
+ver_le() {
+  local a="$1" b="$2" i n
+  local -a A B
+  IFS=. read -r -a A <<< "$a"
+  IFS=. read -r -a B <<< "$b"
+  n=${#A[@]}; [ "${#B[@]}" -gt "$n" ] && n=${#B[@]}
+  for ((i = 0; i < n; i++)); do
+    (( 10#${A[i]:-0} < 10#${B[i]:-0} )) && return 0
+    (( 10#${A[i]:-0} > 10#${B[i]:-0} )) && return 1
+  done
+  return 0
+}
+
 script_folder=""
 while IFS= read -r line; do
   # Skip blanks and comments
   line="${line%%#*}"
   [ -z "${line// }" ] && continue
-  min_ver=$(echo "$line" | awk '{print $1}')
-  folder=$(echo "$line" | awk '{print $2}')
-  [ -z "$min_ver" ] || [ -z "$folder" ] && continue
+  # `read` into named vars, NOT `set --`: the positional parameters here are
+  # the caller's argv and are dispatched to the target script further down.
+  read -r min_ver folder _ <<< "$line"
+  [ -n "$min_ver" ] && [ -n "$folder" ] || continue
   # If min_ver <= effective, this row is a candidate (rows are ascending,
   # so the last candidate wins).
-  if [ "$(printf '%s\n%s\n' "$min_ver" "$effective" | sort -V | head -1)" = "$min_ver" ]; then
+  if ver_le "$min_ver" "$effective"; then
     script_folder="$folder"
   fi
 done < "$map"
