@@ -201,10 +201,18 @@ if wf_claim_held "$artifact"; then
       wf_event queue "$id" "$role deferred until the claim is released"
     fi
     echo "wf-spawn: $artifact still holds this session's own claim — $role queued until it is released" >&2
+    echo "          claim at ${WF_CLAIM_HELD_DIR:-?}/.wf-claim" >&2
     exit 2
   fi
 
   echo "wf-spawn: $artifact is claimed by a live session (PID ${holder:-?}) — not spawning $role" >&2
+  # NAME THE PATH. wf_claim_held reads two locations and this message named
+  # neither, so a claim at the pre-v5.6 plans/<artifact>/.wf-claim produced a
+  # deferral every sweep while wf-claim.sh --list reported "No live claims."
+  # client-d WFI-021 spent ten minutes of a stalled daemon on the gap between
+  # those two sentences. The path is the whole diagnosis: wf-unclaim.sh clears
+  # both, but only once you can see which one is holding.
+  echo "          claim at ${WF_CLAIM_HELD_DIR:-?}/.wf-claim" >&2
   exit 2
 fi
 

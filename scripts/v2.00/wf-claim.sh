@@ -102,6 +102,26 @@ done
 #
 # Liveness is decided by wf_claim_live, which reaps as it reads, so a stale
 # claim disappears from this listing and from the write guard together.
+#
+# ── IT LISTS EVERY PATH THE GUARD READS ───────────────────────────────────
+#
+# This script's own header calls --list "the one way to see what the write
+# guard is enforcing". It used to scan only $(wf_orch_dir)/claims/*/ while
+# wf_claim_held — the guard — ALSO falls back to the pre-v5.6 path,
+# plans/<artifact>/.wf-claim. So a claim at the legacy path was enforced and
+# invisible at the same time.
+#
+# client-d WFI-021: a live claim sat at plans/PLN-020-tile-claude-handoff/
+# .wf-claim while the canonical claims/20/ was empty. Every daemon sweep
+# printed "still holds this session's own claim — implement queued until it is
+# released" (rc=2) and --list answered "No live claims." PLN-020 sat
+# undispatched for ten minutes with the daemon logging "stalled — nothing
+# dispatchable"; the pending/ queue was empty, so the deferred spawn had no
+# flush path either. The escape was wf-unclaim.sh, which clears both paths —
+# found only by reading two scripts' source.
+#
+# The legacy sweep is keyed by artifact NAME (the folder), not by number, and
+# says so in the row: those are the two facts a reader needs to clear it.
 if $list; then
   claims_root="$(wf_orch_dir)/claims"
   registry="$(wf_develop_root)/plans/REGISTRY.md"
@@ -174,6 +194,22 @@ if $list; then
     printf '%-56s PID %-8s %sm%s%s\n' "$label" "${holder:-?}" "$((WF_CLAIM_AGE / 60))" "$overdue" "$mine"
     found=1
   done
+  # ── The legacy path the guard also reads ────────────────────────────────
+  for d in "$(wf_develop_root)"/plans/*/; do
+    [ -f "${d%/}/.wf-claim" ] || continue
+    wf_claim_live "${d%/}" || continue
+    artifact=$(basename "${d%/}")
+    overdue=""
+    if [ "${WF_CLAIM_OVERDUE:-0}" = "1" ]; then overdue="  ⚠ overdue (owner alive)"; fi
+    mine=""
+    if wf_claim_mine "${d%/}"; then mine="  ← yours"; fi
+    printf '%-56s PID %-8s %sm%s%s\n' \
+      "$artifact (LEGACY path)" "${WF_CLAIM_PID:-?}" "$((WF_CLAIM_AGE / 60))" "$overdue" "$mine"
+    echo "    at plans/$artifact/.wf-claim — enforced by the write guard, invisible to claims/." >&2
+    echo "    Clear it with: wf-unclaim.sh $artifact   (clears both paths)" >&2
+    found=1
+  done
+
   [ "$found" = "1" ] || echo "No live claims."
   exit 0
 fi
