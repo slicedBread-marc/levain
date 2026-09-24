@@ -103,8 +103,10 @@ had to be reverted wholesale. The convention is the only guard, which is why
    omitted; `project_slug` is still required, since it is what stamps
    `--source cross-project:<slug>` on everything the coordinator files.
 
-2. Add its path to `deployments.txt` like any other client. `deploy-all.sh`
-   keeps it current from then on.
+2. Add its path to the project registry like any other client (`deployments.txt`
+   in the library, or your pack's `project-registry` hook). `deploy-all.sh`
+   keeps it current from then on. `START.md`'s `install/overseer.md` walks
+   through all of this.
 
 3. Point the project's own `CLAUDE.md` at `WORKFLOW.md`. Without that, a session
    there never learns what it may and may not do to a coordinated project.

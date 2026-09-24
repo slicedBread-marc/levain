@@ -1,9 +1,13 @@
 # claude-workflow configuration
 #
+# Written for Claude to read and fill in, not for a person to edit: START.md's
+# install/project.md does it during setup. Every key says what it is for and
+# where its value comes from.
+#
 # If you are Claude and these values are blank or unset:
 # Scan the project and fill them in before proceeding with any workflow skill.
-# Detection hints are in the comments for each field.
-# After filling in values, confirm with the user before writing the file.
+# Detection hints are in the comments for each field; ask the user only for
+# what the project cannot tell you. Show the values you chose before writing.
 
 # What this project is to the harness.
 #

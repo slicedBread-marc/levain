@@ -1,54 +1,44 @@
-# claude-workflow
+# Levain
 
-A structured SDLC workflow for Claude Code. Skills guide work through a pipeline — brainstorm, plan, implement, verify, test — with state tracked in a registry rather than in your head.
+A structured development pipeline for Claude Code. Ideas become briefs, briefs become reviewed
+plans, and plans become code that is verified and then acceptance-tested. State lives in a
+registry in the repository, not in your head or in a chat.
 
-Run it **manually** across four terminals, or turn on the **orchestrator** and run it from one: a daemon dispatches the same skills as unattended workers by pipeline state, and parks the decisions a machine shouldn't make into a queue you drain when convenient.
+It grows with you. Run it by hand on one project, let a daemon run it while you answer only what
+needs a human, and then oversee several projects from one board.
 
-## Quick Start
+## Quick start
 
 ```bash
-# Clone into your tools directory
-git clone https://github.com/yourusername/claude-workflow.git ~/dev/claude-workflow
-
-# Go to your project
-cd ~/dev/my-project
-
-# First run creates a config file for you to edit
-~/dev/claude-workflow/install.sh .
-
-# Edit the config with your project's build/test commands
-vim claude-workflow.yml
-
-# Re-run to install
-~/dev/claude-workflow/install.sh .
+git clone <this repository> ~/levain
+cd ~/your-project
+claude
 ```
 
-## What It Installs
+Then say:
 
-```
-your-project/
-  .claude/skills/
-    lv-tray/SKILL.md       # /lv-tray — pipeline, workers, gates; /lv-tray <ID> for one item
-    lv-brainstorm/SKILL.md # /lv-brainstorm — capture ideas
-    lv-spec/SKILL.md       # /lv-spec — write implementation specs
-    lv-implement/SKILL.md  # /lv-implement — build from specs
-    lv-verify/SKILL.md     # lv-verify — autonomous verify agent (not user-invocable)
-    lv-consistency/SKILL.md# /lv-consistency — cross-plan contract check
-    lv-test/SKILL.md       # /lv-test — human acceptance testing
-  plans/
-    REGISTRY.md                  # SINGLE SOURCE OF TRUTH for plan state
-    PLN-001-feature-name/        # immovable plan folder (never moves)
-      plan.md                    #   spec: goal, steps, tests, design decisions
-      findings.md                #   append-only: verify agent + human test results
-      progress.md                #   implementer log
-    briefs/                      # idea exploration documents
-      INDEX.md                   # backlog tracker
-      TEMPLATE.md
-    TEMPLATE.md                  # implementation plan spec
-  CLAUDE.md                      # workflow section appended
-```
+> read ~/levain/START.md and set me up
 
-## The Pipeline
+Claude checks your machine, asks where you want to start on the ladder below, installs only
+those rungs, and ends by starting a brainstorm on your first idea. Run it again later and it
+offers the next rung. The prompts it follows are in [`START.md`](START.md) and
+[`install/`](install/), and you can read them first.
+
+**Platform.** Levain is built and tested on macOS, with its own bash 3.2, git, python3 and Claude
+Code (yq is recommended). On another platform, your Claude session can adapt the scripts in place
+during setup. There is no further promise than that.
+
+## The ladder
+
+| Rung | You get | Start here if |
+|-|-|-|
+| **1. Manual** | The pipeline on one project. You run each skill yourself and see every step | You're new to it, or not yet sure the model suits your work |
+| **2. Daemon** | Unattended workers run the same skills. You clear only the gates, with `/lv-attend` | You've taken a few items through by hand and trust the shape |
+| **3. Overseer** | One board for several projects, work filed between them, and a vision of what they are for | You run more than one project |
+
+Each rung works on its own, and nothing above it is needed.
+
+## Rung 1: the pipeline
 
 ```
 draft → ready → active → verify ──[agent]──→ testing → complete
@@ -58,178 +48,144 @@ draft → ready → active → verify ──[agent]──→ testing → complet
                   └→ draft  (implementer escalation)
 ```
 
-**REGISTRY.md IS the status.** `grep "| ready |" plans/REGISTRY.md` shows what's waiting to be built. Plans never move — only the state column changes.
+**`plans/REGISTRY.md` is the status.** Plans never move. Only their state column changes.
 
-## Skills
+| Command | Purpose |
+|-|-|
+| `/lv-brainstorm` | Capture and explore ideas as briefs |
+| `/lv-bug` | File a bug into the same pipeline |
+| `/lv-spec` | Turn a decided brief or a bug into a reviewed implementation plan |
+| `/lv-implement` | Build from the plan in its own worktree, and fix what verify finds |
+| `lv-verify` | Autonomous check of the build against the plan (runs on its own) |
+| `/lv-consistency` | Check a plan against the plans it depends on |
+| `/lv-test` | Human acceptance testing. `browser` mode drives Chrome |
+| `/lv-stage`, `/lv-release`, `/lv-deploy`, `/lv-rollback` | Stage a release, ship it, and take it back |
+| `/lv-tray` | The pipeline, workers, gates and the one next action. `/lv-tray <ID>` shows one item's history |
+| `/lv-help` | Every skill in one line. `/<skill> help` shows one skill's usage |
 
-| Command | Model | Purpose |
-|-|-|-|
-| `/lv-brainstorm` | sonnet | Capture and explore ideas |
-| `/lv-spec` | opus | Convert decided brief → implementation spec |
-| `/lv-implement` | sonnet | Build from plan, fix findings |
-| `lv-verify` | sonnet | Autonomous verify agent (triggered by state change) |
-| `/lv-consistency` | sonnet | Check a plan against its dependency closure (automatic on `ready` + Deps) |
-| `/lv-test` | haiku | Human acceptance testing; `browser` mode drives Chrome |
-| `/lv-tray` | haiku | Pipeline picture and next action, live workers, gates, events; `/lv-tray <ID>` for one item's history. Works with no daemon |
-| `/lv-attend` | haiku | Drain the gate queue |
-| `/lv-orchestrate` | haiku | Drive one item end to end, or manage the daemon |
-| `/lv-help` | haiku | Every skill in one line each; `/<skill> help` for one skill's usage |
+Installed into a project, it adds `.claude/skills/lv-*`, `scripts/` (versioned, swapped
+atomically on upgrade), `plans/` with the registry and templates, a permission guard in
+`.claude/settings.json`, a workflow section in `CLAUDE.md`, and `WORKFLOW.md`, the entry point
+for an agent arriving cold.
 
-## Orchestrated Workflow (one terminal)
+By hand, the skills split naturally across terminals, one model each:
+
+```
+T1 intake (sonnet)   /lv-tray, /lv-brainstorm, /lv-bug
+T2 planner (opus)    /lv-spec
+T3 builder (sonnet)  /lv-implement      (verify runs by itself)
+T4 tester (haiku)    /lv-test
+```
+
+## Rung 2: the daemon
 
 ```bash
 scripts/lv-exec.sh lv-orchestrate.sh --sweep --dry-run   # preview first, always
 scripts/lv-exec.sh lv-orchestrate.sh --daemon            # continuous dispatch
 scripts/lv-exec.sh lv-orchestrate.sh BUG-094             # drive one item end to end
-scripts/lv-exec.sh lv-tray.sh --watch                   # live view
+scripts/lv-exec.sh lv-tray.sh --watch                    # live view
 ```
 
-The daemon reads `REGISTRY.md` and launches a headless worker per actionable
-plan — spec on opus, implement and verify on sonnet, test on haiku. **Routing is
-pure bash; the orchestrator never calls a model.** Only workers cost tokens.
+The daemon reads the registry and starts a headless worker for each plan that can move: spec on
+opus, implement and verify on sonnet, test on haiku. **Routing is plain bash, and the
+orchestrator never calls a model.** Only the workers cost tokens.
 
-When a worker hits something a machine shouldn't decide — approving a spec, an
-acceptance criterion that needs human eyes, a failed push — it opens a **gate**
-and exits cleanly instead of guessing. `/lv-attend` walks that queue.
+When a worker reaches something a machine shouldn't decide (approving a spec, a criterion that
+needs human eyes, a release), it opens a **gate** and stops cleanly instead of guessing.
+`/lv-attend` walks that queue. Which stops are worth a human is measured, not assumed. See
+[`docs/orchestrator.md`](docs/orchestrator.md).
 
-Which stops are worth a human is measured, not assumed. A manual criterion only
-gates when the diff actually renders something to a human **and** the criterion
-is tagged as needing eyes; spec approval can be handed to the architecture
-review's verdict (`specApproval.mode: verdict`), leaving a gate only for plans
-the review keeps blocking. See [`docs/orchestrator.md`](docs/orchestrator.md).
+It ships **disabled** (`orchestrator.enabled: false`). Workers run with
+`--dangerously-skip-permissions`, fenced by the permission guard
+([`docs/autonomy.md`](docs/autonomy.md)), so turning it on is your decision. Caps on concurrency,
+attempts per plan and spawns per hour are the guardrails.
 
-Ships **disabled** (`orchestrator.enabled: false`): workers run with
-`--dangerously-skip-permissions`, so enabling it is a deliberate decision. Caps
-on concurrency, per-plan attempts, and hourly spawns are the guardrails.
-
-Full design: [`docs/orchestrator.md`](docs/orchestrator.md).
-
-### Driving it from another project
-
-Each installed client gets a generated `WORKFLOW.md` at its root describing the
-entry points for an agent arriving cold. The contract is the exit code:
+**Driving it from another project or agent.** The contract is the exit code:
 
 | Code | Meaning |
 |-|-|
 | 0 | Reached the target state |
-| 20 | Blocked on a human — gate details in `--json`. **Never auto-retry** |
-| 30 | Worker ran, state unchanged |
+| 20 | Blocked on a human. The gate's details are in `--json`. **Never auto-retry** |
+| 30 | A worker ran, and the state did not change |
 | 1 | Error |
 
-### Coordinators — a project that oversees pipelines without running one
+## Rung 3: the overseer
 
-A project can declare `role: coordinator` in its `claude-workflow.yml`. It gets
-the dispatcher, the cross-project filing scripts and a generated `WORKFLOW.md`
-explaining the pipelines it files into — and no pipeline of its own: no plans,
-no registry, no bugs, no worktrees, no hooks, no pipeline skills.
+A **coordinator** is a project with `role: coordinator` in its `claude-workflow.yml`. It runs no
+pipeline of its own, so it has no plans, registry or worktrees. It oversees the projects listed
+under `coordinates:`:
 
-It files work down with `lv-dep-notify.sh --kind request`, resolving targets
-from `coordinates:`. That runs the *target's* own `lv-bug-new.sh`, so the ID
-comes from the target's counter and the request lands in its own `bugs/open/` —
-the coordinator never derives an artifact number, and never writes into another
-project's pipeline beyond that filing.
-
-It is also the **overseer's seat**: `/lv-rack` is the board for every project at once
-(`scripts/lv-exec.sh lv-rack.sh --watch` in a terminal), and `/lv-vision` keeps what the projects
-are for together, through the owner's own vision skill. The library ships the skill's contract
-([`docs/vision-spec.md`](docs/vision-spec.md)) and an interview that writes one.
+- **`/lv-rack`, the board.** Every project's pipeline in one grid, and what waits on you.
+  `scripts/lv-exec.sh lv-rack.sh --watch` gives a live terminal board. You can drill into a cell,
+  start `/lv-attend` in a project from it, and stop or resume every daemon at once.
+- **`/lv-dep-notify`, filing.** A request lands in the target project's own pipeline, numbered
+  by its own counter. Filing is where the coordinator's authority stops.
+- **`/lv-vision`, the vision.** It records what the projects are for together, and answers
+  "what should I work on next?" Levain ships the contract ([`docs/vision-spec.md`](docs/vision-spec.md))
+  and an interview that writes your own vision skill from it, never a vision of its own.
 
 See [`docs/coordinator.md`](docs/coordinator.md).
 
-## Workflow Issues — the feedback loop
+## Your own tools: extension hooks
 
-The harness will sometimes be wrong. When a skill or script behaves in a way its
-own documentation doesn't describe, whoever hits it records it in that project
-rather than working around it silently:
+The library never names your secrets tool, your hosting provider, your activity log or your
+list of projects. It calls a hook named for the job (`secrets-deny-patterns`, `provider-deny`,
+`secrets-deploy`, `activity-log`, `project-registry`, `overseer-vision`), and `lv-hook.sh`
+finds who answers it. It looks first in the project's `.lv-local/hooks/`, then in your
+**packs** (private directories listed in `~/.config/levain/packs`), and finally in the library's
+neutral default. A pack can tighten the permission guard but never loosen it.
+[`install/pack.md`](install/pack.md) sets one up. [`docs/extension-hooks.md`](docs/extension-hooks.md)
+is the reference.
+
+## When the harness is wrong
+
+When a skill or script does something its own documentation doesn't describe, whoever hits it
+records it rather than working around it silently:
 
 ```bash
 scripts/lv-exec.sh lv-issue.sh --source lv-implement \
-  --expected "active→verify to succeed" \
-  --actual   "Error: PLN-097 not found in state 'active'"
+  --expected "active→verify to succeed" --actual "Error: PLN-097 not found in state 'active'"
 ```
 
-That appends to `WORKFLOW-ISSUES.md` at the client's root. From the library, sweep
-every installed project at once:
-
-```bash
-./sweep-issues.sh                                              # open issues by client
-./sweep-issues.sh --resolve WFI-003 --client app "fixed in v2.6.0"
-```
-
-Fixes go in the library and reach every project on the next `./deploy-all.sh` — so
-one report improves the workflow everywhere, instead of each project accumulating
-its own workarounds. Unattended workers file these too, which is how process bugs
-surface from runs nobody was watching.
-
-## One writer at a time
-
-Two sessions edit this repo: one rooted here, and an coordinator session reaching in from
-`~/dev/coordinator` when a fault it is chasing across the portfolio turns out to live in the
-library. `deploy-all.sh` ships whatever is on disk to every client, so a collision is
-not a merge conflict — it is nine projects running a tree nobody finished.
-
-```bash
-./lock.sh status                      # 0 free · 1 held · 2 yours · 3 stale
-./lock.sh take coordinator "<what you're about to change>"
-./lock.sh release
-```
-
-The switch is `LIBRARY-LOCK.md` at the repo root: present while somebody is working
-here, absent otherwise, and gitignored because both sessions share a disk. Advisory
-by necessity — the writers are agents and humans with a shell — so its job is to make
-the collision visible while either side is still cheap to redirect.
-
-## Multi-Terminal Workflow (manual mode)
-
-```
-T1: Intake (sonnet)                T2: Planner (opus)
-───────────────────                ──────────────────
-/lv-tray                           
-/lv-brainstorm → Decided brief     
-                                   /lv-spec → review gate → ready
-
-T3: Builder (sonnet)               T4: Tester (haiku)
-────────────────────               ──────────────────
-/lv-implement → active → verify    
-  [verify agent auto-runs]         
-                                   /lv-test → pass → complete
-```
+That appends to the project's `WORKFLOW-ISSUES.md`. From the library, `./sweep-issues.sh`
+collects the open ones across every installed project. The fix goes into the library, and
+reaches every project on the next upgrade. Unattended workers file these too.
 
 ## Configuration
 
-`claude-workflow.yml` in your project root:
+`claude-workflow.yml` at the project root. [`config.example.yml`](config.example.yml) is the
+schema. Each key says what it is for and where to find its value, and it is written for Claude to
+fill in during setup rather than for you to edit. Most projects need only the build and test
+commands and the source directories.
 
-```yaml
-build_command: "npm run build"
-test_command: "npm test"
-test_filter_flag: "--grep"
-source_dirs:
-  - "src/"
-  - "tests/"
-namespace_convention: ""
-conventions_note: ""
-solution_file: ""
+Without the prompt, the same install is two runs of `install.sh`. The first creates the config,
+and the second installs once the config is filled in:
+
+```bash
+~/levain/install.sh .     # creates claude-workflow.yml; fill it in
+~/levain/install.sh .     # installs (commits on main/develop; --no-commit to leave that to you)
 ```
-
-## Your own tools: extension hooks
-
-The library never names your secrets tool, your hosting provider, your activity log or the list
-of projects you deploy to. It calls a hook named for the job (`secrets-deny-patterns`,
-`provider-deny`, `secrets-deploy`, `activity-log`, `project-registry`), and `lv-hook.sh` finds who
-answers it: the project's `.lv-local/hooks/`, then your packs (private directories listed in
-`~/.config/levain/packs`), then the library's neutral default. A pack can tighten the permission
-baseline but never loosen it. See [`docs/extension-hooks.md`](docs/extension-hooks.md).
 
 ## Updating
 
-Re-run the install script. It overwrites skills but skips existing templates and config.
+Say *"read ~/levain/START.md and upgrade me"*, or do it by hand: pull the library and re-run
+`install.sh` in the project. For several projects, list their paths in `deployments.txt` in the
+library (gitignored), or have a pack answer `project-registry`, then run
+`./deploy-all.sh --stop-daemons`. Upgrades overwrite skills and scripts, never your config or
+templates, and a running daemon never sees a half-written harness
+([`docs/atomic-deploy.md`](docs/atomic-deploy.md)).
 
-## Token Strategy
+## Token strategy
 
-- **Opus** only where quality matters most: writing plans
-- **Sonnet** for structured work: implementation, reviews, verification agent
-- **Haiku** for lightweight tasks: status checks, testing, agent subtasks
-- Skills spawn haiku agents for parallel data collection, keeping the main context lean
+- **Opus** only where quality matters most: writing plans.
+- **Sonnet** for structured work: implementation, review and verification.
+- **Haiku** for light work: status, testing and agent subtasks. Skills spawn haiku agents to
+  gather data in parallel, which keeps the main context lean.
+
+## Working on Levain itself
+
+[`CLAUDE.md`](CLAUDE.md) covers the library's own conventions: the lock two sessions take before
+editing, tests (`tests/*.sh`), and version bumps.
 
 ## License
 
