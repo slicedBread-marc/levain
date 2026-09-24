@@ -30,8 +30,12 @@ cleaned=0
 while IFS= read -r proj; do
   # Extract plan number from project name ({{project_slug}}-pln004 → 004)
   num="${proj#$prefix}"
-  # Zero-pad to 3 digits for registry lookup
-  padded=$(printf "%03d" "$num" 2>/dev/null) || continue
+  # Zero-pad to 3 digits for registry lookup. `10#` first: the name carries
+  # the number already padded, and printf reads a leading zero as octal — so
+  # pln008/pln009 were skipped forever ("invalid number") and pln010 was looked
+  # up as PLN-008, tearing down a plan still in testing whenever PLN-008 was done.
+  case "$num" in ''|*[!0-9]*) continue ;; esac
+  padded=$(printf "%03d" "$((10#$num))")
   plan_id="$LV_PLN-${padded}"   # wf_state_of finds it under any plan prefix
 
   # Check registry state

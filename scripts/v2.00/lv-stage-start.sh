@@ -109,8 +109,10 @@ if ! STAGE_PORT="$port" docker compose -f "$compose_file" -p "$project" up --bui
 fi
 
 # ── Health ────────────────────────────────────────────────────────────────
+# LV_STAGE_HEALTH_SECONDS shortens the wait for the tests; 30 is the contract.
+health_seconds="${LV_STAGE_HEALTH_SECONDS:-30}"
 healthy=false
-for _ in $(seq 1 30); do
+for _ in $(seq 1 "$health_seconds"); do
   if curl -fsS "http://localhost:$port$health_path" >/dev/null 2>&1; then
     healthy=true
     break
@@ -149,7 +151,7 @@ if $healthy; then
   exit 0
 fi
 
-echo "lv-stage-start: container started but $health_path did not respond within 30s." >&2
+echo "lv-stage-start: container started but $health_path did not respond within ${health_seconds}s." >&2
 echo "      It is still running and still auto-stops at $deadline. Check:" >&2
 echo "        docker compose -f $compose_file -p $project logs --tail 50" >&2
 echo "      Set staging.healthPath in claude-workflow.yml if this app's probe is elsewhere." >&2
