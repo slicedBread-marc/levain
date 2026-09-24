@@ -230,7 +230,7 @@ per_plan_advice() {
   echo "  collision looks like — it is what PER-PLAN numbering looks like. If each plan here" >&2
   echo "  numbers its own tests from ${prefix}1, renumbering is the wrong move and this check is" >&2
   echo "  answering a question the project does not ask (client-b WFI-024). Declare the" >&2
-  echo "  convention in claude-workflow.yml and re-run:" >&2
+  echo "  convention in levain.yml and re-run:" >&2
   echo "    testIds:" >&2
   echo "      scope: per-plan" >&2
   return 0

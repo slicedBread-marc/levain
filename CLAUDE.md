@@ -61,7 +61,7 @@ visible at the one moment either side is still cheap to redirect.
 ## Clients
 
 - Deployment targets are listed in `deployments.txt` (one absolute path per line). Each receives copies of skills and scripts via `deploy-all.sh`.
-- To add a new client: append its path to `deployments.txt`, ensure its `claude-workflow.yml` sets a unique `project_slug` (prevents Docker compose collisions), then run `./deploy-all.sh`.
+- To add a new client: append its path to `deployments.txt`, ensure its `levain.yml` sets a unique `project_slug` (prevents Docker compose collisions), then run `./deploy-all.sh`.
 
 ### Clients depending on each other
 
@@ -70,13 +70,13 @@ case). A bug or request that belongs to the *other* side of an integration is fi
 `lv-dep-bug.sh` — it runs the dependency's own `lv-bug-new.sh` through the dependency's own
 `lv-exec.sh`, so the report lands in that project's own `bugs/open/`, allocated by its own
 counter, picked up by its own `/lv-spec`. Declared per-client in that client's own
-`claude-workflow.yml` under `dependencies:`, never in this repo. See
+`levain.yml` under `dependencies:`, never in this repo. See
 [`docs/cross-project-reports.md`](docs/cross-project-reports.md).
 
 ### Coordinators: a client that runs no pipeline
 
 `~/dev/coordinator` oversees the portfolio and owns no application code. It declares
-`role: coordinator` in its own `claude-workflow.yml` and gets a deliberately small slice of the
+`role: coordinator` in its own `levain.yml` and gets a deliberately small slice of the
 harness: the dispatcher, `lv-dep-notify.sh`/`lv-dep-bug.sh`/`lv-issue.sh` and their lib, the
 `/lv-dep-notify` skill, and a `WORKFLOW.md` rendered from `templates/WORKFLOW-coordinator.md`
 that explains the pipelines it files into and where its authority stops. No `plans/`, no
@@ -93,7 +93,7 @@ project's own counter and the report still lands in its own `bugs/open/`. Read
 Everything `deploy-all.sh` writes into a client — `scripts/gen/`, `.claude/skills/lv-*/`,
 `.claude/workflow.md`, the hooks — is **gitignored there** as of v5.0.0. The library is the
 source of truth; the client copy is build output. A client's own config
-(`claude-workflow.yml`), its `WORKFLOW.md`, its `.claude/workflow-version` stamp and all of
+(`levain.yml`), its `WORKFLOW.md`, its `.claude/workflow-version` stamp and all of
 `plans/` + `bugs/` stay tracked. See [`docs/untracked-harness.md`](docs/untracked-harness.md).
 
 ### A deploy never writes a path something is running
@@ -130,7 +130,7 @@ Resolved entries stay in the client's file as the record of what was already rep
 ### Governance tiers: how strict each client is right now
 
 Each client can declare `projectProfile.tier` (`pre-launch` | `governed`) in its own
-`claude-workflow.yml` — the recorded reason its `specApproval.mode`, `manualTestGate`
+`levain.yml` — the recorded reason its `specApproval.mode`, `manualTestGate`
 and `orchestrator.autonomy` are set the way they are. It does not change gate
 behavior itself; it is what a human or Claude checks before re-tuning those knobs, and
 what flags drift once they've fallen out of step with the declared tier.
@@ -141,7 +141,7 @@ what flags drift once they've fallen out of step with the declared tier.
 ```
 
 Read [`docs/project-profile.md`](docs/project-profile.md) before adding or changing a
-tier. Applying a tier to a client is a hand edit to that client's `claude-workflow.yml`
+tier. Applying a tier to a client is a hand edit to that client's `levain.yml`
 (preserving its own rationale comments) — never something a script writes for you.
 
 ### VERSION is bumped by a hook, and you state the level
@@ -258,7 +258,7 @@ Bugs move through: `bugs/open/` → `bugs/triaged/` → `bugs/closed/`
 
 4. **Verify agent** (automatic) — triggered by REGISTRY state change to `verify`. Checks code, spec completeness, and design soundness. Auto-routes: clean→`testing`, findings→`active`, escalated→`draft`.
 
-5. **T4 (Tester)** runs `/lv-test` — greps REGISTRY for `testing` state. Guides human through acceptance criteria. On pass, merges `release` in, runs `lv-post-merge-check.sh` (the **full suite** by default — `postMergeCheck:` in `claude-workflow.yml`) on the merged tree, and creates the PR to release. That check is the only thing between a semantic merge break and `release`: two plans green alone and red together used to be found by `/lv-deploy`, one 20-minute suite at a time, long after both plans were complete (client-a WFI-264).
+5. **T4 (Tester)** runs `/lv-test` — greps REGISTRY for `testing` state. Guides human through acceptance criteria. On pass, merges `release` in, runs `lv-post-merge-check.sh` (the **full suite** by default — `postMergeCheck:` in `levain.yml`) on the merged tree, and creates the PR to release. That check is the only thing between a semantic merge break and `release`: two plans green alone and red together used to be found by `/lv-deploy`, one 20-minute suite at a time, long after both plans were complete (client-a WFI-264).
 
 6. **Release** — `/lv-release` merges approved PRs into the release branch and runs E2E tests to validate staging.
 
@@ -295,6 +295,6 @@ All artifacts (plans, bugs, briefs) use a **global shared counter** embedded in 
 - When converting a brief/bug to a **plan**, the plan **inherits the same number** — no new allocation. BRF-041 → PLN-041, BUG-043 → PLN-043. `lv-plan-id.sh` decides this; when the inherited number is already taken it allocates a fresh one and says so, because the alternative is overwriting a live plan (WFI-011).
 - IDs are type-prefixed: `PLN-NNN`, `BUG-NNN`, `BRF-NNN`.
 - Numbers are globally unique across all types, and the number is what the orchestrator treats as identity — one claim and one already-running guard cover a brief and the plan it becomes.
-- **Never write a prefix into a script.** A project may rename any prefix in `claude-workflow.yml` (`scripts/v2.00/lv-ids.sh` holds the map and its rules). So match IDs with `$LV_PLN_RE`, `$LV_WORK_RE` and the rest, glob with a loop over `$LV_PLN_ALL`, and build new IDs from `$LV_PLN`. Every script that sources `lv-orch-lib.sh` has these variables. Skills, templates and docs keep the default spelling, and install renders it to the project's own prefixes. `tests/id-map.sh` fails on a literal prefix pattern in `scripts/v2.00/`. The map is deliberately left out of the user docs, which show only the defaults.
+- **Never write a prefix into a script.** A project may rename any prefix in `levain.yml` (`scripts/v2.00/lv-ids.sh` holds the map and its rules). So match IDs with `$LV_PLN_RE`, `$LV_WORK_RE` and the rest, glob with a loop over `$LV_PLN_ALL`, and build new IDs from `$LV_PLN`. Every script that sources `lv-orch-lib.sh` has these variables. Skills, templates and docs keep the default spelling, and install renders it to the project's own prefixes. `tests/id-map.sh` fails on a literal prefix pattern in `scripts/v2.00/`. The map is deliberately left out of the user docs, which show only the defaults.
 
 **Schema version:** `6` (see `docs/schema.md`). Registry-based model — plans never move, state in REGISTRY.md, `.plan-ref` on feature branches. v5 added Tags and Deps columns plus the goal stack. v6 adds typed reason tags on `#### Manual` criteria (`eyes:blocking`, `eyes:cosmetic`, `external`, `soak`, linted by `lv-manual-lint.sh`), a live `## Steps` checklist in progress.md as the forward-progress signal, a `## Consistency` section, and a producer for `plans/deferred-criteria.md`.

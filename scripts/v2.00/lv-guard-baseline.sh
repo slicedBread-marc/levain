@@ -41,7 +41,7 @@
 #
 # LOOSENING A RULE
 #
-# A client lifts a rule only in its own claude-workflow.yml, and only with a
+# A client lifts a rule only in its own levain.yml, and only with a
 # recorded reason. All four keys are required; a partial block lifts nothing:
 #
 #   permissionBaseline:
@@ -310,4 +310,4 @@ if [ "$rule" != "payload" ] && [ -x "$cfg" ]; then
   fi
 fi
 
-refuse "$rule — $why. Unattended workers may not do this. If the plan truly needs it, stop and open a gate for the operator (lv-gate-open.sh), or have the project lift '$rule' under permissionBaseline in claude-workflow.yml with a reason."
+refuse "$rule — $why. Unattended workers may not do this. If the plan truly needs it, stop and open a gate for the operator (lv-gate-open.sh), or have the project lift '$rule' under permissionBaseline in levain.yml with a reason."

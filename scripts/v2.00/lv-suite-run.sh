@@ -21,7 +21,7 @@
 # run and reset `main`; nothing reached production, and nothing except that
 # second full run would have.
 #
-# So the harness runs it. The command comes from claude-workflow.yml and is not
+# So the harness runs it. The command comes from levain.yml and is not
 # the caller's to choose, narrow or re-type, and the receipt below is what the
 # skill quotes — a caller cannot report a pass this script did not print.
 #
@@ -77,7 +77,7 @@ done
 
 TEST_CMD=$(wf_cfg test_command)
 if [ -z "$TEST_CMD" ]; then
-  echo "Error: no test_command in claude-workflow.yml — this project has no configured suite." >&2
+  echo "Error: no test_command in levain.yml — this project has no configured suite." >&2
   echo "       That is a gap to report, not a suite that passed." >&2
   echo "SUITE_RESULT=unconfigured"
   exit 2

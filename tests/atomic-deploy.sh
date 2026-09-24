@@ -44,7 +44,7 @@ new_client() {
   rm -rf "$CLIENT"
   mkdir -p "$CLIENT"
   git init -q "$CLIENT"
-  printf 'project_slug: "atomic-test"\n' > "$CLIENT/claude-workflow.yml"
+  printf 'project_slug: "atomic-test"\n' > "$CLIENT/levain.yml"
 }
 
 install_client() {
@@ -304,7 +304,7 @@ cat > "$CLIENT/plans/REGISTRY.md" << 'SEED'
 
 <!-- Counter: 1 -->
 SEED
-printf 'project_slug: "atomic-test"\norchestrator:\n  enabled: true\n' > "$CLIENT/claude-workflow.yml"
+printf 'project_slug: "atomic-test"\norchestrator:\n  enabled: true\n' > "$CLIENT/levain.yml"
 (cd "$CLIENT" && git add -A && git commit -q -m seed) >/dev/null 2>&1
 install_client
 b1=$(tr -d '[:space:]' < "$CLIENT/scripts/current")

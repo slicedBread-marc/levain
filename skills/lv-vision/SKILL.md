@@ -32,7 +32,7 @@ scripts/lv-exec.sh lv-hook.sh overseer-vision
 Refuse if step 1 finds a skill: a second one would compete with it. Otherwise:
 
 1. **Read** `.claude/docs/vision-spec.md` in full, then what the coordinator already knows:
-   `claude-workflow.yml` (`coordinates:`), `CLAUDE.md`, a project map if there is one, and the
+   `levain.yml` (`coordinates:`), `CLAUDE.md`, a project map if there is one, and the
    board (`scripts/lv-exec.sh lv-rack.sh --plain`).
 2. **Interview the owner** for every placeholder in the spec's table, one or two questions at a
    time, proposing an answer from what you read wherever you can. Ask above all for the north star

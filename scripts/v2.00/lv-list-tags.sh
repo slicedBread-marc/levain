@@ -32,7 +32,7 @@
 # Sources, unioned:
 #   1. the Tags column of every row in plans/REGISTRY.md — what the project
 #      actually uses
-#   2. `tags:` in claude-workflow.yml, if present — names a project wants
+#   2. `tags:` in levain.yml, if present — names a project wants
 #      available before any plan carries them
 #   3. specApproval.gateTags — always listed, always marked, because those are
 #      the choices that carry a consequence
@@ -92,7 +92,7 @@ if [ -f "$REGISTRY" ]; then
 fi
 
 # ── Declared-but-unused names ─────────────────────────────────────────────
-# `tags:` in claude-workflow.yml, plus every gate tag, at count 0 if no plan
+# `tags:` in levain.yml, plus every gate tag, at count 0 if no plan
 # carries them yet. A gate tag nobody has used is exactly the one a planner
 # most needs to see.
 declared=""

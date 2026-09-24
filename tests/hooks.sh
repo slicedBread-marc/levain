@@ -7,7 +7,7 @@
 #   3. observe: every layer runs, a failure never reaches the caller.
 #   4. add-deny: the union of every layer; a missing pack, a failing or a
 #      non-executable layer refuses (exit 3).
-#   5. Where packs come from: claude-workflow.yml `packs:`, $LV_PACKS, and
+#   5. Where packs come from: levain.yml `packs:`, $LV_PACKS, and
 #      ~/.config/levain/packs only when LV_PACKS is unset.
 #   6. project-registry: deploy-all/sweep-issues/check-profiles read it, and
 #      LV_DEPLOYMENTS (the test seam) wins over a pack.
@@ -36,7 +36,7 @@ section() { echo "── $1 ──"; }
 
 PROJ="$TEST_DIR/proj"
 mkdir -p "$PROJ"; git -C "$PROJ" init -q
-printf 'project_slug: fixture\n' > "$PROJ/claude-workflow.yml"
+printf 'project_slug: fixture\n' > "$PROJ/levain.yml"
 export CLAUDE_PROJECT_DIR="$PROJ"
 export LV_PACKS=""
 export HOME="$TEST_DIR/home"; mkdir -p "$HOME"
@@ -106,9 +106,9 @@ mkdir -p "$HOME/.config/levain"; printf '# mine\n%s\n' "$B" > "$HOME/.config/lev
 assert_eq "~/.config/levain/packs when LV_PACKS is unset" "$(env -u LV_PACKS "$HOOK" project-registry </dev/null)" "from-B"
 assert_eq "LV_PACKS, set, replaces it" "$(LV_PACKS="$A" "$HOOK" project-registry </dev/null)" "from-A"
 assert_eq "LV_PACKS empty means no user pack" "$(LV_PACKS= LV_DEPLOYMENTS=/nonexistent "$HOOK" project-registry </dev/null)" ""
-printf 'project_slug: fixture\npacks:\n  - "%s"\nother: 1\n' "$A" > "$PROJ/claude-workflow.yml"
+printf 'project_slug: fixture\npacks:\n  - "%s"\nother: 1\n' "$A" > "$PROJ/levain.yml"
 assert_eq "the project's packs: list comes before the user's" "$(env -u LV_PACKS "$HOOK" project-registry </dev/null)" "from-A"
-printf 'project_slug: fixture\n' > "$PROJ/claude-workflow.yml"
+printf 'project_slug: fixture\n' > "$PROJ/levain.yml"
 printf '%s\n' "~/tilde-pack" > "$HOME/.config/levain/packs"; mkhook "$HOME/tilde-pack/hooks" project-registry 'echo tilde'
 assert_eq "a ~/ pack path is expanded" "$(env -u LV_PACKS "$HOOK" project-registry </dev/null)" "tilde"
 rm -f "$HOME/.config/levain/packs"
@@ -135,8 +135,8 @@ case "$rc|$out" in 1*"deploying nowhere"*) ok "and stops deploy-all before it to
 section "7. install ships the dispatcher"
 for role in pipeline coordinator; do
   C="$TEST_DIR/inst-$role"; mkdir -p "$C"; git -C "$C" init -q
-  if [ "$role" = coordinator ]; then printf 'project_slug: coord\nrole: coordinator\n' > "$C/claude-workflow.yml"
-  else printf 'project_slug: pipe\n' > "$C/claude-workflow.yml"; fi
+  if [ "$role" = coordinator ]; then printf 'project_slug: coord\nrole: coordinator\n' > "$C/levain.yml"
+  else printf 'project_slug: pipe\n' > "$C/levain.yml"; fi
   (cd "$REPO_ROOT" && LV_PACKS= bash install.sh "$C" >"$TEST_DIR/install-$role.log" 2>&1) || true
   b=$(tr -d '[:space:]' < "$C/scripts/current" 2>/dev/null)
   if [ -x "$C/scripts/gen/$b/v2.00/hooks.default/secrets-deny-patterns" ] && [ -x "$C/scripts/gen/$b/v2.00/lv-hook.sh" ]; then

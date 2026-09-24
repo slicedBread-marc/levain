@@ -130,7 +130,7 @@
 #                  verdict      a recorded review verdict decides it. Verified
 #                               against lv-review-status.sh: the plan must carry
 #                               an `Approved*` result that is NOT stale.
-#                  config       a claude-workflow.yml setting decides it. Name
+#                  config       a levain.yml setting decides it. Name
 #                               the key in the resolution text.
 #                  autonomy     lv-autonomy.sh authorized it. Verified by asking
 #                               it, and only `release-approval` and
@@ -360,7 +360,7 @@ if [ "${LV_UNATTENDED:-0}" = "1" ]; then
       # The setting is the answer, so the resolution has to say which one. A
       # bare "config" is the same unfalsifiable prose this guard exists to stop.
       printf '%s' "$resolution" | grep -q '[A-Za-z]' || \
-        refuse_basis "--basis config with an empty resolution — name the claude-workflow.yml key that decides this"
+        refuse_basis "--basis config with an empty resolution — name the levain.yml key that decides this"
       ;;
 
     autonomy)

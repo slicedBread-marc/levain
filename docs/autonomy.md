@@ -14,7 +14,7 @@ only as an instruction to whichever agent heard it and died at the next session 
 
 `lv-autonomy.sh` **answers a question. It never performs an action.**
 
-It reads `claude-workflow.yml`, checks the grant, writes one line to the event log, and
+It reads `levain.yml`, checks the grant, writes one line to the event log, and
 exits. Whether anything then happens is entirely the caller's business. That separation is
 what makes the grant auditable: the record of *what was authorized* is independent of the
 record of *what was done*.
@@ -191,7 +191,7 @@ GATE_SKILL='lv-release'
 
 `/lv-attend` grows a row for `release-approval` and `deploy-approval`, and — this is the
 loop closure — if the human answers *"stop asking, you're authorized"*, the skill's
-instruction is to **write the grant into `claude-workflow.yml`** rather than accept it as
+instruction is to **write the grant into `levain.yml`** rather than accept it as
 conversation.
 
 ### 3. `lv-orchestrate.sh --json` — the posture, on every run
@@ -359,7 +359,7 @@ rule; `LV_LIVE_CLAUDE=1 tests/permission-baseline.sh` starts a real skip-permiss
 in a fixture client and checks it is refused `.env`. Re-run the live check after a Claude
 Code upgrade.
 
-**Lifting a rule** is the client's call, in its own `claude-workflow.yml`, and only with all
+**Lifting a rule** is the client's call, in its own `levain.yml`, and only with all
 four keys. A partial block lifts nothing, and the refusal says so:
 
 ```yaml

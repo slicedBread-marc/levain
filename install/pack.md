@@ -42,7 +42,7 @@ mkdir -p ~/.config/levain && echo "<absolute path to pack>" >> ~/.config/levain/
 ```
 
 A pack is read where it sits and is never copied into a project, so upgrades cannot overwrite
-it. A single project can also list packs under `packs:` in its own `claude-workflow.yml`.
+it. A single project can also list packs under `packs:` in its own `levain.yml`.
 
 ## Report
 

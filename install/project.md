@@ -1,7 +1,7 @@
 # Rung 1: install into a project
 
 > Part of [START.md](../START.md). The result is the pipeline installed in one project and a
-> `claude-workflow.yml` that describes that project truthfully.
+> `levain.yml` that describes that project truthfully.
 
 ## 1. Write the config
 
@@ -19,7 +19,7 @@ and where to find its value. Read the whole file. The user should never have to 
    - How do they run it locally? (`local_start_command`, `local_deploy_command`, `local_stop_command`)
    - Is there a test account a browser check would sign in with? (`test_account_*`)
    - Any conventions an implementer must follow? (`conventions_note`, `namespace_convention`)
-3. **Write** `claude-workflow.yml` at the project root: keys you know get their values, keys
+3. **Write** `levain.yml` at the project root: keys you know get their values, keys
    that do not apply keep the example's default, and the orchestrator block stays exactly as
    shipped (`enabled: false`). Show the user the values you chose, not the whole file.
 
@@ -34,7 +34,7 @@ with its registry and templates, and the permission guard in `.claude/settings.j
 also writes `WORKFLOW.md`, which is the entry point for any agent that arrives in this project
 cold. It adds a workflow section to `CLAUDE.md` and does not touch the rest of that file.
 
-If it stops with *"Created claude-workflow.yml — edit it"*, then no config existed when it ran.
+If it stops with *"Created levain.yml — edit it"*, then no config existed when it ran.
 Fill that file in as described in step 1, then run it again.
 
 ## 3. Check

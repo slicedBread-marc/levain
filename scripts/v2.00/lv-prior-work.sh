@@ -218,7 +218,7 @@ echo "at step 0 of 4, with no worktree and no code written, into verify (WFI-208
 echo "The overlap line under each commit above is the evidence for choosing."
 echo ""
 echo "If those paths are notes rather than implementation and this keeps firing,"
-echo "declare them once in claude-workflow.yml instead of answering per plan:"
+echo "declare them once in levain.yml instead of answering per plan:"
 echo "  priorWork:"
 echo "    ignorePaths:"
 echo "      - \"path/prefix/\""

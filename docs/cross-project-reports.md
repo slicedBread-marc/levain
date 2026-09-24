@@ -28,7 +28,7 @@ changes, the mechanism doesn't.
 
 ## Setup: declare the dependency
 
-In the **reporting** project's `claude-workflow.yml`:
+In the **reporting** project's `levain.yml`:
 
 ```yaml
 dependencies:
@@ -202,7 +202,7 @@ mechanism as `lv-dep-bug.sh`, same guarantee that the dependent's own
 
 ### Setup: declare dependents
 
-In the **notifying** project's `claude-workflow.yml`:
+In the **notifying** project's `levain.yml`:
 
 ```yaml
 dependents:

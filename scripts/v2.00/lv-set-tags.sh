@@ -4,7 +4,7 @@
 # Tags are comma-separated, no spaces. Use "—" to clear.
 #
 # The vocabulary is the project's own — whatever plans already carry, plus
-# anything declared in claude-workflow.yml (`tags:`, `specApproval.gateTags`).
+# anything declared in levain.yml (`tags:`, `specApproval.gateTags`).
 # See lv-list-tags.sh. A name outside it is a WARNING, not an error: this
 # script used to hardcode `security arcade admin lessons ux infra e2e bugfix`
 # and reject everything else, so a project whose gating tag was `contract`

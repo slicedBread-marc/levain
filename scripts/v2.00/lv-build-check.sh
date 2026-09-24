@@ -13,19 +13,19 @@ set -euo pipefail
 # shellcheck source=lv-orch-lib.sh
 source "$(dirname "$0")/lv-orch-lib.sh"
 
-# Find the develop root to read claude-workflow.yml
+# Find the develop root to read levain.yml
 DEVELOP_ROOT="$(wf_develop_root)"
-CFG="$DEVELOP_ROOT/claude-workflow.yml"
+lv_config_into CFG "$DEVELOP_ROOT"
 
 if [ ! -f "$CFG" ]; then
-  echo "Warning: claude-workflow.yml not found at $CFG — skipping build check" >&2
+  echo "Warning: levain.yml not found at $CFG — skipping build check" >&2
   exit 0
 fi
 
 BUILD_CMD=$(wf_cfg build_command)
 
 if [ -z "$BUILD_CMD" ]; then
-  echo "Warning: no build_command in claude-workflow.yml — skipping build check" >&2
+  echo "Warning: no build_command in levain.yml — skipping build check" >&2
   exit 0
 fi
 

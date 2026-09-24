@@ -16,7 +16,7 @@
 #   wf_state_of <id>                 → one plan's REGISTRY state, PLN-alias aware
 #   wf_bug_id <bug.md>               → the bug that file declares itself to be
 #   wf_goal_text <plan.md>           → that plan's one-line goal
-#   wf_cfg <dotted.path> [default]   → value from claude-workflow.yml
+#   wf_cfg <dotted.path> [default]   → value from levain.yml
 #   wf_emit <KEY> <value>            → eval-safe KEY='value' line
 #   wf_gate_field <file> <KEY> [--unescape] → one field of a gate file
 #   wf_restore_harness               → re-copy the gitignored runtime files after a merge
@@ -64,7 +64,7 @@ wf_develop_root() {
   printf '%s' "$root"
 }
 
-# The ID prefix map, read from the develop root's claude-workflow.yml — loaded
+# The ID prefix map, read from the develop root's levain.yml — loaded
 # here, once wf_develop_root exists, so the map reuses its cached answer.
 # shellcheck source=lv-ids.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lv-ids.sh"
@@ -603,12 +603,12 @@ wf_read1() {
 # ── Config ────────────────────────────────────────────────────────────────
 
 # wf_cfg <dotted.path> [default]
-# Reads a scalar from claude-workflow.yml. Deliberately does NOT require yq —
+# Reads a scalar from levain.yml. Deliberately does NOT require yq —
 # the orchestrator must run on a bare client checkout. Handles the nested
 # 2-space-indented scalar shape this config uses; not a general YAML parser.
 wf_cfg() {
   local path="$1" default="${2:-}" cfg val
-  cfg="$(wf_develop_root)/claude-workflow.yml"
+  lv_config_into cfg "$(wf_develop_root)"
   if [ ! -f "$cfg" ]; then printf '%s' "$default"; return 0; fi
 
   val=$(awk -v path="$path" '
@@ -639,7 +639,7 @@ wf_cfg() {
         # as if the key were unset -- the default the caller passed in
         # applies instead of a one-character command.
         if (rest ~ /^[|>][+-]?[0-9]*$/) {
-          print "wf_cfg: " path " uses YAML block-scalar syntax which claude-workflow.yml cannot express (scalars only, one line per key) -- flatten it to a single line using a semicolon as the statement separator. Treating it as unset." > "/dev/stderr"
+          print "wf_cfg: " path " uses YAML block-scalar syntax which levain.yml cannot express (scalars only, one line per key) -- flatten it to a single line using a semicolon as the statement separator. Treating it as unset." > "/dev/stderr"
           exit
         }
         print rest; exit
@@ -682,7 +682,7 @@ wf_cfg() {
 # caller prints this into a larger message.
 wf_cfg_block() {
   local path="$1" cfg
-  cfg="$(wf_develop_root)/claude-workflow.yml"
+  lv_config_into cfg "$(wf_develop_root)"
   [ -f "$cfg" ] || return 0
 
   awk -v path="$path" '
@@ -746,7 +746,7 @@ wf_cfg_text() {
 # what an empty list means.
 wf_cfg_list() {
   local path="$1" cfg
-  cfg="$(wf_develop_root)/claude-workflow.yml"
+  lv_config_into cfg "$(wf_develop_root)"
   [ -f "$cfg" ] || return 0
 
   awk -v path="$path" '

@@ -39,7 +39,7 @@ Restate the `NEXT` action in plain words, and add only what applies:
 - **A gate line reads `stuck`** — that plan hit its attempt budget. It needs a human look, not another retry.
 - **`pending migration actions`** in the banner — point at `plans/MIGRATION-NOTES.md`.
 - **The `brainstorms` line carries `(+N not in INDEX.md)`** — brief files the backlog doesn't list. `lv-brainstorm-reindex.sh` is the repair; never run it from here.
-- **`enabled: false`** — the project runs by hand, and `NEXT` is a skill to run, not a daemon to start. Mention `scripts/lv-exec.sh lv-orchestrate.sh --sweep --dry-run` (then enabling it in `claude-workflow.yml`) only if the user asks about automating.
+- **`enabled: false`** — the project runs by hand, and `NEXT` is a skill to run, not a daemon to start. Mention `scripts/lv-exec.sh lv-orchestrate.sh --sweep --dry-run` (then enabling it in `levain.yml`) only if the user asks about automating.
 - **A plan is `in progress — claimed by a session`** — another session is working it; say so, so nobody picks it up twice.
 
 ## One artifact's history — `/lv-tray <ID>`
@@ -93,7 +93,7 @@ scripts/lv-exec.sh lv-issue.sh --source lv-tray \
   --context  "<plan id, branch, state>"
 ```
 
-These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
+These are swept into the Levain library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
 ## Usage
 

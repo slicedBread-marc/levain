@@ -23,7 +23,7 @@ emergencies.
 
 ## What the library reads
 
-| Key in `claude-workflow.yml` | Used by |
+| Key in `levain.yml` | Used by |
 |-|-|
 | `production_url`, `production_logs_url` | `/lv-deploy`'s completion message. Leave them blank when there is no production |
 | `local_start_command`, `local_deploy_command`, `local_stop_command` | Local runs and browser checks |

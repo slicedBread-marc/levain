@@ -212,14 +212,14 @@ release-branches/release → release's own permanent worktree — staging enviro
    and re-running, with no code change, turned the same filter from 2 failed / 5 passed in 1m6s
    into 7 passed / 0 failed in 8s. The rollback did its job, so nothing unsafe followed — but the
    report accused a clean batch, and an operator acting on it goes hunting a regression that does
-   not exist. Prerequisites are declared per project in its own `claude-workflow.yml` under
+   not exist. Prerequisites are declared per project in its own `levain.yml` under
    `e2ePrereqs:`; a project with none declared is unaffected by this step.
 
 7. **Run E2E / integration tests** (staging validation), against the local merge — before anything is pushed. **Do not type a test command here; run the script:**
    ```bash
    scripts/lv-exec.sh lv-suite-run.sh --label release --build
    ```
-   It runs `build_command` and then `test_command` from `claude-workflow.yml`, verbatim and unfiltered, in the worktree you are standing in, and ends with three lines: `SUITE_CMD=`, `SUITE_LOG=`, `SUITE_RESULT=`. **Exit 0 pass, 1 fail, 2 no suite is configured** — 2 is a gap to report and never a pass.
+   It runs `build_command` and then `test_command` from `levain.yml`, verbatim and unfiltered, in the worktree you are standing in, and ends with three lines: `SUITE_CMD=`, `SUITE_LOG=`, `SUITE_RESULT=`. **Exit 0 pass, 1 fail, 2 no suite is configured** — 2 is a gap to report and never a pass.
 
    **`SUITE_RESULT=` is the only thing that may be reported as the verdict, and `SUITE_CMD=` must be quoted beside it.** A count you read out of the output is not evidence of what ran. client-a's WFI-252: a run reported "✓ E2E tests passed: **474 passed, 0 failed**" and pushed `release`. 474 was one assembly; the configured suite on that content was 3100 tests with 121 failures, every one of them in the E2E assembly the run had named as passing. So the run labelled a non-E2E assembly as the E2E suite, never ran the suite it claimed had passed, and pushed on that basis. `/lv-deploy`'s own full run caught it and reset `main` — nothing else would have.
 

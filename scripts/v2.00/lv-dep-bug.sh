@@ -7,7 +7,7 @@
 # itself. For that, use /lv-bug (lv-bug-new.sh) as normal.
 #
 # The dependency must be a local checkout of a project running this same
-# harness, declared in THIS project's claude-workflow.yml:
+# harness, declared in THIS project's levain.yml:
 #
 #   dependencies:
 #     - "client-c:/path/to/client-c"
@@ -140,7 +140,7 @@ while IFS= read -r entry; do
 done < <(wf_cfg_list dependencies)
 
 if [ -z "$host_path" ]; then
-  echo "Error: no dependency named '$host_name' in $caller_root/claude-workflow.yml" >&2
+  echo "Error: no dependency named '$host_name' in $caller_root/levain.yml" >&2
   configured=$(wf_cfg_list dependencies | sed 's/:.*//' | paste -sd, - 2>/dev/null || true)
   if [ -n "$configured" ]; then
     echo "Configured dependencies: $configured" >&2

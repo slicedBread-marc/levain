@@ -28,7 +28,7 @@ This is **not** for:
 
 ## Setup: this project needs a `dependents:` list
 
-Check this project's `claude-workflow.yml` for a `dependents:` block:
+Check this project's `levain.yml` for a `dependents:` block:
 ```yaml
 dependents:
   - "client-e:/path/to/client-e"
@@ -41,7 +41,7 @@ never invent a path.
 
 ## If this project is a coordinator, the shape changes slightly
 
-A project with `role: coordinator` in its `claude-workflow.yml` (see `docs/coordinator.md`) runs
+A project with `role: coordinator` in its `levain.yml` (see `docs/coordinator.md`) runs
 no pipeline of its own and oversees ones that do. This skill is its **only** way to put work into
 them, and three things differ:
 

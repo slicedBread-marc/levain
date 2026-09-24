@@ -12,7 +12,7 @@
 #   2. deployments.txt in the library root ($LV_LIBRARY, which those scripts
 #      export — a coordinator's board takes it from .claude/workflow-source);
 #   3. the `coordinates:` list ("name:/path") in the project's
-#      claude-workflow.yml, so a coordinator with no registry file still has
+#      levain.yml, so a coordinator with no registry file still has
 #      a board.
 # Blank lines and # comments are skipped.
 clean() { sed -e 's/[[:space:]]*#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$1" | grep -v '^$' || true; }
@@ -22,7 +22,8 @@ f="${LV_DEPLOYMENTS:-}"
 if [ -n "$f" ] && [ -f "$f" ]; then clean "$f"; exit 0; fi
 
 root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-cfg="$root/claude-workflow.yml"
+cfg="$root/levain.yml"
+[ -f "$cfg" ] || cfg="$root/claude-workflow.yml"   # before 14.7.0
 [ -f "$cfg" ] || exit 0
 awk '
   /^coordinates:[ \t]*$/ { on = 1; next }

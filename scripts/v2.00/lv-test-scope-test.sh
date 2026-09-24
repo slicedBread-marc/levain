@@ -9,15 +9,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Walk up until we find claude-workflow.yml so this works under both flat
+# Walk up until we find levain.yml so this works under both flat
 # (scripts/) and versioned (scripts/vN.NN/) layouts.
 DEVELOP_ROOT=""
 search="$SCRIPT_DIR"
 while [ "$search" != "/" ]; do
-  if [ -f "$search/claude-workflow.yml" ]; then DEVELOP_ROOT="$search"; break; fi
+  if [ -f "$search/levain.yml" ] || [ -f "$search/claude-workflow.yml" ]; then DEVELOP_ROOT="$search"; break; fi
   search="$(dirname "$search")"
 done
-[ -n "$DEVELOP_ROOT" ] || { echo "lv-test-scope-test.sh: cannot locate claude-workflow.yml" >&2; exit 2; }
+[ -n "$DEVELOP_ROOT" ] || { echo "lv-test-scope-test.sh: cannot locate levain.yml" >&2; exit 2; }
 SCOPE_SCRIPT="$SCRIPT_DIR/lv-test-scope.sh"
 REGISTRY="$DEVELOP_ROOT/plans/REGISTRY.md"
 

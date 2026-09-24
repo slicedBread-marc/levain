@@ -13,7 +13,7 @@
 # A DEPENDENCY IN ANOTHER REPO
 #
 # `<project>:<ARTIFACT-ID>` names an artifact in a project declared under
-# `dependencies:` in this project's claude-workflow.yml — the same key
+# `dependencies:` in this project's levain.yml — the same key
 # lv-dep-bug.sh files through, and the same local checkout.
 #
 # client-b WFI-015: PLN-011 was blocked on client-d's BRF-009 / BUG-011 and
@@ -79,7 +79,7 @@ if [ "$deps" != "—" ]; then
         if [ -n "$configured" ]; then
           echo "  Declared dependencies: $configured" >&2
         else
-          echo "  No 'dependencies:' key in claude-workflow.yml. Add one:" >&2
+          echo "  No 'dependencies:' key in levain.yml. Add one:" >&2
           echo "    dependencies:" >&2
           echo "      - \"$proj:/absolute/path/to/$proj\"" >&2
         fi

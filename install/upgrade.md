@@ -30,7 +30,7 @@ key that is new or changed. Old skill names keep working as aliases.
 | Several (a registry exists) | `"$LIB/deploy-all.sh" --stop-daemons`. It stops running daemons, upgrades every listed project, and then restarts exactly the daemons it stopped |
 
 Installs are atomic, so a running daemon never reads a half-written harness. Their templates and
-`claude-workflow.yml` are left alone. New config keys take their defaults until they are set, and
+`levain.yml` are left alone. New config keys take their defaults until they are set, and
 `$LIB/config.example.yml` documents them.
 
 ## Report

@@ -277,7 +277,7 @@ Before starting, confirm E2E passed on release:
    ```bash
    scripts/lv-exec.sh lv-suite-run.sh --label deploy --build
    ```
-   It runs `build_command` then `test_command` from `claude-workflow.yml`, verbatim and unfiltered, against merged `main` in the worktree you are standing in, and ends with `SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`. **Exit 0 pass, 1 fail, 2 no suite configured** — 2 is a gap to report, never a pass. Report the `SUITE_RESULT=` line verbatim with `SUITE_CMD=` beside it; a count read out of the output is not evidence of what ran (WFI-252, where a release was pushed on one assembly's 474 tests reported as the whole E2E suite — **this step is what caught it**, and it only caught it because it ran the configured command).
+   It runs `build_command` then `test_command` from `levain.yml`, verbatim and unfiltered, against merged `main` in the worktree you are standing in, and ends with `SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`. **Exit 0 pass, 1 fail, 2 no suite configured** — 2 is a gap to report, never a pass. Report the `SUITE_RESULT=` line verbatim with `SUITE_CMD=` beside it; a count read out of the output is not evidence of what ran (WFI-252, where a release was pushed on one assembly's 474 tests reported as the whole E2E suite — **this step is what caught it**, and it only caught it because it ran the configured command).
 
    **On a pass, and only then, disarm the guard and clear any recorded failure:**
    ```bash

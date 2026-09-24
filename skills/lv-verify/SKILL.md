@@ -84,7 +84,7 @@ TEST_ARGS=$(scripts/lv-exec.sh lv-test-scope.sh PLN-NNN-<slug> --args 2>/tmp/wf-
 
 If `$TEST_ARGS` is empty → run the **full suite** (backward-compat fallback). Otherwise append it to the test command **through `eval`** — `eval "{{test_command}} $TEST_ARGS < /dev/null"` — because the string carries its own quoting and may be several flags, not one. The `< /dev/null` is rule 6 and belongs on every form below.
 
-`--args` returns the whole argument string rather than a bare filter value on purpose: a Microsoft.Testing.Platform project needs a repeated `--filter-class` plus `--ignore-exit-code 8`, which `<flag> "<value>"` cannot express. Nothing here needs to know which runner is in play — `testFilterStyle` in `claude-workflow.yml` decides, defaulting to auto-detection.
+`--args` returns the whole argument string rather than a bare filter value on purpose: a Microsoft.Testing.Platform project needs a repeated `--filter-class` plus `--ignore-exit-code 8`, which `<flag> "<value>"` cannot express. Nothing here needs to know which runner is in play — `testFilterStyle` in `levain.yml` decides, defaulting to auto-detection.
 
 `testScopes` / `testMappings` / `testScopeMandatory` define the categories and auto-detect mappings. The aggregation guarantee is preserved: `lv-release` always runs the full suite with no filter.
 
@@ -458,7 +458,7 @@ scripts/lv-exec.sh lv-issue.sh --source lv-verify \
   --context  "<plan id, branch, state>"
 ```
 
-These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
+These are swept into the Levain library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
 ## Usage
 

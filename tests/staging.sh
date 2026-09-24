@@ -90,7 +90,7 @@ serve_health() {   # serve_health <port>: answers GET /health with 200
 new_project() {   # new_project <dir> [slug]: a git repo with a compose file
   mkdir -p "$1/docker" && cd "$1" || exit 1
   git init -q -b develop . && git config user.email t@t && git config user.name T
-  printf 'project_slug: "%s"\n' "${2:-demo}" > claude-workflow.yml
+  printf 'project_slug: "%s"\n' "${2:-demo}" > levain.yml
   echo "services: {}" > docker/docker-compose.yml
   git add -A && git commit -qm init   # so `develop` exists to switch back to
 }

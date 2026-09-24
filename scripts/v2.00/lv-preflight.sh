@@ -21,7 +21,7 @@
 #
 # DECLARING PREREQUISITES
 #
-# In this project's own claude-workflow.yml — the harness cannot guess them:
+# In this project's own levain.yml — the harness cannot guess them:
 #
 #   e2ePrereqs:
 #     - "dev issuer:http://localhost:8084/.well-known/openid-configuration"

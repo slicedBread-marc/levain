@@ -15,7 +15,7 @@
 # bearing — see the untagged branch under "Decide" for what the first half alone
 # did to a CLI project.
 #
-# Gate only when ALL configured conditions hold (claude-workflow.yml):
+# Gate only when ALL configured conditions hold (levain.yml):
 #
 #   manualTestGate:
 #     requireRenderingSurface: true    # 1. diff touches a rendering surface

@@ -7,7 +7,7 @@
 # in this project, and is that authorization still good right now?
 #
 # It never performs the action. It never writes to the pipeline. It reads
-# claude-workflow.yml, checks the grant, records that the question was asked,
+# levain.yml, checks the grant, records that the question was asked,
 # and exits. The caller does the work — or doesn't.
 #
 #   0  authorized      the caller may proceed unattended
@@ -26,7 +26,7 @@
 # The reporter also named the failure mode to avoid, and it is the whole reason
 # this file is a script and not a key:
 #
-#   "Adding an unread key to claude-workflow.yml would be worse than nothing:
+#   "Adding an unread key to levain.yml would be worse than nothing:
 #    it would look load-bearing and be honoured by no script."
 #
 # So the vocabulary below is CLOSED and validated. `--show` names every entry
@@ -265,7 +265,7 @@ if ! in_list "$action" "$GRANTABLE"; then
 fi
 
 if [ -n "$problems" ]; then
-  say "The autonomy grant in claude-workflow.yml is malformed, so nothing is authorized:"
+  say "The autonomy grant in levain.yml is malformed, so nothing is authorized:"
   $quiet || printf '%s\n' "$problems" >&2
   exit 2
 fi

@@ -357,7 +357,7 @@ assert_eq "PLN-11 priority NOT overwritten by the PLN-1 write" "—" "$(registry
 
 section "Config reader"
 
-cat > claude-workflow.yml << 'YML'
+cat > levain.yml << 'YML'
 project_slug: "demo"
 orchestrator:
   enabled: true
@@ -606,7 +606,7 @@ assert_eq "lv-spec keeps approval as a hard gate" "true" \
 section "Dispatcher — selection logic (dry run)"
 
 # Enable the orchestrator for the remaining sections.
-cat > claude-workflow.yml << 'YML'
+cat > levain.yml << 'YML'
 project_slug: "demo"
 orchestrator:
   enabled: true
@@ -712,10 +712,10 @@ assert_eq "no develop yet: the branch in front of us IS the registry" "true" \
   "$(printf '%s' "$plan" | grep -q 'would spawn' && echo true || echo false)"
 
 # Disabled by default is the safety posture that matters most.
-sed 's/enabled: true/enabled: false/' claude-workflow.yml > cfg.tmp && mv cfg.tmp claude-workflow.yml
+sed 's/enabled: true/enabled: false/' levain.yml > cfg.tmp && mv cfg.tmp levain.yml
 assert_fails "sweep refuses to run when disabled" orch --sweep
 assert_ok "--force overrides disabled" orch --sweep --dry-run --force
-sed 's/enabled: false/enabled: true/' claude-workflow.yml > cfg.tmp && mv cfg.tmp claude-workflow.yml
+sed 's/enabled: false/enabled: true/' levain.yml > cfg.tmp && mv cfg.tmp levain.yml
 
 section "Dispatcher — spawning (stub claude)"
 
@@ -1171,8 +1171,8 @@ assert_eq "and both are otherwise implementable, so the subtraction is reached" 
 # Raise the implement ceiling for this section only: the sweep dispatches in
 # registry order and the earlier fixtures already fill the default 2 slots, so
 # a capped sweep would prove nothing about PLN-973 either way.
-cp claude-workflow.yml /tmp/wf-cfg-restore.$$
-sed -i.bak 's/^    implement: 2$/    implement: 20/' claude-workflow.yml
+cp levain.yml /tmp/wf-cfg-restore.$$
+sed -i.bak 's/^    implement: 2$/    implement: 20/' levain.yml
 
 sweep_err=$(orch --sweep --dry-run 2>&1 >/dev/null)
 case "$sweep_err" in *"newline in string"*) r=true ;; *) r=false ;; esac
@@ -1186,7 +1186,7 @@ assert_eq "and the two owing one are held back from implement" "false" \
 assert_eq "while still being offered a consistency pass" "true" \
   "$(printf '%s' "$sweep_out" | grep -q 'consistency PLN-971-pend-one' && echo true || echo false)"
 
-mv /tmp/wf-cfg-restore.$$ claude-workflow.yml; rm -f claude-workflow.yml.bak
+mv /tmp/wf-cfg-restore.$$ levain.yml; rm -f levain.yml.bak
 
 # A QUIET QUEUE IS NOT A FAILED FILTER EITHER
 #
@@ -1234,7 +1234,7 @@ INST_DIR=$(mktemp -d)
   cd "$INST_DIR" || exit 1
   git init -q . && git commit -q --allow-empty -m init
   "$LIB_ROOT/install.sh" . >/dev/null 2>&1
-  sed -i.bak 's/^project_slug:.*/project_slug: "itest"/' claude-workflow.yml
+  sed -i.bak 's/^project_slug:.*/project_slug: "itest"/' levain.yml
   "$LIB_ROOT/install.sh" . > install-1.log 2>&1
   git add plans/REGISTRY.md && git commit -q -m "track registry"
   "$LIB_ROOT/install.sh" . > install-2.log 2>&1
@@ -2664,7 +2664,7 @@ auth_cfg() {   # auth_cfg <mode> [standing_for...]
       printf '    granted_by: "A Tester"\n    granted_on: 2026-01-01\n    expires_on: 2099-01-01\n    max_per_day: 4\n    standing_for:\n'
       shift; for a in "$@"; do printf '      - %s\n' "$a"; done
     fi
-  } > "$AUTH/claude-workflow.yml"
+  } > "$AUTH/levain.yml"
 }
 
 # Captured and matched in-shell, never piped into `grep -q`: this file runs
@@ -2680,7 +2680,7 @@ auth_dispatches_release() {
 
 # coordinator WFI-006: with no autonomy config at all, release (and a local deploy)
 # needs no grant — only production-push reaches users.
-printf 'project_slug: "auth-demo"\norchestrator:\n  enabled: true\n' > "$AUTH/claude-workflow.yml"
+printf 'project_slug: "auth-demo"\norchestrator:\n  enabled: true\n' > "$AUTH/levain.yml"
 assert_eq "by default, release is dispatched with no grant" "true" "$(auth_dispatches_release)"
 
 # attended_for takes the gate back — every listed promotion stops for a human,
@@ -2698,7 +2698,7 @@ assert_eq "a grant covering only deploy does not dispatch release" "false" "$(au
 # An expired grant is not a grant, and a malformed one authorizes nothing —
 # exit 2 is never "proceed", at the dispatcher as much as in the skill.
 auth_cfg standing release
-sed -i.bak 's/expires_on: 2099-01-01/expires_on: 2020-01-01/' "$AUTH/claude-workflow.yml"
+sed -i.bak 's/expires_on: 2099-01-01/expires_on: 2020-01-01/' "$AUTH/levain.yml"
 assert_eq "an expired grant does not dispatch" "false" "$(auth_dispatches_release)"
 auth_cfg standing release everything
 assert_eq "a malformed grant does not dispatch either" "false" "$(auth_dispatches_release)"
@@ -2761,7 +2761,7 @@ git config user.email t@t.com; git config user.name T
 git commit -q --allow-empty -m base
 mkdir -p scripts; printf '0.00 v2.00\n' > scripts/version-map.txt
 
-printf 'build_command: "echo building"\ntest_command: "echo 3100 total"\n' > claude-workflow.yml
+printf 'build_command: "echo building"\ntest_command: "echo 3100 total"\n' > levain.yml
 out=$("$SCRIPT_DIR/lv-suite-run.sh" --label t --build 2>&1); rc=$?
 assert_eq "a passing suite exits 0" "0" "$rc"
 assert_eq "and says so in a receipt the skill quotes" "true" \
@@ -2771,20 +2771,20 @@ assert_eq "naming the command it actually ran" "true" \
 assert_eq "and the log holding the whole output" "true" \
   "$([ -f "$(printf '%s' "$out" | sed -n 's/^SUITE_LOG=//p')" ] && echo true || echo false)"
 
-printf 'build_command: "echo b"\ntest_command: "exit 1"\n' > claude-workflow.yml
+printf 'build_command: "echo b"\ntest_command: "exit 1"\n' > levain.yml
 out=$("$SCRIPT_DIR/lv-suite-run.sh" --label t 2>&1); rc=$?
 assert_eq "a failing suite exits 1" "1" "$rc"
 assert_eq "and never prints a pass" "true" \
   "$(printf '%s' "$out" | grep -q '^SUITE_RESULT=fail' && echo true || echo false)"
 
-printf 'build_command: "exit 1"\ntest_command: "echo never reached"\n' > claude-workflow.yml
+printf 'build_command: "exit 1"\ntest_command: "echo never reached"\n' > levain.yml
 out=$("$SCRIPT_DIR/lv-suite-run.sh" --label t --build 2>&1); rc=$?
 assert_eq "a failing build exits 1 without running the suite" "1" "$rc"
 assert_eq "and says the suite never ran" "true" \
   "$(printf '%s' "$out" | grep -q 'the suite never ran' && echo true || echo false)"
 
 # No suite configured is a gap to report, never a pass.
-printf 'build_command: "echo b"\n' > claude-workflow.yml
+printf 'build_command: "echo b"\n' > levain.yml
 "$SCRIPT_DIR/lv-suite-run.sh" >/dev/null 2>&1
 assert_eq "an unconfigured suite exits 2, not 0" "2" "$?"
 
@@ -2804,7 +2804,7 @@ cd "$LONG" || exit 1
 git config user.email t@t.com; git config user.name T
 git commit -q --allow-empty -m base
 mkdir -p scripts; printf '0.00 v2.00\n' > scripts/version-map.txt
-printf 'test_command: "sleep 6; echo done"\n' > claude-workflow.yml
+printf 'test_command: "sleep 6; echo done"\n' > levain.yml
 
 out=$("$SCRIPT_DIR/lv-suite-run.sh" --label long --detach 2>&1)
 H=$(printf '%s' "$out" | sed -n 's/^SUITE_HANDLE=//p')

@@ -19,7 +19,7 @@ Creating a repository needs their yes. Then:
 mkdir -p <dir> && git -C <dir> init
 ```
 
-and write `<dir>/claude-workflow.yml`:
+and write `<dir>/levain.yml`:
 
 ```yaml
 role: "coordinator"

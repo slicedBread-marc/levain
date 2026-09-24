@@ -242,7 +242,7 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
    ```
    Then exit 0 without transitioning the registry or creating a branch. Attended, put the same question to the user.
 
-   **Offer all three, and quote the overlap line `lv-prior-work.sh` printed under the commit.** A commit that merely mentions the ID while doing something else is common, and for it neither of the first two answers is true. client-a's PLN-206 had one touching only `docs/plan/reference/` while the plan's four steps target `RedactionGuards.cs` and two test files — zero file overlap, and Step 4 saying in as many words "No `docs/` change". With only two options offered, answering `accept` literally would have moved a plan at step 0 of 4, with no worktree and no code written, straight to `verify` (WFI-208). If answer (3) keeps recurring for the same paths, the durable fix is `priorWork.ignorePaths` in `claude-workflow.yml`, which the script prints.
+   **Offer all three, and quote the overlap line `lv-prior-work.sh` printed under the commit.** A commit that merely mentions the ID while doing something else is common, and for it neither of the first two answers is true. client-a's PLN-206 had one touching only `docs/plan/reference/` while the plan's four steps target `RedactionGuards.cs` and two test files — zero file overlap, and Step 4 saying in as many words "No `docs/` change". With only two options offered, answering `accept` literally would have moved a plan at step 0 of 4, with no worktree and no code written, straight to `verify` (WFI-208). If answer (3) keeps recurring for the same paths, the durable fix is `priorWork.ignorePaths` in `levain.yml`, which the script prints.
 
    **Exit 3 from `lv-gate-open.sh` is not a failure.** It means the gate was refused because an answer of record already covers this revision of the plan; the resolution is printed. Act on it and continue — never work around it by re-opening under another name.
 
@@ -667,7 +667,7 @@ scripts/lv-exec.sh lv-issue.sh --source lv-implement \
   --context  "<plan id, branch, state>"
 ```
 
-These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
+These are swept into the Levain library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
 ## Usage
 

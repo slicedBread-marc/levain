@@ -385,7 +385,7 @@ An unattended `/lv-release` or `/lv-deploy` reached its promotion prompt with no
    | `1` | Run `/lv-release` or `/lv-deploy` themselves — nothing else will pick this up. |
 
    This skill drains queues; it does not run releases either way.
-3. If the gate's question carries `lv-autonomy.sh` stderr, the project's grant is **malformed** — that is a broken config, not a refusal. Show the problems verbatim and offer to fix `claude-workflow.yml`.
+3. If the gate's question carries `lv-autonomy.sh` stderr, the project's grant is **malformed** — that is a broken config, not a refusal. Show the problems verbatim and offer to fix `levain.yml`.
 
 **If the user says "stop asking me — you're authorized from now on", that is a real answer and it has a home.** Do not accept it as conversation; it dies at the session boundary, which is the whole of WFI-159. Write it down:
 
@@ -418,7 +418,7 @@ Never write a grant the user did not ask for, never widen one to save a future r
 
 **A thing the user said to you is not a grant.** "Process them all", "go ahead", "yes to everything" — these tell *you*, in this conversation, how to work the queue in front of you. They authorize nothing outside it and they expire when the conversation does. client-a's WFI-227: a worker took "process them all" as standing authority, closed a `spec-approval` gate on its own recognisance, and had an implementer running by the time the human answered the same question three minutes later in `/lv-attend`. The resolution it wrote said so out loud — "approved by the assistant … not by Marc" — and nothing read it.
 
-The only durable authorization is the one in `claude-workflow.yml`, which is why this section exists at all (WFI-159). If a conversational instruction sounds like it should outlive the session, that is the moment to offer to write it down — with an author, a date and an expiry — not to act as though it already had been. And `spec-approval` and `manual-test` can never be written down there; `lv-gate-close.sh` refuses an unattended close of any gate without a checked `--basis`, so the harness now stops this rather than trusting it.
+The only durable authorization is the one in `levain.yml`, which is why this section exists at all (WFI-159). If a conversational instruction sounds like it should outlive the session, that is the moment to offer to write it down — with an author, a date and an expiry — not to act as though it already had been. And `spec-approval` and `manual-test` can never be written down there; `lv-gate-close.sh` refuses an unattended close of any gate without a checked `--basis`, so the harness now stops this rather than trusting it.
 
 ### `deploy-suite-red`
 
@@ -497,7 +497,7 @@ scripts/lv-exec.sh lv-issue.sh --source lv-attend \
   --context  "<plan id, branch, state>"
 ```
 
-These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
+These are swept into the Levain library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
 ## Usage
 

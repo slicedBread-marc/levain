@@ -35,7 +35,7 @@ Show the output and explain what it would start.
 ## 3. Turn it on (their decision)
 
 Ask directly: *turn the orchestrator on for this project?* Only after a yes, set
-`orchestrator.enabled: true` in `claude-workflow.yml` and commit that one line.
+`orchestrator.enabled: true` in `levain.yml` and commit that one line.
 
 The daemon does not return, so do not run it yourself. Ask them to start it in a terminal of
 its own:

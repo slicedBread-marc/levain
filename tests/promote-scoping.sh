@@ -48,7 +48,7 @@ new_client() {
   git init -q -b develop "$CLIENT"
   cd "$CLIENT" || exit 1
   git config user.email t@t; git config user.name t
-  printf 'project_slug: "promote-test"\n' > claude-workflow.yml
+  printf 'project_slug: "promote-test"\n' > levain.yml
   mkdir -p plans .claude/orchestrator
   printf '# Plan Registry\n\n<!-- Counter: 1 -->\n' > plans/REGISTRY.md
   git add -A; git commit -qm init
@@ -194,7 +194,7 @@ echo "5. lv-post-merge-check.sh reads postMergeCheck:"
 new_client
 cd "$CLIENT" || exit 1
 
-printf 'project_slug: "promote-test"\nbuild_command: "true"\npostMergeCheck: build\n' > claude-workflow.yml
+printf 'project_slug: "promote-test"\nbuild_command: "true"\npostMergeCheck: build\n' > levain.yml
 out=$("$SCRIPTS/lv-post-merge-check.sh" 2>&1); rc=$?
 assert_eq "build mode → exit 0 on a passing build" "0" "$rc"
 case "$out" in
@@ -202,15 +202,15 @@ case "$out" in
   *) bad "it says it ran build only" "$out" ;;
 esac
 
-printf 'project_slug: "promote-test"\nbuild_command: "true"\ntest_command: "false"\n' > claude-workflow.yml
+printf 'project_slug: "promote-test"\nbuild_command: "true"\ntest_command: "false"\n' > levain.yml
 "$SCRIPTS/lv-post-merge-check.sh" --label t >/dev/null 2>&1; rc=$?
 assert_eq "default is full — a red suite fails the check" "1" "$rc"
 
-printf 'project_slug: "promote-test"\nbuild_command: "true"\ntest_command: "true"\n' > claude-workflow.yml
+printf 'project_slug: "promote-test"\nbuild_command: "true"\ntest_command: "true"\n' > levain.yml
 "$SCRIPTS/lv-post-merge-check.sh" --label t >/dev/null 2>&1; rc=$?
 assert_eq "default is full — a green suite passes" "0" "$rc"
 
-printf 'project_slug: "promote-test"\nbuild_command: "true"\ntest_command: "true"\npostMergeCheck: sometimes\n' > claude-workflow.yml
+printf 'project_slug: "promote-test"\nbuild_command: "true"\ntest_command: "true"\npostMergeCheck: sometimes\n' > levain.yml
 "$SCRIPTS/lv-post-merge-check.sh" --label t >/dev/null 2>&1; rc=$?
 assert_eq "an unrecognized value is refused, never defaulted past" "2" "$rc"
 

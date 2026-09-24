@@ -81,7 +81,7 @@ even though client-e is where it was noticed.
 different repo, this is a dependency report — filing it here means nobody on the other side
 ever sees it.
 
-Check this project's `claude-workflow.yml` for a `dependencies:` block:
+Check this project's `levain.yml` for a `dependencies:` block:
 ```yaml
 dependencies:
   - "client-c:/path/to/client-c"

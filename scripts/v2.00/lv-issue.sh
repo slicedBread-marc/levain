@@ -8,7 +8,7 @@
 #
 # Entries land in WORKFLOW-ISSUES.md at the DEVELOP ROOT of this client, so a
 # worker inside a feature worktree still files to the one place per project.
-# The claude-workflow library sweeps every client periodically (sweep-issues.sh)
+# The Levain library sweeps every client periodically (sweep-issues.sh)
 # and fixes the underlying process bugs upstream.
 #
 # FILE AN ISSUE
@@ -67,7 +67,7 @@ scripts/lv-exec.sh lv-issue.sh --source <skill-or-script> \
   --actual   "<what happened, verbatim>"
 ```
 
-These are swept into the claude-workflow library periodically and fixed
+These are swept into the Levain library periodically and fixed
 upstream, so an entry here becomes a fix for every project using the workflow.
 Leave resolved entries in place — they are the record of what was already
 reported.

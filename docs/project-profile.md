@@ -31,7 +31,7 @@ What the tier gives you is:
    tightened one knob without updating the others, or the project's real-world
    stakes changed and the config didn't follow.
 
-It does **not** write `claude-workflow.yml` for you. Applying a tier is a
+It does **not** write `levain.yml` for you. Applying a tier is a
 deliberate edit — ask Claude to "apply the `governed` profile" and it edits
 `specApproval.mode` etc. by hand, the same way a human would, preserving the
 rationale comments already there. A script that silently rewrote those blocks

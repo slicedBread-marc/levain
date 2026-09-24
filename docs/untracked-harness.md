@@ -106,7 +106,7 @@ by name (`lv-*`), never all skills, so a project's own hand-written skills stay 
 
 | Path | Why |
 |-|-|
-| `claude-workflow.yml` | The client's own config. Hand-edited, never generated |
+| `levain.yml` | The client's own config. Hand-edited, never generated |
 | `.claude/workflow-version` | One line. The stamp that says which harness a commit was made under — the one audit property tracking actually buys |
 | `WORKFLOW.md` | The entry contract an agent landing cold reads. Also the natural place to say "run the installer" |
 | `plans/**`, `bugs/**` | Pipeline data. Unchanged, including tracked `plans/REGISTRY.md` |

@@ -16,7 +16,7 @@
 # separate times before the cause was found (WFI-039/041/043).
 #
 # {{project_slug}} is baked in by install.sh at deploy time from
-# claude-workflow.yml. No runtime resolution.
+# levain.yml. No runtime resolution.
 
 set -euo pipefail
 

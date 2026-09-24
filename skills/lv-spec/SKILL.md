@@ -420,7 +420,7 @@ If the user picks a bug BUG-NNN:
 
    Exit 3 names every colliding id and the file holding it. Renumber from the `TEST_ID_NEXT` it prints — at draft that is one edit, at the gate it is nineteen.
 
-   **Read what exit 3 says before you obey it.** On a project whose plans each number from `T1`, a flat reading reports every sibling plan as a collision and advises renumbering ids that are already written and green — client-b WFI-024 got ~70 collisions across ten plans and five landed test files on a replan mid-fix-cycle, where obeying would have renumbered seven passing tests to fix nothing. The script now says so itself when the collisions have that shape (four or more different plans in one range), and the fix is to declare `testIds.scope: per-plan` in `claude-workflow.yml`, not to renumber. If it does not say so, the collisions are real.
+   **Read what exit 3 says before you obey it.** On a project whose plans each number from `T1`, a flat reading reports every sibling plan as a collision and advises renumbering ids that are already written and green — client-b WFI-024 got ~70 collisions across ten plans and five landed test files on a replan mid-fix-cycle, where obeying would have renumbered seven passing tests to fix nothing. The script now says so itself when the collisions have that shape (four or more different plans in one range), and the fix is to declare `testIds.scope: per-plan` in `levain.yml`, not to renumber. If it does not say so, the collisions are real.
 
    **Get the command shape from the config, not from memory or from the template.** Run:
 
@@ -464,7 +464,7 @@ If the user picks a bug BUG-NNN:
 
    Only escape to Human Test Criteria when the check genuinely requires human judgment (subjective animation feel, visual polish, cross-device ergonomics).
 7a. **Fill `## E2E Scope`** — list the e2e test file paths or glob patterns that cover this plan's changes (one per line, no backticks). If the project has a single flat e2e directory and there are no dedicated per-feature files yet, leave the section blank — lv-test will fall back to the full suite. Only populate this if you can identify specific test files that exercise the affected routes or behaviors.
-7b. **Fill `## Test Scope`** — list category names (one per bullet) the planner knows are relevant. Leave blank only if the change truly affects nothing testable (e.g., doc-only). Prefer declaring generously; auto-detect unions in more categories at verify time. Valid category names live in `claude-workflow.yml → testScopes`.
+7b. **Fill `## Test Scope`** — list category names (one per bullet) the planner knows are relevant. Leave blank only if the change truly affects nothing testable (e.g., doc-only). Prefer declaring generously; auto-detect unions in more categories at verify time. Valid category names live in `levain.yml → testScopes`.
 7c. **Consult the auto-test log** — if `plans/auto-test-log.md` exists, read its `### Realized` section. Those rows prove what shape of criterion past plans successfully converted to automated tests at `/lv-test` time. **Before citing a row, verify the referenced test file still exists** (`test -f <File column>`) — rolled-back plans may leave stale rows. For each criterion you're drafting, ask: *does any live Realized row describe a similar intent* (e.g., "redirects after valid login", "button disables while submitting", "validation error shows on empty field")? If yes, flag it to the user before proceeding to step 8:
     ```
     Automation opportunity: criterion "<text>" resembles past realized auto-tests:
@@ -985,7 +985,7 @@ scripts/lv-exec.sh lv-issue.sh --source lv-spec \
   --context  "<plan id, branch, state>"
 ```
 
-These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
+These are swept into the Levain library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
 ## Usage
 

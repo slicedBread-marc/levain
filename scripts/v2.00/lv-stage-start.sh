@@ -23,7 +23,7 @@
 #
 # The original hardcoded `--project-name app-staging`. Nine clients share one
 # Docker daemon; two of them staging at once with the same project name is the
-# collision `project_slug` exists in claude-workflow.yml to prevent, and the
+# collision `project_slug` exists in levain.yml to prevent, and the
 # second `up` adopts the first one's containers rather than failing.
 
 set -euo pipefail
@@ -71,7 +71,7 @@ cd "$tree"
 
 if [ ! -f "$compose_file" ]; then
   echo "lv-stage-start: no compose file at $tree/$compose_file" >&2
-  echo "      Set staging.composeFile in claude-workflow.yml if this project keeps it elsewhere." >&2
+  echo "      Set staging.composeFile in levain.yml if this project keeps it elsewhere." >&2
   exit 3
 fi
 
@@ -154,5 +154,5 @@ fi
 echo "lv-stage-start: container started but $health_path did not respond within ${health_seconds}s." >&2
 echo "      It is still running and still auto-stops at $deadline. Check:" >&2
 echo "        docker compose -f $compose_file -p $project logs --tail 50" >&2
-echo "      Set staging.healthPath in claude-workflow.yml if this app's probe is elsewhere." >&2
+echo "      Set staging.healthPath in levain.yml if this app's probe is elsewhere." >&2
 exit 2

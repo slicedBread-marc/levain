@@ -85,17 +85,17 @@ if ! echo "$PLAN_NAME" | grep -qE "^($LV_PLN_RE)-[0-9]+-[a-z0-9-]+$"; then
   exit 2
 fi
 
-# Locate the script's own directory and walk up until we find claude-workflow.yml.
+# Locate the script's own directory and walk up until we find levain.yml.
 # Works for both flat (scripts/) and versioned (scripts/vN.NN/) layouts.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEVELOP_ROOT=""
 search="$SCRIPT_DIR"
 while [ "$search" != "/" ]; do
-  if [ -f "$search/claude-workflow.yml" ]; then DEVELOP_ROOT="$search"; break; fi
+  if [ -f "$search/levain.yml" ] || [ -f "$search/claude-workflow.yml" ]; then DEVELOP_ROOT="$search"; break; fi
   search="$(dirname "$search")"
 done
 if [ -z "$DEVELOP_ROOT" ]; then
-  echo "lv-test-scope.sh: cannot locate claude-workflow.yml by walking up from $SCRIPT_DIR" >&2
+  echo "lv-test-scope.sh: cannot locate levain.yml by walking up from $SCRIPT_DIR" >&2
   exit 2
 fi
 # ── Which tree answers "what is the config?" ──────────────────────────────
@@ -115,10 +115,11 @@ fi
 # So: plans come from develop, config comes from the tree the caller is in.
 WORKTREE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 CONFIG_ROOT="$DEVELOP_ROOT"
-if [ -n "$WORKTREE_ROOT" ] && [ -f "$WORKTREE_ROOT/claude-workflow.yml" ]; then
+if [ -n "$WORKTREE_ROOT" ] && { [ -f "$WORKTREE_ROOT/levain.yml" ] || [ -f "$WORKTREE_ROOT/claude-workflow.yml" ]; }; then
   CONFIG_ROOT="$WORKTREE_ROOT"
 fi
-CONFIG="$CONFIG_ROOT/claude-workflow.yml"
+CONFIG="$CONFIG_ROOT/levain.yml"
+[ -f "$CONFIG" ] || [ ! -f "$CONFIG_ROOT/claude-workflow.yml" ] || CONFIG="$CONFIG_ROOT/claude-workflow.yml"
 
 # Check yq dependency before doing anything else.
 if ! command -v yq >/dev/null 2>&1; then

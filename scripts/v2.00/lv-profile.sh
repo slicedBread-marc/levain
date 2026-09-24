@@ -2,10 +2,10 @@
 # lv-profile.sh [--show|--check]
 #
 # Reads this project's declared governance tier (`projectProfile.tier` in
-# claude-workflow.yml — see docs/project-profile.md) and reports on it.
+# levain.yml — see docs/project-profile.md) and reports on it.
 # `--check` compares it against the knobs it recommends and flags drift.
 #
-# This script is READ-ONLY. It never writes claude-workflow.yml. The tier is
+# This script is READ-ONLY. It never writes levain.yml. The tier is
 # a recorded stance — the reason specApproval.mode, manualTestGate, and
 # orchestrator.autonomy are set the way they are — not a runtime switch
 # anything else in the pipeline consults. Applying a tier (or a tier change)
@@ -32,7 +32,7 @@ set_by=$(wf_cfg projectProfile.set_by "")
 set_on=$(wf_cfg projectProfile.set_on "")
 
 if [ -z "$tier" ]; then
-  echo "No projectProfile declared in claude-workflow.yml." >&2
+  echo "No projectProfile declared in levain.yml." >&2
   echo "See docs/project-profile.md to add one." >&2
   exit "$([ "$mode" = "--check" ] && echo 2 || echo 1)"
 fi

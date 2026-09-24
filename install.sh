@@ -8,7 +8,7 @@ for _wf in $(compgen -e | grep '^WF_' || true); do
   _lv="LV_${_wf#WF_}"; [ -n "${!_lv+x}" ] || export "$_lv=${!_wf}"
 done; unset _wf _lv
 
-# claude-workflow installer
+# Levain installer
 # Installs the workflow skills, templates, and folder structure into a project.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -222,14 +222,31 @@ gen_retire() {
     fi
 }
 
-echo "claude-workflow installer"
+echo "Levain installer"
 echo "========================"
 echo ""
 
 # Check for config
-CONFIG_FILE="$TARGET_DIR/claude-workflow.yml"
+CONFIG_FILE="$TARGET_DIR/levain.yml"
+OLD_CONFIG="$TARGET_DIR/claude-workflow.yml"
+# 14.7.0 renamed the config from claude-workflow.yml. Move it once, as a git
+# rename where it is tracked, so history follows it and the deploy's own commit
+# below carries both sides. Every reader still falls back to the old name, so a
+# feature branch cut before the rename keeps working until it merges.
+CONFIG_RENAMED=false
+if [ ! -f "$CONFIG_FILE" ] && [ -f "$OLD_CONFIG" ]; then
+    if git -C "$TARGET_DIR" ls-files --error-unmatch -- claude-workflow.yml >/dev/null 2>&1; then
+        git -C "$TARGET_DIR" mv claude-workflow.yml levain.yml
+    else
+        mv "$OLD_CONFIG" "$CONFIG_FILE"
+    fi
+    CONFIG_RENAMED=true
+    echo -e "${GREEN}Renamed claude-workflow.yml → levain.yml${NC}"
+elif [ -f "$CONFIG_FILE" ] && [ -f "$OLD_CONFIG" ]; then
+    echo -e "${YELLOW}Both levain.yml and claude-workflow.yml exist — using levain.yml. Remove the old one.${NC}"
+fi
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo -e "${YELLOW}No claude-workflow.yml found in $TARGET_DIR${NC}"
+    echo -e "${YELLOW}No levain.yml found in $TARGET_DIR${NC}"
     echo "Creating from template..."
     cp "$SCRIPT_DIR/config.example.yml" "$CONFIG_FILE"
     echo -e "${GREEN}Created $CONFIG_FILE — edit it with your project settings, then re-run.${NC}"
@@ -516,10 +533,11 @@ if [ "$ROLE" = "coordinator" ]; then
     # The deploy owns its own tracked changes, same as the client path below.
     if $INSTALL_COMMIT && git -C "$TARGET_DIR" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
         COORD_PATHS=()
-        for p in claude-workflow.yml WORKFLOW.md .claude/workflow-version .gitignore; do
+        for p in levain.yml WORKFLOW.md .claude/workflow-version .gitignore; do
             git -C "$TARGET_DIR" ls-files --error-unmatch -- "$p" >/dev/null 2>&1 || continue
             git -C "$TARGET_DIR" diff --quiet -- "$p" 2>/dev/null || COORD_PATHS+=("$p")
         done
+        $CONFIG_RENAMED && COORD_PATHS+=(levain.yml claude-workflow.yml)
         if [ ${#COORD_PATHS[@]} -gt 0 ]; then
             if git -C "$TARGET_DIR" commit --quiet \
                  -m "chore: sync workflow harness to v$WORKFLOW_VERSION" \
@@ -900,7 +918,7 @@ HARNESS_IGNORED=0
 # write is not a stricter policy than tracking it; it is a broken one." The
 # same is true of tracking it. See docs/untracked-harness.md.
 #
-# NOT ignored, deliberately: claude-workflow.yml (the project's own config),
+# NOT ignored, deliberately: levain.yml (the project's own config),
 # .claude/workflow-version (the one-line stamp saying which harness a commit
 # was made under), WORKFLOW.md (the entry contract), and plans/ + bugs/.
 #
@@ -1484,7 +1502,7 @@ fi
 # develop dirty and walked away.
 #
 # That is not cosmetic. The next worker into that repo reads an uncommitted
-# `.claude/workflow-version` and a modified `claude-workflow.yml` as somebody
+# `.claude/workflow-version` and a modified `levain.yml` as somebody
 # else's work in progress and has to decide what to do about it — client-a's
 # WFI-131 filed exactly that, mid-plan, and worked around it by leaving the
 # changes alone. Meanwhile the files are on the shared develop index, where the
@@ -1497,10 +1515,12 @@ fi
 # run while other workers have things staged.
 if $INSTALL_COMMIT && git -C "$TARGET_DIR" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
     DEPLOY_PATHS=()
-    for p in claude-workflow.yml WORKFLOW.md .claude/workflow-version plans/TEMPLATE.md CLAUDE.md .gitignore; do
+    for p in levain.yml WORKFLOW.md .claude/workflow-version plans/TEMPLATE.md CLAUDE.md .gitignore; do
         git -C "$TARGET_DIR" ls-files --error-unmatch -- "$p" >/dev/null 2>&1 || continue
         git -C "$TARGET_DIR" diff --quiet -- "$p" 2>/dev/null || DEPLOY_PATHS+=("$p")
     done
+    # A staged rename shows no working-tree diff on either side; name both.
+    $CONFIG_RENAMED && DEPLOY_PATHS+=(levain.yml claude-workflow.yml)
 
     if [ ${#DEPLOY_PATHS[@]} -gt 0 ]; then
         DEPLOY_BRANCH=$(git -C "$TARGET_DIR" branch --show-current 2>/dev/null || true)
@@ -1534,7 +1554,7 @@ echo ""
 echo "Orchestrated mode:"
 echo "  The orchestrator ships DISABLED. Preview it before enabling:"
 echo "    scripts/lv-exec.sh lv-orchestrate.sh --sweep --dry-run"
-echo "  Then set orchestrator.enabled: true in claude-workflow.yml."
+echo "  Then set orchestrator.enabled: true in levain.yml."
 echo ""
 echo "Start with your first idea: /lv-brainstorm <what you want to build or fix>"
 echo "  /lv-tray shows the pipeline and the next action; /lv-help lists every skill."

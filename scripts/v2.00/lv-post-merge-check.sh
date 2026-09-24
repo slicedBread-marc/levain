@@ -25,7 +25,7 @@
 # A semantic merge break is exactly what the merging side is best placed to fix
 # and worst placed to notice. So this runs the real suite there, by default.
 #
-# WHAT IT RUNS — claude-workflow.yml, `postMergeCheck:`
+# WHAT IT RUNS — levain.yml, `postMergeCheck:`
 #
 #   full   (default)  build_command, then test_command, whole and unfiltered —
 #                     the same lv-suite-run.sh every other gate uses.
@@ -70,7 +70,7 @@ mode="${mode:-full}"
 
 case "$mode" in
   build)
-    echo "postMergeCheck: build — build only, no suite (claude-workflow.yml)"
+    echo "postMergeCheck: build — build only, no suite (levain.yml)"
     exec "$SELF_DIR/lv-build-check.sh"
     ;;
   full) ;;
@@ -79,7 +79,7 @@ case "$mode" in
     # guessing which of the two they meant is how a project silently stops
     # running its suite.
     echo "lv-post-merge-check: postMergeCheck: '$mode' is not 'full' or 'build'." >&2
-    echo "  Fix claude-workflow.yml; this check will not guess which you meant." >&2
+    echo "  Fix levain.yml; this check will not guess which you meant." >&2
     exit 2 ;;
 esac
 

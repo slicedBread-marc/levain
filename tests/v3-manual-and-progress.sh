@@ -71,7 +71,7 @@ setup_repo() {
   git config user.name "Test"
   mkdir -p plans feature-branches src/App/Cli
 
-  cat > claude-workflow.yml << 'CFG'
+  cat > levain.yml << 'CFG'
 build_command: "dotnet build"
 
 manualTestGate:

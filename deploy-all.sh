@@ -77,7 +77,7 @@ done
 
 current=$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
 
-echo "claude-workflow deploy-all"
+echo "Levain deploy-all"
 echo "=========================="
 echo ""
 echo "Deploying workflow v$current"

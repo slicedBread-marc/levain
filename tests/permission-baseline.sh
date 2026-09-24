@@ -61,7 +61,7 @@ chmod +x "$FIXPACK/hooks/"*
 export LV_PACKS="$FIXPACK"
 mkdir -p "$PROJ"
 git -C "$PROJ" init -q
-printf 'project_slug: fixture\n' > "$PROJ/claude-workflow.yml"
+printf 'project_slug: fixture\n' > "$PROJ/levain.yml"
 
 # payload <tool> <json tool_input>
 payload() { printf '{"tool_name":"%s","cwd":"%s","tool_input":%s}' "$1" "$PROJ" "$2"; }
@@ -145,7 +145,7 @@ run_guard 1 "";         [ $? -eq 2 ] && ok "empty payload refuses"      || bad "
 
 echo "── 4. loosening needs a recorded reason ──"
 mkdir -p "$PROJ/scripts"
-cat > "$PROJ/claude-workflow.yml" <<'YML'
+cat > "$PROJ/levain.yml" <<'YML'
 project_slug: fixture
 permissionBaseline:
   allow:
@@ -153,7 +153,7 @@ permissionBaseline:
 YML
 refuses "allow without reason lifts nothing" provider-shell Bash '{"command":"acmectl ssh -a app"}'
 grep -q "lifts nothing" "$TEST_DIR/err" && ok "and says why" || bad "and says why" "$(cat "$TEST_DIR/err")"
-cat > "$PROJ/claude-workflow.yml" <<'YML'
+cat > "$PROJ/levain.yml" <<'YML'
 project_slug: fixture
 permissionBaseline:
   allow:
@@ -164,7 +164,7 @@ permissionBaseline:
 YML
 allows "allow with reason, set_by, set_on lifts the rule" Bash '{"command":"acmectl ssh -a app"}'
 refuses "and only that rule"                  provider-secrets Bash '{"command":"acmectl secrets set A=b"}'
-printf 'project_slug: fixture\n' > "$PROJ/claude-workflow.yml"
+printf 'project_slug: fixture\n' > "$PROJ/levain.yml"
 
 echo "── 5. settings-merge.py ──"
 S="$TEST_DIR/settings.json"

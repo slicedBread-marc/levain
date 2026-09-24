@@ -66,14 +66,37 @@ echo
 echo "3. Where an install leaves you"
 mk() { mkdir -p "$1" && git -C "$1" init -q && git -C "$1" commit -q --allow-empty -m init; }
 mk "$T/app"
-printf 'build_command: "true"\ntest_command: "true"\nproject_slug: "app"\nsource_dirs:\n  - "src/"\n' > "$T/app/claude-workflow.yml"
+printf 'build_command: "true"\ntest_command: "true"\nproject_slug: "app"\nsource_dirs:\n  - "src/"\n' > "$T/app/levain.yml"
 out=$(LV_PACKS="" LV_INSTALL_NO_COMMIT=1 bash install.sh "$T/app" </dev/null 2>&1)
 has "a client install points at the first brainstorm" "$out" "/lv-brainstorm <what you want to build or fix>"
 has "and at START.md for the rungs above"            "$out" "START.md"
 mk "$T/coord"
-printf 'role: "coordinator"\nproject_slug: "coord"\ncoordinates:\n  - "app:%s"\n' "$T/app" > "$T/coord/claude-workflow.yml"
+printf 'role: "coordinator"\nproject_slug: "coord"\ncoordinates:\n  - "app:%s"\n' "$T/app" > "$T/coord/levain.yml"
 out=$(LV_PACKS="" LV_INSTALL_NO_COMMIT=1 bash install.sh "$T/coord" </dev/null 2>&1)
 for s in /lv-rack /lv-dep-notify /lv-vision; do has "a coordinator install lists $s" "$out" "$s"; done
+
+echo
+echo "4. The config's old name (claude-workflow.yml, before 14.7.0)"
+mk "$T/old"
+printf 'build_command: "true"\ntest_command: "true"\nproject_slug: "old"\n' > "$T/old/claude-workflow.yml"
+git -C "$T/old" add -A && git -C "$T/old" commit -qm cfg
+( cd "$T/old" && git switch -q -c develop )
+LV_PACKS="" bash install.sh "$T/old" </dev/null >/dev/null 2>&1
+assert_eq "install renames it to levain.yml" "levain.yml:no" \
+  "$(cd "$T/old" && ls levain.yml):$([ -e "$T/old/claude-workflow.yml" ] && echo yes || echo no)"
+assert_eq "and commits both sides of the rename" "" "$(git -C "$T/old" status --porcelain -- levain.yml claude-workflow.yml)"
+assert_eq "the commit deletes the old name" "D" \
+  "$(git -C "$T/old" show --name-status --format= HEAD -- claude-workflow.yml | cut -c1)"
+mkdir -p "$T/untracked" && printf 'project_slug: "u"\n' > "$T/untracked/claude-workflow.yml"
+LV_PACKS="" LV_INSTALL_NO_COMMIT=1 bash install.sh "$T/untracked" </dev/null >/dev/null 2>&1
+assert_eq "an untracked one is moved" "yes" "$([ -f "$T/untracked/levain.yml" ] && echo yes || echo no)"
+# A feature branch cut before the rename still has only the old file.
+mk "$T/branch"; printf 'project_slug: "from-old-name"\n' > "$T/branch/claude-workflow.yml"
+assert_eq "config reads fall back to the old name" "from-old-name" \
+  "$(cd "$T/branch" && bash "$REPO_ROOT/scripts/v2.00/lv-config-get.sh" project_slug 2>/dev/null)"
+assert_eq "so does the hook dispatcher's packs: list" "$T/branch-pack" \
+  "$(printf 'packs:\n  - "%s"\n' "$T/branch-pack" >> "$T/branch/claude-workflow.yml"; mkdir -p "$T/branch-pack/hooks"; : > "$T/branch-pack/hooks/activity-log";
+     CLAUDE_PROJECT_DIR="$T/branch" LV_PACKS="" bash scripts/v2.00/lv-hook.sh --which activity-log | awk -F'\t' '$1=="pack"{print $2}' | head -1 | sed 's#/hooks/.*##')"
 
 echo
 echo "================"

@@ -9,7 +9,7 @@
 # outward, never asks for anything back.
 #
 # Dependents are local checkouts of this same harness, declared in THIS
-# project's claude-workflow.yml:
+# project's levain.yml:
 #
 #   dependents:
 #     - "client-e:/path/to/client-e"
@@ -199,7 +199,7 @@ target_key="dependents"
 [ "$(wf_cfg role client)" = "coordinator" ] && target_key="coordinates"
 
 if [ "${#target_names[@]}" -eq 0 ]; then
-  echo "Error: no '$target_key:' key in $caller_root/claude-workflow.yml — nothing to notify. Add one, e.g.:" >&2
+  echo "Error: no '$target_key:' key in $caller_root/levain.yml — nothing to notify. Add one, e.g.:" >&2
   echo "  $target_key:" >&2
   echo "    - \"<name>:/absolute/path/to/<name>\"" >&2
   exit 1
@@ -220,7 +220,7 @@ if [ -n "$to_name" ]; then
   found=false
   for n in "${target_names[@]}"; do [ "$n" = "$to_name" ] && found=true && break; done
   if ! $found; then
-    echo "Error: no target named '$to_name' in $caller_root/claude-workflow.yml" >&2
+    echo "Error: no target named '$to_name' in $caller_root/levain.yml" >&2
     printf 'Configured targets: %s\n' "$(IFS=,; echo "${target_names[*]}")" >&2
     exit 1
   fi

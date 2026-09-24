@@ -9,7 +9,7 @@
 #
 #   1. project-local  .lv-local/hooks/<hook> in the project (gitignored)
 #   2. packs          <pack>/hooks/<hook>, for each pack in the project's
-#                     claude-workflow.yml `packs:` list, then each in $LV_PACKS
+#                     levain.yml `packs:` list, then each in $LV_PACKS
 #                     (colon-separated) — or, when LV_PACKS is unset, each
 #                     line of ~/.config/levain/packs
 #   3. default        hooks.default/<hook>, beside this script: a neutral
@@ -53,7 +53,8 @@ ROOT=$(project_root)
 # The packs, one per line, in lookup order. `~/` is expanded; blank lines and
 # comments are skipped.
 packs() {
-  local cfg="$ROOT/claude-workflow.yml" list p
+  local cfg="$ROOT/levain.yml" list p
+  [ -f "$cfg" ] || [ ! -f "$ROOT/claude-workflow.yml" ] || cfg="$ROOT/claude-workflow.yml"
   if [ -f "$cfg" ]; then
     awk '
       /^packs:[ \t]*$/ { on = 1; next }

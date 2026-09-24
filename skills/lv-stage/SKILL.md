@@ -78,7 +78,7 @@ If no plan is in play, or it is a stop, there is nothing to gate — report the 
 
 ## Configuration
 
-All optional, in `claude-workflow.yml`, all with working defaults: `staging.port` (8081), `staging.minutes` (60), `staging.composeFile` (`docker/docker-compose.yml`), `staging.healthPath` (`/health`). The compose project name is `<project_slug>-staging`, which keeps several projects' staging stacks off each other on one Docker daemon.
+All optional, in `levain.yml`, all with working defaults: `staging.port` (8081), `staging.minutes` (60), `staging.composeFile` (`docker/docker-compose.yml`), `staging.healthPath` (`/health`). The compose project name is `<project_slug>-staging`, which keeps several projects' staging stacks off each other on one Docker daemon.
 
 ## Done
 

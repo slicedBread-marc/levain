@@ -32,7 +32,7 @@ rc() { "$@" >/dev/null 2>&1; echo $?; }
 cd "$TEST_DIR" || exit 1
 git init -q -b develop . && git config user.email t@t && git config user.name T
 mkdir -p plans bugs/open bugs/triaged bugs/closed .claude
-printf 'project_slug: "demo"\n' > claude-workflow.yml
+printf 'project_slug: "demo"\n' > levain.yml
 row() { printf '| %s | %s | %s | — | %s | 2026-09-24 | 14.2.0 | — | — |\n' "$1" "$2" "$3" "${4:-—}"; }
 {
   printf '\n| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n'
@@ -154,16 +154,16 @@ assert_eq "an unknown argument is exit 1"              "1" "$(rc "$SD/lv-bug-clo
 echo
 echo "5. lv-build-check.sh"
 assert_eq "no build_command: skipped, exit 0"          "0" "$(rc "$SD/lv-build-check.sh")"
-printf 'project_slug: "demo"\nbuild_command: "true"\n' > claude-workflow.yml
+printf 'project_slug: "demo"\nbuild_command: "true"\n' > levain.yml
 assert_eq "a build that passes: exit 0"                "0" "$(rc "$SD/lv-build-check.sh")"
-printf 'project_slug: "demo"\nbuild_command: "echo broken >&2; false"\n' > claude-workflow.yml
+printf 'project_slug: "demo"\nbuild_command: "echo broken >&2; false"\n' > levain.yml
 assert_eq "a build that fails: exit 1"                 "1" "$(rc "$SD/lv-build-check.sh")"
-printf 'project_slug: "demo"\n' > claude-workflow.yml
+printf 'project_slug: "demo"\n' > levain.yml
 
 # ═════════════════════════════════════════════════════════════════════════════
 echo
 echo "6. lv-profile.sh"
-prof() { printf 'project_slug: "demo"\n%s' "$1" > claude-workflow.yml; }
+prof() { printf 'project_slug: "demo"\n%s' "$1" > levain.yml; }
 assert_eq "--show with no tier: exit 1"                "1" "$(rc "$SD/lv-profile.sh" --show)"
 assert_eq "--check with no tier: exit 2"               "2" "$(rc "$SD/lv-profile.sh" --check)"
 prof 'projectProfile:
@@ -218,7 +218,7 @@ prof 'projectProfile:
   tier: yolo
 '
 assert_eq "an unknown tier: exit 2"                    "2" "$(rc "$SD/lv-profile.sh" --check)"
-printf 'project_slug: "demo"\n' > claude-workflow.yml
+printf 'project_slug: "demo"\n' > levain.yml
 
 # ═════════════════════════════════════════════════════════════════════════════
 echo

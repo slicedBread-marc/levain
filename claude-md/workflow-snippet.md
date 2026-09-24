@@ -18,7 +18,7 @@ scripts/lv-exec.sh lv-issue.sh --source <skill-or-script> \
 ```
 
 It appends to `WORKFLOW-ISSUES.md` at the project root. These are swept into the
-claude-workflow library periodically and fixed **upstream**, so one report
+Levain library periodically and fixed **upstream**, so one report
 becomes a fix for every project using the workflow. A problem you work around
 silently is one everybody keeps hitting.
 
@@ -59,18 +59,18 @@ scripts/lv-exec.sh lv-orchestrate.sh BUG-094             # drive one item end to
 the orchestrator refused to make on its own (spec approval, manual acceptance
 criteria, deploys). It ships **disabled** — workers run with
 `--dangerously-skip-permissions`, so enabling it is a deliberate human decision
-made in `claude-workflow.yml`.
+made in `levain.yml`.
 
 ## Workflow Setup
 
-If `claude-workflow.yml` exists in the project root but has blank values, detect them from the project before using any workflow skill:
+If `levain.yml` exists in the project root but has blank values, detect them from the project before using any workflow skill:
 
 1. Scan for build/test commands — check `package.json` scripts, `*.csproj`/`*.slnx`, `Makefile`, `pytest.ini`, `go.mod`, etc.
 2. Identify source directories from the project structure
 3. Detect namespace/module conventions from existing source files
 4. Present the detected values to the user and confirm before writing
 
-Do this once. After `claude-workflow.yml` is filled in, the workflow skills will use those values automatically.
+Do this once. After `levain.yml` is filled in, the workflow skills will use those values automatically.
 
 ## Multi-Session Workflow (Brainstorm → Plan → Implement → Verify → Test → Release)
 
@@ -179,9 +179,9 @@ Feature-branch verify runs a **scoped** test suite, not the full suite. The scop
 - Auto-detected categories from `git diff develop..HEAD` via `testMappings`
 - Mandatory categories (`testScopeMandatory`) — always included
 
-Category names and filter substrings live in `claude-workflow.yml → testScopes`. `lv-release` and `lv-deploy` run the full suite with no filter — the aggregation guarantee that every test skipped on a feature branch runs before production. Missing/empty `## Test Scope` → full-suite fallback.
+Category names and filter substrings live in `levain.yml → testScopes`. `lv-release` and `lv-deploy` run the full suite with no filter — the aggregation guarantee that every test skipped on a feature branch runs before production. Missing/empty `## Test Scope` → full-suite fallback.
 
-Both run it through `lv-suite-run.sh`, which executes `test_command` from `claude-workflow.yml` verbatim and prints the receipt those skills quote (`SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`). The guarantee is enforced there rather than requested of the worker: a run that narrows the suite and reports a count cannot be told from a full one, and one that did exactly that pushed `release` on a single assembly (WFI-252).
+Both run it through `lv-suite-run.sh`, which executes `test_command` from `levain.yml` verbatim and prints the receipt those skills quote (`SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`). The guarantee is enforced there rather than requested of the worker: a run that narrows the suite and reports a count cannot be told from a full one, and one that did exactly that pushed `release` on a single assembly (WFI-252).
 
 ### Tester Role (`/lv-test`)
 - **Entry:** `grep "| testing |" REGISTRY.md`
@@ -236,7 +236,7 @@ makes an unattended approval auditable afterwards.
 
 ## Local Dev Environment
 
-If `local_start_command`, `local_deploy_command`, and `local_stop_command` are configured in `claude-workflow.yml`, a local dev environment script is installed at `.claude/on-implement-commit.sh`. It starts automatically on every `implement(` commit and shuts down after 60 minutes of inactivity.
+If `local_start_command`, `local_deploy_command`, and `local_stop_command` are configured in `levain.yml`, a local dev environment script is installed at `.claude/on-implement-commit.sh`. It starts automatically on every `implement(` commit and shuts down after 60 minutes of inactivity.
 
 **Runs on feature branch worktrees** — T3/T4 work in their isolated worktree directory.
 

@@ -14,7 +14,7 @@ Read this before setting `role: coordinator` on a project.
 
 ## What a coordinator is
 
-A project with `role: coordinator` in its `claude-workflow.yml`. It gets the
+A project with `role: coordinator` in its `levain.yml`. It gets the
 harness on disk and **one capability**: filing work into the pipelines of the
 projects it coordinates, through each of those projects' own scripts.
 
@@ -88,7 +88,7 @@ had to be reverted wholesale. The convention is the only guard, which is why
 
 ## Setup
 
-1. Write the project's `claude-workflow.yml` by hand:
+1. Write the project's `levain.yml` by hand:
 
    ```yaml
    role: "coordinator"

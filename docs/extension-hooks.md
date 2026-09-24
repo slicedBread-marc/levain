@@ -16,7 +16,7 @@ scripts/lv-exec.sh lv-hook.sh --which <hook>    # every layer, in lookup order
 
 1. **Project-local:** `.lv-local/hooks/<hook>` in the project. For one machine and one project;
    add `.lv-local/` to the project's `.gitignore`.
-2. **Packs:** `<pack>/hooks/<hook>`, for each pack in the project's `claude-workflow.yml`
+2. **Packs:** `<pack>/hooks/<hook>`, for each pack in the project's `levain.yml`
    `packs:` list, then each in `$LV_PACKS` (colon-separated). When `LV_PACKS` is unset, each
    line of `~/.config/levain/packs` is read instead (a `~/` path and `#` comments are fine).
 3. **Default:** `hooks.default/<hook>` in the library. It is a neutral implementation or a

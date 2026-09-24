@@ -64,7 +64,7 @@ fi
 # (client-e's WFI-019). So: on that specific failure, prune once and retry,
 # bounded, before surfacing anything.
 #
-# `dockerRetry.maxAttempts` in claude-workflow.yml overrides the default (2);
+# `dockerRetry.maxAttempts` in levain.yml overrides the default (2);
 # the default keeps a client that has never set it self-healing from day one.
 max_attempts=$(wf_cfg dockerRetry.maxAttempts 2)
 attempt=1
@@ -143,7 +143,7 @@ if [ -n "$account_note" ]; then
   # author's line breaks are its formatting.
   printf 'lv-docker-up: test account —\n%s\n' "$account_note" >&2
 elif [ -n "$account_cmd" ]; then
-  echo "lv-docker-up: test account provisioned (set test_account_note in claude-workflow.yml to print the credentials here)" >&2
+  echo "lv-docker-up: test account provisioned (set test_account_note in levain.yml to print the credentials here)" >&2
 fi
 
 # ── Device testing ────────────────────────────────────────────────────────
@@ -166,7 +166,7 @@ fi
 # cookies are stored and the criterion is reachable. It is opt-in: it publishes
 # a development build to a public URL, which is a deliberate act.
 #
-#   tunnel_command: from claude-workflow.yml. Runs with FEATURE_PORT exported
+#   tunnel_command: from levain.yml. Runs with FEATURE_PORT exported
 #                   and must print a URL on stdout or stderr. Defaults to a
 #                   cloudflared quick tunnel, which needs no account.
 if $want_tunnel; then
@@ -188,7 +188,7 @@ if $want_tunnel; then
 
   if ! command -v "$tunnel_bin" >/dev/null 2>&1; then
     echo "lv-docker-up: --tunnel needs '$tunnel_bin', which is not installed." >&2
-    echo "      Install it (macOS: brew install cloudflared), or set tunnel_command in claude-workflow.yml." >&2
+    echo "      Install it (macOS: brew install cloudflared), or set tunnel_command in levain.yml." >&2
     echo "      Without it, device criteria cannot be tested: a Secure cookie is dropped on http://<lan-ip>," >&2
     echo "      so the phone signs in, gets a 200, and reloads logged out with no error shown (WFI-113)." >&2
     wf_emit PUBLIC_URL ""

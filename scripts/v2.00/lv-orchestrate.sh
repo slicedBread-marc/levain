@@ -110,7 +110,7 @@ if $dry_run; then
 fi
 
 # Read with the rest of the config, once, rather than re-parsing
-# claude-workflow.yml per role on every sweep of a daemon that never exits.
+# levain.yml per role on every sweep of a daemon that never exits.
 cfg_cap_spec=$(wf_cfg orchestrator.max_concurrent.spec 1)
 cfg_cap_implement=$(wf_cfg orchestrator.max_concurrent.implement 2)
 cfg_cap_verify=$(wf_cfg orchestrator.max_concurrent.verify 2)
@@ -118,7 +118,7 @@ cfg_cap_test=$(wf_cfg orchestrator.max_concurrent.test 1)
 cfg_cap_consistency=$(wf_cfg orchestrator.max_concurrent.consistency 1)
 # release/deploy are singletons by construction — one promotion pipeline, one
 # worktree each (release-branches/release, release-branches/main) — so this is
-# fixed rather than a claude-workflow.yml knob. A higher cap would be a
+# fixed rather than a levain.yml knob. A higher cap would be a
 # footgun the per-role claim (RELEASE/DEPLOY) doesn't protect against: it
 # stops two CONCURRENT release runs, not two the dispatcher was told to allow.
 cfg_cap_release=1
@@ -136,14 +136,14 @@ max_concurrent() {
 require_enabled() {
   # --dry-run is a pure read — no worker, no gate, nothing written to
   # events.log (see the --dry-run contract above) — so it carries none of the
-  # risk `enabled: false` guards against. Docs and the claude-workflow.yml
+  # risk `enabled: false` guards against. Docs and the levain.yml
   # comment both tell a client to preview with `--sweep --dry-run` BEFORE
   # flipping the flag on; requiring --force to do that made the documented
   # preview path unsatisfiable without also granting the thing it exists to
   # let you evaluate first (client-b WFI-002).
   if $dry_run; then return 0; fi
   if [ "$cfg_enabled" != "true" ] && ! $force; then
-    echo "lv-orchestrate: disabled (set orchestrator.enabled: true in claude-workflow.yml, or pass --force)" >&2
+    echo "lv-orchestrate: disabled (set orchestrator.enabled: true in levain.yml, or pass --force)" >&2
     return 1
   fi
   return 0
@@ -1000,7 +1000,7 @@ case "$mode" in
 
     wf_event daemon "—" "started (interval ${cfg_interval}s)"
     echo "lv-orchestrate: daemon up, sweeping every ${cfg_interval}s. Ctrl-C or --stop to end."
-    echo "lv-orchestrate: config is read once, at startup — restart to pick up claude-workflow.yml changes."
+    echo "lv-orchestrate: config is read once, at startup — restart to pick up levain.yml changes."
     while true; do
       # Before the sweep, not after: a sweep from a retired build spawns
       # nothing and charges skips to artifacts that have nothing wrong.

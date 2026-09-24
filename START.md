@@ -36,10 +36,10 @@ These two can be done at any time, on any rung:
 1. **Run `install/preflight.md`.** Always run it, even on a re-run, because it is quick and it
    catches a machine that has changed.
 2. **Find out where they already are.** Look before you ask:
-   - no `claude-workflow.yml` in the project: nothing is installed yet
-   - `claude-workflow.yml` with `role: "coordinator"`: this is an overseer's seat, not a project
+   - no `levain.yml` in the project: nothing is installed yet
+   - `levain.yml` with `role: "coordinator"`: this is an overseer's seat, not a project
    - `plans/REGISTRY.md` with rows past `draft`: they have used rung 1
-   - `orchestrator.enabled: true` in `claude-workflow.yml`: rung 2 is set up
+   - `orchestrator.enabled: true` in `levain.yml`: rung 2 is set up
    - `.claude/workflow-version` older than `$LIB/VERSION`: offer the upgrade first
 
    Then tell them in two or three lines what you found, show the ladder table, and ask which

@@ -15,7 +15,7 @@
 #   test      T          a test ID (T75 — no hyphen)
 #   rollback  RBK        a rollback record (RBK-NNN)
 #
-# A project overrides a kind in claude-workflow.yml, issued prefix first:
+# A project overrides a kind in levain.yml, issued prefix first:
 #
 #   ids:
 #     plan: LOAF PLN
@@ -55,6 +55,18 @@
 
 LV_ID_KINDS="plan bug brief deferred issue test rollback"
 
+# lv_config_into <var> <dir> — the project config in <dir>: levain.yml, or the
+# claude-workflow.yml it was called before 14.7.0 when only that exists (an
+# un-upgraded client, or a feature branch cut before the rename). No fork.
+lv_config_into() {
+  if [ ! -f "$2/levain.yml" ] && [ -f "$2/claude-workflow.yml" ]; then
+    printf -v "$1" '%s' "$2/claude-workflow.yml"
+  else
+    printf -v "$1" '%s' "$2/levain.yml"
+  fi
+}
+lv_has_config() { [ -f "$1/levain.yml" ] || [ -f "$1/claude-workflow.yml" ]; }
+
 # The frozen v1.x generation is not on the map, and needs not be: it serves only
 # plans stamped before 2.0, whose IDs carry the defaults, which stay accepted.
 
@@ -74,7 +86,7 @@ _lv_id_default_into() {
 }
 
 # lv_id_load — read the whole map once into _LV_ID_<kind> shell variables, so
-# lookups after it are free. One awk pass over claude-workflow.yml. Not
+# lookups after it are free. One awk pass over levain.yml. Not
 # exported, on purpose: a process that walks several projects (lv-rack) must
 # not carry one project's map into the next, so each process reads its own.
 lv_id_load() {
@@ -88,7 +100,7 @@ lv_id_load() {
     # Not a repo reads ./ — git's failure must not end a pipefail caller.
     root=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p') || root=""
   fi
-  cfg="${root:-.}/claude-workflow.yml"
+  lv_config_into cfg "${root:-.}"
   for k in $LV_ID_KINDS; do printf -v "_LV_ID_$k" '%s' ""; done
   # One awk for the whole map, read back without a fork per kind: this runs
   # at the start of nearly every script.

@@ -60,7 +60,7 @@ while IFS= read -r client; do
   # autonomy scope for a tier to be in step with — and no lv-profile.sh to ask.
   # Counting them as "undeclared" would make this exit 1 forever on a project
   # that cannot be made clean.
-  if grep -qE '^role:[[:space:]]*"?coordinator"?' "$client/claude-workflow.yml" 2>/dev/null; then
+  if grep -qsE '^role:[[:space:]]*"?coordinator"?' "$client/levain.yml" "$client/claude-workflow.yml"; then
     [ "$mode" = "count" ] && printf '%s: coordinator n/a\n' "$name"
     [ "$mode" = "list" ] && echo -e "${DIM}== $name — coordinator, no pipeline (skipped) ==${NC}"
     continue

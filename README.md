@@ -111,7 +111,7 @@ attempts per plan and spawns per hour are the guardrails.
 
 ## Rung 3: the overseer
 
-A **coordinator** is a project with `role: coordinator` in its `claude-workflow.yml`. It runs no
+A **coordinator** is a project with `role: coordinator` in its `levain.yml`. It runs no
 pipeline of its own, so it has no plans, registry or worktrees. It oversees the projects listed
 under `coordinates:`:
 
@@ -153,7 +153,7 @@ reaches every project on the next upgrade. Unattended workers file these too.
 
 ## Configuration
 
-`claude-workflow.yml` at the project root. [`config.example.yml`](config.example.yml) is the
+`levain.yml` at the project root. [`config.example.yml`](config.example.yml) is the
 schema. Each key says what it is for and where to find its value, and it is written for Claude to
 fill in during setup rather than for you to edit. Most projects need only the build and test
 commands and the source directories.
@@ -162,7 +162,7 @@ Without the prompt, the same install is two runs of `install.sh`. The first crea
 and the second installs once the config is filled in:
 
 ```bash
-~/levain/install.sh .     # creates claude-workflow.yml; fill it in
+~/levain/install.sh .     # creates levain.yml; fill it in
 ~/levain/install.sh .     # installs (commits on main/develop; --no-commit to leave that to you)
 ```
 

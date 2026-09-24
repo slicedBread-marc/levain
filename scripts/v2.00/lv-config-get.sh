@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lv-config-get.sh <dotted.path> [default] [--list] [--text]
 #
-# Reads one value out of claude-workflow.yml, so a skill can branch on config
+# Reads one value out of levain.yml, so a skill can branch on config
 # without hand-rolling awk in a markdown code block (which is how the same
 # parser ended up written four slightly different ways).
 #

@@ -266,7 +266,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    eval "$(../../scripts/lv-exec.sh lv-docker-up.sh)" && BUILD=$(git log -1 --format='%ad (%h)' --date=format:'%b %d %H:%M')
    ```
    This sets FEATURE_PORT, COMPOSE_PROJECT_NAME, TEST_ACCOUNT, and BUILD.
-   Also read `guest_entry_path` from `claude-workflow.yml` (root of repo). If set, store it as `GUEST_ENTRY_PATH`.
+   Also read `guest_entry_path` from `levain.yml` (root of repo). If set, store it as `GUEST_ENTRY_PATH`.
 
    **`$TEST_ACCOUNT` is the sign-in line** — display it verbatim with the URL in every state below. A fresh container has no account unless `test_account_command` made one.
 
@@ -279,7 +279,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
 
    A non-empty note IS the answer, and asking anyway is the failure: client-b recorded the full recipe at a `/lv-attend` gate after PLN-012's tester asked, and PLN-014's tester opened `needs-input` with the identical question anyway, which a human answered a third time (WFI-021). The durable answer was present and unread. A note that exists satisfies the stop-and-say-so condition below — read it and carry on.
 
-   **If `test_account_note` is genuinely empty and any criterion needs a signed-in session, stop and say so before walking criteria.** Attended: ask the user how to get an account, and once they answer, tell them to record it as `test_account_command` / `test_account_note` in `claude-workflow.yml` so the next run does not repeat this. Unattended: **[GATE]** `needs-input` with the question "criteria N, M need a signed-in session and the container has no account — what provisions one?".
+   **If `test_account_note` is genuinely empty and any criterion needs a signed-in session, stop and say so before walking criteria.** Attended: ask the user how to get an account, and once they answer, tell them to record it as `test_account_command` / `test_account_note` in `levain.yml` so the next run does not repeat this. Unattended: **[GATE]** `needs-input` with the question "criteria N, M need a signed-in session and the container has no account — what provisions one?".
 
    Do not work around it silently and do not mark those criteria skipped, untested or passed. client-a's WFI-072 stalled a run at criterion 5 of 5 for exactly this, and the reporter's read of the earlier runs is the reason this paragraph exists: two prior plans shipped with every criterion behind the login unexecuted, and nothing in the record said so.
 
@@ -489,7 +489,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
 6b. **Read auto-test config** (runs once, before entering the criterion loop). This determines whether the per-criterion mode menu is shown. Do NOT skip — if you're about to enter step 7 and haven't run this yet, run it now:
    ```bash
    DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
-   CFG="$DEVELOP_ROOT/claude-workflow.yml"
+   CFG="$DEVELOP_ROOT/levain.yml"
    AUTO_TEST_ENABLED=$(awk '/^  enabled:/{print $2; exit}' "$CFG" 2>/dev/null)
    ```
    If `AUTO_TEST_ENABLED=true`, the menu in step 7 is **mandatory** on every criterion (fresh, resume, and sweep). If blank or `false`, skip the menu and go straight to the manual flow.
@@ -541,14 +541,14 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
 
 ### Auto-test mode
 
-Entered from step 7 when the user picks `[a]`. Active only when `autoTestGrowth.enabled: true` in `claude-workflow.yml`.
+Entered from step 7 when the user picks `[a]`. Active only when `autoTestGrowth.enabled: true` in `levain.yml`.
 
 **Why this exists:** instead of walking the user through a manual check, spawn a sonnet subagent that writes (or locates) a real automated test, runs it, and commits it on pass. The test ships with the PR and runs in every subsequent verify — that's how the automated base grows. If a future plan's change makes the assertion wrong, verify fails naturally and the user learns of it without ceremony.
 
 **Read config** (first `[a]` only — cache afterward):
 
 ```bash
-CFG="$DEVELOP_ROOT/claude-workflow.yml"
+CFG="$DEVELOP_ROOT/levain.yml"
 AUTO_TEST_MODEL=$(awk '/^  agentModel:/{print $2; exit}' "$CFG")
 AUTO_TEST_LOG_CANDIDATES=$(awk '/^  logCandidatesOnFail:/{print $2; exit}' "$CFG")
 AUTO_TEST_LOG=$(awk '/^  logFile:/{print $2; exit}' "$CFG")
@@ -884,7 +884,7 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    ```bash
    ../../scripts/lv-exec.sh lv-post-merge-check.sh --label "post-merge-$PLAN_NAME"
    ```
-   It reads `postMergeCheck:` from `claude-workflow.yml` — `full` (default: `build_command` then `test_command`, whole and unfiltered) or `build` (build only, the pre-9.8 behavior). **Exit 0 good, 1 the merged tree is broken, 2 nothing is configured to check it with** — 2 is a gap to report, never a pass.
+   It reads `postMergeCheck:` from `levain.yml` — `full` (default: `build_command` then `test_command`, whole and unfiltered) or `build` (build only, the pre-9.8 behavior). **Exit 0 good, 1 the merged tree is broken, 2 nothing is configured to check it with** — 2 is a gap to report, never a pass.
 
    **The suite may outlast a foreground Bash call** (the cap is 10 minutes). Detach and wait in slices, exactly as `/lv-release` step 7 does — never `run_in_background`:
    ```bash
@@ -1289,7 +1289,7 @@ scripts/lv-exec.sh lv-issue.sh --source lv-test \
   --context  "<plan id, branch, state>"
 ```
 
-These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
+These are swept into the Levain library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
 ## Usage
 

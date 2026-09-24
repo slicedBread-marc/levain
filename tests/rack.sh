@@ -38,7 +38,7 @@ registry() {
 }
 C="$LV_COORD_DIR"
 git -C "$C" init -q
-printf 'project_slug: coord\nrole: coordinator\ncoordinates:\n  - "alpha:/p/alpha"\n  - "beta:/p/beta"\n' > "$C/claude-workflow.yml"
+printf 'project_slug: coord\nrole: coordinator\ncoordinates:\n  - "alpha:/p/alpha"\n  - "beta:/p/beta"\n' > "$C/levain.yml"
 assert_eq "no pack, no library: the coordinator's coordinates: list" "$(registry | tr '\n' ' ')" "/p/alpha /p/beta "
 mkdir -p "$T/lib"; printf '/p/one\n# c\n/p/two\n' > "$T/lib/deployments.txt"
 mkdir -p "$C/.claude"; printf '%s\n' "$T/lib" > "$C/.claude/workflow-source"

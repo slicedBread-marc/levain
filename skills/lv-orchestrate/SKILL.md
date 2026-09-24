@@ -37,7 +37,7 @@ It runs in the **foreground** and streams each stage. It can take a long time �
 | 0 | Reached the target state | Report the final state. If `complete`, say so plainly. |
 | 20 | Blocked on a human | Name the gate and its question. Point at `/lv-attend`. This is a **normal outcome**, not a failure. |
 | 30 | Worker ran, state didn't change | Show the tail of the newest log under `.claude/orchestrator/logs/`. Something is wrong with the plan or the skill, not the orchestrator. |
-| 1 | Error | Show the error. Common causes: orchestrator disabled in `claude-workflow.yml`, unknown artifact ID. |
+| 1 | Error | Show the error. Common causes: orchestrator disabled in `levain.yml`, unknown artifact ID. |
 
 **Never retry automatically on 20.** A gate means a human has to decide; spawning again just burns tokens and trips the attempt budget.
 
@@ -73,7 +73,7 @@ To stop: `lv-orchestrate.sh --stop` (workers finish), or `--kill-all` (workers d
 
 ## If the orchestrator is disabled
 
-Exit code 1 with a message about `orchestrator.enabled`. Explain that it ships off deliberately, show the `orchestrator:` block from `claude-workflow.yml`, and let the user decide. Do **not** flip it to `true` for them — that's a standing grant of autonomous execution, and it's theirs to give.
+Exit code 1 with a message about `orchestrator.enabled`. Explain that it ships off deliberately, show the `orchestrator:` block from `levain.yml`, and let the user decide. Do **not** flip it to `true` for them — that's a standing grant of autonomous execution, and it's theirs to give.
 
 ## Rules
 
@@ -92,7 +92,7 @@ scripts/lv-exec.sh lv-issue.sh --source lv-orchestrate \
   --context  "<plan id, branch, state>"
 ```
 
-These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
+These are swept into the Levain library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
 ## Usage
 

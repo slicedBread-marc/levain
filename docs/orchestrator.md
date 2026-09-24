@@ -467,7 +467,7 @@ said "go ahead and release overnight" was heard by one agent and forgotten at th
 next session boundary (client-a WFI-159).
 
 `lv-autonomy.sh` is that home. It reads `orchestrator.autonomy` from
-`claude-workflow.yml` and answers one question — *is this action authorized right
+`levain.yml` and answers one question — *is this action authorized right
 now?* — for exactly three actions: `release`, `deploy`, `production-push`. It
 performs none of them; `/lv-release` and `/lv-deploy` call it at the point where
 they would otherwise prompt, and park a `release-approval` / `deploy-approval`
@@ -563,7 +563,7 @@ runs. This has come up once; revisit only if it recurs.
 
 ## Safety
 
-Everything below is configurable in `claude-workflow.yml → orchestrator`:
+Everything below is configurable in `levain.yml → orchestrator`:
 
 - `enabled: false` by default. Workers run with
   `--dangerously-skip-permissions`; turning this on is a deliberate human grant,

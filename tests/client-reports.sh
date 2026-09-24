@@ -375,7 +375,7 @@ if command -v yq >/dev/null 2>&1; then
   cp plans/REGISTRY.md "$SCOPE_DIR/plans/REGISTRY.md"
   printf '| PLN-107 | scoped | verify | — | — | 2026-08-02 | 2.00 | — | — |\n' >> "$SCOPE_DIR/plans/REGISTRY.md"
   printf '# PLN-107\n\n## Goal\nscoped\n\n## Test Scope\n- unit\n' > "$SCOPE_DIR/plans/PLN-107-scoped/plan.md"
-  cat > "$SCOPE_DIR/claude-workflow.yml" <<'YML'
+  cat > "$SCOPE_DIR/levain.yml" <<'YML'
 testFilterStyle: auto
 testScopes:
   unit:
@@ -393,7 +393,7 @@ YML
   assert_eq "and it is a clean exit, not a failure" "0" "$rc"
 
   # An explicit setting must beat the detection in both directions.
-  printf 'testFilterStyle: vstest\ntestScopes:\n  unit:\n    - Core.Tests\n' > "$SCOPE_DIR/claude-workflow.yml"
+  printf 'testFilterStyle: vstest\ntestScopes:\n  unit:\n    - Core.Tests\n' > "$SCOPE_DIR/levain.yml"
   out=$(cd "$SCOPE_DIR" && ./scripts/lv-test-scope.sh PLN-107-scoped 2>/dev/null || true)
   assert_eq "testFilterStyle: vstest overrides the detection" "true" \
     "$(printf '%s' "$out" | grep -q 'FullyQualifiedName~Core.Tests' && echo true || echo false)"
@@ -568,7 +568,7 @@ assert_eq "lv-infra-sync.sh no longer exists" "false" \
 prune_client="$TEST_DIR/prune-client"
 rm -rf "$prune_client"; mkdir -p "$prune_client"
 git init -q "$prune_client"
-printf 'project_slug: "prune-client"\n' > "$prune_client/claude-workflow.yml"
+printf 'project_slug: "prune-client"\n' > "$prune_client/levain.yml"
 LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$prune_client" >/dev/null 2>&1
 printf 'residue\n' > "$(live_script_dir "$prune_client")/wf-gone-from-the-library.sh"
 LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$prune_client" >/dev/null 2>&1
@@ -711,7 +711,7 @@ section "The tag vocabulary is the project's own (client-a WFI-030)"
 # surface, and the only tag in its specApproval.gateTags. The list was already
 # being ignored in practice, which is what makes it dangerous: it looks
 # authoritative, is not, and sits directly in front of a gating decision.
-cat > claude-workflow.yml <<'YML'
+cat > levain.yml <<'YML'
 specApproval:
   mode: verdict
   gateTags:
@@ -734,10 +734,10 @@ assert_eq "--gating lists only what carries a gate" "contract" \
   "$("$SCRIPT_DIR/lv-list-tags.sh" --gating 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
 
 # A gate tag nobody has used yet is the one a planner most needs offered.
-printf 'specApproval:\n  mode: verdict\n  gateTags:\n    - contract\n    - unused-gate\n' > claude-workflow.yml
+printf 'specApproval:\n  mode: verdict\n  gateTags:\n    - contract\n    - unused-gate\n' > levain.yml
 assert_eq "an unused gate tag is still listed" "true" \
   "$("$SCRIPT_DIR/lv-list-tags.sh" 2>/dev/null | grep -qE '^unused-gate\s+0\s+gate$' && echo true || echo false)"
-printf 'specApproval:\n  mode: verdict\n  gateTags:\n    - contract\n' > claude-workflow.yml
+printf 'specApproval:\n  mode: verdict\n  gateTags:\n    - contract\n' > levain.yml
 
 # The hard failure: the tag that gates could not be assigned at all.
 assert_ok "a tag outside the old hardcoded list can be assigned" \
@@ -1036,7 +1036,7 @@ printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n
   "${SCRIPT_FOLDER#v}" > "$SCOPE2/plans/REGISTRY.md"
 printf '## Goal\nx\n\n## Test Scope\n- unit\n' > "$SCOPE2/plans/PLN-160-mtp/plan.md"
 printf 'test_filter_flag: "--filter"\ntestFilterStyle: mtp\ntestScopes:\n  unit:\n    - Core.Tests\n' \
-  > "$SCOPE2/claude-workflow.yml"
+  > "$SCOPE2/levain.yml"
 
 if command -v yq >/dev/null 2>&1; then
   mtp_args=$(cd "$SCOPE2" && ./scripts/lv-test-scope.sh PLN-160-mtp --args 2>/dev/null || true)
@@ -1048,7 +1048,7 @@ if command -v yq >/dev/null 2>&1; then
     "$(printf '%s' "$mtp_args" | grep -q -- '--ignore-exit-code 8' && echo true || echo false)"
 
   printf 'test_filter_flag: "--filter"\ntestFilterStyle: vstest\ntestScopes:\n  unit:\n    - Core.Tests\n' \
-    > "$SCOPE2/claude-workflow.yml"
+    > "$SCOPE2/levain.yml"
   vs_args=$(cd "$SCOPE2" && ./scripts/lv-test-scope.sh PLN-160-mtp --args 2>/dev/null || true)
   assert_eq "vstest --args still renders flag plus value" "--filter 'FullyQualifiedName~Core.Tests'" "$vs_args"
   # On an UNFILTERED run exit 8 means the suite really found no tests, so the
@@ -1056,7 +1056,7 @@ if command -v yq >/dev/null 2>&1; then
   assert_eq "and never carries the MTP exit-code ignore" "false" \
     "$(printf '%s' "$vs_args" | grep -q -- '--ignore-exit-code' && echo true || echo false)"
 
-  printf 'testFilterStyle: auto\ntestScopes:\n  unit:\n    - Core.Tests\n' > "$SCOPE2/claude-workflow.yml"
+  printf 'testFilterStyle: auto\ntestScopes:\n  unit:\n    - Core.Tests\n' > "$SCOPE2/levain.yml"
   printf '{ "test": { "runner": "Microsoft.Testing.Platform" } }\n' > "$SCOPE2/global.json"
   auto_args=$(cd "$SCOPE2" && ./scripts/lv-test-scope.sh PLN-160-mtp --args 2>/dev/null || true)
   assert_eq "auto-detection routes an MTP project to mtp, not to the full suite" "true" \
@@ -1397,14 +1397,14 @@ mkdir -p "$DEPLOYC" && (
 ) >/dev/null 2>&1
 # First run creates the config and stops; second run installs.
 bash "$LIB_ROOT/install.sh" "$DEPLOYC" >/dev/null 2>&1 || true
-( cd "$DEPLOYC" && sed -i.bak 's|^project_slug:.*|project_slug: "deployclient"|' claude-workflow.yml \
-    && rm -f claude-workflow.yml.bak ) >/dev/null 2>&1
+( cd "$DEPLOYC" && sed -i.bak 's|^project_slug:.*|project_slug: "deployclient"|' levain.yml \
+    && rm -f levain.yml.bak ) >/dev/null 2>&1
 bash "$LIB_ROOT/install.sh" "$DEPLOYC" >/dev/null 2>&1 || true
 ( cd "$DEPLOYC" && git add -A && git commit -qm "install" ) >/dev/null 2>&1
 
 # Dirty a tracked path the way a real deploy does (a config backfill, a new
 # version stamp), then re-deploy.
-printf '\n# forced change\n' >> "$DEPLOYC/claude-workflow.yml"
+printf '\n# forced change\n' >> "$DEPLOYC/levain.yml"
 deploy_out=$(bash "$LIB_ROOT/install.sh" "$DEPLOYC" 2>&1 || true)
 assert_eq "a re-deploy leaves the client's tree clean" "true" \
   "$(cd "$DEPLOYC" && git status --porcelain | grep -q . && echo false || echo true)"
@@ -1416,7 +1416,7 @@ assert_eq "under its own message, not a plan's" "true" \
 # It must commit ONLY its own paths — never the shared index, which on develop
 # holds every other live worker's staged work (WFI-122, WFI-123).
 ( cd "$DEPLOYC" && echo 'someone elses work' > other.txt && git add other.txt ) >/dev/null 2>&1
-printf '\n# forced change\n' >> "$DEPLOYC/claude-workflow.yml"
+printf '\n# forced change\n' >> "$DEPLOYC/levain.yml"
 bash "$LIB_ROOT/install.sh" "$DEPLOYC" >/dev/null 2>&1 || true
 assert_eq "another worker's staged file is not swept into the deploy commit" "true" \
   "$(cd "$DEPLOYC" && git diff --cached --name-only | grep -qx 'other.txt' && echo true || echo false)"
@@ -1424,19 +1424,19 @@ assert_eq "another worker's staged file is not swept into the deploy commit" "tr
 
 # Off a pipeline branch, the deploy's changes are not this branch's to carry.
 ( cd "$DEPLOYC" && git checkout -q -- . && git checkout -q -b someones-session ) >/dev/null 2>&1
-printf '\n# forced change\n' >> "$DEPLOYC/claude-workflow.yml"
+printf '\n# forced change\n' >> "$DEPLOYC/levain.yml"
 foreign_out=$(bash "$LIB_ROOT/install.sh" "$DEPLOYC" 2>&1 || true)
 assert_eq "on a foreign branch it says so instead of committing" "true" \
   "$(printf '%s' "$foreign_out" | grep -q "not a branch a deploy should commit to" && echo true || echo false)"
 assert_eq "and leaves the change for develop to land" "true" \
-  "$(cd "$DEPLOYC" && git status --porcelain | grep -q 'claude-workflow.yml' && echo true || echo false)"
+  "$(cd "$DEPLOYC" && git status --porcelain | grep -q 'levain.yml' && echo true || echo false)"
 
 # --no-commit restores the old behaviour for a caller that wants to bundle it.
 ( cd "$DEPLOYC" && git checkout -q develop && git checkout -q -- . ) >/dev/null 2>&1
-printf '\n# forced change\n' >> "$DEPLOYC/claude-workflow.yml"
+printf '\n# forced change\n' >> "$DEPLOYC/levain.yml"
 bash "$LIB_ROOT/install.sh" "$DEPLOYC" --no-commit >/dev/null 2>&1 || true
 assert_eq "--no-commit leaves the tree dirty on purpose" "true" \
-  "$(cd "$DEPLOYC" && git status --porcelain | grep -q 'claude-workflow.yml' && echo true || echo false)"
+  "$(cd "$DEPLOYC" && git status --porcelain | grep -q 'levain.yml' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A test result carries proof of which tree it measured (client-a WFI-132)"
@@ -1545,7 +1545,7 @@ setup_dep_project() {
 setup_dep_project "$DEPA"
 setup_dep_project "$DEPB"
 
-cat > "$DEPA/claude-workflow.yml" <<YML
+cat > "$DEPA/levain.yml" <<YML
 project_slug: "dep-caller"
 dependencies:
   - "dep-host:$DEPB"
@@ -1641,7 +1641,7 @@ section "A coordinator files work DOWN without deriving an artifact number"
 # writing into it directly, which had to be reverted wholesale once already.
 COORD="$TEST_DIR/coord"
 mkdir -p "$COORD"
-cat > "$COORD/claude-workflow.yml" <<YML
+cat > "$COORD/levain.yml" <<YML
 role: "coordinator"
 project_slug: "coord"
 coordinates:
@@ -1721,11 +1721,11 @@ assert_eq "a bad --kind is refused rather than filed as something else" "true" \
 # A client that later becomes a coordinator must not keep a live pipeline on
 # disk — but its plans/ and bugs/ are a human's tracked work and are reported,
 # never deleted.
-sed -i.bak 's/^role: "coordinator"/role: "client"/' "$COORD/claude-workflow.yml" && rm -f "$COORD/claude-workflow.yml.bak"
+sed -i.bak 's/^role: "coordinator"/role: "client"/' "$COORD/levain.yml" && rm -f "$COORD/levain.yml.bak"
 LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" >/dev/null 2>&1
 assert_eq "as a client it gets the full harness" "true" \
   "$([ -f "$(live_script_dir "$COORD")/lv-worktree-sparse.sh" ] && echo true || echo false)"
-sed -i.bak 's/^role: "client"/role: "coordinator"/' "$COORD/claude-workflow.yml" && rm -f "$COORD/claude-workflow.yml.bak"
+sed -i.bak 's/^role: "client"/role: "coordinator"/' "$COORD/levain.yml" && rm -f "$COORD/levain.yml.bak"
 coord_reinstall=$(LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" 2>&1)
 assert_eq "switching back prunes the pipeline scripts" "true" \
   "$([ -f "$(live_script_dir "$COORD")/lv-worktree-sparse.sh" ] && echo false || echo true)"
@@ -1738,7 +1738,7 @@ assert_eq "and the deploy says so rather than staying silent" "true" \
 # An unknown role is a typo, and a typo that falls back to `client` would
 # install a whole pipeline into a repo that asked for none.
 role_rc=0
-sed -i.bak 's/^role: "coordinator"/role: "coordnator"/' "$COORD/claude-workflow.yml" && rm -f "$COORD/claude-workflow.yml.bak"
+sed -i.bak 's/^role: "coordinator"/role: "coordnator"/' "$COORD/levain.yml" && rm -f "$COORD/levain.yml.bak"
 LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" >/dev/null 2>&1 || role_rc=$?
 assert_eq "a misspelled role is refused, not defaulted" "1" "$role_rc"
 
@@ -2110,7 +2110,7 @@ A CLI.
 - [ ] tool key export then tool key import leaves <drive>/keys/ empty afterwards
 PLANEOF
 printf 'manualTestGate:\n  requireRenderingSurface: true\n  minEyesCriteria: 1\n  blockOnCosmetic: false\n  renderingSurfaces:\n    - "src/**/wwwroot/**"\n' \
-  > "$GATE_DIR/claude-workflow.yml"
+  > "$GATE_DIR/levain.yml"
 # A real diff that touches no rendering surface — a CLI change. Without one the
 # gate takes the "could not read the plan's diff" branch, which also gates, and
 # the assertions below would pass for the wrong reason.
@@ -2314,7 +2314,7 @@ assert_eq "an unmatched criterion says ACTION REQUIRED, not 'note'" "true" \
 # ═══════════════════════════════════════════════════════════════════════
 section "Verify reads the branch's own config (client-a WFI-052)"
 
-# claude-workflow.yml was located by walking up from SCRIPT_DIR, which
+# levain.yml was located by walking up from SCRIPT_DIR, which
 # lv-exec.sh always resolves to the MAIN worktree. A plan whose Step 1 adds a
 # test project to testScopes commits that on its own branch; verify then read
 # develop's config, did not see it, and filed a finding saying the scope was
@@ -2846,14 +2846,14 @@ section "Config values arrive unquoted (client-a WFI-088, WFI-090)"
 # ignored, the full suite ran, and the run failed on the very e2e test the
 # filter existed to exclude.
 cfg_probe=$(mktemp -d)
-cat > "$cfg_probe/claude-workflow.yml" << 'CFGEOF'
+cat > "$cfg_probe/levain.yml" << 'CFGEOF'
 test_exclude_e2e: '--ignore-exit-code 8 --filter-not-namespace "*E2E*"'
 build_command: "dotnet build"
 CFGEOF
 extract=$(awk '/^get_config\(\)/,/^}/' "$LIB_ROOT/install.sh")
-value=$(CONFIG_FILE="$cfg_probe/claude-workflow.yml" bash -c "$extract"$'\nget_config test_exclude_e2e')
+value=$(CONFIG_FILE="$cfg_probe/levain.yml" bash -c "$extract"$'\nget_config test_exclude_e2e')
 assert_eq "single-quoted YAML loses its quotes" '--ignore-exit-code 8 --filter-not-namespace "*E2E*"' "$value"
-value=$(CONFIG_FILE="$cfg_probe/claude-workflow.yml" bash -c "$extract"$'\nget_config build_command')
+value=$(CONFIG_FILE="$cfg_probe/levain.yml" bash -c "$extract"$'\nget_config build_command')
 assert_eq "so does double-quoted YAML" 'dotnet build' "$value"
 rm -rf "$cfg_probe"
 
@@ -3445,14 +3445,14 @@ section "A Test Scope bullet may carry a comment (client-a WFI-116)"
 # the category and run a narrower suite than it declared.
 #
 # lv-test-scope.sh finds its config by walking up from its OWN directory, so
-# the fixture needs a copy of the scripts beside a claude-workflow.yml.
+# the fixture needs a copy of the scripts beside a levain.yml.
 if ! command -v yq >/dev/null 2>&1; then
   printf '  \033[33m—\033[0m skipped: yq not installed\n'
 else
   SC="$TEST_DIR/scope-comment"
   mkdir -p "$SC/plans/PLN-950-annotated" "$SC/plans/PLN-951-bare"
   cp -R "$LIB_SCRIPTS" "$SC/scripts"
-  cat > "$SC/claude-workflow.yml" << 'YEOF'
+  cat > "$SC/levain.yml" << 'YEOF'
 project_slug: scope-fixture
 testScopes:
   vectors:
@@ -4079,12 +4079,12 @@ section "Standing authorization is recorded, scoped and expiring (client-a WFI-1
 # load-bearing and be honoured by no script" — which is why the vocabulary is
 # closed and an unread entry is a reported problem rather than a silent no-op.
 AUTONOMY_CFG_BACKUP=""
-[ -f claude-workflow.yml ] && AUTONOMY_CFG_BACKUP=$(cat claude-workflow.yml)
+[ -f levain.yml ] && AUTONOMY_CFG_BACKUP=$(cat levain.yml)
 
 # Absent config: release and deploy run unattended, production-push stops for a
 # human (coordinator WFI-006). Neither of the first two leaves the machine; the push is
 # the step that reaches users.
-rm -f claude-workflow.yml .claude/orchestrator/events.log
+rm -f levain.yml .claude/orchestrator/events.log
 assert_ok "with no config at all, release is authorized by default" \
   "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_ok "and so is a local deploy" \
@@ -4096,7 +4096,7 @@ assert_eq "a default authorization is on the event log, and says it was the defa
      | grep -q 'authorized by default' && echo true || echo false)"
 
 # A project takes a gate back by listing it under attended_for.
-cat > claude-workflow.yml <<'YML'
+cat > levain.yml <<'YML'
 orchestrator:
   autonomy:
     attended_for:
@@ -4109,7 +4109,7 @@ assert_ok "and leaves deploy unattended" \
 
 # The default still has a ceiling, or a role dispatching in a loop is unbounded.
 rm -f .claude/orchestrator/events.log
-cat > claude-workflow.yml <<'YML'
+cat > levain.yml <<'YML'
 orchestrator:
   autonomy:
     max_unattended_per_day: 1
@@ -4118,7 +4118,7 @@ assert_ok "the default is spent against max_unattended_per_day..." \
   "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_eq "...and the one past it is refused" "1" \
   "$("$SCRIPT_DIR/lv-autonomy.sh" release --quiet; echo $?)"
-rm -f claude-workflow.yml .claude/orchestrator/events.log
+rm -f levain.yml .claude/orchestrator/events.log
 assert_eq "and --show says so without calling it a fault" "0" \
   "$("$SCRIPT_DIR/lv-autonomy.sh" --show >/dev/null 2>&1; echo $?)"
 
@@ -4126,7 +4126,7 @@ assert_eq "and --show says so without calling it a fault" "0" \
 # one also lists them under attended_for — otherwise the WFI-006 default would
 # authorize them before the grant was ever read.
 write_grant() {
-  cat > claude-workflow.yml <<YML
+  cat > levain.yml <<YML
 orchestrator:
   autonomy:
     attended_for:
@@ -4249,7 +4249,7 @@ assert_eq "and neither wrote anything to the event log" "false" \
 assert_ok "so the real question still has its whole budget" \
   env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 
-[ -n "$AUTONOMY_CFG_BACKUP" ] && printf '%s\n' "$AUTONOMY_CFG_BACKUP" > claude-workflow.yml
+[ -n "$AUTONOMY_CFG_BACKUP" ] && printf '%s\n' "$AUTONOMY_CFG_BACKUP" > levain.yml
 rm -f .claude/orchestrator/events.log
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -4768,8 +4768,8 @@ section "A replan does not promote on a stale approval (client-a WFI-178)"
 # later. lv-registry-update.sh's guard could not catch it: it refuses
 # draft -> ready without a review OF RECORD, and a fresh one existed.
 REPLAN_CFG_BACKUP=""
-[ -f claude-workflow.yml ] && REPLAN_CFG_BACKUP=$(cat claude-workflow.yml)
-printf 'specApproval:\n  mode: verdict\n  gateTags:\n    - contract\n' > claude-workflow.yml
+[ -f levain.yml ] && REPLAN_CFG_BACKUP=$(cat levain.yml)
+printf 'specApproval:\n  mode: verdict\n  gateTags:\n    - contract\n' > levain.yml
 registry_add_row PLN-280 gate-tagged-replan draft "—" "contract"
 cat > plans/PLN-280-gate-tagged-replan/plan.md <<'EOF'
 # gate-tagged
@@ -4821,7 +4821,7 @@ printf '\n## Review\n> **Result:** Approved\n' >> plans/PLN-281-untagged-replan/
 assert_ok "a plan carrying no gating tag replans without a gate" \
   "$SCRIPT_DIR/lv-replan-target.sh" PLN-281 --apply
 assert_eq "and promotes" "ready" "$(registry_state PLN-281)"
-[ -n "$REPLAN_CFG_BACKUP" ] && printf '%s\n' "$REPLAN_CFG_BACKUP" > claude-workflow.yml
+[ -n "$REPLAN_CFG_BACKUP" ] && printf '%s\n' "$REPLAN_CFG_BACKUP" > levain.yml
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A close is announced after it is committed (client-a WFI-192)"
@@ -4886,14 +4886,14 @@ git add -A >/dev/null 2>&1
 git commit -qm "chore: relay BUG-284 from tb" >/dev/null 2>&1
 
 PW_CFG_BACKUP=""
-[ -f claude-workflow.yml ] && PW_CFG_BACKUP=$(cat claude-workflow.yml)
+[ -f levain.yml ] && PW_CFG_BACKUP=$(cat levain.yml)
 assert_ok "a note outside the four built-ins is flagged by default" \
   "$SCRIPT_DIR/lv-prior-work.sh" PLN-284
 pw_out=$("$SCRIPT_DIR/lv-prior-work.sh" PLN-284 2>/dev/null || true)
 assert_eq "and the report NAMES the file, not just a count" "true" \
   "$(printf '%s' "$pw_out" | grep -q 'drive/exchange/msg-284.md' && echo true || echo false)"
 
-printf 'priorWork:\n  ignorePaths:\n    - "drive/exchange/"\n' > claude-workflow.yml
+printf 'priorWork:\n  ignorePaths:\n    - "drive/exchange/"\n' > levain.yml
 assert_fails "a declared note path is not prior work" \
   "$SCRIPT_DIR/lv-prior-work.sh" PLN-284
 
@@ -4911,9 +4911,9 @@ assert_eq "and names only the non-ignored file" "true" \
   "$(printf '%s' "$pw2" | grep -q 'src/bug285.c' \
      && ! printf '%s' "$pw2" | grep -q 'msg-285.md' && echo true || echo false)"
 assert_eq "a built-in path can never be un-ignored by config" "true" \
-  "$(printf 'priorWork:\n  ignorePaths:\n    - "src/"\n' > claude-workflow.yml
+  "$(printf 'priorWork:\n  ignorePaths:\n    - "src/"\n' > levain.yml
      "$SCRIPT_DIR/lv-prior-work.sh" PLN-284 >/dev/null 2>&1 && echo true || echo false)"
-[ -n "$PW_CFG_BACKUP" ] && printf '%s\n' "$PW_CFG_BACKUP" > claude-workflow.yml || rm -f claude-workflow.yml
+[ -n "$PW_CFG_BACKUP" ] && printf '%s\n' "$PW_CFG_BACKUP" > levain.yml || rm -f levain.yml
 
 # ═══════════════════════════════════════════════════════════════════════
 section "The harness reinstalls into a worktree (client-a WFI-191)"
@@ -4933,7 +4933,7 @@ git worktree add -q -b release-wfi191 "$TEST_DIR/wt-191" develop 2>/dev/null
 # install.sh stands down without a config, which would mask the failure this
 # section is about. project_slug is the only required key.
 printf 'project_slug: "wfi191"\nbuild_command: ""\ntest_command: ""\n' \
-  > "$TEST_DIR/wt-191/claude-workflow.yml"
+  > "$TEST_DIR/wt-191/levain.yml"
 
 assert_eq "workflow-source is absent in the worktree (untracked)" "false" \
   "$([ -f "$TEST_DIR/wt-191/.claude/workflow-source" ] && echo true || echo false)"
@@ -5253,7 +5253,7 @@ printf '## Goal\nA plan whose scope names two whole assemblies.\n\n## Test Scope
 
 if command -v yq >/dev/null 2>&1; then
   printf 'testFilterStyle: mtp\ntestScopes:\n  unit:\n    - Tracker.Cli.Tests\n  vectors:\n    - Tracker.Core.Tests\n' \
-    > "$SCOPE3/claude-workflow.yml"
+    > "$SCOPE3/levain.yml"
 
   combined=$(cd "$SCOPE3" && ./scripts/lv-test-scope.sh PLN-228-split-scope --args 2>/dev/null || true)
   assert_eq "--args still ORs the values into one run" "1" \
@@ -5273,7 +5273,7 @@ if command -v yq >/dev/null 2>&1; then
 
   # vstest splits the same way, one flag-plus-value per line and no MTP ignore.
   printf 'testFilterStyle: vstest\ntestScopes:\n  unit:\n    - Tracker.Cli.Tests\n  vectors:\n    - Tracker.Core.Tests\n' \
-    > "$SCOPE3/claude-workflow.yml"
+    > "$SCOPE3/levain.yml"
   vsplit=$(cd "$SCOPE3" && ./scripts/lv-test-scope.sh PLN-228-split-scope --split 2>/dev/null || true)
   assert_eq "vstest --split is one flag-plus-value per line" "2" \
     "$(printf '%s\n' "$vsplit" | grep -c "^--filter 'FullyQualifiedName~" | xargs)"
@@ -5617,8 +5617,8 @@ section "A deploy no longer refuses a running daemon (coordinator WFI-003, WFI-0
 # and a stale pidfile must still not be mistaken for one.
 DEPD="$TEST_DIR/deployguard"
 mkdir -p "$DEPD/client-a/.claude/orchestrator" "$DEPD/client-b/.claude/orchestrator"
-printf 'project_slug: "client-a"\n' > "$DEPD/client-a/claude-workflow.yml"
-printf 'project_slug: "client-b"\n' > "$DEPD/client-b/claude-workflow.yml"
+printf 'project_slug: "client-a"\n' > "$DEPD/client-a/levain.yml"
+printf 'project_slug: "client-b"\n' > "$DEPD/client-b/levain.yml"
 git init -q "$DEPD/client-a"; git init -q "$DEPD/client-b"
 printf '%s\n' "$DEPD/client-a" "$DEPD/client-b" > "$DEPD/deployments.txt"
 
@@ -5673,7 +5673,7 @@ COORDIG="$TEST_DIR/coord-ignore"
 mkdir -p "$COORDIG"
 (
   cd "$COORDIG" && git init -qb main . && git config user.email t@t && git config user.name t
-  printf 'project_slug: coordig\nrole: coordinator\ncoordinates:\n  - "x:/tmp/x"\n' > claude-workflow.yml
+  printf 'project_slug: coordig\nrole: coordinator\ncoordinates:\n  - "x:/tmp/x"\n' > levain.yml
   printf '# coordig\n' > CLAUDE.md
   git add -A && git commit -q -m seed
 ) >/dev/null 2>&1
@@ -5852,14 +5852,14 @@ PRE="$TEST_DIR/preflight"
 mkdir -p "$PRE/scripts"
 cp "$SCRIPT_DIR/lv-preflight.sh" "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$PRE/scripts/"
 (cd "$PRE" && git init -qb develop . && git config user.email t@t && git config user.name t \
-  && printf 'project_slug: pre\n' > claude-workflow.yml \
+  && printf 'project_slug: pre\n' > levain.yml \
   && git add -A && git commit -q -m seed) >/dev/null 2>&1
 
 assert_eq "a project declaring none is not in trouble, just quiet" "0" \
   "$( (cd "$PRE" && ./scripts/lv-preflight.sh) >/dev/null 2>&1; echo $? )"
 
 printf 'project_slug: pre\ne2ePrereqs:\n  - "dev issuer:false"\n  - "database:true"\n' \
-  > "$PRE/claude-workflow.yml"
+  > "$PRE/levain.yml"
 pre_rc=0
 pre_out=$( (cd "$PRE" && ./scripts/lv-preflight.sh 2>/dev/null) ) || pre_rc=$?
 assert_eq "a prerequisite that is down fails the check" "1" "$pre_rc"
@@ -5868,13 +5868,13 @@ assert_eq "and is named, with the probe that failed" "true" \
 assert_eq "one that is up is reported up, not silently assumed" "true" \
   "$(printf '%s' "$pre_out" | grep -q '^ok database' && echo true || echo false)"
 
-printf 'project_slug: pre\ne2ePrereqs:\n  - "database:true"\n' > "$PRE/claude-workflow.yml"
+printf 'project_slug: pre\ne2ePrereqs:\n  - "database:true"\n' > "$PRE/levain.yml"
 assert_eq "all up is a clean exit" "0" \
   "$( (cd "$PRE" && ./scripts/lv-preflight.sh) >/dev/null 2>&1; echo $? )"
 
 # A URL check must not pass merely because something answered the socket.
 printf 'project_slug: pre\ne2ePrereqs:\n  - "issuer:http://127.0.0.1:9/nothing-here"\n' \
-  > "$PRE/claude-workflow.yml"
+  > "$PRE/levain.yml"
 assert_eq "an unreachable URL is DOWN, not ok" "1" \
   "$( (cd "$PRE" && ./scripts/lv-preflight.sh) >/dev/null 2>&1; echo $? )"
 
@@ -6299,7 +6299,7 @@ cd "$XDEP/consumer" || exit 1
 git init -q -b develop && git config user.email t@t.com && git config user.name T
 printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-011 | public-landing-hero | draft | — | — | 2026-09-21 | 2.00 | ux | — |\n\n<!-- Counter: 20 -->\n' \
   > plans/REGISTRY.md
-printf 'project_slug: consumer\ndependencies:\n  - "client-d:%s/provider"\n' "$XDEP" > claude-workflow.yml
+printf 'project_slug: consumer\ndependencies:\n  - "client-d:%s/provider"\n' "$XDEP" > levain.yml
 git add -A && git commit -qm init
 
 setdeps() { "$SCRIPT_DIR/lv-set-deps.sh" "$@"; }
@@ -6403,7 +6403,7 @@ mkdir -p "$BLK/plans"
 cd "$BLK" || exit 1
 git init -q -b develop && git config user.email t@t.com && git config user.name T
 printf '| ID | Slug | State |\n|-|-|-|\n\n<!-- Counter: 1 -->\n' > plans/REGISTRY.md
-cat > claude-workflow.yml <<'YML'
+cat > levain.yml <<'YML'
 project_slug: blocktest
 test_account_command: ""
 test_account_note: |

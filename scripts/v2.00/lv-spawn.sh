@@ -19,7 +19,7 @@
 #   --dry-run      print what would be launched, change nothing
 #   --model NAME   override the configured model tier for this role
 #
-# Model tiers come from claude-workflow.yml → orchestrator.models.<role>,
+# Model tiers come from levain.yml → orchestrator.models.<role>,
 # defaulting to the pipeline's standing assignment: spec=opus (judgment),
 # implement=sonnet, verify=sonnet, test=haiku (guided).
 #

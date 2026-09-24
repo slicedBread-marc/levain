@@ -19,7 +19,7 @@ ok()  { echo "  ✓ $1"; PASS=$((PASS + 1)); }
 bad() { echo "  ✗ $1"; [ $# -gt 1 ] && echo "      $2"; FAIL=$((FAIL + 1)); }
 assert_eq() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want [$2], got [$3]"; fi; }
 
-cd "$TEST_DIR" && git init -q . && printf 'project_slug: "ids"\n' > claude-workflow.yml
+cd "$TEST_DIR" && git init -q . && printf 'project_slug: "ids"\n' > levain.yml
 ids() { bash "$SD/lv-ids.sh" "$@" 2>&1; }
 
 echo "id-map.sh"
@@ -37,7 +37,7 @@ assert_eq "a test ID has no hyphen"         "test"         "$(ids kind T75)"
 
 echo
 echo "2. Overrides"
-printf 'project_slug: "ids"\nids:\n  issue: HI LVI   # renamed\ntestIds:\n  prefix: TT\n' > claude-workflow.yml
+printf 'project_slug: "ids"\nids:\n  issue: HI LVI   # renamed\ntestIds:\n  prefix: TT\n' > levain.yml
 assert_eq "issued prefix comes first"       "HI LVI WFI"   "$(ids prefixes issue)"
 assert_eq "the default stays accepted"      "issue"        "$(ids kind WFI-001)"
 assert_eq "testIds.prefix is honoured"      "TT T"         "$(ids prefixes test)"
@@ -46,18 +46,18 @@ assert_eq "the override checks clean"       "ids: ok"      "$(ids check)"
 
 echo
 echo "3. Validation"
-printf 'ids:\n  issue: BUG\n' > claude-workflow.yml
+printf 'ids:\n  issue: BUG\n' > levain.yml
 assert_eq "a prefix claimed by two kinds is refused" "1" "$(ids check >/dev/null 2>&1; echo $?)"
-printf 'ids:\n  issue: hi\n' > claude-workflow.yml
+printf 'ids:\n  issue: hi\n' > levain.yml
 assert_eq "a malformed prefix is refused"   "1" "$(ids check >/dev/null 2>&1; echo $?)"
-printf 'ids:\n  plan: LOAF PLN\n  bug: FIX\n  brief: IDEA\n  deferred: DEF\n  rollback: UNDO\n' > claude-workflow.yml
+printf 'ids:\n  plan: LOAF PLN\n  bug: FIX\n  brief: IDEA\n  deferred: DEF\n  rollback: UNDO\n' > levain.yml
 assert_eq "every kind may be renamed"       "ids: ok"      "$(ids check)"
-printf 'ids:\n  plan: FIX\n  bug: FIX\n' > claude-workflow.yml
+printf 'ids:\n  plan: FIX\n  bug: FIX\n' > levain.yml
 assert_eq "but not onto another kind's prefix" "1" "$(ids check >/dev/null 2>&1; echo $?)"
 
 echo
 echo "4. Issues follow the map"
-printf 'project_slug: "ids"\nids:\n  issue: HI LVI\n' > claude-workflow.yml
+printf 'project_slug: "ids"\nids:\n  issue: HI LVI\n' > levain.yml
 cat > WORKFLOW-ISSUES.md <<'EOF'
 # Workflow Issues
 
@@ -84,7 +84,7 @@ echo "5. Plans, bugs, briefs and deferred criteria follow the map"
 # A project that ran on the defaults, then renamed: PLN-041 and BUG-042 exist,
 # and everything issued from now on takes the new prefix.
 P="$TEST_DIR/pipe"; mkdir -p "$P" && cd "$P" && git init -q . && git checkout -qb develop
-printf 'project_slug: "ids"\nids:\n  plan: LOAF PLN\n  bug: FIX BUG\n  brief: IDEA\n  deferred: DEF\n' > claude-workflow.yml
+printf 'project_slug: "ids"\nids:\n  plan: LOAF PLN\n  bug: FIX BUG\n  brief: IDEA\n  deferred: DEF\n' > levain.yml
 mkdir -p plans/PLN-041-old-plan plans/briefs bugs/open/BUG-042-old-bug bugs/closed
 cat > plans/REGISTRY.md <<'EOF'
 # Plan Registry
@@ -139,14 +139,14 @@ echo
 echo "6. Prose is rendered to the issued prefixes"
 assert_eq "skills and docs name the project's IDs" "Spec LOAF-NNN from IDEA-012 or FIX-9; DEF-001; T75; LV_PLN" \
   "$(echo 'Spec PLN-NNN from BRF-012 or BUG-9; DC-001; T75; LV_PLN' | bash "$SD/lv-ids.sh" render)"
-cd "$TEST_DIR" && printf 'project_slug: "ids"\n' > claude-workflow.yml
+cd "$TEST_DIR" && printf 'project_slug: "ids"\n' > levain.yml
 assert_eq "the default map is a straight copy" "Spec PLN-NNN; RBK-1" "$(echo 'Spec PLN-NNN; RBK-1' | bash "$SD/lv-ids.sh" render)"
 
 # And install actually does it: a client with a renamed map gets skills and a
 # WORKFLOW.md that name its prefixes, and nothing else changes.
 C="$TEST_DIR/client"; mkdir -p "$C" && ( cd "$C" && git init -q . && git checkout -qb develop \
   && git commit -q --allow-empty -m init )
-printf 'project_slug: "ids-client"\nids:\n  plan: LOAF PLN\n  bug: FIX BUG\n' > "$C/claude-workflow.yml"
+printf 'project_slug: "ids-client"\nids:\n  plan: LOAF PLN\n  bug: FIX BUG\n' > "$C/levain.yml"
 LV_INSTALL_NO_COMMIT=1 bash "$REPO_ROOT/install.sh" "$C" >"$TEST_DIR/install.log" 2>&1
 assert_eq "install succeeds with a renamed map" "0" "$?"
 spec="$C/.claude/skills/lv-spec/SKILL.md"
