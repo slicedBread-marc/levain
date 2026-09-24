@@ -4,7 +4,7 @@
 #
 # The extension-hook dispatcher (LVI-013). Library scripts never call a
 # provider or a personal tool directly: they call a hook named for the job
-# (secrets-deploy, not secrets-tool; provider-deny, not fly), and this resolves who
+# (secrets-deploy, not a named secrets tool; provider-deny, not a named host), and this resolves who
 # implements it, at run time, in three layers:
 #
 #   1. project-local  .lv-local/hooks/<hook> in the project (gitignored)
