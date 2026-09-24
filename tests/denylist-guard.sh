@@ -31,6 +31,20 @@ echo "fine" > b.txt && git add b.txt && git commit -qm "work for zebra-corp" && 
 printf 'refs/heads/main %s refs/heads/main %s\n' "$tip" "$base" | $G --pre-push >/dev/null 2>&1
 check "listed name in a pushed commit message fails" 1 $?
 
+# A match early in a commit bigger than a pipe buffer: the matcher used to stop
+# at the first hit, the writers upstream died of SIGPIPE, and pipefail turned
+# the match into a pass.
+git reset -q --hard "$base"
+# Removed again by the next commit, so the tree scan is clean and only the
+# per-commit scan can catch it.
+{ echo "for zebra-corp"; seq 1 200000; } > big.txt && git add big.txt && git commit -qm "big"
+git rm -q big.txt && git commit -qm "drop it" && tip=$(git rev-parse HEAD)
+printf 'refs/heads/main %s refs/heads/main %s\n' "$tip" "$base" | $G --pre-push >/dev/null 2>&1
+check "a listed name early in a large commit fails" 1 $?
+git reset -q --hard "$base" && git commit -q --allow-empty -m "clean" && git commit -q --allow-empty -m "for zebra-corp" && tip=$(git rev-parse HEAD)
+printf 'refs/heads/main %s refs/heads/main %s\n' "$tip" "$base" | $G --pre-push >/dev/null 2>&1
+check "a listed name in any commit of the range fails" 1 $?
+
 git reset -q --hard "$base" && echo "x" > c.txt && git add c.txt && git commit -qm "clean" && tip=$(git rev-parse HEAD)
 printf 'refs/heads/main %s refs/heads/main %s\n' "$tip" "$base" | $G --pre-push >/dev/null 2>&1
 check "a clean push passes" 0 $?

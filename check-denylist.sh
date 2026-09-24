@@ -66,11 +66,14 @@ if [ "$prepush" = 1 ]; then
   while read -r _lref lsha _rref rsha; do
     [ "$lsha" = "$zero" ] && continue                 # a delete publishes nothing
     if [ "$rsha" = "$zero" ]; then range="$lsha"; else range="$rsha..$lsha"; fi
+    # perl reads to the end and answers once. It used to `exit` on the first
+    # match, which closed the pipe under git and grep; with pipefail their
+    # SIGPIPE failed the whole pipeline, so the `if` saw a failure and a match
+    # in any commit bigger than a pipe buffer passed as clean.
     bad=$(git log --format='%H' "$range" | while read -r c; do
-      if git log -1 -p --format='%B' "$c" | grep -vE '^(-|diff |index |--- )' \
-         | perl -ne 'BEGIN{$r=shift} if(/$r/i){print "x"; exit}' "$combined" | grep -q x; then
-        echo "${c:0:12}"
-      fi
+      hit=$(git log -1 -p --format='%B' "$c" | grep -vE '^(-|diff |index |--- )' \
+         | perl -ne 'BEGIN{$r=shift} $f=1 if /$r/i; END{print $f ? "x" : ""}' "$combined")
+      [ "$hit" = x ] && echo "${c:0:12}"
     done)
     if [ -n "$bad" ]; then
       echo "check-denylist: denylisted text in commits being pushed (message or added lines):" >&2
