@@ -69,9 +69,31 @@ BASELINE_DENY = [
     "Read(~/.config/gh/hosts.yml)",
     "Read(~/.fly/config.yml)",
     "Read(~/.netrc)",
-    "Read(~/.client-c-keyring/**)",
     "Read(~/dev/coordinator/secrets/**)",
 ]
+
+
+# The operator's own secret paths, from the same file lv-guard-baseline.sh
+# reads (~/.config/levain/secret-paths, or LV_SECRET_PATHS). A directory gets
+# its whole tree denied, a file itself. Missing adds nothing; a dangling link
+# stops the install, because deploying without the guards it names would be
+# a silent downgrade.
+def local_secret_deny():
+    f = os.path.expanduser(os.environ.get("LV_SECRET_PATHS") or "~/.config/levain/secret-paths")
+    if not os.path.lexists(f):
+        return []
+    rules = []
+    with open(f) as fh:
+        for s in fh:
+            s = s.strip()
+            if not s or s.startswith("#"):
+                continue
+            s = s.rstrip("/")
+            rules.append(f"Read({s}/**)" if os.path.isdir(os.path.expanduser(s)) else f"Read({s})")
+    return rules
+
+
+BASELINE_DENY += local_secret_deny()
 
 # Silence and a zero exit if the harness is not on disk.
 #

@@ -338,6 +338,13 @@ Two layers, both installed into every client's `.claude/settings.json` by
 | `rm-outside` | `rm -r` on anything outside the worktree and the temp dirs, or on a path it cannot check (`$VAR`) |
 | `pipe-to-shell` | `curl`/`wget` piped into a shell or interpreter |
 
+**Your own secret stores.** The library names only generic ones. List yours, one path per line,
+in `~/.config/levain/secret-paths` (or the file `LV_SECRET_PATHS` names); a link into a private
+pack is the usual form. `secret-read` refuses workers anything under them, and the next deploy
+adds matching `Read` deny rules for every session. A missing file adds nothing; a link whose
+target is gone makes the hook refuse every worker call, so a moved pack cannot silently take its
+guards with it.
+
 **Fail closed, for workers only.** A worker's guard that crashes, times out, cannot parse its
 payload or is not on disk refuses. The hook command's wrapper turns any non-zero exit into
 2 when `LV_UNATTENDED=1`. `lv-guard-promote.sh` now runs under the same wrapper. An

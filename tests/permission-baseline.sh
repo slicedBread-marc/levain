@@ -37,6 +37,9 @@ command -v python3 >/dev/null 2>&1 || { echo "python3 required"; exit 1; }
 
 TEST_DIR=$(cd "$(mktemp -d)" && pwd -P)
 PROJ="$TEST_DIR/client"
+# The operator's own secret-paths file must not leak into the fixture: every
+# case below sees none unless it names one.
+export LV_SECRET_PATHS="$TEST_DIR/no-secret-paths"
 mkdir -p "$PROJ"
 git -C "$PROJ" init -q
 printf 'project_slug: fixture\n' > "$PROJ/claude-workflow.yml"
@@ -167,6 +170,23 @@ field() { python3 -c "import json,sys;d=json.load(open('$S'));print($1)"; }
   && ok "secret-read deny rules added" || bad "secret-read deny rules added"
 [ "$(field "d['permissions']['deny'].count('Read(~/.ssh/**)')")" = "1" ] \
   && ok "deny rules not duplicated" || bad "deny rules not duplicated"
+
+echo "── local secret paths (~/.config/levain/secret-paths) ──"
+# A published library cannot name the operator's own key stores, so they come
+# from a local file, usually a link into a private pack.
+mkdir -p "$TEST_DIR/acme-keyring"
+printf '# the operator\x27s own\n%s\n~/dev/acme/secrets/\n' "$TEST_DIR/acme-keyring" > "$TEST_DIR/secret-paths"
+LV_SECRET_PATHS="$TEST_DIR/secret-paths" refuses "a listed directory is a secret" secret-read Bash \
+  "{\"command\":\"cat $TEST_DIR/acme-keyring/cert.pfx.b64\"}"
+LV_SECRET_PATHS="$TEST_DIR/secret-paths" refuses "a ~/ entry matches a command's path" secret-read Bash \
+  '{"command":"cat ~/dev/acme/secrets/REGISTRY.tsv"}'
+allows "without the file it is not" Bash '{"command":"cat ~/dev/acme/secrets/REGISTRY.tsv"}'
+ln -s "$TEST_DIR/gone" "$TEST_DIR/dangling-paths"
+LV_SECRET_PATHS="$TEST_DIR/dangling-paths" refuses "a dangling link refuses (fail closed)" "fail closed" Bash \
+  '{"command":"echo hi"}'
+R=$(LV_SECRET_PATHS="$TEST_DIR/secret-paths" merge)
+[ "$(field "'Read($TEST_DIR/acme-keyring/**)' in d['permissions']['deny'] and 'Read(~/dev/acme/secrets)' in d['permissions']['deny']")" = "True" ] \
+  && ok "the merge denies them to every session" || bad "the merge denies them to every session" "$(field "d['permissions']['deny']")"
 
 # The wrapper, exercised for real against a stub harness.
 BCMD=$(field "[e['hooks'][0]['command'] for e in d['hooks']['PreToolUse'] if 'lv-guard-baseline' in e['hooks'][0]['command']][0]")

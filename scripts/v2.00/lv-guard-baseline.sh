@@ -114,9 +114,26 @@ SECRET_PATTERNS = [
     r"(^|/)\.config/gh/hosts\.yml$",
     r"(^|/)\.fly/config\.yml$",
     r"(^|/)\.netrc$",
-    r"(^|/)\.client-c-keyring(/|$)",
     r"(^|/)dev/coordinator/secrets(/|$)",
 ]
+
+
+# The operator's own secret paths, which a published library cannot name: one
+# per line in ~/.config/levain/secret-paths (LV_SECRET_PATHS moves it), usually
+# a link into a private pack. A missing file adds nothing. A link whose target
+# is gone raises here, and the hook refuses (fail closed): a pack that moved
+# must not quietly take its guards with it.
+def local_secret_paths():
+    f = os.path.expanduser(os.environ.get("LV_SECRET_PATHS") or "~/.config/levain/secret-paths")
+    if not os.path.lexists(f):
+        return []
+    with open(f) as fh:
+        return [s.strip() for s in fh if s.strip() and not s.lstrip().startswith("#")]
+
+
+for sp in local_secret_paths():
+    rel = (sp[2:] if sp.startswith("~/") else sp.lstrip("/")).rstrip("/")
+    SECRET_PATTERNS.append(r"(^|/)" + re.escape(rel) + r"(/|$)")
 secret_re = [re.compile(x) for x in SECRET_PATTERNS]
 
 
