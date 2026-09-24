@@ -74,7 +74,7 @@
 #
 # Under --watch the arrow keys move a cell cursor (left/right across
 # projects, up/down through the metric rows) and Enter opens the cell:
-# `app-one / running` lists the three live workers, one of those opens
+# `project-a / running` lists the three live workers, one of those opens
 # its plan, its files and its logs, and a log opens in a pager that can
 # FOLLOW a worker still writing it. Esc bubbles back up one level at a time,
 # q returns to the board. `a` is the old project action menu, still one
@@ -287,7 +287,7 @@ interactive_watch=false
 sel_name=""
 
 # sel_row: which metric ROW the cell cursor is on, as an index into
-# ROW_LABELS. Together with sel_idx it names one CELL — "app-one /
+# ROW_LABELS. Together with sel_idx it names one CELL — "project-a /
 # running" — which is what Enter drills into. Empty in every non-interactive
 # mode, exactly like sel_idx, so the same render path serves a piped board.
 #
@@ -1430,7 +1430,7 @@ read_key() {
 
 # ── Drill-down: what is behind a number ─────────────────────────────────
 #
-# The grid answers "app-one has 3 running and 2 gates". Everything under
+# The grid answers "project-a has 3 running and 2 gates". Everything under
 # that used to mean opening a terminal in the project and knowing which script
 # to run. Enter on a CELL now opens it: the row's items, then one item's
 # files, then the log a worker is writing right now. Esc bubbles back up one
