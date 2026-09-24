@@ -11,9 +11,9 @@ cat .claude/workflow-version                     # this project
 git -C "$LIB" status --short && git -C "$LIB" fetch && git -C "$LIB" log --oneline HEAD..@{u}
 ```
 
-If the library has upstream commits, pull them. If a `local/platform` branch exists (from
-`install/preflight.md`), rebase it onto the new version instead, and run the test suite before
-going on.
+If the library has upstream commits, pull them. If a `local/*` branch exists (`local/platform`
+from `install/preflight.md`, `local/fixes` from `install/issues.md`), rebase it onto the new
+version instead, and run the test suite before going on.
 
 ## 2. What changed
 

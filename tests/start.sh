@@ -4,6 +4,7 @@
 # skill and doc those prompts name exists in the tree they ship with. An
 # install ends by pointing at the first brainstorm; a coordinator's lists its
 # three skills. The README carries the home page's tagline, rung names and link (LVI-016).
+# Working through recorded issues has its own prompt, which points upstream (LVI-018).
 #
 # Usage: ./tests/start.sh
 
@@ -37,9 +38,15 @@ has "README names the ladder"               "$(cat README.md)" "manual → atten
 has "START.md names the same ladder"        "$(cat START.md)" "manual → attended → overseer"
 has "README clones the public repository"  "$(cat README.md)" "git clone https://github.com/slicedBread-marc/levain.git ~/levain"
 assert_eq "README links the home page once" "1" "$(grep -c 'https://slicedbread.ca/levain' README.md)"
+# LVI-018: a user can work through their own workflow issues, and knows where upstream is.
+has "README's issue section hands off to the prompt" "$(cat README.md)" "go through my workflow issues"
+has "the issues prompt names the public repository" "$(cat install/issues.md)" "https://github.com/slicedBread-marc/levain"
+has "the issues prompt fixes on local/fixes"         "$(cat install/issues.md)" "local/fixes"
+has "and upgrades rebase it forward"                 "$(cat install/upgrade.md)" "local/fixes"
+has "nothing goes upstream without a yes"            "$(cat install/issues.md)" "Nothing goes out without their yes"
 # shellcheck disable=SC2086
 assert_eq "rung 2 is 'attended', never 'the daemon'" "" "$(grep -liE 'rung 2(:|,)? the daemon|2\. daemon' $ALL)"
-want="attended first-brainstorm overseer pack preflight project upgrade vision"
+want="attended first-brainstorm issues overseer pack preflight project upgrade vision"
 assert_eq "one prompt per step" "$want" "$(ls install | sed 's/\.md$//' | sort | tr '\n' ' ' | sed 's/ $//')"
 # shellcheck disable=SC2086
 missing=$(grep -ohE 'install/[a-z-]+\.md' $ALL | sort -u | while read -r f; do [ -f "$f" ] || echo "$f"; done)

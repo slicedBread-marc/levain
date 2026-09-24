@@ -24,12 +24,13 @@ without the ones above it.
 | 2. Attended | A daemon moves the work between the user's decisions. The user attends to what needs a human, with `/lv-attend` | Someone who has taken a few items through by hand and trusts the shape | `install/attended.md` |
 | 3. Overseer | Several projects on one board, work filed between them, and a vision that says what they are for together | Someone running more than one project | `install/overseer.md`, then `install/vision.md` |
 
-These two can be done at any time, on any rung:
+These three can be done at any time, on any rung:
 
 | Step | When | Prompt |
 |-|-|-|
 | Pack | The user has their own tools (a secrets manager, a hosting provider, an activity log) that the harness should call | `install/pack.md` |
 | Upgrade | Levain is already installed and the library has a newer version | `install/upgrade.md` |
+| Issues | The harness has recorded faults in `WORKFLOW-ISSUES.md`, and the user wants them fixed, resolved and sent upstream | `install/issues.md` |
 
 ## What to do
 

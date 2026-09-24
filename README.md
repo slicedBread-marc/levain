@@ -154,9 +154,19 @@ scripts/lv-exec.sh lv-issue.sh --source lv-implement \
   --expected "active→verify to succeed" --actual "Error: PLN-097 not found in state 'active'"
 ```
 
-That appends to the project's `WORKFLOW-ISSUES.md`. From the library, `./sweep-issues.sh`
-collects the open ones across every installed project. The fix goes into the library, and
-reaches every project on the next upgrade. Unattended workers file these too.
+That appends to the project's `WORKFLOW-ISSUES.md`. Unattended workers file these too.
+
+To work through them, say *"read ~/levain/START.md and go through my workflow issues"*. Claude
+follows [`install/issues.md`](install/issues.md):
+
+1. **Collect** the open issues: `lv-issue.sh --list` in one project, or `./sweep-issues.sh` from
+   the library across every project in your registry.
+2. **Fix** each fault in your copy of the library, on a `local/fixes` branch that upgrades rebase
+   forward, never in a project's `scripts/`, which the next install overwrites.
+3. **Resolve** the entry with a note, and install the fix into your projects.
+4. **Send it upstream**, if you choose: an issue or a pull request on
+   [github.com/slicedBread-marc/levain](https://github.com/slicedBread-marc/levain), so the next
+   version fixes it for everyone.
 
 ## Configuration
 
