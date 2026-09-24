@@ -131,8 +131,8 @@ if [ "$cfg_block_cosmetic" = "true" ]; then
 fi
 
 # ── Does the diff touch a rendering surface? ──────────────────────────────
-# Translate globs to anchored regexes: `/**/` spans zero or more directories,
-# a bare `*` stops at a separator.
+# Translate globs to anchored regexes: `/**/` (or a leading `**/`) spans zero
+# or more directories, a bare `*` stops at a separator.
 #
 # The two `**` rules emit PLACEHOLDER bytes, and only the final pair turns
 # those into regex. That indirection is the whole point. Substituting the real
@@ -160,6 +160,7 @@ glob_to_regex() {
   star_any=$(printf '\002')   # stands in for a bare `**`
   printf '%s' "$1" \
     | sed -e 's/[.()+^$[]/\\&/g' -e 's/\]/\\]/g' \
+          -e "s#^\*\*/#${star_dir}#" \
           -e "s#/\*\*/#/${star_dir}#g" \
           -e "s/\*\*/${star_any}/g" \
           -e 's/\*/[^\/]*/g' \

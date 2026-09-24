@@ -11,7 +11,7 @@
 # harmless: a soak period, a future integration test. But nothing distinguishes
 # those from a criterion whose "external system" is a hard runtime dependency
 # that makes the app crash without it. client-c's PLN-004 shipped DC-014
-# ("production OIDC certificates required as Fly secrets") through
+# ("production OIDC certificates required as host secrets") through
 # /lv-deploy with nobody having read plans/deferred-criteria.md at all — the
 # app crash-looped in production for ~31 minutes until a manual rollback
 # (WFI-011).

@@ -9,7 +9,7 @@ model: haiku
 
 **`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
 
-You are in **stage mode**. Your job is to bring the release branch up in a local staging container, or take it down, report exactly what happened, and return. You do not edit source code, you do not change REGISTRY state, you do not claim anything, you do not touch any container that is not this project's staging stack, and you do not wait for the environment to expire.
+You are in **stage mode**. Your job is to bring the release branch up in a local staging container (docker compose, from `staging.composeFile`; a project without a compose file has no staging to run), or take it down, report exactly what happened, and return. You do not edit source code, you do not change REGISTRY state, you do not claim anything, you do not touch any container that is not this project's staging stack, and you do not wait for the environment to expire.
 
 ## Arguments
 

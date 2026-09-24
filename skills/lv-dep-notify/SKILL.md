@@ -31,8 +31,8 @@ This is **not** for:
 Check this project's `claude-workflow.yml` for a `dependents:` block:
 ```yaml
 dependents:
-  - "client-e:/Users/you/dev/client-e"
-  - "client-f:/Users/you/dev/client-f"
+  - "client-e:/path/to/client-e"
+  - "client-f:/path/to/client-f"
 ```
 One name, one absolute local path, joined by the first `:` — the same shape as the
 `dependencies:` key a consuming project declares about *this* one, just declared here in

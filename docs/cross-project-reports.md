@@ -32,7 +32,7 @@ In the **reporting** project's `claude-workflow.yml`:
 
 ```yaml
 dependencies:
-  - "client-c:/Users/you/dev/client-c"
+  - "client-c:/path/to/client-c"
 ```
 
 One entry per dependency, `name:absolute-path`, joined on the first `:`. The
@@ -156,8 +156,8 @@ without redefining what `wf_develop_root()` means project-wide.
 ## Limitation: no local checkout
 
 This mechanism assumes the dependency is checked out on the same machine at a
-known path — true for a single developer coordinating several repos under one
-`~/dev`, false for a dependency that's genuinely only hosted elsewhere (a
+known path — true for a single developer coordinating several repos on one
+machine, false for a dependency that's genuinely only hosted elsewhere (a
 third-party service, a team you don't have a clone from). For that case,
 there's no shortcut: file the report as a local bug in the reporting
 project's own `bugs/open/` instead, with `--links` naming the real dependency
@@ -206,8 +206,8 @@ In the **notifying** project's `claude-workflow.yml`:
 
 ```yaml
 dependents:
-  - "client-e:/Users/you/dev/client-e"
-  - "client-f:/Users/you/dev/client-f"
+  - "client-e:/path/to/client-e"
+  - "client-f:/path/to/client-f"
 ```
 
 Same shape as `dependencies:` — `name:absolute-path`, one entry per line,
@@ -278,7 +278,7 @@ were skipped and telling the user, since nothing else retries them.
 
 A third direction reuses this identical mechanism: a **coordinator** — a project
 with `role: coordinator` that oversees others and runs no pipeline of its own
-(`~/dev/coordinator`) — files work *down* into the projects it directs.
+— files work *down* into the projects it directs.
 
 `lv-dep-notify.sh` is the script for that too. It resolves targets from
 `coordinates:` as well as `dependents:` (both keys are read and concatenated),

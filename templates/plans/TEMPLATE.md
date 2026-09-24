@@ -140,7 +140,7 @@ Symptoms or thresholds that should trigger a rollback rather than a fix-forward.
 Ordered steps to revert this change. Be specific — include exact commands.
 
 1. [e.g. `git revert <commit-sha>` and push to trigger redeploy]
-2. [e.g. `dotnet ef database update PreviousMigration`]
+2. [e.g. roll the schema back one migration: `alembic downgrade -1`, `rails db:rollback`, `dotnet ef database update PreviousMigration`]
 3. [e.g. Clear cache / notify affected users]
 
 ### Verification

@@ -10,7 +10,7 @@
 # harness, declared in THIS project's claude-workflow.yml:
 #
 #   dependencies:
-#     - "client-c:/Users/you/dev/client-c"
+#     - "client-c:/path/to/client-c"
 #
 # One name, one absolute path, joined by the first ':'. See
 # docs/cross-project-reports.md for the full convention.
@@ -71,7 +71,7 @@
 # Output is an eval contract:
 #   DEP_BUG_ID='BUG-041'
 #   DEP_BUG_HOST='client-c'
-#   DEP_BUG_PATH='/Users/you/dev/client-c'
+#   DEP_BUG_PATH='/path/to/client-c'
 #   DEP_BUG_DIR='bugs/open/BUG-041-login-crash'      (relative to DEP_BUG_PATH)
 # Everything else goes to stderr.
 #

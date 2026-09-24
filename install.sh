@@ -326,8 +326,8 @@ fi
 # A coordinator (role: coordinator) oversees several projects that DO run the
 # pipeline, and files work into theirs. It runs none of its own: no plans/, no
 # REGISTRY, no bugs/, no worktrees, no orchestrator, no pipeline skills, and
-# none of the git or session hooks that drive them. ~/dev/coordinator is the case this
-# exists for.
+# none of the git or session hooks that drive them. One person overseeing several
+# projects is the case this exists for.
 #
 # It still needs the harness on disk, for two reasons that pull in the same
 # direction. First, filing has to go through the TARGET's own lv-bug-new.sh —
@@ -601,7 +601,7 @@ if ! grep -q "^manualTestGate:" "$CONFIG_FILE" 2>/dev/null; then
     printf '\n' >> "$CONFIG_FILE"
     extract_block "# ── Manual-test gate" >> "$CONFIG_FILE"
     echo -e "${GREEN}  Added manualTestGate: block to $CONFIG_FILE${NC}"
-    echo -e "${YELLOW}    Review renderingSurfaces — the defaults assume a .NET/Razor layout${NC}"
+    echo -e "${YELLOW}    Review renderingSurfaces — the defaults cover common web front ends; add this project's UI paths${NC}"
 fi
 
 # v3.0: who approves a spec. Ships as `gate` — today's behavior — so nothing

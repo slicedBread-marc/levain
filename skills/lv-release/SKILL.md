@@ -259,7 +259,7 @@ release-branches/release → release's own permanent worktree — staging enviro
    exited without resetting, and 71 seconds later the daemon counted 30 commits on
    `release..main` and dispatched a deploy worker, which opened a `deploy-approval` gate quoting
    the whole red batch as ready to promote to production. coordinator WFI-002 is the same finding read
-   across the portfolio: unfixed, it blocks enabling the daemon on every client that holds a
+   across every client: unfixed, it blocks enabling the daemon on every client that holds a
    release/deploy grant.
 
    `lv-release-rollback.sh` resets `release` to `origin/release` — which *is* the pre-merge tip,

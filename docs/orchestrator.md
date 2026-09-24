@@ -549,7 +549,7 @@ A `(soak)`-tagged *acceptance criterion* has a way out — `lv-defer-criterion.s
 lets the plan complete and release with the criterion tracked separately in
 `plans/deferred-criteria.md`. But a plan can also have a soak-gated
 **implementation step** — real work that cannot run until real calendar time has
-passed (e.g. "wait 72h of production traffic, then `fly apps destroy` the old
+passed (e.g. "wait 72h of production traffic, then destroy the old
 app"). That is not a criterion to defer; it is a step the plan is not done
 without. `drive` correctly refuses to fast-forward it, but then has no way to
 release the already-implemented, tested steps that precede it — the plan sits at

@@ -128,15 +128,15 @@ started is unattached to any turn. Kill any stray runner first
 (`pkill -f '<test runner>'`) so two suites are not writing one log.
 
 **Build and test are ONE agent, run sequentially inside it — never two agents launched in
-parallel against the same worktree.** They both invoke the same toolchain (`dotnet build` /
-`dotnet test`, etc.) against the same `feature-branches/PLN-NNN-<slug>/`, and MSBuild's
-incremental state under `obj/` (StaticWebAssets in particular) is not safe for two concurrent
-writers on one worktree. client-a's WFI-023: a `dotnet test` invocation failed with
+parallel against the same worktree.** They both invoke the same toolchain against the same
+`feature-branches/PLN-NNN-<slug>/`, and most toolchains keep incremental build state in the
+tree (`obj/`, `target/`, `node_modules/.cache`, `__pycache__`) that is not safe for two
+concurrent writers. client-a's WFI-023, on .NET: a `dotnet test` invocation failed with
 `StaticWebAssets.targets: No file exists for the asset at ... review.json` — a file that had
 never existed in the worktree — while a sibling `dotnet build` ran at the same moment; the
-identical command, alone and sequential, then passed cleanly with 0 errors. The build step buys
-nothing `dotnet test` doesn't already do itself (it builds first), so folding it into the same
-agent removes the redundant run as well as the corruption.
+identical command, alone and sequential, then passed cleanly with 0 errors. Most test commands
+build first anyway, so folding the build into the same agent removes a redundant run as well as
+the corruption.
 
 ```
 # Launch all in parallel — build+test is ONE of these agents, run sequentially inside it:
@@ -303,7 +303,7 @@ The reason this exists: `#### Manual` used to cost the planner nothing, so crite
 - **Authentication & authorization** — new endpoints or actions enforce auth checks; no privilege escalation paths
 - **Secrets** — no API keys, tokens, passwords, or connection strings committed in source; secrets come from environment or vault
 - **Data exposure** — logs, error messages, and API responses do not leak PII, stack traces, or internal paths to clients
-- **Dependencies** — new or updated packages have no known critical/high CVEs (check with `npm audit` / `dotnet list package --vulnerable` as applicable)
+- **Dependencies** — new or updated packages have no known critical/high CVEs (check with the ecosystem's own tool: `npm audit`, `pip-audit`, `cargo audit`, `dotnet list package --vulnerable`, …)
 - **Input validation** — untrusted input is validated at system boundaries (type, length, range, allowlist)
 - **CSRF/CORS** — state-changing endpoints are protected against cross-site request forgery; CORS policies are not overly permissive
 

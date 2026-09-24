@@ -970,6 +970,15 @@ assert_eq "a nested wwwroot file matches src/**/wwwroot/**" \
 assert_eq "a glob that should not match still does not" "" "$(glob_hit 'src/**/Components/**')"
 assert_eq "a single * does not span a separator" "" "$(glob_hit 'src/*.cs')"
 
+# A leading `**/` spans zero directories too, so a stack-neutral default like
+# `**/*.html` also matches a page at the repository root.
+changed_files='index.html
+web/views/home.html
+src/app.cs'
+assert_eq "a leading **/ matches at the root" "index.html" "$(glob_hit '**/*.html')"
+assert_eq "a leading **/ matches nested" "web/views/home.html" \
+  "$(printf '%s\n' "$changed_files" | grep -E "$(glob_to_regex '**/views/*.html')" | head -1)"
+
 # The escape rule was `[.[\]()+^$]`, which reads as a metacharacter set but is
 # not one: a backslash is literal inside brackets, so `\]` closed it early and
 # the rule never fired on any input.

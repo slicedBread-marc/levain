@@ -1,9 +1,9 @@
 # Coordinators: a harness install for a project that runs no pipeline
 
-`~/dev/coordinator` oversees every project in the portfolio and owns none of their code.
-When an initiative there needs something built, the work belongs in the target
-project's own pipeline. Until now there was no way to put it there: coordinator is not a
-client, has no `scripts/lv-exec.sh`, and its own instructions told it to write
+A coordinator oversees every project in a portfolio and owns none of their code.
+When work planned there needs something built, the work belongs in the target
+project's own pipeline. Before coordinator installs there was no way to put it there: the
+coordinator was not a client, had no `scripts/lv-exec.sh`, and its own instructions told it to write
 `plans/briefs/` plus a REGISTRY row by hand — which means deriving an artifact
 number by hand, from a counter it is not allowed to touch.
 
@@ -95,8 +95,8 @@ had to be reverted wholesale. The convention is the only guard, which is why
    project_slug: "coordinator"
 
    coordinates:
-     - "client-e:/Users/you/dev/client-e"
-     - "client-f:/Users/you/dev/client-f"
+     - "client-e:/path/to/client-e"
+     - "client-f:/path/to/client-f"
    ```
 
    The build, test and deploy keys a client needs are irrelevant here and can be

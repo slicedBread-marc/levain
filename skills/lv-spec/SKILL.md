@@ -433,7 +433,7 @@ If the user picks a bug BUG-NNN:
 
    `plans/TEMPLATE.md` is not a second opinion here. Its example was rendered from the config **when the harness was first installed** and is never re-rendered, so on any project whose runner changed since, the template's example is the stale one and the config is right.
 
-   **A bare method name is not a filter value.** `--filter-method` (Microsoft.Testing.Platform) matches a *fully-qualified* name — `Namespace.Class.Method` — or a wildcard. Handed a bare `Check_reports_the_line_count`, it matches nothing, prints `Test run summary: Zero tests ran`, and **exits 0**: not the `--ignore-exit-code 8` no-tests-matched code, but a plain success. Run verbatim by an agent that checks the exit code, that reads as a pass for a test that never executed — silently, and for every row in the table (client-a WFI-196). Write the wildcard form:
+   **A bare method name is not a filter value** in every runner. On .NET, for example, `--filter-method` (Microsoft.Testing.Platform) matches a *fully-qualified* name — `Namespace.Class.Method` — or a wildcard. Handed a bare `Check_reports_the_line_count`, it matches nothing, prints `Test run summary: Zero tests ran`, and **exits 0**: not the `--ignore-exit-code 8` no-tests-matched code, but a plain success. Run verbatim by an agent that checks the exit code, that reads as a pass for a test that never executed — silently, and for every row in the table (client-a WFI-196). Write the wildcard form:
 
    ```
    dotnet test --filter-method '*.Check_reports_the_line_count_and_no_elision_at_the_cap_boundary'

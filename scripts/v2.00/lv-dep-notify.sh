@@ -12,8 +12,8 @@
 # project's claude-workflow.yml:
 #
 #   dependents:
-#     - "client-e:/Users/you/dev/client-e"
-#     - "client-f:/Users/you/dev/client-f"
+#     - "client-e:/path/to/client-e"
+#     - "client-f:/path/to/client-f"
 #
 # One name, one absolute path, joined by the first ':' — same shape as
 # `dependencies:`, just declared on the other side of the relationship. A
@@ -96,7 +96,7 @@
 #
 # COORDINATORS
 #
-# A coordinator (role: coordinator — ~/dev/coordinator, docs/coordinator.md) oversees
+# A coordinator (role: coordinator, docs/coordinator.md) oversees
 # projects rather than depending on them, and uses this same script to file
 # work down into them. The mechanism is identical; only the config key and the
 # default kind differ. A coordinator declares its targets under `coordinates:`,

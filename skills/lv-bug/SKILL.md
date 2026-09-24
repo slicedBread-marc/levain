@@ -84,7 +84,7 @@ ever sees it.
 Check this project's `claude-workflow.yml` for a `dependencies:` block:
 ```yaml
 dependencies:
-  - "client-c:/Users/you/dev/client-c"
+  - "client-c:/path/to/client-c"
 ```
 If the project the bug belongs to is listed there, file through the dependency instead of step 2:
 ```bash
