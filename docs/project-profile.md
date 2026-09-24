@@ -1,13 +1,13 @@
 # Project profile
 
-**Status:** ships with no default tier. `wf-profile.sh --show` refuses until one
+**Status:** ships with no default tier. `lv-profile.sh --show` refuses until one
 is declared.
 
 Answers a pattern that showed up tuning five clients by hand in one session:
 `specApproval.mode`, `manualTestGate`, and `orchestrator.autonomy` each get
 decided project-by-project, from scratch, in conversation — and the reasoning
 ("this one has no real users yet") lives only in that conversation and evaporates
-at the next session boundary, same shape as the gap `wf-autonomy.sh` closed for
+at the next session boundary, same shape as the gap `lv-autonomy.sh` closed for
 standing release/deploy authorization.
 
 ---
@@ -26,7 +26,7 @@ What the tier gives you is:
    the next session (human or agent) doesn't have to re-derive it from five
    scattered yaml values.
 2. **A recommendation table** for what those values should be at each tier.
-3. **A drift check** (`wf-profile.sh --check`) that flags when the actual
+3. **A drift check** (`lv-profile.sh --check`) that flags when the actual
    values no longer match what the declared tier recommends — because someone
    tightened one knob without updating the others, or the project's real-world
    stakes changed and the config didn't follow.
@@ -65,7 +65,7 @@ projectProfile:
   set_on: 2026-09-10
 ```
 
-`reason` is required in spirit, not enforced in code — `wf-profile.sh --show`
+`reason` is required in spirit, not enforced in code — `lv-profile.sh --show`
 prints `(none recorded)` rather than refusing, because a missing reason is a
 smaller problem than a missing tier and shouldn't block reading what tier is
 declared. But a tier with no reason is a decision nobody can re-derive later,
@@ -86,8 +86,8 @@ get rubber-stamp-renewed the way a genuinely load-bearing date shouldn't be.
 ## Reading it
 
 ```bash
-scripts/wf-exec.sh wf-profile.sh --show     # tier, reason, who, when
-scripts/wf-exec.sh wf-profile.sh --check    # drift against the recommendation table
+scripts/lv-exec.sh lv-profile.sh --show     # tier, reason, who, when
+scripts/lv-exec.sh lv-profile.sh --check    # drift against the recommendation table
 ```
 
 `--check` exits 0 clean, 1 on drift, 2 if no tier is declared or the declared
@@ -125,7 +125,7 @@ hurts.
   what scope is reasonable to grant, but writing the grant is still the
   deliberate, dated act `docs/autonomy.md` describes.
 - **It does not gate anything itself.** There is no `profile-mismatch` gate.
-  Drift is reported, not enforced — the same restraint `wf-autonomy.sh --show`
+  Drift is reported, not enforced — the same restraint `lv-autonomy.sh --show`
   uses for an unread `standing_for` entry.
 - **It is not retroactive.** Declaring `governed` today doesn't undo whatever
   ran unattended yesterday under `pre-launch`.

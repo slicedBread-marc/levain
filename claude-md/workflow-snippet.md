@@ -1,6 +1,6 @@
 > **`WORKFLOW.md` in the project root is the entry-point contract** — how work
 > enters the pipeline, which git hooks fire automatically, and the
-> `wf-orchestrate.sh` exit codes an external process needs to drive a plan.
+> `lv-orchestrate.sh` exit codes an external process needs to drive a plan.
 > Read it before automating anything against this repo.
 
 ## When the workflow itself misbehaves — file it
@@ -11,7 +11,7 @@ If the harness does something its own documentation does not describe, record it
 before moving on:
 
 ```bash
-scripts/wf-exec.sh wf-issue.sh --source <skill-or-script> \
+scripts/lv-exec.sh lv-issue.sh --source <skill-or-script> \
   --expected "<what the docs say should happen>" \
   --actual   "<what happened, verbatim>" \
   --context  "<plan id, branch, state>"
@@ -24,7 +24,7 @@ silently is one everybody keeps hitting.
 
 **File it when:**
 
-- A `wf-*` script exits non-zero with an error that isn't a documented outcome
+- A `lv-*` script exits non-zero with an error that isn't a documented outcome
 - A skill instruction references a file, command, state, or column that doesn't exist
 - The registry contradicts reality — state says one thing, the worktree or branch says another
 - A plan loops, or a gate opens that shouldn't have
@@ -34,7 +34,7 @@ silently is one everybody keeps hitting.
 
 - Application build or test failures — that's the plan's work, not a harness fault
 - Legitimate verify or test findings — those belong in the plan's `findings.md`
-- Application bugs — use `/wf-bug`
+- Application bugs — use `/lv-bug`
 - The user changing their mind, or you misreading an instruction that was correct
 
 **Then carry on.** Filing is a side note, never a reason to abandon the run. Work
@@ -50,12 +50,12 @@ The orchestrator dispatches unattended workers by REGISTRY state, so the four
 terminal roles below become optional rather than mandatory:
 
 ```bash
-scripts/wf-exec.sh wf-orchestrate.sh --sweep --dry-run   # preview — always do this first
-scripts/wf-exec.sh wf-orchestrate.sh --daemon            # continuous dispatch
-scripts/wf-exec.sh wf-orchestrate.sh BUG-094             # drive one item end to end
+scripts/lv-exec.sh lv-orchestrate.sh --sweep --dry-run   # preview — always do this first
+scripts/lv-exec.sh lv-orchestrate.sh --daemon            # continuous dispatch
+scripts/lv-exec.sh lv-orchestrate.sh BUG-094             # drive one item end to end
 ```
 
-`/wf-board` shows what's in flight. `/wf-attend` drains the queue of decisions
+`/lv-tray` shows what's in flight. `/lv-attend` drains the queue of decisions
 the orchestrator refused to make on its own (spec approval, manual acceptance
 criteria, deploys). It ships **disabled** — workers run with
 `--dangerously-skip-permissions`, so enabling it is a deliberate human decision
@@ -127,11 +127,11 @@ draft → ready → active → verify ──[agent]──→ testing → complet
 
 | State | Meaning | Who acts next |
 |-|-|-|
-| `draft` | Being written or needs replanning | T2 (wf-spec) |
-| `ready` | Spec approved, waiting for builder | T3 (wf-implement) |
+| `draft` | Being written or needs replanning | T2 (lv-spec) |
+| `ready` | Spec approved, waiting for builder | T3 (lv-implement) |
 | `active` | Being implemented or in fix cycle | T3 |
 | `verify` | Verify agent running automated checks | (automatic) |
-| `testing` | Passed automated checks, needs human test | T4 (wf-test) |
+| `testing` | Passed automated checks, needs human test | T4 (lv-test) |
 | `complete` | Done | — |
 | `abandoned` | Dropped on purpose — terminal, but not successful | — |
 
@@ -139,35 +139,35 @@ draft → ready → active → verify ──[agent]──→ testing → complet
 
 | Skill | Model | Role | Agents |
 |-|-|-|-|
-| `/wf-status` | haiku | T1 Orchestrator | none |
-| `/wf-brainstorm` | sonnet | T1 Intake | none |
-| `/wf-spec` | opus | T2 Planner | codebase exploration (haiku) |
-| `/wf-implement` | sonnet | T3 Builder | build/test verification (haiku) |
-| `wf-verify` | sonnet | Verify Agent (auto) | parallel checks (haiku) |
-| `/wf-test` | haiku | T4 Tester | none |
-| `/wf-release` | haiku | Release — merge PRs, E2E | none |
-| `/wf-deploy` | haiku | Deploy — promote to main | none |
+| `/lv-status` | haiku | T1 Orchestrator | none |
+| `/lv-brainstorm` | sonnet | T1 Intake | none |
+| `/lv-spec` | opus | T2 Planner | codebase exploration (haiku) |
+| `/lv-implement` | sonnet | T3 Builder | build/test verification (haiku) |
+| `lv-verify` | sonnet | Verify Agent (auto) | parallel checks (haiku) |
+| `/lv-test` | haiku | T4 Tester | none |
+| `/lv-release` | haiku | Release — merge PRs, E2E | none |
+| `/lv-deploy` | haiku | Deploy — promote to main | none |
 
-### Orchestrator (`/wf-status`) — haiku
+### Orchestrator (`/lv-status`) — haiku
 Reads REGISTRY.md, reports pipeline state, recommends next action.
 
-### Brainstorm Role (`/wf-brainstorm`)
+### Brainstorm Role (`/lv-brainstorm`)
 - Write to `plans/briefs/<name>.md`, explore options, track status (Idea → Exploring → Decided)
-- A brief at **Decided** is input for `/wf-spec`
+- A brief at **Decided** is input for `/lv-spec`
 
-### Planner Role (`/wf-spec`)
+### Planner Role (`/lv-spec`)
 - **Entry:** `grep "| draft |" REGISTRY.md` → show available work
 - Creates immovable plan folder at `plans/PLN-NNN-<slug>/`
 - Runs review gate; on pass, updates REGISTRY `draft→ready`
 - For replanning: reads ESCALATED findings, writes Amendment, updates `draft→ready`
 
-### Implementer Role (`/wf-implement`)
+### Implementer Role (`/lv-implement`)
 - **Entry:** `grep "| ready |" REGISTRY.md` or `grep "| active |"` for fix cycles
 - Creates feature branch + worktree, writes `.plan-ref`
 - Reads plan from develop worktree (`../../plans/PLN-NNN-<slug>/plan.md`)
 - **Exit:** Updates REGISTRY `active→verify` — triggers verify agent automatically
 
-### Verify Agent (`wf-verify`) — autonomous
+### Verify Agent (`lv-verify`) — autonomous
 - **Triggered by:** REGISTRY state change to `verify` (hook)
 - Checks code (build/test), spec completeness, design soundness
 - **Auto-routes:** clean→`testing`, findings→`active`, escalated→`draft`
@@ -179,21 +179,21 @@ Feature-branch verify runs a **scoped** test suite, not the full suite. The scop
 - Auto-detected categories from `git diff develop..HEAD` via `testMappings`
 - Mandatory categories (`testScopeMandatory`) — always included
 
-Category names and filter substrings live in `claude-workflow.yml → testScopes`. `wf-release` and `wf-deploy` run the full suite with no filter — the aggregation guarantee that every test skipped on a feature branch runs before production. Missing/empty `## Test Scope` → full-suite fallback.
+Category names and filter substrings live in `claude-workflow.yml → testScopes`. `lv-release` and `lv-deploy` run the full suite with no filter — the aggregation guarantee that every test skipped on a feature branch runs before production. Missing/empty `## Test Scope` → full-suite fallback.
 
-Both run it through `wf-suite-run.sh`, which executes `test_command` from `claude-workflow.yml` verbatim and prints the receipt those skills quote (`SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`). The guarantee is enforced there rather than requested of the worker: a run that narrows the suite and reports a count cannot be told from a full one, and one that did exactly that pushed `release` on a single assembly (WFI-252).
+Both run it through `lv-suite-run.sh`, which executes `test_command` from `claude-workflow.yml` verbatim and prints the receipt those skills quote (`SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`). The guarantee is enforced there rather than requested of the worker: a run that narrows the suite and reports a count cannot be told from a full one, and one that did exactly that pushed `release` on a single assembly (WFI-252).
 
-### Tester Role (`/wf-test`)
+### Tester Role (`/lv-test`)
 - **Entry:** `grep "| testing |" REGISTRY.md`
 - Human acceptance testing in the feature worktree
 - **Exit (pass):** Creates PR to release, updates REGISTRY `testing→complete`
 - **Exit (fail):** Writes findings, routes to `active` or `draft`
 
-### Release (`/wf-release`)
+### Release (`/lv-release`)
 - Merges approved PRs to release branch, runs E2E tests
 - Validates staging before anything touches main
 
-### Deploy (`/wf-deploy`)
+### Deploy (`/lv-deploy`)
 - Promotes validated release → main
 - Updates REGISTRY to `complete`, closes bugs, back-merges to develop
 
@@ -223,10 +223,10 @@ Under the orchestrator this is routine, not exotic: `spec`, `consistency` and
 `test` all run on develop, and the per-role concurrency caps do not prevent it
 because the race is *across* roles.
 
-**Commit through `wf-commit.sh`, which scopes the commit to a pathspec:**
+**Commit through `lv-commit.sh`, which scopes the commit to a pathspec:**
 
 ```bash
-scripts/wf-exec.sh wf-commit.sh "<message>" --add <path>...
+scripts/lv-exec.sh lv-commit.sh "<message>" --add <path>...
 ```
 
 Name every path the commit should carry, including `plans/REGISTRY.md` when a

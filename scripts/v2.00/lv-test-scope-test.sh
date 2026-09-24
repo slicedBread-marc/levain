@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# lv-test-scope-test.sh
+# Fixture-based shell test harness for lv-test-scope.sh.
+# Creates throwaway plan folders in the real plans/ directory (with temp REGISTRY entries),
+# invokes lv-test-scope.sh, asserts output, then cleans up.
+# Usage: ./scripts/lv-test-scope-test.sh
+# Exit 0 on all pass; non-zero on any failure.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Walk up until we find claude-workflow.yml so this works under both flat
+# (scripts/) and versioned (scripts/vN.NN/) layouts.
+DEVELOP_ROOT=""
+search="$SCRIPT_DIR"
+while [ "$search" != "/" ]; do
+  if [ -f "$search/claude-workflow.yml" ]; then DEVELOP_ROOT="$search"; break; fi
+  search="$(dirname "$search")"
+done
+[ -n "$DEVELOP_ROOT" ] || { echo "lv-test-scope-test.sh: cannot locate claude-workflow.yml" >&2; exit 2; }
+SCOPE_SCRIPT="$SCRIPT_DIR/lv-test-scope.sh"
+REGISTRY="$DEVELOP_ROOT/plans/REGISTRY.md"
+
+FIXTURE_IDS=()
+
+pass=0
+fail=0
+
+# Cleanup: remove fixture plans and REGISTRY rows on exit.
+cleanup() {
+  for id in "${FIXTURE_IDS[@]+"${FIXTURE_IDS[@]}"}"; do
+    rm -rf "$DEVELOP_ROOT/plans/$id"
+    # Remove the REGISTRY row (temp fixture rows have a known marker comment).
+    sed -i.bak "/# wf-scope-test-fixture/d" "$REGISTRY" && rm -f "$REGISTRY.bak"
+  done
+}
+trap cleanup EXIT
+
+# Create a fixture plan and add a REGISTRY stub entry.
+make_fixture_plan() {
+  local plan_id="$1" plan_name="$2" scope_content="${3:-}"
+  local plan_dir="$DEVELOP_ROOT/plans/$plan_name"
+  FIXTURE_IDS+=("$plan_name")
+  mkdir -p "$plan_dir"
+  {
+    echo "# Fixture"
+    echo ""
+    echo "## Goal"
+    echo "Fixture plan for lv-test-scope-test."
+    echo ""
+    echo "## Steps"
+    echo ""
+    if [ -n "$scope_content" ]; then
+      echo "## Test Scope"
+      echo "$scope_content"
+      echo ""
+    fi
+    echo "## E2E Scope"
+  } > "$plan_dir/plan.md"
+  # Append a REGISTRY stub (marker comment keeps cleanup targeted).
+  local slug="${plan_name#${plan_id}-}"
+  echo "| $plan_id | $slug | draft | — | 2099-01-01 | # wf-scope-test-fixture" >> "$REGISTRY"
+}
+
+assert_eq() {
+  local test_name="$1" expected="$2" actual="$3"
+  if [ "$actual" = "$expected" ]; then
+    echo "  PASS: $test_name"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: $test_name"
+    echo "        expected: '$expected'"
+    echo "        actual:   '$actual'"
+    fail=$((fail + 1))
+  fi
+}
+
+assert_contains() {
+  local test_name="$1" needle="$2" haystack="$3"
+  if echo "$haystack" | grep -qF "$needle"; then
+    echo "  PASS: $test_name"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: $test_name"
+    echo "        expected to contain: '$needle'"
+    echo "        actual: '$haystack'"
+    fail=$((fail + 1))
+  fi
+}
+
+run_scope() {
+  local plan_name="$1"
+  "$SCOPE_SCRIPT" "$plan_name" 2>/dev/null
+}
+
+run_scope_exit() {
+  local plan_name="$1"
+  "$SCOPE_SCRIPT" "$plan_name" >/dev/null 2>&1; echo $?
+}
+
+run_scope_stderr() {
+  local plan_name="$1"
+  "$SCOPE_SCRIPT" "$plan_name" 2>&1 >/dev/null || true
+}
+
+echo "=== lv-test-scope.sh test harness ==="
+echo ""
+
+# Case 1: Missing ## Test Scope → empty stdout, exit 0
+echo "Case 1: No ## Test Scope section → empty stdout, exit 0"
+make_fixture_plan "PLN-991" "PLN-991-fixture-no-scope" ""
+actual_out=$(run_scope PLN-991-fixture-no-scope)
+actual_exit=$(run_scope_exit PLN-991-fixture-no-scope)
+assert_eq "empty stdout" "" "$actual_out"
+assert_eq "exit 0" "0" "$actual_exit"
+
+# Case 2: Single 'unit' category → filter contains App.Core.Tests and App.Web.Tests
+echo ""
+echo "Case 2: unit scope → filter contains App.Core.Tests and App.Web.Tests"
+make_fixture_plan "PLN-992" "PLN-992-fixture-unit" "- unit"
+filter=$(run_scope PLN-992-fixture-unit)
+assert_contains "has App.Core.Tests" "App.Core.Tests" "$filter"
+assert_contains "has App.Web.Tests" "App.Web.Tests" "$filter"
+assert_contains "has e2e-smoke HomePageTests (mandatory)" "App.E2E.Tests.HomePageTests" "$filter"
+
+# Case 3: 'unit' + 'e2e-lesson' → filter contains lesson test class names
+echo ""
+echo "Case 3: unit + e2e-lesson → filter contains lesson class names"
+make_fixture_plan "PLN-993" "PLN-993-fixture-unit-lesson" "- unit
+- e2e-lesson"
+filter=$(run_scope PLN-993-fixture-unit-lesson)
+assert_contains "has App.Core.Tests" "App.Core.Tests" "$filter"
+assert_contains "has LessonFlowTests" "App.E2E.Tests.LessonFlowTests" "$filter"
+assert_contains "has ProvincePuzzleTests" "App.E2E.Tests.ProvincePuzzleTests" "$filter"
+
+# Case 4: Unknown category name → warning on stderr, no crash, exit 0
+echo ""
+echo "Case 4: unknown category → warning on stderr, no crash, exit 0"
+make_fixture_plan "PLN-994" "PLN-994-fixture-unknown-cat" "- totally-unknown-cat"
+stderr_out=$(run_scope_stderr PLN-994-fixture-unknown-cat)
+exit_code=$(run_scope_exit PLN-994-fixture-unknown-cat)
+assert_contains "warning on stderr" "warning: unknown category" "$stderr_out"
+assert_eq "exit 0 (graceful)" "0" "$exit_code"
+
+# Case 5: Mandatory e2e-smoke always present even when not declared
+echo ""
+echo "Case 5: mandatory e2e-smoke patterns always present (even for unit-only scope)"
+filter=$(run_scope PLN-992-fixture-unit)
+assert_contains "HomePageTests in mandatory smoke" "App.E2E.Tests.HomePageTests" "$filter"
+assert_contains "LogoutTests in mandatory smoke" "App.E2E.Tests.LogoutTests" "$filter"
+
+# Case 6: an annotated bullet is still the category (client-a WFI-116)
+#
+# Plans justify a scope inline — "- unit <!-- Step 1a edits src/**, mapped to
+# unit -->". The comment was read as part of the key, so the category came back
+# "unknown" and was silently skipped; client-a only kept it because
+# testMappings auto-detected the same category from the diff.
+echo ""
+echo "Case 6: trailing HTML comment on a bullet → category still resolves"
+make_fixture_plan "PLN-995" "PLN-995-fixture-annotated" "- unit <!-- A3: Step 1a edits src/Core/**, mapped to unit -->"
+filter=$(run_scope PLN-995-fixture-annotated)
+stderr_out=$(run_scope_stderr PLN-995-fixture-annotated)
+assert_contains "annotated 'unit' still resolves" "App.Core.Tests" "$filter"
+assert_eq "and is not reported unknown" "false" \
+  "$(echo "$stderr_out" | grep -q 'unknown category' && echo true || echo false)"
+assert_eq "the annotated bullet reads identically to the bare one" \
+  "$(run_scope PLN-992-fixture-unit)" "$filter"
+
+echo ""
+echo "=== Results: $pass passed, $fail failed ==="
+
+if [ "$fail" -gt 0 ]; then
+  exit 1
+fi
+echo "ALL PASS"

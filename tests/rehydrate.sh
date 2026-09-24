@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rehydrate.sh — tests for wf-rehydrate.sh, the post-compaction state producer.
+# rehydrate.sh — tests for lv-rehydrate.sh, the post-compaction state producer.
 #
 # The two things that must hold:
 #
@@ -93,18 +93,18 @@ SEED
 SEED
 }
 
-echo "── wf-rehydrate.sh ──"
+echo "── lv-rehydrate.sh ──"
 seed_repo
 
 # 1. Plain mode from the develop root: the pipeline, terminals excluded.
-OUT=$("$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+OUT=$("$SCRIPTS/lv-rehydrate.sh" 2>/dev/null)
 assert_contains "pipeline lists the active plan"   "PLN-041"  "$OUT"
 assert_contains "pipeline shows step progress"     "step 1/3" "$OUT"
 
 # A plan with NO ticked steps — the common case, and the one that broke.
 # `grep -c || echo 0` emits two lines on no match, rendering "step 0\n0/3".
 sed -i.bak 's/^- \[x\] Step 1/- [ ] Step 1/' plans/PLN-041-relay-hardening/progress.md
-OUT=$("$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+OUT=$("$SCRIPTS/lv-rehydrate.sh" 2>/dev/null)
 assert_contains "zero ticked steps render on one line" "step 0/3" "$OUT"
 N=$(printf '%s' "$OUT" | grep -c "PLN-041")
 [ "$N" = "1" ] && ok "pipeline row is a single line" || bad "pipeline row is a single line" "lines=$N"
@@ -117,7 +117,7 @@ fi
 
 # 2. SessionStart mode: one line, valid JSON, hazardous text survives escaping.
 JSON=$(printf '{"hook_event_name":"SessionStart","source":"compact"}' \
-  | "$SCRIPTS/wf-rehydrate.sh" --hook session-start 2>/dev/null)
+  | "$SCRIPTS/lv-rehydrate.sh" --hook session-start 2>/dev/null)
 LINES=$(printf '%s' "$JSON" | wc -l | tr -d ' ')
 if [ "$LINES" = "0" ]; then ok "JSON is a single line"; else bad "JSON is a single line" "$LINES newlines"; fi
 assert_contains "declares the hook event" '"hookEventName":"SessionStart"' "$JSON"
@@ -126,7 +126,7 @@ assert_json_roundtrip "compaction source named in the block" "$JSON" "after comp
 
 # 3. Inside a feature worktree, .plan-ref selects one plan and its steps.
 mkdir -p wt && echo "PLN-041" > wt/.plan-ref
-OUT=$(cd wt && "$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+OUT=$(cd wt && "$SCRIPTS/lv-rehydrate.sh" 2>/dev/null)
 assert_contains "plan detail resolved from .plan-ref" "PLAN:     PLN-041-relay-hardening" "$OUT"
 assert_contains "live Steps checklist included"       "[ ] Step 2: guard"                 "$OUT"
 assert_contains "amendment surfaced"                  "AMENDMENTS: 1 amendment(s)"        "$OUT"
@@ -134,7 +134,7 @@ assert_contains "amendment surfaced"                  "AMENDMENTS: 1 amendment(s
 # 3a. The block is a snapshot and has to say so (WFI-099). An old block survives
 # into the next summary word for word; without a timestamp and a scoped
 # precedence claim, an hour-old STATE line outranks a script run seconds ago.
-OUT=$("$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+OUT=$("$SCRIPTS/lv-rehydrate.sh" 2>/dev/null)
 if printf '%s' "$OUT" | grep -qE 'read from disk at [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z'; then
   ok "the block stamps when it was read"
 else
@@ -157,7 +157,7 @@ git -c user.email=t@t -c user.name=t add -A >/dev/null 2>&1
 git -c user.email=t@t -c user.name=t commit -qm seed >/dev/null 2>&1
 git worktree add -q -b feature/PLN-041-relay-hardening "$TEST_DIR/feature-branches/PLN-041" >/dev/null 2>&1
 echo "PLN-041" > "$TEST_DIR/feature-branches/PLN-041/.plan-ref"
-OUT=$(cd wt && "$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+OUT=$(cd wt && "$SCRIPTS/lv-rehydrate.sh" 2>/dev/null)
 # git reports the resolved path; on macOS $TMPDIR is a symlink (/var → /private/var).
 WT_REAL=$(cd "$TEST_DIR/feature-branches/PLN-041" && pwd -P)
 assert_contains "the plan's worktree path is restated absolute" \
@@ -167,7 +167,7 @@ assert_contains "and says the working directory did not survive" \
 
 # 4. An open gate is not something a rehydrated worker may walk past.
 printf "GATE_NAME='contract'\n" > .claude/orchestrator/gates/PLN-041.gate
-OUT=$(cd wt && "$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+OUT=$(cd wt && "$SCRIPTS/lv-rehydrate.sh" 2>/dev/null)
 assert_contains "open gate surfaced" "GATE OPEN: contract" "$OUT"
 rm -f .claude/orchestrator/gates/PLN-041.gate
 
@@ -179,7 +179,7 @@ rm -f .claude/orchestrator/gates/PLN-041.gate
 # is worse than no rehydration: it hands the session a finished plan, complete
 # with a step checklist, inside a block that says "these values win".
 echo "PLN-030" > .plan-ref            # complete, per the seeded registry
-OUT=$("$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+OUT=$("$SCRIPTS/lv-rehydrate.sh" 2>/dev/null)
 if printf '%s' "$OUT" | grep -q "^PLAN: *PLN-030"; then
   bad "terminal .plan-ref not presented as current work" "PLN-030 shown as the plan"
 else
@@ -192,13 +192,13 @@ assert_contains "pipeline shown instead"     "PLN-041"       "$OUT"
 # branch the registry names for it. PLN-041 is active but lives on a feature
 # branch; a develop-root session holding that ref is holding litter.
 echo "PLN-041" > .plan-ref
-OUT=$("$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+OUT=$("$SCRIPTS/lv-rehydrate.sh" 2>/dev/null)
 assert_contains "root .plan-ref off-branch treated as stale" "names PLN-041" "$OUT"
 rm -f .plan-ref
 
 # 6. A .plan-ref naming a plan the registry does not have must not read as fine.
 echo "PLN-999" > wt/.plan-ref
-OUT=$(cd wt && "$SCRIPTS/wf-rehydrate.sh" 2>/dev/null)
+OUT=$(cd wt && "$SCRIPTS/lv-rehydrate.sh" 2>/dev/null)
 assert_contains "unknown .plan-ref flagged" "ABSENT from REGISTRY.md" "$OUT"
 echo "PLN-041" > wt/.plan-ref
 
@@ -212,17 +212,17 @@ cat > plans/REGISTRY.md << 'SEED'
 
 <!-- Counter: 30 -->
 SEED
-EMPTY=$(printf '{"source":"compact"}' | "$SCRIPTS/wf-rehydrate.sh" --hook session-start 2>/dev/null)
+EMPTY=$(printf '{"source":"compact"}' | "$SCRIPTS/lv-rehydrate.sh" --hook session-start 2>/dev/null)
 assert_empty "empty pipeline emits no JSON" "$EMPTY"
 
 # 8. PostCompact mode is one plain line for the human — never JSON.
-LINE=$(printf '{"trigger":"auto"}' | "$SCRIPTS/wf-rehydrate.sh" --hook post-compact 2>/dev/null)
+LINE=$(printf '{"trigger":"auto"}' | "$SCRIPTS/lv-rehydrate.sh" --hook post-compact 2>/dev/null)
 assert_contains "post-compact says nothing is in flight" "nothing in flight" "$LINE"
 case "$LINE" in *'hookSpecificOutput'*) bad "post-compact is not JSON" ;; *) ok "post-compact is not JSON" ;; esac
 
 # 9. A repo with no registry at all must exit clean, not error.
 rm -rf plans
-OUT=$("$SCRIPTS/wf-rehydrate.sh" --hook session-start </dev/null 2>&1)
+OUT=$("$SCRIPTS/lv-rehydrate.sh" --hook session-start </dev/null 2>&1)
 RC=$?
 if [ "$RC" = "0" ] && [ -z "$OUT" ]; then ok "no registry → silent exit 0"; else bad "no registry → silent exit 0" "rc=$RC out=[$OUT]"; fi
 
@@ -232,18 +232,18 @@ cd "$REPO_ROOT"
 #
 # The merge writes into a file the PROJECT owns. Two ways it can go wrong are
 # both silent: clobbering a project's own hooks, and stacking a second copy of
-# ours every deploy so wf-rehydrate.sh runs twice per compaction.
+# ours every deploy so lv-rehydrate.sh runs twice per compaction.
 echo ""
 echo "── settings-merge.py ──"
 MERGE="$REPO_ROOT/templates/hooks/settings-merge.py"
-CMD='"$CLAUDE_PROJECT_DIR"/scripts/wf-exec.sh wf-rehydrate.sh --hook'
+CMD='"$CLAUDE_PROJECT_DIR"/scripts/lv-exec.sh lv-rehydrate.sh --hook'
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "  ~ skipped (no python3)"
 else
   TEST_DIR=$(mktemp -d)
   S="$TEST_DIR/settings.json"
-  GCMD='"$CLAUDE_PROJECT_DIR"/scripts/wf-exec.sh wf-guard-write.sh'
+  GCMD='"$CLAUDE_PROJECT_DIR"/scripts/lv-exec.sh lv-guard-write.sh'
   merge() { SETTINGS_PATH="$S" REHYDRATE_CMD="$CMD" GUARD_CMD="$GCMD" python3 "$MERGE" 2>&1; }
   # An older install.sh passes no GUARD_CMD — it must not install a half-wired
   # blocking hook.
@@ -266,7 +266,7 @@ else
   # that reports the collision and permits the write anyway — worse than none,
   # because it reads as protection. Absence is tested up front instead.
   GUARD_ENTRY=$(field 'json.load(sys.stdin)["hooks"]["PreToolUse"][0]')
-  assert_contains "the guard is wired to PreToolUse" "wf-guard-write.sh" "$GUARD_ENTRY"
+  assert_contains "the guard is wired to PreToolUse" "lv-guard-write.sh" "$GUARD_ENTRY"
   assert_contains "on the three in-place writers" "Edit|Write|NotebookEdit" "$GUARD_ENTRY"
   assert_contains "and still tolerates a missing harness" "|| exit 0;" "$GUARD_ENTRY"
   case "$GUARD_ENTRY" in
@@ -305,12 +305,12 @@ import json, sys
 p = sys.argv[1]
 d = json.load(open(p))
 for e in d["hooks"]["SessionStart"]:
-    if "wf-rehydrate" in e["hooks"][0]["command"]:
+    if "lv-rehydrate" in e["hooks"][0]["command"]:
         e["matcher"] = "compact"
 json.dump(d, open(p, "w"), indent=2)
 ' "$S"
   merge >/dev/null
-  N=$(field 'len([e for e in json.load(sys.stdin)["hooks"]["SessionStart"] if "wf-rehydrate" in e["hooks"][0]["command"]])')
+  N=$(field 'len([e for e in json.load(sys.stdin)["hooks"]["SessionStart"] if "lv-rehydrate" in e["hooks"][0]["command"]])')
   [ "$N" = "1" ] && ok "matcher drift updates in place" || bad "matcher drift updates in place" "copies=$N"
 
   # Bad JSON must be reported and left alone, never half-written.

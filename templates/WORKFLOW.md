@@ -18,9 +18,9 @@ of truth for state. Nothing is "in progress" because a file changed; it is in
 progress because the registry says so.
 
 The registry is **committed on develop**, alongside the plan folders it indexes.
-Feature branches never carry it — `wf-worktree-sparse.sh` excludes `plans/**`
+Feature branches never carry it — `lv-worktree-sparse.sh` excludes `plans/**`
 from every feature worktree — so a plan's state changes in exactly one place and
-never arrives as a merge conflict. Write to it only through the `wf-*.sh`
+never arrives as a merge conflict. Write to it only through the `lv-*.sh`
 scripts; they hold the `registry` lock and commit the transition with the files
 that justify it.
 
@@ -46,7 +46,7 @@ tested like anything else:
 
 ```bash
 # From a Claude session in this repo:
-/wf-bug
+/lv-bug
 ```
 
 The bug lands in `bugs/open/BUG-NNN-<slug>/bug.md`.
@@ -58,15 +58,15 @@ missing capability in a **dependency** — not this project, not the harness —
 file it there instead, so the team on that side actually sees it:
 
 ```bash
-scripts/wf-exec.sh wf-dep-bug.sh --host <name> "<title>" \
+scripts/lv-exec.sh lv-dep-bug.sh --host <name> "<title>" \
   --kind bug|request \
   --description "..." --expected "..." --actual "..."
 ```
 
 `<name>` must be declared in this project's `claude-workflow.yml` under
 `dependencies:`. The report is filed through **that project's own**
-`wf-bug-new.sh`, allocated by **its own** counter, landing in **its own**
-`bugs/open/` — picked up by its own `/wf-spec` like any bug filed there by
+`lv-bug-new.sh`, allocated by **its own** counter, landing in **its own**
+`bugs/open/` — picked up by its own `/lv-spec` like any bug filed there by
 hand. It commits there but does not push; that push is the dependency's call.
 See [`docs/cross-project-reports.md`](docs/cross-project-reports.md) in the
 claude-workflow library for the full convention.
@@ -78,15 +78,15 @@ shift, a migration — that a **dependent** project needs to react to gets
 told to them directly, not left for them to discover:
 
 ```bash
-scripts/wf-exec.sh wf-dep-notify.sh "<title>" [--to <name>] \
+scripts/lv-exec.sh lv-dep-notify.sh "<title>" [--to <name>] \
   --severity Critical|High|Medium|Low \
   --description "..." --expected "..." --actual "..."
 ```
 
 Every entry in this project's `claude-workflow.yml` under `dependents:` gets
 the notice by default; `--to <name>` restricts it to one. Same mechanism as
-`wf-dep-bug.sh`, reversed: it lands as `--kind notice` in **each dependent's
-own** `bugs/open/`, filed through **its own** `wf-bug-new.sh`. One dependent
+`lv-dep-bug.sh`, reversed: it lands as `--kind notice` in **each dependent's
+own** `bugs/open/`, filed through **its own** `lv-bug-new.sh`. One dependent
 off `develop` right now is skipped, not a reason to abort the rest — see
 [`docs/cross-project-reports.md`](docs/cross-project-reports.md) § Notifying
 dependents of a change.
@@ -94,12 +94,12 @@ dependents of a change.
 ### Report the workflow itself misbehaving
 
 Distinct from a bug in *this project*. If the **harness** does something its own
-documentation doesn't describe — a `wf-*` script erroring unexpectedly, an
+documentation doesn't describe — a `lv-*` script erroring unexpectedly, an
 instruction pointing at something that doesn't exist, the registry contradicting
 the worktree, a plan looping — record it and continue:
 
 ```bash
-scripts/wf-exec.sh wf-issue.sh --source <skill-or-script> \
+scripts/lv-exec.sh lv-issue.sh --source <skill-or-script> \
   --expected "<what should have happened>" \
   --actual   "<what happened, verbatim>" \
   --context  "<plan id, branch, state>"
@@ -111,10 +111,10 @@ becomes a fix everywhere. A problem worked around silently is one everyone keeps
 hitting.
 
 Not for application build/test failures or plan findings — those are normal work.
-Never patch a `wf-*` script inside this project; the next deploy overwrites it.
+Never patch a `lv-*` script inside this project; the next deploy overwrites it.
 
 ```bash
-scripts/wf-exec.sh wf-issue.sh --list     # what's already reported
+scripts/lv-exec.sh lv-issue.sh --list     # what's already reported
 ```
 
 ### Drive one item end to end (the automation hook)
@@ -123,9 +123,9 @@ This is the entry point for an external process. It accepts a bug, a brief, or a
 plan, and pushes it as far through the pipeline as it can go without a human:
 
 ```bash
-scripts/wf-exec.sh wf-orchestrate.sh BUG-094
-scripts/wf-exec.sh wf-orchestrate.sh PLN-097 --until testing
-scripts/wf-exec.sh wf-orchestrate.sh PLN-097 --json     # machine-readable
+scripts/lv-exec.sh lv-orchestrate.sh BUG-094
+scripts/lv-exec.sh lv-orchestrate.sh PLN-097 --until testing
+scripts/lv-exec.sh lv-orchestrate.sh PLN-097 --json     # machine-readable
 ```
 
 **Exit codes are the contract:**
@@ -133,9 +133,9 @@ scripts/wf-exec.sh wf-orchestrate.sh PLN-097 --json     # machine-readable
 | Code | Meaning | What a caller should do |
 |-|-|-|
 | `0` | Reached the target state | Done |
-| `20` | Blocked on a human decision | **Stop. Do not retry.** The gate is on stdout / in `--json`. A person must run `/wf-attend`. |
+| `20` | Blocked on a human decision | **Stop. Do not retry.** The gate is on stdout / in `--json`. A person must run `/lv-attend`. |
 | `30` | A worker ran but nothing changed | Inspect `.claude/orchestrator/logs/` — the plan or skill is wrong, not the orchestrator |
-| `40` | The plan is abandoned | Terminal, and not successfully. Nothing to drive. Revive it with `wf-abandon.sh <ID> --revive` if that was wrong |
+| `40` | The plan is abandoned | Terminal, and not successfully. Nothing to drive. Revive it with `lv-abandon.sh <ID> --revive` if that was wrong |
 | `41` | A worker for that role is already running | **Not a fault.** Something else is driving this plan. Wait and re-drive; do not retry in a loop |
 | `1` | Error | Bad artifact ID, or the orchestrator is disabled in `claude-workflow.yml` |
 
@@ -154,8 +154,8 @@ scripts/wf-exec.sh wf-orchestrate.sh PLN-097 --json     # machine-readable
 ```
 
 `autonomy` reports how far this project has authorized the harness to go **after**
-`complete` — the `/wf-release`, `/wf-deploy` and production-push promotions. The
-orchestrator's sweep *does* dispatch `/wf-release` and `/wf-deploy` today, the moment
+`complete` — the `/lv-release`, `/lv-deploy` and production-push promotions. The
+orchestrator's sweep *does* dispatch `/lv-release` and `/lv-deploy` today, the moment
 `release`/`main` has something to promote. Since coordinator WFI-006 neither needs a grant:
 `unattended` lists them, and both run to completion with no person, because neither
 leaves the machine — a wrong local `main` is undone with `git reset`. A project takes
@@ -169,7 +169,7 @@ says: the field exists so a caller can tell "nobody has authorized anything here
 "releases are authorized until the 16th", which call for different behaviour.
 
 ```bash
-scripts/wf-exec.sh wf-autonomy.sh --show    # what this project has granted, and to whom
+scripts/lv-exec.sh lv-autonomy.sh --show    # what this project has granted, and to whom
 ```
 
 **Exit 20 is a normal, successful outcome.** It means the pipeline did all the
@@ -179,10 +179,10 @@ burns tokens and trips the attempt budget.
 ### See what is happening
 
 ```bash
-scripts/wf-exec.sh wf-board.sh            # running workers, gates, pipeline, events
-scripts/wf-exec.sh wf-board.sh --watch    # live
-scripts/wf-exec.sh wf-event.sh --for PLN-097   # audit trail for one artifact
-scripts/wf-exec.sh wf-list-gates.sh       # what is waiting on a human
+scripts/lv-exec.sh lv-tray.sh            # running workers, gates, pipeline, events
+scripts/lv-exec.sh lv-tray.sh --watch    # live
+scripts/lv-exec.sh lv-event.sh --for PLN-097   # audit trail for one artifact
+scripts/lv-exec.sh lv-list-gates.sh       # what is waiting on a human
 ```
 
 ---
@@ -193,11 +193,11 @@ scripts/wf-exec.sh wf-list-gates.sh       # what is waiting on a human
 |-|-|-|
 | `.git/hooks/post-commit` | commit message matches `*move*to verify*` | Launches the verify agent for that plan |
 | `.git/hooks/post-commit` | commit message starts `implement(` **and HEAD is a `feature/*` branch** | Starts/refreshes the local dev environment |
-| `.claude/on-verify-trigger.sh` | called by the hook above | Shim over `wf-spawn.sh verify` |
+| `.claude/on-verify-trigger.sh` | called by the hook above | Shim over `lv-spawn.sh verify` |
 | `.claude/on-implement-commit.sh` | called by the hook above | Docker local-env lifecycle |
 | `SessionStart` (`compact`/`clear`/`resume`) | Claude Code context is rebuilt | Re-reads pipeline state from `REGISTRY.md` and injects it into the conversation |
 | `PostCompact` | after any compaction | Prints a one-line receipt saying what rehydration found |
-| Orchestrator daemon | `wf-orchestrate.sh --daemon` (manual start) | Sweeps `REGISTRY.md` and dispatches unattended workers by state |
+| Orchestrator daemon | `lv-orchestrate.sh --daemon` (manual start) | Sweeps `REGISTRY.md` and dispatches unattended workers by state |
 
 The last two are Claude Code hooks in `.claude/settings.json`, not git hooks.
 They exist because a compacted session keeps a **prose summary** of what it was
@@ -215,7 +215,7 @@ The daemon is **off by default** (`orchestrator.enabled: false` in
 turning it on is a deliberate, human decision. Preview it first:
 
 ```bash
-scripts/wf-exec.sh wf-orchestrate.sh --sweep --dry-run
+scripts/lv-exec.sh lv-orchestrate.sh --sweep --dry-run
 ```
 
 ---
@@ -232,17 +232,17 @@ The orchestrator parks work rather than guessing. These never run unattended:
 | `consistency-migration` | A plan contradicts an already-built dependency — that is a migration, not an amendment |
 | `goal-missing` | The goal is quoted in PRs and by the tester — it is not invented |
 | `migration` | Pending workflow-upgrade actions |
-| `merge-failed` | `git push` or the PR merge was **refused**. A GitHub outage that outlasts `wf-retry.sh` opens no gate — the plan waits for the next sweep |
+| `merge-failed` | `git push` or the PR merge was **refused**. A GitHub outage that outlasts `lv-retry.sh` opens no gate — the plan waits for the next sweep |
 | `stuck` | A plan burned its attempt budget **with no forward progress** — neither its state nor its `progress.md` step checklist moved. Retrying will not help |
 
-Queued gates are drained with `/wf-attend`.
+Queued gates are drained with `/lv-attend`.
 
 **A gate and a claim are the two things that keep a worker off a plan, and they come down
 last.** Any session leaving a plan — a skill exiting, a human answering a gate — commits the
 state transition *first*, then closes the gate, then unclaims. The reverse order leaves the
 plan unguarded while the registry still reads its old state, and a sweep landing in that
 window dispatches a worker at work that is already done or already moved on.
-`wf-spawn.sh` re-reads the registry immediately before launching and stands down on a state
+`lv-spawn.sh` re-reads the registry immediately before launching and stands down on a state
 its role cannot act on, which narrows that window but does not close it.
 
 **Claim before you write — whoever you are.** The rule is not orchestrator-specific and not
@@ -250,27 +250,27 @@ skill-specific: a session driving an artifact takes its claim first, by whatever
 handed, whether or not a plan folder exists yet.
 
 ```bash
-scripts/wf-exec.sh wf-claim.sh PLN-NNN     # or BUG-NNN / BRF-NNN — one claim per number
-scripts/wf-exec.sh wf-claim.sh --list      # what is held right now, and by whom
-scripts/wf-exec.sh wf-unclaim.sh PLN-NNN   # on the way out, after the commit and the gate
+scripts/lv-exec.sh lv-claim.sh PLN-NNN     # or BUG-NNN / BRF-NNN — one claim per number
+scripts/lv-exec.sh lv-claim.sh --list      # what is held right now, and by whom
+scripts/lv-exec.sh lv-unclaim.sh PLN-NNN   # on the way out, after the commit and the gate
 ```
 
-A human drives the same three through `/wf-claim`.
+A human drives the same three through `/lv-claim`.
 
-A `PreToolUse` hook (`wf-guard-write.sh`) enforces this: an `Edit` or `Write` under
+A `PreToolUse` hook (`lv-guard-write.sh`) enforces this: an `Edit` or `Write` under
 `plans/PLN-NNN-*/`, `bugs/`, `briefs/` or `feature-branches/PLN-NNN-*/` is **refused** while
 another live session holds that number's claim. The refusal names the holder and the one way
-through — `wf-claim.sh <id> --steal`, which records the takeover. Never resolve it by deleting
-the claim file: unclaiming is also a *trigger*, and `wf-unclaim.sh` flushes any spawn the
+through — `lv-claim.sh <id> --steal`, which records the takeover. Never resolve it by deleting
+the claim file: unclaiming is also a *trigger*, and `lv-unclaim.sh` flushes any spawn the
 daemon deferred behind that claim.
 
 A claim is a lease, not a lock — it expires after two hours and when its owning process dies,
 so a crashed session never parks an artifact forever. Long attended work refreshes it by
-claiming again; `wf-implement` does this on every step commit.
+claiming again; `lv-implement` does this on every step commit.
 
-A second `PreToolUse` hook (`wf-guard-promote.sh`), on `Bash`, refuses `git push origin release`
+A second `PreToolUse` hook (`lv-guard-promote.sh`), on `Bash`, refuses `git push origin release`
 while `RELEASE.gate` is open and `git push origin main` while `DEPLOY.gate` is open — the
-mechanical stop for a `/wf-release` or `/wf-deploy` run that was refused promotion and is
+mechanical stop for a `/lv-release` or `/lv-deploy` run that was refused promotion and is
 supposed to end there. See `docs/orchestrator.md` in the workflow library → "A refused
 release/deploy is enforced, not just instructed."
 
@@ -288,18 +288,18 @@ Run these from a Claude session in this repo.
 
 | Skill | Purpose |
 |-|-|
-| `/wf-status` | Plan-by-plan pipeline picture |
-| `/wf-board` | Live orchestrator view |
-| `/wf-attend` | Drain the gate queue |
-| `/wf-orchestrate` | Drive one item, or manage the daemon |
-| `/wf-bug` | File a bug |
-| `/wf-brainstorm` | Explore an idea into a decided brief |
-| `/wf-spec` | Turn a brief or bug into a plan |
-| `/wf-consistency` | Check a plan against its dependency closure (automatic when it declares `Deps`) |
-| `/wf-implement` | Build a ready plan |
-| `/wf-test` | Human acceptance test |
-| `/wf-release`, `/wf-deploy` | Promote to staging, then production |
-| `/wf-help` | Full strategy |
+| `/lv-status` | Plan-by-plan pipeline picture |
+| `/lv-tray` | Live orchestrator view |
+| `/lv-attend` | Drain the gate queue |
+| `/lv-orchestrate` | Drive one item, or manage the daemon |
+| `/lv-bug` | File a bug |
+| `/lv-brainstorm` | Explore an idea into a decided brief |
+| `/lv-spec` | Turn a brief or bug into a plan |
+| `/lv-consistency` | Check a plan against its dependency closure (automatic when it declares `Deps`) |
+| `/lv-implement` | Build a ready plan |
+| `/lv-test` | Human acceptance test |
+| `/lv-release`, `/lv-deploy` | Promote to staging, then production |
+| `/lv-help` | Full strategy |
 
 ---
 
@@ -313,7 +313,7 @@ plans/deferred-criteria.md      criteria no gate can satisfy, waiting for a plan
 bugs/{open,triaged,closed}/     bug lifecycle
 WORKFLOW-ISSUES.md              harness problems reported here, swept upstream
 claude-workflow.yml             project config, incl. the orchestrator block
-scripts/wf-exec.sh              version dispatcher — always call scripts THROUGH this
+scripts/lv-exec.sh              version dispatcher — always call scripts THROUGH this
 scripts/vN.NN/                  versioned script generations
 .claude/skills/                 the workflow skills
 .claude/orchestrator/           runtime: gates, worker logs, events.log (gitignored)
@@ -323,10 +323,10 @@ scripts/vN.NN/                  versioned script generations
 
 ## Rules for anything automating against this repo
 
-1. **Call scripts through `scripts/wf-exec.sh`**, never by their versioned path.
+1. **Call scripts through `scripts/lv-exec.sh`**, never by their versioned path.
    The dispatcher picks the script generation a plan was built against.
-2. **Do not hand-edit `plans/REGISTRY.md`.** Use `wf-registry-add.sh` to create a
-   row and `wf-registry-update.sh` to move it — each holds a lock, rewrites by
+2. **Do not hand-edit `plans/REGISTRY.md`.** Use `lv-registry-add.sh` to create a
+   row and `lv-registry-update.sh` to move it — each holds a lock, rewrites by
    column, and commits the row it wrote in the same step. A row left dirty on
    the shared `develop` checkout is carried off by whichever worker commits
    next; both workers legitimately name that file, so no pathspec can prevent
@@ -340,5 +340,5 @@ scripts/vN.NN/                  versioned script generations
    ← `feature/*` (one per plan). Plan content lives on `develop` only.
    `release` and `main` each live in their own permanent worktree
    (`release-branches/release`, `release-branches/main`), pinned by
-   `/wf-release` and `/wf-deploy` — neither ever checks out its branch in
+   `/lv-release` and `/lv-deploy` — neither ever checks out its branch in
    this shared `develop` checkout.

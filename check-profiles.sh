@@ -3,7 +3,7 @@
 #
 # Each client declares a projectProfile.tier (pre-launch | governed) recording
 # how much governance its real-world stakes currently justify — see
-# docs/project-profile.md. wf-profile.sh --check compares that tier's
+# docs/project-profile.md. lv-profile.sh --check compares that tier's
 # recommendation against the client's actual specApproval.mode,
 # manualTestGate.blockOnCosmetic and autonomy scope. This walks every client
 # and reports in one place, the same shape as sweep-issues.sh.
@@ -12,12 +12,19 @@
 #   ./check-profiles.sh --count    one "<client>: <tier> <clean|drift|none>" line
 #
 # Exit 0 if every client is clean, 1 if any client has drift or no declared
-# tier. Never edits a client — read-only, like wf-profile.sh itself.
+# tier. Never edits a client — read-only, like lv-profile.sh itself.
 
 set -uo pipefail
 
+# Pre-14.0.0 environment names: each WF_* still seeds its LV_* counterpart
+# unless that is set already, so shell profiles and daemons started before the
+# rename keep working.
+for _wf in $(compgen -e | grep '^WF_' || true); do
+  _lv="LV_${_wf#WF_}"; [ -n "${!_lv+x}" ] || export "$_lv=${!_wf}"
+done; unset _wf _lv
+
 LIB_ROOT="$(cd "$(dirname "$0")" && pwd)"
-DEPLOYMENTS="${WF_DEPLOYMENTS:-$LIB_ROOT/deployments.txt}"
+DEPLOYMENTS="${LV_DEPLOYMENTS:-$LIB_ROOT/deployments.txt}"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 [ -t 1 ] || { GREEN=''; YELLOW=''; RED=''; BOLD=''; DIM=''; NC=''; }
@@ -38,7 +45,7 @@ while IFS= read -r client; do
   name=$(basename "$client")
 
   # Coordinators have no pipeline, so no specApproval, manualTestGate or
-  # autonomy scope for a tier to be in step with — and no wf-profile.sh to ask.
+  # autonomy scope for a tier to be in step with — and no lv-profile.sh to ask.
   # Counting them as "undeclared" would make this exit 1 forever on a project
   # that cannot be made clean.
   if grep -qE '^role:[[:space:]]*"?coordinator"?' "$client/claude-workflow.yml" 2>/dev/null; then
@@ -49,9 +56,9 @@ while IFS= read -r client; do
 
   clients=$((clients + 1))
 
-  out=$( cd "$client" && ./scripts/wf-exec.sh wf-profile.sh --check 2>&1 )
+  out=$( cd "$client" && ./scripts/lv-exec.sh lv-profile.sh --check 2>&1 )
   rc=$?
-  tier=$( cd "$client" && ./scripts/wf-exec.sh wf-profile.sh --show 2>/dev/null | awk -F': *' '/^tier:/ {print $2}' )
+  tier=$( cd "$client" && ./scripts/lv-exec.sh lv-profile.sh --show 2>/dev/null | awk -F': *' '/^tier:/ {print $2}' )
   tier="${tier:-none}"
 
   case "$mode" in

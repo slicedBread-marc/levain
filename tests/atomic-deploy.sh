@@ -48,7 +48,7 @@ new_client() {
 }
 
 install_client() {
-  WF_INSTALL_NO_COMMIT=1 bash "$REPO_ROOT/install.sh" "$CLIENT" >/dev/null 2>&1
+  LV_INSTALL_NO_COMMIT=1 bash "$REPO_ROOT/install.sh" "$CLIENT" >/dev/null 2>&1
 }
 
 echo "atomic-deploy.sh"
@@ -67,14 +67,14 @@ else
   bad "scripts/current names a build directory that exists" "current=[$build]"
 fi
 
-if [ -x "$CLIENT/scripts/gen/$build/v2.00/wf-counter-next.sh" ]; then
+if [ -x "$CLIENT/scripts/gen/$build/v2.00/lv-counter-next.sh" ]; then
   ok "the published build holds executable scripts"
 else
   bad "the published build holds executable scripts"
 fi
 
-out=$( cd "$CLIENT" && scripts/wf-exec.sh wf-counter-next.sh --peek 2>&1 )
-assert_eq "wf-exec.sh dispatches through the pointer" "1" "$out"
+out=$( cd "$CLIENT" && scripts/lv-exec.sh lv-counter-next.sh --peek 2>&1 )
+assert_eq "lv-exec.sh dispatches through the pointer" "1" "$out"
 
 # ── 2. Every deploy is a new build ──────────────────────────────────────────
 #
@@ -123,8 +123,8 @@ fi
 # This is the whole point, and it needs a probe sharp enough to see the window.
 # Sampling a single file's size is not: the truncate-then-fill of one script
 # lasts microseconds. The window that lasts the WHOLE DEPLOY is the folder
-# being a MIXTURE — the loop rewrites wf-abandon.sh first and
-# wf-worktree-sparse.sh last, so for the length of the loop the first carries
+# being a MIXTURE — the loop rewrites lv-abandon.sh first and
+# lv-worktree-sparse.sh last, so for the length of the loop the first carries
 # the incoming harness and the last still carries the outgoing one.
 #
 # So: deploy from a marked copy of the library, and have a reader resolve the
@@ -139,14 +139,14 @@ rm -rf "$MARKED_LIB"; mkdir -p "$MARKED_LIB"
 cp -R "$REPO_ROOT/scripts" "$REPO_ROOT/templates" "$REPO_ROOT/skills" \
       "$REPO_ROOT/claude-md" "$REPO_ROOT/config.example.yml" \
       "$REPO_ROOT/VERSION" "$REPO_ROOT/install.sh" "$MARKED_LIB/"
-for f in "$MARKED_LIB/scripts/v2.00"/wf-*.sh; do
+for f in "$MARKED_LIB/scripts/v2.00"/lv-*.sh; do
   printf '# ATOMIC-TEST-MARKER\n' >> "$f"
 done
 
 new_client
 install_client
 
-# Resolve the way wf-exec.sh does: pointer first, legacy folder as fallback.
+# Resolve the way lv-exec.sh does: pointer first, legacy folder as fallback.
 resolve_dir() {
   local build=""
   [ -f "$CLIENT/scripts/current" ] && build=$(tr -d '[:space:]' < "$CLIENT/scripts/current")
@@ -160,8 +160,8 @@ resolve_dir() {
 probe() {
   local d a z
   d=$(resolve_dir)
-  if grep -q 'ATOMIC-TEST-MARKER' "$d/wf-abandon.sh" 2>/dev/null; then a=1; else a=0; fi
-  if grep -q 'ATOMIC-TEST-MARKER' "$d/wf-worktree-sparse.sh" 2>/dev/null; then z=1; else z=0; fi
+  if grep -q 'ATOMIC-TEST-MARKER' "$d/lv-abandon.sh" 2>/dev/null; then a=1; else a=0; fi
+  if grep -q 'ATOMIC-TEST-MARKER' "$d/lv-worktree-sparse.sh" 2>/dev/null; then z=1; else z=0; fi
   echo "$a$z"
 }
 
@@ -182,7 +182,7 @@ rm -f "$TEST_DIR/reader.stop"
 ) &
 reader_pid=$!
 
-WF_INSTALL_NO_COMMIT=1 bash "$MARKED_LIB/install.sh" "$CLIENT" >/dev/null 2>&1
+LV_INSTALL_NO_COMMIT=1 bash "$MARKED_LIB/install.sh" "$CLIENT" >/dev/null 2>&1
 
 touch "$TEST_DIR/reader.stop"
 wait "$reader_pid" 2>/dev/null
@@ -204,7 +204,7 @@ fi
 
 # ── 5. Legacy folders survive the migration deploy, and only that one ────────
 #
-# install.sh flips scripts/current BEFORE it replaces wf-exec.sh, so on a
+# install.sh flips scripts/current BEFORE it replaces lv-exec.sh, so on a
 # client's first gen-era deploy an old dispatcher — which knows nothing of
 # scripts/current — has to resolve the legacy folder, and that folder must
 # still hold the old harness, whole. The deploy after that removes them.
@@ -212,11 +212,11 @@ echo ""
 echo "5. Migration from the pre-gen layout"
 new_client
 mkdir -p "$CLIENT/scripts/v2.00" "$CLIENT/.claude"
-printf '#!/bin/sh\necho legacy\n' > "$CLIENT/scripts/v2.00/wf-counter-next.sh"
-chmod +x "$CLIENT/scripts/v2.00/wf-counter-next.sh"
+printf '#!/bin/sh\necho legacy\n' > "$CLIENT/scripts/v2.00/lv-counter-next.sh"
+chmod +x "$CLIENT/scripts/v2.00/lv-counter-next.sh"
 
 install_client
-if [ -f "$CLIENT/scripts/v2.00/wf-counter-next.sh" ]; then
+if [ -f "$CLIENT/scripts/v2.00/lv-counter-next.sh" ]; then
   ok "the first gen-era deploy leaves the legacy folder standing"
 else
   bad "the first gen-era deploy leaves the legacy folder standing"
@@ -256,8 +256,8 @@ install_client
 held=$(tr -d '[:space:]' < "$CLIENT/scripts/current")
 
 # A process whose ARGV carries the build path, which is the shape of both real
-# holders: the daemon's own command line, and the `bash -c` wrapper wf-spawn.sh
-# detaches with the build's wf-event.sh inside it.
+# holders: the daemon's own command line, and the `bash -c` wrapper lv-spawn.sh
+# detaches with the build's lv-event.sh inside it.
 printf '#!/usr/bin/env bash\nsleep 30\n' > "$CLIENT/scripts/gen/$held/v2.00/wf-holder-test.sh"
 chmod +x "$CLIENT/scripts/gen/$held/v2.00/wf-holder-test.sh"
 bash "$CLIENT/scripts/gen/$held/v2.00/wf-holder-test.sh" &
@@ -309,7 +309,7 @@ printf 'project_slug: "atomic-test"\norchestrator:\n  enabled: true\n' > "$CLIEN
 install_client
 b1=$(tr -d '[:space:]' < "$CLIENT/scripts/current")
 
-( cd "$CLIENT" && "$CLIENT/scripts/gen/$b1/v2.00/wf-orchestrate.sh" --daemon --interval 2 \
+( cd "$CLIENT" && "$CLIENT/scripts/gen/$b1/v2.00/lv-orchestrate.sh" --daemon --interval 2 \
     > "$TEST_DIR/daemon.log" 2>&1 ) &
 daemon_wrapper=$!
 DPID_FILE="$CLIENT/.claude/orchestrator/daemon.pid"
@@ -338,7 +338,7 @@ if [ -n "$dpid" ] && kill -0 "$dpid" 2>/dev/null; then
     bad "and is still alive to be stopped"
   fi
 
-  ( cd "$CLIENT" && scripts/wf-exec.sh wf-orchestrate.sh --stop ) >/dev/null 2>&1
+  ( cd "$CLIENT" && scripts/lv-exec.sh lv-orchestrate.sh --stop ) >/dev/null 2>&1
   wait "$daemon_wrapper" 2>/dev/null || true
   if kill -0 "$dpid" 2>/dev/null; then kill "$dpid" 2>/dev/null || true; fi
 else

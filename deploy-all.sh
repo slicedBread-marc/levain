@@ -6,9 +6,9 @@
 #
 # DEPLOYING UNDER A RUNNING DAEMON IS SAFE AS OF v9.0.0
 #
-# It was not before. install.sh rewrote scripts/v*/ and .claude/skills/wf-*/ in
+# It was not before. install.sh rewrote scripts/v*/ and .claude/skills/lv-*/ in
 # place; an orchestrator daemon sweeps out of those same directories every 60s
-# and re-reads wf-orchestrate.sh and wf-orch-lib.sh as it goes, so a sweep
+# and re-reads lv-orchestrate.sh and lv-orch-lib.sh as it goes, so a sweep
 # landing inside the write window read a half-replaced script folder. Nothing
 # errored at deploy time; what it produced was confusing dispatch behaviour an
 # hour later, attributed to anything but the deploy. The 8.3.0 → 8.6.0 deploy
@@ -34,8 +34,15 @@
 #
 set -euo pipefail
 
+# Pre-14.0.0 environment names: each WF_* still seeds its LV_* counterpart
+# unless that is set already, so shell profiles and daemons started before the
+# rename keep working.
+for _wf in $(compgen -e | grep '^WF_' || true); do
+  _lv="LV_${_wf#WF_}"; [ -n "${!_lv+x}" ] || export "$_lv=${!_wf}"
+done; unset _wf _lv
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEPLOYMENTS_FILE="${WF_DEPLOYMENTS:-$SCRIPT_DIR/deployments.txt}"
+DEPLOYMENTS_FILE="${LV_DEPLOYMENTS:-$SCRIPT_DIR/deployments.txt}"
 VERSION_FILE="$SCRIPT_DIR/VERSION"
 
 # Colors
@@ -97,7 +104,7 @@ done
 # A retried deploy must not lose the record: --stop-daemons run twice would
 # otherwise find nothing running the second time, rewrite the record empty, and
 # turn the restore into a no-op that leaves every daemon off (coordinator WFI-003).
-SUSPEND_STATE="${WF_SUSPEND_STATE:-$SCRIPT_DIR/.deploy-suspended-daemons}"
+SUSPEND_STATE="${LV_SUSPEND_STATE:-$SCRIPT_DIR/.deploy-suspended-daemons}"
 
 if $force; then
     echo -e "${YELLOW}--force does nothing now — deploying under a live daemon is the default.${NC}"
@@ -108,7 +115,7 @@ if [ "${#LIVE[@]}" -gt 0 ]; then
     if $stop_daemons; then
         for p in "${LIVE[@]}"; do
             echo "  stopping daemon in $p"
-            (cd "$p" && scripts/wf-exec.sh wf-orchestrate.sh --stop) || \
+            (cd "$p" && scripts/lv-exec.sh lv-orchestrate.sh --stop) || \
                 echo -e "  ${RED}could not stop the daemon in $p${NC}"
             grep -qxF "$p" "$SUSPEND_STATE" 2>/dev/null || echo "$p" >> "$SUSPEND_STATE"
         done
@@ -191,9 +198,9 @@ if [ -s "$SUSPEND_STATE" ]; then
         # with all three descriptors pointed away, and `exec`ing so no shell is
         # left behind at all, is what actually detaches it.
         if command -v setsid >/dev/null 2>&1; then
-            ( cd "$p" && exec setsid nohup scripts/wf-exec.sh wf-orchestrate.sh --daemon ) >> "$log" 2>&1 < /dev/null &
+            ( cd "$p" && exec setsid nohup scripts/lv-exec.sh lv-orchestrate.sh --daemon ) >> "$log" 2>&1 < /dev/null &
         else
-            ( cd "$p" && exec nohup scripts/wf-exec.sh wf-orchestrate.sh --daemon ) >> "$log" 2>&1 < /dev/null &
+            ( cd "$p" && exec nohup scripts/lv-exec.sh lv-orchestrate.sh --daemon ) >> "$log" 2>&1 < /dev/null &
             RESTART_FRAGILE=true
         fi
         # Verify rather than trust: `nohup … &` returns 0 whether or not the
@@ -213,7 +220,7 @@ if [ -s "$SUSPEND_STATE" ]; then
         echo -e "  ${YELLOW}No setsid on this system: each restarted daemon is still in this${NC}"
         echo -e "  ${YELLOW}script's process group. If you ran this deploy from an agent or a${NC}"
         echo -e "  ${YELLOW}wrapper that reaps its process tree, the daemon dies with it —${NC}"
-        echo -e "  ${YELLOW}re-check with 'wf-orchestrate.sh --daemon-status' a few minutes on,${NC}"
+        echo -e "  ${YELLOW}re-check with 'lv-orchestrate.sh --daemon-status' a few minutes on,${NC}"
         echo -e "  ${YELLOW}and start it from your own terminal if it is gone.${NC}"
     fi
     echo ""

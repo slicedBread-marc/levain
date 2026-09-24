@@ -9,7 +9,7 @@ file first.**
 
 This project has the harness installed but **does not run the pipeline**. It has
 no `plans/`, no `plans/REGISTRY.md`, no `bugs/`, no worktrees, no orchestrator,
-and none of the `/wf-*` pipeline skills. It holds one capability: **filing work
+and none of the `/lv-*` pipeline skills. It holds one capability: **filing work
 into the pipelines of the projects it coordinates**, through each of those
 projects' own scripts.
 
@@ -25,7 +25,7 @@ happens *here*.
 |-|-|
 | **May** | File a bug, request or notice into a coordinated project's `bugs/open/` |
 | **May** | Read a coordinated project's `plans/REGISTRY.md`, plans and bugs |
-| **May** | Report a harness fault against the library (`wf-issue.sh`) |
+| **May** | Report a harness fault against the library (`lv-issue.sh`) |
 | **Must not** | Write anything else into a coordinated project — no plan folders, no registry rows, no claims, no state transitions, no commits |
 | **Must not** | Allocate an artifact ID by hand, or read one off a counter to reuse |
 
@@ -34,8 +34,8 @@ The second block is not a style preference. It is the rule
 reporting session* exists to state, and it has been broken once already:
 client-e's WFI-025 filed a bug into client-c correctly, then kept going —
 claimed it, hand-authored `plan.md`/`findings.md`/`progress.md`, ran
-`wf-registry-add.sh`, spawned a review agent — effectively running that
-project's `/wf-spec` from a session with no standing role in its pipeline. All
+`lv-registry-add.sh`, spawned a review agent — effectively running that
+project's `/lv-spec` from a session with no standing role in its pipeline. All
 of it had to be reverted. Nothing at the tool level refused any of it; only this
 convention stands between a coordinator and the same mess at portfolio scale.
 
@@ -60,21 +60,21 @@ draft → ready → active → verify ──[automatic]──→ testing → com
 
 | State | Meaning | Who acts next |
 |-|-|-|
-| `draft` | Being written or needs replanning | the planner (`/wf-spec`) |
-| `ready` | Spec approved, waiting for a builder | the builder (`/wf-implement`) |
+| `draft` | Being written or needs replanning | the planner (`/lv-spec`) |
+| `ready` | Spec approved, waiting for a builder | the builder (`/lv-implement`) |
 | `active` | Being implemented, or in a fix cycle | the builder |
 | `verify` | Automated checks running | nobody — it's an agent |
-| `testing` | Passed automated checks, needs a human | the tester (`/wf-test`) |
+| `testing` | Passed automated checks, needs a human | the tester (`/lv-test`) |
 | `complete` | Done | — |
 | `abandoned` | Dropped on purpose | — |
 
 Bugs move `bugs/open/` → `bugs/triaged/` → `bugs/closed/`. A bug in `open/` is
-picked up by that project's own `/wf-spec` exactly like anything else there.
+picked up by that project's own `/lv-spec` exactly like anything else there.
 
 **All artifacts share one counter per project**, embedded in that project's
 `plans/REGISTRY.md` as `<!-- Counter: N -->`. A bug becomes a plan with the same
 number: **BUG-094 → PLN-094**. You never compute one of these. The allocator
-(`wf-counter-next.sh`, called by `wf-bug-new.sh`) is the only thing permitted
+(`lv-counter-next.sh`, called by `lv-bug-new.sh`) is the only thing permitted
 to, and it runs in the target project, not here.
 
 ---
@@ -82,14 +82,14 @@ to, and it runs in the target project, not here.
 ## Entry point: file work into a coordinated project
 
 ```bash
-scripts/wf-exec.sh wf-dep-notify.sh "<title>" \
+scripts/lv-exec.sh lv-dep-notify.sh "<title>" \
   --to <project-name> \
   --kind request \
   --severity Medium \
   --description "..." --expected "..." --actual "..." --notes "..."
 ```
 
-Drop `--to` to broadcast to every coordinated project. `/wf-dep-notify` is the
+Drop `--to` to broadcast to every coordinated project. `/lv-dep-notify` is the
 skill a human or agent invokes; the script above is what it calls.
 
 **Pick the right `--kind`:**
@@ -108,14 +108,14 @@ change made elsewhere that the project has to account for.
 
 1. Resolves the target against this project's own `coordinates:` list in
    `claude-workflow.yml`.
-2. Confirms the path exists and has `scripts/wf-exec.sh` — a real local checkout
+2. Confirms the path exists and has `scripts/lv-exec.sh` — a real local checkout
    running this harness.
 3. **Reads, never writes**, the target's current branch. If it isn't `develop`,
    that target is skipped, not forced — a human's `feature/*` work is never
    moved out from under them for a filing.
-4. Runs **the target's own** `scripts/wf-exec.sh wf-bug-new.sh`, so the ID comes
+4. Runs **the target's own** `scripts/lv-exec.sh lv-bug-new.sh`, so the ID comes
    from the target's own counter and the file lands where that project's own
-   `/wf-spec` already looks. `--source` is stamped
+   `/lv-spec` already looks. `--source` is stamped
    `cross-project:{{project_slug}}`, so the origin is on the record.
 
 It **commits in the target but does not push.** Pushing another project's
@@ -138,16 +138,16 @@ that goes stale the moment the project acts. So this project tracks the
 
 ## Report a harness fault
 
-A `wf-*` script erroring, a skill instruction referencing something that does
+A `lv-*` script erroring, a skill instruction referencing something that does
 not exist, this document contradicting reality:
 
 ```bash
-scripts/wf-exec.sh wf-issue.sh "<what went wrong>"
+scripts/lv-exec.sh lv-issue.sh "<what went wrong>"
 ```
 
 It lands in `WORKFLOW-ISSUES.md` at this project's root and is swept by the
 library (`sweep-issues.sh`). Fixes happen in the library, never here — this
-repo's `scripts/` and `.claude/skills/wf-*/` are generated, gitignored build
+repo's `scripts/` and `.claude/skills/lv-*/` are generated, gitignored build
 output, and the next `deploy-all.sh` overwrites any local edit.
 
 ---
@@ -163,14 +163,14 @@ scripts and the skill on every run. The installed version is stamped in
 Coordinator installs carry a deliberately small slice of the harness:
 
 ```
-scripts/wf-exec.sh          dispatcher
+scripts/lv-exec.sh          dispatcher
 scripts/version-map.txt     version → script-folder map
-scripts/v*/wf-orch-lib.sh   config + repo-root helpers
-scripts/v*/wf-lock.sh       lock helper
-scripts/v*/wf-dep-notify.sh file into the projects this one coordinates
-scripts/v*/wf-dep-bug.sh    file into a declared dependency
-scripts/v*/wf-issue.sh      report a harness fault
-.claude/skills/wf-dep-notify/
+scripts/v*/lv-orch-lib.sh   config + repo-root helpers
+scripts/v*/lv-lock.sh       lock helper
+scripts/v*/lv-dep-notify.sh file into the projects this one coordinates
+scripts/v*/lv-dep-bug.sh    file into a declared dependency
+scripts/v*/lv-issue.sh      report a harness fault
+.claude/skills/lv-dep-notify/
 ```
 
 If a pipeline script you read about above is not on that list, it is not

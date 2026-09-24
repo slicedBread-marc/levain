@@ -26,7 +26,7 @@ STOP_CMD="{{local_stop_command}}"
 # worktree it is in, and a feature worktree carries `.plan-ref`; nothing else is
 # needed. An already-exported value wins, so an explicit override still works.
 #
-# The formula is duplicated from scripts/*/wf-plan-port.sh, which remains the
+# The formula is duplicated from scripts/*/lv-plan-port.sh, which remains the
 # authority. `tests/client-reports.sh` asserts the two agree, because a silent
 # divergence here is exactly the class of bug this block exists to kill.
 if [ -f "$PROJECT_DIR/.plan-ref" ]; then

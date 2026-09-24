@@ -11,13 +11,13 @@ decisions a machine shouldn't make.
 ## Design
 
 ```
-                    ┌─ wf-orchestrate.sh ─┐
-   post-commit ────▶│  --sweep  (one pass)│──▶ wf-spawn.sh <role> <artifact>
+                    ┌─ lv-orchestrate.sh ─┐
+   post-commit ────▶│  --sweep  (one pass)│──▶ lv-spawn.sh <role> <artifact>
    (low-latency     │  --daemon (loop)    │      └─ claude -p --model <tier>
-    nudge)          │  <ID>     (drive-1) │         WF_UNATTENDED=1
+    nudge)          │  <ID>     (drive-1) │         LV_UNATTENDED=1
                     └──────────┬──────────┘
                                │ reads                 writes
-              wf-list-*.sh ────┘                 .claude/orchestrator/
+              lv-list-*.sh ────┘                 .claude/orchestrator/
               gates, claims, deps                  gates/  logs/  events.log
 ```
 
@@ -26,11 +26,11 @@ Three properties worth stating, because they're the reason it's cheap and safe:
 1. **Routing is pure bash.** State → role is a table lookup. The orchestrator
    never calls a model; only workers cost tokens, each on its cheapest
    sufficient tier.
-2. **Eligibility is not reimplemented.** The existing `wf-list-*.sh` scripts
+2. **Eligibility is not reimplemented.** The existing `lv-list-*.sh` scripts
    (spec'd in [eligibility.md](eligibility.md)) remain the single source of truth
    for what's actionable. The dispatcher parses them and adds skip rules.
 3. **One spawn path.** The post-commit hook and the daemon both call
-   `wf-spawn.sh`, so the pidfile guard lives in one place and they cannot
+   `lv-spawn.sh`, so the pidfile guard lives in one place and they cannot
    double-launch a plan.
 
 ## Roles and tiers
@@ -56,11 +56,11 @@ migration.
 
 `release` and `deploy` aren't plans — there is no REGISTRY row keyed by
 number, just a singleton fixed id (`RELEASE`/`DEPLOY`, capped at 1 in flight
-each) whose eligibility comes from `wf-list-release.sh`/`wf-list-deploy.sh`
+each) whose eligibility comes from `lv-list-release.sh`/`lv-list-deploy.sh`
 diffing branches directly (see [`eligibility.md`](eligibility.md)). Dispatch
 is unconditional the moment there's something to promote — **authorization is
-not**: the spawned `/wf-release`/`/wf-deploy` worker still checks
-`wf-autonomy.sh` itself and opens a `release-approval`/`deploy-approval` gate
+not**: the spawned `/lv-release`/`/lv-deploy` worker still checks
+`lv-autonomy.sh` itself and opens a `release-approval`/`deploy-approval` gate
 if nothing covers it (see [`autonomy.md`](autonomy.md)). The dispatcher never
 consults a grant; it only decides "is there a diff to look at."
 
@@ -73,7 +73,7 @@ attempts — successes included — would permanently trip `stuck`.
 
 **The ref it reads is the PUSHED one** — `origin/release` / `origin/main`,
 falling back to the local ref only where no remote-tracking ref exists at all.
-The local ref is not a promotion signal: `/wf-release` fast-forwards local
+The local ref is not a promotion signal: `/lv-release` fast-forwards local
 `release` onto develop at step 6 and only finds out at step 7 that the suite
 failed, and when the rollback then refuses (refs diverged, worktree dirty) the
 local ref stays ahead for a run that promoted nothing. client-a's WFI-254:
@@ -95,7 +95,7 @@ the point, and it surfaced only because an attending human happened to hold both
 plans at once. The same missing-provisioning-path defect appeared independently
 in 7 of 16 plans — a pattern no per-plan reviewer is scoped to see.
 
-`wf-consistency` reads a plan plus its full dependency closure and checks only
+`lv-consistency` reads a plan plus its full dependency closure and checks only
 inter-plan claims: consumed APIs exist with the assumed shape, required entities
 have a provisioning path somewhere, no two plans define the same artifact
 incompatibly, and no dependency's prohibition has outlived its purpose to the
@@ -103,7 +103,7 @@ point of making a downstream plan unbuildable. Findings against an **unbuilt** d
 findings against a **built** one open a `consistency-migration` gate.
 
 It writes `## Consistency` into the plan, which is the done-marker
-`wf-list-consistency.sh` reads — so it runs once per plan, not once per sweep.
+`lv-list-consistency.sh` reads — so it runs once per plan, not once per sweep.
 Turn it off with `orchestrator.consistency_pass: false`, but read the note under
 `specApproval` first: it is the compensating control for verdict-mode spec
 approval.
@@ -114,19 +114,19 @@ An artifact is not dispatched when any of these hold:
 
 | Condition | Detected by |
 |-|-|
-| A gate is open on it | `wf-list-gates.sh <ID>` |
+| A gate is open on it | `lv-list-gates.sh <ID>` |
 | Another session holds its claim | `claims/<NNN>/.wf-claim` (via the list scripts) |
 | Its deps are not `complete` | `PLAN_BLOCKED` / list-script `blocked` rows |
 | Its role is at `max_concurrent` | live pidfiles under `.claude/orchestrator/logs/` |
 | It's over `max_attempts_per_plan` | `.claude/orchestrator/attempts/<ID>.<role>` (a launch that never reached a session is refunded there — see *A launch is not a run*) |
 | The hourly spawn budget is spent | `.claude/orchestrator/spawns-<YYYYMMDDHH>` |
-| It still owes a consistency pass (implement only) | `wf-list-consistency.sh` |
+| It still owes a consistency pass (implement only) | `lv-list-consistency.sh` |
 
 And nothing at all is dispatched when the whole sweep is disqualified:
 
 | Condition | Detected by |
 |-|-|
-| The main worktree is not on `develop` | `checkout_available()` in `wf-orchestrate.sh` |
+| The main worktree is not on `develop` | `checkout_available()` in `lv-orchestrate.sh` |
 
 ### The registry is a file, and only develop's copy is the state machine
 
@@ -135,10 +135,10 @@ older copy — whatever it last merged. So when the shared main worktree is
 checked out anywhere else, the dispatcher is not reading the state machine; it
 is reading a snapshot of it.
 
-client-a's WFI-135 is what that costs. An interactive `/wf-release` checked
+client-a's WFI-135 is what that costs. An interactive `/lv-release` checked
 out `release`, where PLN-051 still read `active` while develop had it
 `complete`. Within three minutes the daemon dispatched two unattended
-`wf-implement` workers at a finished plan. Nothing raced — the registry was
+`lv-implement` workers at a finished plan. Nothing raced — the registry was
 moved out from under the dispatcher by a documented step of another skill, and
 every plan whose state had advanced since the last release sync was exposed the
 same way, for as long as the checkout stayed off develop.
@@ -150,7 +150,7 @@ with one exception: before `develop` exists there is no other copy to be stale
 against, so a greenfield client dispatches from whatever branch it has.
 
 **As of the release/deploy worktree pin, neither skill parks the shared
-checkout here at all anymore** — `/wf-release` and `/wf-deploy` each pin their
+checkout here at all anymore** — `/lv-release` and `/lv-deploy` each pin their
 branch to its own persistent worktree (`release-branches/release`,
 `release-branches/main`) instead of borrowing this one. See
 [`docs/release-worktrees.md`](release-worktrees.md). This skip rule stays as a
@@ -171,17 +171,17 @@ or two workers start inside the window between "the dispatcher decided this was
 free" and "the worker said so" (WFI-067).
 
 That makes "another session holds the claim" ambiguous from inside the worker,
-and the ambiguity was expensive: a dispatched `wf-test` read the claim taken out
+and the ambiguity was expensive: a dispatched `lv-test` read the claim taken out
 *for it*, reported a human who did not exist, and exited in 15 seconds. Every
 plan reaching `testing` under the daemon parked as `stuck` after three such
 no-op dispatches (WFI-073, WFI-075), and the same confusion told an explicitly
 dispatched implementer its own plan was `processing` (WFI-076).
 
-So ownership is now answerable. `wf-spawn.sh` exports `WF_CLAIM_PID` into the
+So ownership is now answerable. `lv-spawn.sh` exports `LV_CLAIM_PID` into the
 worker's environment, and `wf_claim_mine` also accepts a claim whose PID is an
 ancestor of the asking process, or one naming the asking session directly —
 which covers the foreground spawn path, a caller that lost the environment, and
-a caller whose ancestry chain is broken by a sandbox wrapper. `wf-claim.sh
+a caller whose ancestry chain is broken by a sandbox wrapper. `lv-claim.sh
 --if-free` refreshes a claim it recognises as its own and exits 0; exit 2 now
 means, and only means, somebody else. An attended session's claim names that
 session, which is never an ancestor of a different one, so a human mid-test is
@@ -191,29 +191,29 @@ still protected.
 that stood down and the bare form the one that ignored a claim — and the skills
 present the bare form as the *attended* default, which is backwards: the
 attended caller is the one whose sessions the unattended workers are meant to
-stay out of. An attended `/wf-spec` overwrote the dispatcher's claim for a live
-`wf-test` worker mid-run and printed "Claimed PLN-059" (WFI-146). Now both forms
+stay out of. An attended `/lv-spec` overwrote the dispatcher's claim for a live
+`lv-test` worker mid-run and printed "Claimed PLN-059" (WFI-146). Now both forms
 exit 2 against another live session, and taking a claim on purpose is
 `--steal` — which says whose it was and writes a `claim-steal` event. Prefer it
-over `wf-unclaim.sh` + `wf-claim.sh`: unclaiming is also a *trigger*, and flushes
+over `lv-unclaim.sh` + `lv-claim.sh`: unclaiming is also a *trigger*, and flushes
 any spawn the daemon deferred behind that claim.
 
 **The claim also carries the state precondition, as of v6.15.** A dispatch is a
 statement about the registry at the moment it was read, and the worker acts on
-it some time later; nothing re-checked in between. A `wf-verify` worker was
+it some time later; nothing re-checked in between. A `lv-verify` worker was
 handed PLN-078 whose verify, human test, PR merge and bug close were all already
 committed — it stood down by judgement, but a verify that runs to completion
 routes on its findings, and routing a `complete` plan sends it back to `testing`
 (WFI-153). So every dispatched role now claims with the states it can actually
 work — `--state verify`, `--state testing`, `--state ready,active`, `--state
-ready` — and `wf-claim.sh` exits **3**, claiming nothing, when the plan has moved
+ready` — and `lv-claim.sh` exits **3**, claiming nothing, when the plan has moved
 on. The check is skipped when no `PLN` row exists for that number, so a spec
 worker claiming `BUG-096` before the plan exists is unaffected.
 
 ### Which PID a claim records
 
 A claim is only worth what its PID outlives. `wf_session_pid` records, in order:
-`$WF_SESSION_PID` if a caller set it, then `$CLAUDE_PID` — the agent session's
+`$LV_SESSION_PID` if a caller set it, then `$CLAUDE_PID` — the agent session's
 own process — and only then falls back to walking up the process tree to the
 first non-shell ancestor.
 
@@ -221,7 +221,7 @@ The walk is last because it is a guess, and it guesses wrong wherever something
 that is not a shell sits between the script and the session. A sandboxed tool
 call inserts exactly that, so the walk stopped on a wrapper that died with the
 call and **every attended claim read as stale**. client-a's WFI-102: the
-daemon dispatched an unattended `wf-test` onto a plan a human was mid-test on,
+daemon dispatched an unattended `lv-test` onto a plan a human was mid-test on,
 and that worker's container cleanup destroyed the container the attended session
 was testing in and blanked `test-progress.md`. `$CLAUDE_PID` lives exactly as
 long as the session that took the claim, which is the lifetime a claim means.
@@ -229,33 +229,33 @@ long as the session that took the claim, which is the lifetime a claim means.
 ### A claim keys on the number, not on the folder
 
 Claims live at `.claude/orchestrator/claims/<NNN>/.wf-claim`, keyed on the
-artifact **number** — the same identity `wf-spawn.sh`'s already-running pidfile
+artifact **number** — the same identity `lv-spawn.sh`'s already-running pidfile
 guard uses, and the only one the work actually keeps: the counter is global and
 one piece of work carries two names through spec (`BUG-022 → PLN-022`,
 `BRF-002 → PLN-002`).
 
 They used to live at `plans/<PLN-NNN-slug>/.wf-claim`, which ties the claim to a
 folder the work does not have yet. A spec worker dispatched onto a brief creates
-that folder — so `wf-spawn.sh` skipped the claim entirely and `wf-claim.sh
+that folder — so `lv-spawn.sh` skipped the claim entirely and `lv-claim.sh
 BRF-002 --if-free` exited 1 with "plan directory not found". Every brief- and
 bug-sourced spec run was unclaimed from spawn until it happened to `mkdir`, and
 two workers inside that window both pass `--if-free` (client-c WFI-004).
-`wf-list-specable.sh` now filters bugs and briefs on the claim too; before, it
+`lv-list-specable.sh` now filters bugs and briefs on the claim too; before, it
 offered them unconditionally because there was no folder to check.
 
 A pre-v5.6 claim left in a plan folder is still honoured (`wf_claim_held`) and
-adopted into the new location on the next `wf-claim.sh`, so an upgrade mid-flight
+adopted into the new location on the next `lv-claim.sh`, so an upgrade mid-flight
 does not read a live worker's claim as absent.
 
 ### A claim is enforced at the write, not only at the dispatch
 
-`wf-guard-write.sh` runs as a `PreToolUse` hook on `Edit|Write|NotebookEdit`. It
+`lv-guard-write.sh` runs as a `PreToolUse` hook on `Edit|Write|NotebookEdit`. It
 maps the target path to an artifact — any `PLN-NNN` / `BUG-NNN` / `BRF-NNN` in
 the path, which covers `plans/`, `bugs/`, `briefs/` and `feature-branches/`
 alike — and exits **2** when a *different* live session holds that artifact's
-claim, naming `wf-claim.sh <id> --steal` as the one way through.
+claim, naming `lv-claim.sh <id> --steal` as the one way through.
 
-Until v6.9 the claim was read only at dispatch, by `wf-spawn.sh` and three list
+Until v6.9 the claim was read only at dispatch, by `lv-spawn.sh` and three list
 scripts. That answers "should I launch a worker onto this?" and never "may I
 write this file?", so it stopped a second worker being *started* and guarded
 nothing already *running*. The two sessions that collide most are the daemon's
@@ -264,9 +264,9 @@ skill instruction reaches the second one, because the session that most needs
 the rule is the one that did not read it. The machine about to write the file is
 the only thing positioned to check.
 
-**It is not a lock, and `wf-lock.sh` cannot be one here.** That library is a real
+**It is not a lock, and `lv-lock.sh` cannot be one here.** That library is a real
 mutex, but its lifetime is one process: it ends with `trap wf_lock_release_all
-EXIT`, and its re-entrancy rides on an exported `WF_LOCK_HELD_<NAME>`. Every
+EXIT`, and its re-entrancy rides on an exported `LV_LOCK_HELD_<NAME>`. Every
 agent Bash call is a fresh shell, so a session cannot hold one across two tool
 calls. It protects a script's critical section — a REGISTRY row rewrite — and
 nothing longer. The claim is the only primitive with a session's lifetime, which
@@ -279,8 +279,8 @@ a positively identified foreign live claim exits 2. No artifact in the path
 (`plans/REGISTRY.md` among them, which is shared by design and has the
 `registry` lock instead), no claim, an expired or dead-owner claim, an
 unreadable payload, no `python3`, not a repo: every one of those allows the
-write silently. Ownership uses `wf_claim_mine`, the same test `wf-claim.sh` and
-`wf-spawn.sh` use — reading a claim taken out on the worker's own behalf as
+write silently. Ownership uses `wf_claim_mine`, the same test `lv-claim.sh` and
+`lv-spawn.sh` use — reading a claim taken out on the worker's own behalf as
 somebody else's is what parked every plan that reached testing (WFI-073/075),
 and in the guard it would block a session's own edits.
 
@@ -288,7 +288,7 @@ The installed hook deliberately does **not** carry the `2>/dev/null || true`
 suffix the rehydration hooks wear. `|| true` rewrites every exit to 0, and exit
 2 is the entire mechanism; a guard wearing it would report the collision and
 permit the write anyway, which is worse than no guard because it reads as
-protection. A missing harness is tolerated by testing for `wf-exec.sh` up front
+protection. A missing harness is tolerated by testing for `lv-exec.sh` up front
 instead, which leaves the exit status alone.
 
 The attempt budget is the loop breaker. A plan bouncing `active ⇄ verify`
@@ -301,21 +301,21 @@ The budget counts worker **launches**, which for a while made it useless: a clea
 resume of an 11-step plan spent the same budget as a genuine `active ⇄ verify`
 thrash, so long plans parked as `stuck` with nothing wrong and the only
 workaround was raising the cap until the loop breaker no longer broke loops.
-Nothing recorded forward progress — `wf-implement` kept `progress.md`'s Log
+Nothing recorded forward progress — `lv-implement` kept `progress.md`'s Log
 current but never ticked its Steps checklist, which read *1 of 11* while the
 branch sat at step 9.
 
 Both halves are fixed together:
 
-- `wf-progress-tick.sh` ticks the checklist and writes the Log line in one call,
-  and `wf-implement` calls it on every step commit.
+- `lv-progress-tick.sh` ticks the checklist and writes the Log line in one call,
+  and `lv-implement` calls it on every step commit.
 - The dispatcher records a progress signature per plan —
   `<state>:<ticked>/<total>:<consistency-pending>` — and **resets the attempt
   budget whenever it changes.**
 
 So `max_attempts_per_plan: 3` now means what it claims: three launches with *no
 forward progress*. If a plan still parks mid-build, the implementer is not
-calling `wf-progress-tick.sh`; raising the cap hides that rather than fixing it.
+calling `lv-progress-tick.sh`; raising the cap hides that rather than fixing it.
 
 ### A launch is not a run
 
@@ -325,8 +325,8 @@ not, and each is handled at the only point that can see it:
 
 | It died | Who notices | How |
 |-|-|-|
-| before `bash -c` ran | `wf-spawn.sh`, at launch | a started-marker the wrapper writes as its first act. Absent → exit 3, no attempt, `launch-fails` bumped (WFI-231, WFI-232) |
-| after `bash -c`, before a session | `wf-attempt-refund.sh`, in the worker's exit clause | the marker exists, so the launch looked healthy. The log is what tells: a transient transport failure and nothing else in it → the attempt is given back |
+| before `bash -c` ran | `lv-spawn.sh`, at launch | a started-marker the wrapper writes as its first act. Absent → exit 3, no attempt, `launch-fails` bumped (WFI-231, WFI-232) |
+| after `bash -c`, before a session | `lv-attempt-refund.sh`, in the worker's exit clause | the marker exists, so the launch looked healthy. The log is what tells: a transient transport failure and nothing else in it → the attempt is given back |
 
 The second is client-d's WFI-016. Three consistency launches for PLN-016, a
 minute apart, each produced a 161-byte log holding one line — `API Error: 500
@@ -345,7 +345,7 @@ error: all real runs with real answers, all charged.
 A gate is how an unattended worker says *"a human has to decide this"* without
 hanging. Instead of asking a question it writes
 `.claude/orchestrator/gates/<ID>.gate` and exits 0. The dispatcher skips gated
-artifacts; `/wf-attend` drains the queue.
+artifacts; `/lv-attend` drains the queue.
 
 | Gate | Opened when |
 |-|-|
@@ -353,7 +353,7 @@ artifacts; `/wf-attend` drains the queue.
 | `spec-stuck` | The review blocked the plan for `maxReviewRounds` rounds running. Any mode — the fix loop is the same everywhere |
 | `scope-reduction` | A replan's amendment drops or qualifies a capability the plan's `## Goal` promises. Fires whatever the review verdict says: a reviewer judges whether a plan is sound, and a narrowing is very often sound engineering, but whether a capability the user asked for may be dropped is a product decision no verdict answers |
 | `consistency-migration` | A plan contradicts an **already-built** dependency — an amendment can't fix it |
-| `manual-test` | `wf-manual-gate.sh` says a human is needed: the diff touches a rendering surface **and** unresolved `(eyes:*)` criteria remain |
+| `manual-test` | `lv-manual-gate.sh` says a human is needed: the diff touches a rendering surface **and** unresolved `(eyes:*)` criteria remain |
 | `goal-missing` | No concrete goal line; it's quoted in PRs and by the tester, so it isn't invented |
 | `migration` | Pending `MIGRATION-NOTES.md` actions for the plan |
 | `merge-failed` | `git push` was rejected |
@@ -370,15 +370,15 @@ oldest-first, and re-opening an existing gate keeps its original timestamp, so
 nothing starves.
 
 Gates live under the **develop root**, not the current worktree — a worker inside
-`feature/PLN-097-foo` must open a gate that `/wf-attend` on develop can see.
+`feature/PLN-097-foo` must open a gate that `/lv-attend` on develop can see.
 
 ### Closing one: a slot readers look up, a ledger that remembers
 
-`wf-gate-close.sh` writes two things:
+`lv-gate-close.sh` writes two things:
 
 | Path | Shape | Read by |
 |-|-|-|
-| `gates/resolved/<id>.<gate>` | latest resolution, `wf_emit` key/values | `wf-gate-status.sh`, by exact path |
+| `gates/resolved/<id>.<gate>` | latest resolution, `wf_emit` key/values | `lv-gate-status.sh`, by exact path |
 | `gates/resolved/<id>.<gate>.log` | append-only, one tab-separated line per close | humans, after the fact |
 
 The slot is a *single* file per plan per gate name, and some gates are opened and
@@ -397,22 +397,22 @@ earlier outcome fabricates a run.
 ## Unattended mode
 
 Skills are written for a human. Under `claude -p` every prompt is either a hang
-or an improvisation. Each of `wf-spec`, `wf-implement` and `wf-test` carries an
+or an improvisation. Each of `lv-spec`, `lv-implement` and `lv-test` carries an
 `## Unattended mode` section: a table tagging every existing prompt `[AUTO]`
 (resolve to a documented default) or `[GATE]` (park, never guess), plus inline
 markers at the gates themselves.
 
 Judgment calls encoded there worth knowing:
 
-- **wf-spec** flips auto-test promotion to `[AUTO] yes`, overriding step 7c's
+- **lv-spec** flips auto-test promotion to `[AUTO] yes`, overriding step 7c's
   "never auto-promote". Maximizing automation is the standing direction.
-- **wf-spec**'s review gate is `[GATE]` or `[AUTO]` depending on
+- **lv-spec**'s review gate is `[GATE]` or `[AUTO]` depending on
   `specApproval.mode` — see below.
-- **wf-test** does *not* gate on the first Manual criterion, and does not decide
-  the question at all: `wf-manual-gate.sh` does, and its answer is final in both
+- **lv-test** does *not* gate on the first Manual criterion, and does not decide
+  the question at all: `lv-manual-gate.sh` does, and its answer is final in both
   directions.
-- **wf-test** treats an unverified criterion as *not* a PASS. A false PASS ships.
-- **wf-consistency** may amend an unbuilt dependency unattended; against a built
+- **lv-test** treats an unverified criterion as *not* a PASS. A false PASS ships.
+- **lv-consistency** may amend an unbuilt dependency unattended; against a built
   one it must gate, because that is a migration.
 
 ### Which gates are actually worth a human
@@ -460,27 +460,27 @@ nothing else.
 
 ### Standing authorization for the promotions after `complete` (v6.18)
 
-The pipeline ends at `complete`. `/wf-release`, `/wf-deploy` and the production
+The pipeline ends at `complete`. `/lv-release`, `/lv-deploy` and the production
 push sit outside it, and until v6.18 there was nowhere to record that a person
 had authorized them anyway. A user who
 said "go ahead and release overnight" was heard by one agent and forgotten at the
 next session boundary (client-a WFI-159).
 
-`wf-autonomy.sh` is that home. It reads `orchestrator.autonomy` from
+`lv-autonomy.sh` is that home. It reads `orchestrator.autonomy` from
 `claude-workflow.yml` and answers one question — *is this action authorized right
 now?* — for exactly three actions: `release`, `deploy`, `production-push`. It
-performs none of them; `/wf-release` and `/wf-deploy` call it at the point where
+performs none of them; `/lv-release` and `/lv-deploy` call it at the point where
 they would otherwise prompt, and park a `release-approval` / `deploy-approval`
 gate on a no.
 
 A grant is not the only authorization. A human who answered the
-`release-approval` / `deploy-approval` gate at `/wf-attend` authorized that
-batch, and `wf-gate-close.sh --decision approve` is where that answer is
+`release-approval` / `deploy-approval` gate at `/lv-attend` authorized that
+batch, and `lv-gate-close.sh --decision approve` is where that answer is
 recorded — scoped to the source branch's tip, so it lapses the moment new work
-lands. `wf-promote-approval.sh` reads it back, and both the dispatcher and the
+lands. `lv-promote-approval.sh` reads it back, and both the dispatcher and the
 skills ask it **before** the grant. Without it the approval could not reach the
 merge at all: client-b WFI-005 had two approvals produce two more gates, each
-worker asking `wf-autonomy.sh`, being told no, and re-opening the gate it had
+worker asking `lv-autonomy.sh`, being told no, and re-opening the gate it had
 just been let through. See [`autonomy.md`](autonomy.md).
 
 The dispatcher asks the grant question first, through `--check`, which answers
@@ -500,21 +500,21 @@ Read [`autonomy.md`](autonomy.md) before writing a grant.
 ## Concurrency
 
 Running workers in parallel makes every read-modify-write of `REGISTRY.md` a
-race — previously avoided only because humans are slow. `wf-lock.sh` provides
+race — previously avoided only because humans are slow. `lv-lock.sh` provides
 named, repo-scoped advisory locks (`mkdir` as the atomic primitive; macOS ships
 no `flock`). The mutators are **self-locking**, so no SKILL.md call site changed:
 
 | Lock | Held by |
 |-|-|
-| `registry` | `wf-registry-update.sh`, `wf-set-tags.sh`, `wf-set-deps.sh`, `wf-set-priority.sh`, `wf-counter-next.sh` |
-| `plan-<ID>` | `wf-goal-push.sh`, `wf-goal-pop.sh` |
+| `registry` | `lv-registry-update.sh`, `lv-set-tags.sh`, `lv-set-deps.sh`, `lv-set-priority.sh`, `lv-counter-next.sh` |
+| `plan-<ID>` | `lv-goal-push.sh`, `lv-goal-pop.sh` |
 
-`wf-counter-next.sh` was the sharpest edge: two concurrent specs were handed the
+`lv-counter-next.sh` was the sharpest edge: two concurrent specs were handed the
 same artifact ID.
 
-Acquiring exports `WF_LOCK_HELD_<NAME>`, so a child process taking the same lock
+Acquiring exports `LV_LOCK_HELD_<NAME>`, so a child process taking the same lock
 is a no-op rather than a deadlock. Stale locks are reclaimed when the owning PID
-is dead or after `WF_LOCK_TTL` seconds.
+is dead or after `LV_LOCK_TTL` seconds.
 
 ## Driving one item
 
@@ -522,7 +522,7 @@ The hook for an agent in another repo. Accepts a bug, brief, or plan — the sha
 counter makes `BUG-094 → PLN-094` predictable.
 
 ```bash
-scripts/wf-exec.sh wf-orchestrate.sh BUG-094 --json
+scripts/lv-exec.sh lv-orchestrate.sh BUG-094 --json
 ```
 
 | Exit | Meaning |
@@ -545,7 +545,7 @@ saw no state change, and reported a stall while the real worker ran healthily be
 ### Known limitation: a soak-gated tail step blocks the whole plan
 
 `drive` treats a plan as one unit through `active → verify → testing → complete`.
-A `(soak)`-tagged *acceptance criterion* has a way out — `wf-defer-criterion.sh`
+A `(soak)`-tagged *acceptance criterion* has a way out — `lv-defer-criterion.sh`
 lets the plan complete and release with the criterion tracked separately in
 `plans/deferred-criteria.md`. But a plan can also have a soak-gated
 **implementation step** — real work that cannot run until real calendar time has
@@ -567,7 +567,7 @@ Everything below is configurable in `claude-workflow.yml → orchestrator`:
 
 - `enabled: false` by default. Workers run with
   `--dangerously-skip-permissions`; turning this on is a deliberate human grant,
-  and `/wf-orchestrate` is explicitly forbidden from flipping it for you.
+  and `/lv-orchestrate` is explicitly forbidden from flipping it for you.
 - `--dry-run` on `--sweep` reports what would be spawned and spawns nothing. It
   is a pure read: no workers, no gates opened, and nothing written to
   `events.log` — a preview that left entries behind would be indistinguishable
@@ -585,7 +585,7 @@ Everything below is configurable in `claude-workflow.yml → orchestrator`:
   measured run. A skip is written when the reason for a (role, artifact) pair
   first appears or changes, and the latch clears the moment that pair
   dispatches, so a plan gated → freed → gated again is reported both times.
-- `wf-list-gates.sh` ranks the queue by **blocked-closure size**, not by age.
+- `lv-list-gates.sh` ranks the queue by **blocked-closure size**, not by age.
   A gate's cost is the time until someone looks times the number of plans
   behind it, and the second term is invisible from the gate itself. Column 6 is
   that count; ties break oldest-first so nothing starves.
@@ -604,28 +604,28 @@ Everything below is configurable in `claude-workflow.yml → orchestrator`:
 
 ### A refused release/deploy is enforced, not just instructed
 
-`wf-release`'s and `wf-deploy`'s unattended paths tell a worker refused by
-`wf-autonomy.sh` to stop at the gate it just opened — in as many words, "STOP.
+`lv-release`'s and `lv-deploy`'s unattended paths tell a worker refused by
+`lv-autonomy.sh` to stop at the gate it just opened — in as many words, "STOP.
 Do not merge, push, or run step 6 or anything after it." That sentence has
 been ignored three times by three different runs, each of which opened its
 `release-approval`/`deploy-approval` gate and then merged and pushed anyway
 (client-c WFI-032, client-d WFI-004, WFI-005 — the last of those in
 *attended* mode, refused, and still pushed).
 
-`wf-guard-promote.sh` is the mechanical backstop: a `PreToolUse` hook on
-`Bash`, wired alongside `wf-guard-write.sh`, that refuses `git push origin
+`lv-guard-promote.sh` is the mechanical backstop: a `PreToolUse` hook on
+`Bash`, wired alongside `lv-guard-write.sh`, that refuses `git push origin
 release` while `RELEASE.gate` exists and `git push origin main` while
 `DEPLOY.gate` exists — regardless of what the model believes it is authorized
 to do. It never touches `develop`; that branch is pushed constantly by
-unrelated, legitimate pipeline traffic (`/wf-verify`, `/wf-test`, step 6 of
-`/wf-release` itself), and gating it on either promotion gate would stall
+unrelated, legitimate pipeline traffic (`/lv-verify`, `/lv-test`, step 6 of
+`/lv-release` itself), and gating it on either promotion gate would stall
 every plan in flight for as long as a human takes to answer one question.
 
 The invariant it relies on: no legitimate path pushes `release` or `main`
 while its own approval gate is open. Unattended-and-authorized never opens the
 gate at all. Attended closes any stale gate of its own name — left behind by
 an earlier refused unattended run — right after the human's own "yes",
-*before* continuing to the push (`wf-release`/`wf-deploy` SKILL.md, step 5).
+*before* continuing to the push (`lv-release`/`lv-deploy` SKILL.md, step 5).
 Only a refused run, which is supposed to stop, reaches a push with the gate
 still open. Changing either skill's gate-close ordering breaks that invariant
 and turns this guard against a real release — read it before touching either
@@ -638,6 +638,6 @@ argv and simulates the state transition a real worker would make. The entire
 dispatch path — selection, caps, gates, attempt budgets, exit codes — is covered
 for zero tokens.
 
-Run it with `WF_TEST_SCRIPT_DIR=<path>` to point the suite at an alternate copy
+Run it with `LV_TEST_SCRIPT_DIR=<path>` to point the suite at an alternate copy
 of the scripts; that's how the locking and prefix-collision assertions were
 proven to fail against pre-fix code.

@@ -9,15 +9,15 @@
 <!-- A brief that cannot be converted to a plan yet — blocked on another repo,
      or one that sequences several future plans rather than becoming one — adds
      a `> **Blocked:** <reason>` field to the header above. Write it with
-     `wf-brief-block.sh BRF-NNN "<why>" [--on <artifact>] [--repo <name>]` and
+     `lv-brief-block.sh BRF-NNN "<why>" [--on <artifact>] [--repo <name>]` and
      clear it with `--clear`. The brief stays Decided and stops being offered to
-     /wf-spec; short of a plan existing, it is the only exit a brief has. -->
+     /lv-spec; short of a plan existing, it is the only exit a brief has. -->
 
 <!-- A brief nobody is carrying forward is PARKED, not deleted:
-     `wf-brief-park.sh BRF-NNN "<why>"` sets Status to Parked, stamps a dated
+     `lv-brief-park.sh BRF-NNN "<why>"` sets Status to Parked, stamps a dated
      reason, and moves its INDEX.md row to `## Parked`. It stops counting as an
      incomplete brainstorm on the board and stays one command away
-     (`wf-list-brainstorms.sh --parked`). `--clear` puts it back. -->
+     (`lv-list-brainstorms.sh --parked`). `--clear` puts it back. -->
 
 
 ## Problem

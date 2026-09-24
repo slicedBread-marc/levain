@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# lv-progress-count.sh <plan-id-or-name>
+#
+# Prints "<checked>/<total>" for the `## Steps` checklist in the plan's
+# progress.md — the plan's forward-progress signal.
+#
+# The orchestrator uses this to tell a RESUME from a RETRY. A worker that
+# picks a long plan back up and advances it has made progress even though the
+# REGISTRY state never moved; a worker thrashing active⇄verify has not. Only
+# the second kind should burn the attempt budget.
+#
+# Always anchored to the develop root — progress.md does not exist on feature
+# branches, so this is safe to call from inside a worktree.
+#
+# Output: "3/11" on stdout. A missing plan or progress.md prints "0/0".
+# Exit 0 always (except on usage error) — callers treat this as a reading,
+# not a check.
+
+set -euo pipefail
+
+# shellcheck source=lv-orch-lib.sh
+source "$(dirname "$0")/lv-orch-lib.sh"
+
+raw_id="${1:-}"
+plan_id=$(printf '%s' "$raw_id" | grep -oE "($LV_PLN_RE)-[0-9]+" || true)
+if [ -z "$plan_id" ]; then
+  echo "Usage: $0 <plan-id-or-name>" >&2
+  exit 1
+fi
+
+ROOT="$(wf_develop_root)"
+REGISTRY="$ROOT/plans/REGISTRY.md"
+
+progress=""
+if [ -f "$REGISTRY" ]; then
+  slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
+  if [ -n "$slug" ]; then
+    progress="$ROOT/plans/${plan_id}-${slug}/progress.md"
+  fi
+fi
+
+if [ -z "$progress" ] || [ ! -f "$progress" ]; then
+  echo "0/0"
+  exit 0
+fi
+
+# Count only inside `## Steps` — the Log section also contains bracketed text.
+echo "$(wf_step_counts "$progress")"

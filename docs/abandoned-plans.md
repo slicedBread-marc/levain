@@ -5,8 +5,8 @@
 > `app` WFI-008; this is the design, and the "Change surface" section below is now a record
 > of what was built rather than a plan.
 >
-> Entry points: `wf-abandon.sh <ID> --reason "..."` to drop a plan, `--revive` to bring it
-> back to `draft`, and `wf-registry-audit.sh` to find the damage an unvalidated state
+> Entry points: `lv-abandon.sh <ID> --reason "..."` to drop a plan, `--revive` to bring it
+> back to `draft`, and `lv-registry-audit.sh` to find the damage an unvalidated state
 > already did.
 
 ## The gap
@@ -16,23 +16,23 @@ except `complete` means *someone still owes work*, and `complete` means *it ship
 is no way to say **"this was dropped on purpose"**.
 
 That matters more than it sounds. A plan that is abandoned but left at `verify` is
-indistinguishable from one that is genuinely mid-verify: it shows up in `/wf-board`, the
-orchestrator dispatches a worker at it, and `wf-list-*` keeps offering it as available work.
+indistinguishable from one that is genuinely mid-verify: it shows up in `/lv-tray`, the
+orchestrator dispatches a worker at it, and `lv-list-*` keeps offering it as available work.
 The only alternatives available to an operator today are both lies — leave it in a working
 state (and be re-dispatched forever), or mark it `complete` (and claim shipped code that
 never shipped).
 
 ## What `app` actually did, and what broke
 
-Six live plans were written as `state = abandoned` via `wf-registry-update.sh`. It worked —
+Six live plans were written as `state = abandoned` via `lv-registry-update.sh`. It worked —
 which is itself the first defect.
 
 | Surface | Behaviour with `abandoned` in the registry | File |
 |-|-|-|
-| State write | **Accepted silently.** No validation against the documented state set, so any typo becomes a live state value. | `scripts/v2.00/wf-registry-update.sh` |
-| Orchestrator | **Hard fail:** `Error: unknown state 'abandoned' for PLN-NNN`, `exit 1`. | `wf-orchestrate.sh:570` |
-| Dependency checks | **Blocks dependents forever.** Four sites test `dep_state != "complete"` and treat the result as unsatisfied; an abandoned plan named in a `Deps` column can never be cleared. | `wf-check-deps.sh:47`, `wf-list-implementable.sh:56`, `wf-list-testable.sh:76`, `wf-plan-info.sh:94` |
-| Board | Silently invisible — the counter only tallies `complete`, so abandoned plans appear in no column. | `wf-board.sh:130` |
+| State write | **Accepted silently.** No validation against the documented state set, so any typo becomes a live state value. | `scripts/v2.00/lv-registry-update.sh` |
+| Orchestrator | **Hard fail:** `Error: unknown state 'abandoned' for PLN-NNN`, `exit 1`. | `lv-orchestrate.sh:570` |
+| Dependency checks | **Blocks dependents forever.** Four sites test `dep_state != "complete"` and treat the result as unsatisfied; an abandoned plan named in a `Deps` column can never be cleared. | `lv-check-deps.sh:47`, `lv-list-implementable.sh:56`, `lv-list-testable.sh:76`, `lv-plan-info.sh:94` |
+| Board | Silently invisible — the counter only tallies `complete`, so abandoned plans appear in no column. | `lv-tray.sh:130` |
 
 `app` got away with it because no plan depended on any of the six — verified before the
 transition, not by luck. A project with a real dependency edge would have been wedged.
@@ -42,39 +42,39 @@ transition, not by luck. A project with a real dependency edge would have been w
 `abandoned` is **terminal, like `complete`, but not successful**. The distinction is the
 whole point: `complete` asserts the work landed, `abandoned` asserts it never will.
 
-1. **Terminal.** No skill has it as an entry state; no `wf-list-*` offers it; the
+1. **Terminal.** No skill has it as an entry state; no `lv-list-*` offers it; the
    orchestrator treats it as `result="done"` rather than an error.
 2. **Does not satisfy a dependency.** A dependent plan is *blocked and must be replanned* —
    its dependency is never arriving. That is different from today's silent forever-block:
-   `wf-check-deps.sh` should report it distinctly ("dep PLN-NNN is abandoned — amend or drop
+   `lv-check-deps.sh` should report it distinctly ("dep PLN-NNN is abandoned — amend or drop
    the dependency") so the operator gets an actionable message instead of a stall.
 3. **Reachable from any state**, unlike every other transition. Work is dropped from
    wherever it happened to be — `app`'s six were at `draft`, `active`, `verify` and
    `testing`.
 4. **Reversible by explicit revival** — `abandoned → draft` only. Never straight back to a
    working state, because the branch may be years stale.
-5. **Visible.** `/wf-board` counts it in its own dim column. A dropped plan that vanishes
+5. **Visible.** `/lv-tray` counts it in its own dim column. A dropped plan that vanishes
    from every view is how `app` ended up with an unregistered plan folder (WFI-009).
 
 ## Change surface — as built
 
-- `wf-registry-update.sh` — **validate `to_state` against the state set** and reject
+- `lv-registry-update.sh` — **validate `to_state` against the state set** and reject
   anything else. This is worth doing on its own merits, independent of `abandoned`; the
   absence of validation is what let an undocumented state into a production registry.
-- `wf-orchestrate.sh:570` — `abandoned)` → `result="done"` (arguably `result="abandoned"`,
+- `lv-orchestrate.sh:570` — `abandoned)` → `result="done"` (arguably `result="abandoned"`,
   so an external driver can tell the two terminals apart via exit code).
 - The four dep-check sites — distinguish *not yet complete* from *never will be*.
-- `wf-board.sh` — count and display it.
+- `lv-tray.sh` — count and display it.
 - Docs that publish the state machine: `README.md`, `CLAUDE.md`, `docs/schema.md`,
   `docs/eligibility.md`, `claude-md/workflow-snippet.md`, `templates/WORKFLOW.md`.
 - `tests/e2e-pipeline.sh` — cover the transition and the dependent-blocked path.
-- `wf-abandon.sh <ID> --reason "..."` captures the reason at the point of decision and
+- `lv-abandon.sh <ID> --reason "..."` captures the reason at the point of decision and
   appends it to the plan's `progress.md` under `## Abandoned — <date>`, with the state it
   was dropped from. `app` had to write its reasons into a hand-authored
   `docs/worktree-detach-record.md` because the registry had nowhere to put them. The script
   also names any plan that declared a dependency on the one being dropped, since that is
   the moment the dependency needs amending.
-- `wf-registry-audit.sh` — added beyond the original design. The proposal treated the
+- `lv-registry-audit.sh` — added beyond the original design. The proposal treated the
   missing validation as the first defect; the audit is the other half, because validation
   only helps writes that happen *after* it ships.
 
@@ -86,7 +86,7 @@ rename blocked for two days on the theory that draining worktrees required finis
 
 The convention `app` used and that this proposal endorses: tag the branch `abandoned/<dir>`
 before removing the worktree, retain the branch, and leave the plan folder in place. Recovery
-is then `git checkout -b <name> abandoned/<dir>` plus `git worktree add`. A `wf-abandon.sh`
+is then `git checkout -b <name> abandoned/<dir>` plus `git worktree add`. A `lv-abandon.sh`
 should do the tagging, and should **warn loudly when the branch has no upstream** — all eight
 of `app`'s tags are a single local copy of roughly 6,500 lines.
 

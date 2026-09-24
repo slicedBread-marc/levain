@@ -12,7 +12,7 @@ only as an instruction to whichever agent heard it and died at the next session 
 
 ## The one rule
 
-`wf-autonomy.sh` **answers a question. It never performs an action.**
+`lv-autonomy.sh` **answers a question. It never performs an action.**
 
 It reads `claude-workflow.yml`, checks the grant, writes one line to the event log, and
 exits. Whether anything then happens is entirely the caller's business. That separation is
@@ -38,7 +38,7 @@ the log with a decision no skill ever acted on.
 ## Unattended by default: release and deploy
 
 `release` (develop → release, plus the E2E suite) and `deploy` (release → main, **locally**)
-need no grant. `wf-autonomy.sh` answers 0 for them with no config, logs an `autonomy-use`
+need no grant. `lv-autonomy.sh` answers 0 for them with no config, logs an `autonomy-use`
 line that says *authorized by default*, and counts them against their own ceiling.
 
 Why: neither leaves the machine. A wrong local `main` is undone with `git reset`, and a red
@@ -65,7 +65,7 @@ orchestrator:
 - A standing grant still works as before for anything listed under `attended_for`, and is
   still the only *standing* route to `production-push`. Without one, an unattended deploy
   that finishes the promotion opens a `production-push` gate naming `main`'s tip; approving
-  it at `/wf-attend` (`--decision approve`) lets the next dispatch push exactly that commit
+  it at `/lv-attend` (`--decision approve`) lets the next dispatch push exactly that commit
   (coordinator WFI-008). Before that gate existed, the finished deploy was re-dispatched until it
   parked as `stuck`.
 
@@ -77,9 +77,9 @@ is good.
 
 | Action | Authorizes | Consumer |
 |-|-|-|
-| `release` | `develop` → `release` and the E2E suite | `/wf-release` step 4 |
-| `deploy` | `release` → `main`, **locally** | `/wf-deploy` step 4 |
-| `production-push` | `git push origin main` | `/wf-deploy` step 14 — ungranted, an unattended run opens a `production-push` gate the operator accepts at `/wf-attend` |
+| `release` | `develop` → `release` and the E2E suite | `/lv-release` step 4 |
+| `deploy` | `release` → `main`, **locally** | `/lv-deploy` step 4 |
+| `production-push` | `git push origin main` | `/lv-deploy` step 14 — ungranted, an unattended run opens a `production-push` gate the operator accepts at `/lv-attend` |
 
 `deploy` and `production-push` are deliberately two grants. A wrong `main` that never left
 the machine is fixed with `git reset`; a pushed one is already running for users.
@@ -88,7 +88,7 @@ the machine is fixed with `git reset`; a pushed one is already running for users
 
 | Name | Reason | Use instead |
 |-|-|-|
-| `merge` | **Already unattended.** `/wf-test`'s exit path runs `git push -u`, `gh pr create` and `gh pr merge --merge` with no human, and routes a failure back to the builder itself. A `merge` key would change nothing. | — |
+| `merge` | **Already unattended.** `/lv-test`'s exit path runs `git push -u`, `gh pr create` and `gh pr merge --merge` with no human, and routes a failure back to the builder itself. A `merge` key would change nothing. | — |
 | `spec-approval` | Has a surface, with rounds and tag escapes | `specApproval.mode: verdict` |
 | `manual-test` | Has a surface, keyed on the rendering surface the diff touches | `manualTestGate` |
 | `force-push`, `history-rewrite`, `claim-steal` | Not promotions. WFI-159's own framing: someone authorizing merges and deployments almost certainly does not mean these. | — |
@@ -147,8 +147,8 @@ loop burns only its own budget, and burning it no longer disarms the other two.
 Audit it before trusting it:
 
 ```bash
-scripts/wf-exec.sh wf-autonomy.sh --show   # 0 coherent, 2 has problems
-scripts/wf-exec.sh wf-autonomy.sh --list   # the closed vocabulary
+scripts/lv-exec.sh lv-autonomy.sh --show   # 0 coherent, 2 has problems
+scripts/lv-exec.sh lv-autonomy.sh --list   # the closed vocabulary
 ```
 
 `--show` **names** every `standing_for` entry that nothing reads, and exits non-zero. A
@@ -176,7 +176,7 @@ The message carries the grant's **identity** — who, when, expiry, and the runn
 so reconstructing "who authorized this and under what" needs only this file, not the
 config as it happens to read today.
 
-Read it with `wf-event.sh --for <ID>`, or `wf-board.sh`.
+Read it with `lv-event.sh --for <ID>`, or `lv-tray.sh`.
 
 ### 2. The gate file — when authorization is refused
 
@@ -186,15 +186,15 @@ A refused promotion parks like any other decision, at
 ```
 GATE_NAME='release-approval'
 GATE_QUESTION='<the commit list, verbatim>'
-GATE_SKILL='wf-release'
+GATE_SKILL='lv-release'
 ```
 
-`/wf-attend` grows a row for `release-approval` and `deploy-approval`, and — this is the
+`/lv-attend` grows a row for `release-approval` and `deploy-approval`, and — this is the
 loop closure — if the human answers *"stop asking, you're authorized"*, the skill's
 instruction is to **write the grant into `claude-workflow.yml`** rather than accept it as
 conversation.
 
-### 3. `wf-orchestrate.sh --json` — the posture, on every run
+### 3. `lv-orchestrate.sh --json` — the posture, on every run
 
 ```json
 {
@@ -220,7 +220,7 @@ Always a full sentence naming the grant and what to do:
 ```
 the standing grant covers 'release' — not deploy. Park a gate and stop.
 the standing grant expired on 2026-09-16 (today is 2026-10-01). Ask for a fresh one.
-'force-push' is never grantable through autonomy — see wf-autonomy.sh --list
+'force-push' is never grantable through autonomy — see lv-autonomy.sh --list
 ```
 
 Suppress with `--quiet` when a caller wants the exit code alone.
@@ -231,8 +231,8 @@ Suppress with `--quiet` when a caller wants the exit code alone.
 
 A standing grant is policy written in advance. It is not the only authorization that exists,
 and for a long time it was the only one the harness could *read* — which is client-b WFI-005.
-A human answered `release-approval` at `/wf-attend` with an approval; the daemon dispatched
-`/wf-release` a minute later; that run asked `wf-autonomy.sh`, which knows nothing about gate
+A human answered `release-approval` at `/lv-attend` with an approval; the daemon dispatched
+`/lv-release` a minute later; that run asked `lv-autonomy.sh`, which knows nothing about gate
 answers, was told no, and re-opened the gate it had just been let through. Twice, each
 re-opening quoting a longer commit list so gate dedup saw a fresh question every time. The
 approval was in the ledger and nothing between it and the merge could act on it.
@@ -240,15 +240,15 @@ approval was in the ledger and nothing between it and the merge could act on it.
 So a promotion gate's answer is now recorded as a **value**, not as prose:
 
 ```bash
-scripts/wf-exec.sh wf-gate-close.sh RELEASE "approved — ship it" --decision approve
-scripts/wf-exec.sh wf-promote-approval.sh release   # 0 authorized · 1 no answer · 2 answer aged out
+scripts/lv-exec.sh lv-gate-close.sh RELEASE "approved — ship it" --decision approve
+scripts/lv-exec.sh lv-promote-approval.sh release   # 0 authorized · 1 no answer · 2 answer aged out
 ```
 
 Three properties make this a one-off approval rather than a grant by the back door:
 
-- **It is scoped to a commit set.** `wf-gate-open.sh` records the source branch's tip when the
-  question is asked, `wf-gate-close.sh` carries it into the record, and
-  `wf-promote-approval.sh` refuses (exit 2) once the branch has moved. A human approves *these
+- **It is scoped to a commit set.** `lv-gate-open.sh` records the source branch's tip when the
+  question is asked, `lv-gate-close.sh` carries it into the record, and
+  `lv-promote-approval.sh` refuses (exit 2) once the branch has moved. A human approves *these
   commits*, exactly as a spec approval covers *that revision* of the plan.
 - **It is spent by the promotion it authorizes.** Once the merge lands there is nothing left in
   the range, so the next dispatch has nothing to promote; once new work lands the tip has moved
@@ -256,21 +256,21 @@ Three properties make this a one-off approval rather than a grant by the back do
 - **It fails closed.** No `--decision`, a rejection, or a record from before this existed all
   read as "not authorized", and the gate re-opens exactly as it did before.
 
-`wf-autonomy.sh` is unchanged by this: it still answers only about standing grants, and it is
-still what `--show` reports. Both the dispatcher's pre-flight and the `/wf-release` and
-`/wf-deploy` skills ask for the one-off approval **first**, and fall through to the grant.
+`lv-autonomy.sh` is unchanged by this: it still answers only about standing grants, and it is
+still what `--show` reports. Both the dispatcher's pre-flight and the `/lv-release` and
+`/lv-deploy` skills ask for the one-off approval **first**, and fall through to the grant.
 
 ### A third promotion gate, with no grant behind it
 
-`/wf-deploy` step 4a asks a second question about the same batch — "these plans shipped with
+`/lv-deploy` step 4a asks a second question about the same batch — "these plans shipped with
 `external`/`soak`/`unbuilt` criteria still open; promote anyway?" — at
-`deploy-deferred-criteria`, read back with `wf-promote-approval.sh deferred`. It is
+`deploy-deferred-criteria`, read back with `lv-promote-approval.sh deferred`. It is
 commit-set-scoped exactly like the two above, and for the same reason: client-a WFI-260 had
-this gate open quoting 91 commits when a `/wf-release` two minutes later put 118 in the batch,
+this gate open quoting 91 commits when a `/lv-release` two minutes later put 118 in the batch,
 carrying two plans whose deferred criteria the question never showed.
 
-It is the one promotion gate with **no** fall-through to a grant. `wf-gate-close.sh` refuses
-`--basis autonomy` on it and the skill never asks `wf-autonomy.sh` there, because a standing
+It is the one promotion gate with **no** fall-through to a grant. `lv-gate-close.sh` refuses
+`--basis autonomy` on it and the skill never asks `lv-autonomy.sh` there, because a standing
 `deploy` grant is policy written before these criteria existed — and client-c's DC-014 was
 the kind that crash-loops production when it goes unread (WFI-011). A human answers it or
 nothing does.
@@ -287,25 +287,25 @@ only moves on a fetch — so a gate could be opened against a tip this checkout 
 heard about, and the human's answer was then discarded by the first worker that did fetch.
 
 client-a WFI-264: the gate opened at 17:46 carrying an `origin/release` four hours and 69
-commits stale, because `/wf-test` had merged a PR into release through GitHub. A human approved
-it at 21:50. `/wf-deploy`'s step 2a fetched, `wf-promote-approval.sh` saw the mismatch, exited 2,
+commits stale, because `/lv-test` had merged a PR into release through GitHub. A human approved
+it at 21:50. `/lv-deploy`'s step 2a fetched, `lv-promote-approval.sh` saw the mismatch, exited 2,
 and the identical question re-opened 41 seconds later — indistinguishable, from where the human
 sat, from the by-design "the batch changed" case above. They answered it twice.
 
 Two changes, either of which would have caught it:
 
-- **`wf_promote_fetch` on the open path.** `wf-gate-open.sh` refreshes the ref before stamping,
+- **`wf_promote_fetch` on the open path.** `lv-gate-open.sh` refreshes the ref before stamping,
   so the question is asked about what is there. Best-effort: offline, the cached ref is still
   better than refusing to open a gate.
-- **A close-time re-check.** `wf-gate-close.sh` refuses (**exit 5**) an `--decision approve`
+- **A close-time re-check.** `lv-gate-close.sh` refuses (**exit 5**) an `--decision approve`
   whose gate was opened against a tip the ref has since moved past, leaving the gate open and
   saying so — to the person standing there, who can still re-derive the batch — instead of
   writing an approval that is already dead. `--batch-moved-ok` records it against the current
-  tip, for a caller (`/wf-attend`) that has re-derived the batch and is answering about *that*.
+  tip, for a caller (`/lv-attend`) that has re-derived the batch and is answering about *that*.
 
 The batch a human is shown must also be counted against `origin/main`, not local `main`:
-`wf-release-sync.sh` now fetches it and prints `DEPLOY_BASE=`. Local `main` legitimately holds
-commits production does not between `/wf-deploy`'s merge and its push, and an unrecovered one of
+`lv-release-sync.sh` now fetches it and prints `DEPLOY_BASE=`. Local `main` legitimately holds
+commits production does not between `/lv-deploy`'s merge and its push, and an unrecovered one of
 those is what made the same gate quote "205 commits" for a batch of 353.
 
 ---
@@ -314,7 +314,7 @@ those is what made the same gate quote "205 commits" for a batch of 353.
 
 Standing grants decide when the pipeline may act **without asking**. The baseline decides
 what an unattended worker may **never** do, asked or not. It exists because every worker
-runs `claude -p --dangerously-skip-permissions` (`wf-spawn.sh`), and until it shipped no
+runs `claude -p --dangerously-skip-permissions` (`lv-spawn.sh`), and until it shipped no
 client had a single deny rule (coordinator WFI-005). The pipeline is meant to stop for a person
 only when security needs one, so security lives here, in code, and not in pauses.
 
@@ -324,7 +324,7 @@ Two layers, both installed into every client's `.claude/settings.json` by
 | Layer | Applies to | Refuses |
 |-|-|-|
 | `permissions.deny` | every session, attended or not | reading `~/.ssh`, cloud and CLI credential files, the secrets archive, a signing key ring |
-| `wf-guard-baseline.sh` (PreToolUse, every tool) | unattended workers only (`WF_UNATTENDED=1`) | the rules below |
+| `lv-guard-baseline.sh` (PreToolUse, every tool) | unattended workers only (`LV_UNATTENDED=1`) | the rules below |
 
 | Rule id | Refuses |
 |-|-|
@@ -340,14 +340,14 @@ Two layers, both installed into every client's `.claude/settings.json` by
 
 **Fail closed, for workers only.** A worker's guard that crashes, times out, cannot parse its
 payload or is not on disk refuses. The hook command's wrapper turns any non-zero exit into
-2 when `WF_UNATTENDED=1`. `wf-guard-promote.sh` now runs under the same wrapper. An
+2 when `LV_UNATTENDED=1`. `lv-guard-promote.sh` now runs under the same wrapper. An
 interactive session is never blocked by a broken guard: its own permission prompts still
 stand, and a bricked editor is worse than the prompt.
 
 **Proven, not assumed.** On Claude Code 2.1.280, under `--dangerously-skip-permissions`, both a
 PreToolUse exit 2 and a `permissions.deny` rule refuse the call, and a Read deny also
 refuses a Bash `cat`/`head` of the same file. `tests/permission-baseline.sh` covers every
-rule; `WF_LIVE_CLAUDE=1 tests/permission-baseline.sh` starts a real skip-permissions worker
+rule; `LV_LIVE_CLAUDE=1 tests/permission-baseline.sh` starts a real skip-permissions worker
 in a fixture client and checks it is refused `.env`. Re-run the live check after a Claude
 Code upgrade.
 
@@ -369,21 +369,21 @@ each provider's own credential scoping are the deeper layers.
 
 ## What this does *not* do
 
-- **The daemon does not decide policy — it only dispatches.** `wf-orchestrate.sh`'s sweep
-  includes `release`/`deploy` in `SWEEP_ROLES` and spawns a `WF_UNATTENDED=1` worker for
-  either when `wf-list-release.sh`/`wf-list-deploy.sh` says one is eligible **and** the action
+- **The daemon does not decide policy — it only dispatches.** `lv-orchestrate.sh`'s sweep
+  includes `release`/`deploy` in `SWEEP_ROLES` and spawns a `LV_UNATTENDED=1` worker for
+  either when `lv-list-release.sh`/`lv-list-deploy.sh` says one is eligible **and** the action
   is authorized — by a standing grant, or by the answer at the gate (above) — see
   [`orchestrator.md`](orchestrator.md). Whether that
   worker actually promotes anything is still decided entirely inside the
-  `/wf-release`/`/wf-deploy` **skills**, which ask again for real: the dispatch alone
+  `/lv-release`/`/lv-deploy` **skills**, which ask again for real: the dispatch alone
   authorizes nothing, and a grant that lapses between the two is caught by the skill.
 
-  The dispatcher's pre-flight asks `wf-promote-approval.sh <action>` first and
-  `wf-autonomy.sh <action> --check` second, and it exists because
+  The dispatcher's pre-flight asks `lv-promote-approval.sh <action>` first and
+  `lv-autonomy.sh <action> --check` second, and it exists because
   spawning a worker that can only refuse is not free. It burns a worker, an hourly spawn
   slot and an attempt, and reopens a gate a human has often just answered; worse, a refused
   worker is structurally the one most likely to promote anyway — WFI-004, WFI-005, WFI-007,
-  WFI-032 and WFI-034 are five incidents and five refused workers. `wf-guard-promote.sh`
+  WFI-032 and WFI-034 are five incidents and five refused workers. `lv-guard-promote.sh`
   contains that class mechanically; not launching the worker removes the occasion for it.
   The skip is latched, so a sweep says *why* once rather than once a minute forever.
 - **It does not answer judgment gates.** `spec-approval`, `manual-test`, `needs-input`,

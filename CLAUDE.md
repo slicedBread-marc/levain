@@ -1,6 +1,6 @@
 # Project Purpose
 
-This project is a development workflow library. All `wf-*` skills are designed to be deployed to other projects — they form a reusable workflow harness that can be dropped into any codebase to provide a structured, multi-terminal development pipeline.
+This project is a development workflow library. All `lv-*` skills are designed to be deployed to other projects — they form a reusable workflow harness that can be dropped into any codebase to provide a structured, multi-terminal development pipeline.
 
 Work in this repo is about building, improving, and maintaining that library, not about implementing features for this repo itself.
 
@@ -67,9 +67,9 @@ visible at the one moment either side is still cheap to redirect.
 
 Two clients can depend on one another (client-e integrating client-c's OIDC is the standing
 case). A bug or request that belongs to the *other* side of an integration is filed through
-`wf-dep-bug.sh` — it runs the dependency's own `wf-bug-new.sh` through the dependency's own
-`wf-exec.sh`, so the report lands in that project's own `bugs/open/`, allocated by its own
-counter, picked up by its own `/wf-spec`. Declared per-client in that client's own
+`lv-dep-bug.sh` — it runs the dependency's own `lv-bug-new.sh` through the dependency's own
+`lv-exec.sh`, so the report lands in that project's own `bugs/open/`, allocated by its own
+counter, picked up by its own `/lv-spec`. Declared per-client in that client's own
 `claude-workflow.yml` under `dependencies:`, never in this repo. See
 [`docs/cross-project-reports.md`](docs/cross-project-reports.md).
 
@@ -77,20 +77,20 @@ counter, picked up by its own `/wf-spec`. Declared per-client in that client's o
 
 `~/dev/coordinator` oversees the portfolio and owns no application code. It declares
 `role: coordinator` in its own `claude-workflow.yml` and gets a deliberately small slice of the
-harness: the dispatcher, `wf-dep-notify.sh`/`wf-dep-bug.sh`/`wf-issue.sh` and their lib, the
-`/wf-dep-notify` skill, and a `WORKFLOW.md` rendered from `templates/WORKFLOW-coordinator.md`
+harness: the dispatcher, `lv-dep-notify.sh`/`lv-dep-bug.sh`/`lv-issue.sh` and their lib, the
+`/lv-dep-notify` skill, and a `WORKFLOW.md` rendered from `templates/WORKFLOW-coordinator.md`
 that explains the pipelines it files into and where its authority stops. No `plans/`, no
 registry, no `bugs/`, no worktrees, no orchestrator, no hooks, no pipeline skills — and the
 install is subtractive, so a former client is pruned back to that slice on every deploy.
 
-It files work down with `wf-dep-notify.sh --kind request`, resolving targets from
+It files work down with `lv-dep-notify.sh --kind request`, resolving targets from
 `coordinates:` — the same mechanism as a dependent notice, so the ID still comes from the target
 project's own counter and the report still lands in its own `bugs/open/`. Read
 [`docs/coordinator.md`](docs/coordinator.md) before declaring another one.
 
 ### The client copy of the harness is generated
 
-Everything `deploy-all.sh` writes into a client — `scripts/gen/`, `.claude/skills/wf-*/`,
+Everything `deploy-all.sh` writes into a client — `scripts/gen/`, `.claude/skills/lv-*/`,
 `.claude/workflow.md`, the hooks — is **gitignored there** as of v5.0.0. The library is the
 source of truth; the client copy is build output. A client's own config
 (`claude-workflow.yml`), its `WORKFLOW.md`, its `.claude/workflow-version` stamp and all of
@@ -105,11 +105,11 @@ mid-run keeps a whole, self-consistent harness and the next call gets the new on
 why `deploy-all.sh` no longer refuses to run while an orchestrator daemon is sweeping
 (coordinator WFI-003). Read [`docs/atomic-deploy.md`](docs/atomic-deploy.md) before changing the
 install's write order, the pointer, or the retention rule — the flip's position relative to
-the dispatcher replacement is load-bearing, and so is the legacy fallback in `wf-exec.sh`.
+the dispatcher replacement is load-bearing, and so is the legacy fallback in `lv-exec.sh`.
 
 ### Inbound: workflow issues from clients
 
-Clients report harness problems as they hit them — a `wf-*` script erroring unexpectedly, a skill instruction referencing something that doesn't exist, the registry contradicting the worktree. Each lands in that project's root `WORKFLOW-ISSUES.md` via `wf-issue.sh`.
+Clients report harness problems as they hit them — a `lv-*` script erroring unexpectedly, a skill instruction referencing something that doesn't exist, the registry contradicting the worktree. Each lands in that project's root `WORKFLOW-ISSUES.md` via `lv-issue.sh`.
 
 **Sweep them periodically — this is the main source of process-bug reports:**
 
@@ -122,7 +122,7 @@ Fix the cause **here**, in the library — never in the client, where the next d
 
 ```bash
 ./deploy-all.sh
-./sweep-issues.sh --resolve WFI-NNN --client <name> "fixed in vX.Y.Z"
+./sweep-issues.sh --resolve LVI-NNN --client <name> "fixed in vX.Y.Z"
 ```
 
 Resolved entries stay in the client's file as the record of what was already reported. `sweep-issues.sh` exits 0 when there is work and 1 when every client is clean.
@@ -149,11 +149,11 @@ tier. Applying a tier to a client is a hand edit to that client's `claude-workfl
 `.git/hooks/pre-commit` bumps `VERSION` into every commit. It bumps a **patch** unless told otherwise:
 
 ```bash
-WF_BUMP=minor git commit -m "feat(x): a new script, a new flag"     # 0.x.0
-WF_BUMP=major git commit -m "breaking(x): a changed contract"       # x.0.0
+LV_BUMP=minor git commit -m "feat(x): a new script, a new flag"     # 0.x.0
+LV_BUMP=major git commit -m "breaking(x): a changed contract"       # x.0.0
 ```
 
-The level is not read from the commit message, and cannot be: `pre-commit` is the only hook whose `git add` git re-reads into the commit, and it is the one hook that has no access to the message — `.git/COMMIT_EDITMSG` still holds the *previous* commit's message when it runs. So an unstated bump understates by design; say `WF_BUMP` when a commit adds a script, a flag, or changes a contract.
+The level is not read from the commit message, and cannot be: `pre-commit` is the only hook whose `git add` git re-reads into the commit, and it is the one hook that has no access to the message — `.git/COMMIT_EDITMSG` still holds the *previous* commit's message when it runs. So an unstated bump understates by design; say `LV_BUMP` when a commit adds a script, a flag, or changes a contract (`WF_BUMP`, its name before 14.0.0, still works).
 
 ---
 
@@ -165,16 +165,16 @@ The workflow is designed to run across 4 terminal sessions, each with a dedicate
 
 | Terminal | Role | Primary Skills | Model |
 |-|-|-|-|
-| T1 | Intake | `/wf-status`, `/wf-brainstorm`, `/wf-bug` | Sonnet |
-| T2 | Planner | `/wf-spec` | Opus |
-| T3 | Builder | `/wf-implement` | Sonnet |
-| T4 | Tester | `/wf-test` | Haiku |
-| Agent | Verifier | `wf-verify` (auto-triggered) | Sonnet |
-| Agent | Consistency | `wf-consistency` (auto-triggered on `ready` + Deps) | Sonnet |
-| Any | Claims | `/wf-claim` | Haiku |
-| Any | Release | `/wf-release`, `/wf-deploy` | Haiku |
+| T1 | Intake | `/lv-status`, `/lv-brainstorm`, `/lv-bug` | Sonnet |
+| T2 | Planner | `/lv-spec` | Opus |
+| T3 | Builder | `/lv-implement` | Sonnet |
+| T4 | Tester | `/lv-test` | Haiku |
+| Agent | Verifier | `lv-verify` (auto-triggered) | Sonnet |
+| Agent | Consistency | `lv-consistency` (auto-triggered on `ready` + Deps) | Sonnet |
+| Any | Claims | `/lv-claim` | Haiku |
+| Any | Release | `/lv-release`, `/lv-deploy` | Haiku |
 
-Each terminal invokes its own skill directly — `/wf-spec`, `/wf-implement`, `/wf-test`. No skill requires a role to be set: every one enters on a `grep` of REGISTRY.md and picks up whatever is in the state it acts on. (`/wf-init` and `/wf-next` were retired in v12.0.0 — the role they passed between them travelled in an `export` that could not outlive its own Bash call, so it never arrived.)
+Each terminal invokes its own skill directly — `/lv-spec`, `/lv-implement`, `/lv-test`. No skill requires a role to be set: every one enters on a `grep` of REGISTRY.md and picks up whatever is in the state it acts on. (`/wf-init` and `/wf-next` were retired in v12.0.0 — the role they passed between them travelled in an `export` that could not outlive its own Bash call, so it never arrived.)
 
 ### Orchestrated mode (one terminal)
 
@@ -182,34 +182,34 @@ The four-terminal layout above is the **manual** mode. With the orchestrator ena
 
 | Surface | Purpose |
 |-|-|
-| `wf-orchestrate.sh --daemon` | Continuous dispatch (its own terminal; never returns) |
-| `wf-orchestrate.sh <ID>` | Drive one bug/brief/plan end to end — the hook for an external project |
-| `/wf-board` | What's in flight: workers, gates, pipeline, events |
-| `wf-board-drill.sh <row>` | What's *behind* a board number — the workers, the plans, the logs. Read-only; its list lines carry the argv of the next level down, which is how coordinator' `wf-board-all` drills from a grid cell to a live worker's log without knowing what any of them are |
-| `/wf-attend` | Drain the queue of decisions the orchestrator refused to make |
-| `wf-autonomy.sh --show` | What this project has authorized the harness to do unattended |
+| `lv-orchestrate.sh --daemon` | Continuous dispatch (its own terminal; never returns) |
+| `lv-orchestrate.sh <ID>` | Drive one bug/brief/plan end to end — the hook for an external project |
+| `/lv-tray` | What's in flight: workers, gates, pipeline, events |
+| `lv-tray-drill.sh <row>` | What's *behind* a board number — the workers, the plans, the logs. Read-only; its list lines carry the argv of the next level down, which is how coordinator' `lv-rack` drills from a grid cell to a live worker's log without knowing what any of them are |
+| `/lv-attend` | Drain the queue of decisions the orchestrator refused to make |
+| `lv-autonomy.sh --show` | What this project has authorized the harness to do unattended |
 
 Routing is deterministic bash — the orchestrator never calls a model. Ships **disabled**; see `docs/orchestrator.md`.
 
-The promotions *after* `complete` — `/wf-release`, `/wf-deploy`, the production push — are the
+The promotions *after* `complete` — `/lv-release`, `/lv-deploy`, the production push — are the
 one place a human's standing authorization can be recorded rather than re-asked each session.
-`wf-autonomy.sh` answers whether an action is authorized and never performs one; the vocabulary
+`lv-autonomy.sh` answers whether an action is authorized and never performs one; the vocabulary
 is closed, and a grant carries an author, a date and a required expiry. Also ships **off**. Read
 [`docs/autonomy.md`](docs/autonomy.md) before adding a key.
 
 A standing grant is not the only authorization. The answer a human gives at a `release-approval`
-/ `deploy-approval` gate is recorded by `wf-gate-close.sh --decision approve`, scoped to the
-commit set it was given for, and read back by `wf-promote-approval.sh` — which both the
+/ `deploy-approval` gate is recorded by `lv-gate-close.sh --decision approve`, scoped to the
+commit set it was given for, and read back by `lv-promote-approval.sh` — which both the
 dispatcher and the two skills consult **before** the grant. Without it an approval could not
 reach the merge at all (client-b WFI-005).
 
 That scoping needs the stamped tip to be one that exists: gates fetch before stamping, and
-`wf-gate-close.sh` refuses (exit 5) an approval for a batch the ref has moved past rather than
+`lv-gate-close.sh` refuses (exit 5) an approval for a batch the ref has moved past rather than
 recording one a worker will silently discard (client-a WFI-264). A deploy whose suite goes
-red records it against the release tip (`wf-deploy-suite-memo.sh`), so the next dispatch parks
+red records it against the release tip (`lv-deploy-suite-memo.sh`), so the next dispatch parks
 `deploy-suite-red` instead of re-merging the same commits and re-running the same suite.
 
-Each client also gets a generated `WORKFLOW.md` at its project root (from `templates/WORKFLOW.md`) — the entry-point contract for any agent or script that lands in that repo cold: pipeline shape, hooks that fire automatically, and the `wf-orchestrate.sh` exit codes.
+Each client also gets a generated `WORKFLOW.md` at its project root (from `templates/WORKFLOW.md`) — the entry-point contract for any agent or script that lands in that repo cold: pipeline shape, hooks that fire automatically, and the `lv-orchestrate.sh` exit codes.
 
 ---
 
@@ -236,11 +236,11 @@ draft → ready → active → verify ──[agent]──→ testing → complet
 
 | State | Meaning | Who acts next |
 |-|-|-|
-| `draft` | Being written or needs replanning | T2 (wf-spec) |
-| `ready` | Spec approved, waiting for builder | T3 (wf-implement) |
+| `draft` | Being written or needs replanning | T2 (lv-spec) |
+| `ready` | Spec approved, waiting for builder | T3 (lv-implement) |
 | `active` | Being implemented or in fix cycle | T3 |
 | `verify` | Verify agent running automated checks | (automatic) |
-| `testing` | Passed automated checks, needs human test | T4 (wf-test) |
+| `testing` | Passed automated checks, needs human test | T4 (lv-test) |
 | `complete` | Done | — |
 | `abandoned` | Dropped on purpose — terminal, but not successful | — |
 
@@ -250,19 +250,19 @@ Bugs move through: `bugs/open/` → `bugs/triaged/` → `bugs/closed/`
 
 ### Full Workflow
 
-1. **T1 (Intake)** runs `/wf-status` to see the pipeline (reads REGISTRY.md). Files bugs with `/wf-bug`. Brainstorms and decides briefs with `/wf-brainstorm`.
+1. **T1 (Intake)** runs `/lv-status` to see the pipeline (reads REGISTRY.md). Files bugs with `/lv-bug`. Brainstorms and decides briefs with `/lv-brainstorm`.
 
-2. **T2 (Planner)** runs `/wf-spec` — greps REGISTRY for `draft` state. Converts briefs/bugs into plans, or reviews findings (escalated and behavior) routed from testing/verify. Review gate promotes `draft→ready`.
+2. **T2 (Planner)** runs `/lv-spec` — greps REGISTRY for `draft` state. Converts briefs/bugs into plans, or reviews findings (escalated and behavior) routed from testing/verify. Review gate promotes `draft→ready`.
 
-3. **T3 (Builder)** runs `/wf-implement` — greps REGISTRY for `ready` or `active` state. Creates feature branch worktree with `.plan-ref`, codes all steps. Exit sets `active→verify`, triggering the verify agent.
+3. **T3 (Builder)** runs `/lv-implement` — greps REGISTRY for `ready` or `active` state. Creates feature branch worktree with `.plan-ref`, codes all steps. Exit sets `active→verify`, triggering the verify agent.
 
 4. **Verify agent** (automatic) — triggered by REGISTRY state change to `verify`. Checks code, spec completeness, and design soundness. Auto-routes: clean→`testing`, findings→`active`, escalated→`draft`.
 
-5. **T4 (Tester)** runs `/wf-test` — greps REGISTRY for `testing` state. Guides human through acceptance criteria. On pass, merges `release` in, runs `wf-post-merge-check.sh` (the **full suite** by default — `postMergeCheck:` in `claude-workflow.yml`) on the merged tree, and creates the PR to release. That check is the only thing between a semantic merge break and `release`: two plans green alone and red together used to be found by `/wf-deploy`, one 20-minute suite at a time, long after both plans were complete (client-a WFI-264).
+5. **T4 (Tester)** runs `/lv-test` — greps REGISTRY for `testing` state. Guides human through acceptance criteria. On pass, merges `release` in, runs `lv-post-merge-check.sh` (the **full suite** by default — `postMergeCheck:` in `claude-workflow.yml`) on the merged tree, and creates the PR to release. That check is the only thing between a semantic merge break and `release`: two plans green alone and red together used to be found by `/lv-deploy`, one 20-minute suite at a time, long after both plans were complete (client-a WFI-264).
 
-6. **Release** — `/wf-release` merges approved PRs into the release branch and runs E2E tests to validate staging.
+6. **Release** — `/lv-release` merges approved PRs into the release branch and runs E2E tests to validate staging.
 
-7. **Deploy** — `/wf-deploy` promotes the validated release branch to `main`. Marks plans complete, closes bugs, and back-merges to develop.
+7. **Deploy** — `/lv-deploy` promotes the validated release branch to `main`. Marks plans complete, closes bugs, and back-merges to develop.
 
 ---
 
@@ -277,13 +277,13 @@ feature/*   → one branch per plan (e.g. feature/PLN-005-bug-002-guest-logout)
 
 T3 creates a `feature/<plan-name>` branch and worktree from `develop`. On completion, the worktree merges back to `develop` and the feature branch is deleted.
 
-`release` and `main` each live in their own persistent worktree too — `release-branches/release` and `release-branches/main`, pinned by `/wf-release` and `/wf-deploy` respectively (`wf-worktree-pin.sh`). Neither skill checks out its branch in the shared develop worktree anymore, so a release or a deploy in progress no longer moves what a parallel session, or the orchestrator, reads as `develop`. Read `docs/release-worktrees.md` before changing either skill's worktree step.
+`release` and `main` each live in their own persistent worktree too — `release-branches/release` and `release-branches/main`, pinned by `/lv-release` and `/lv-deploy` respectively (`lv-worktree-pin.sh`). Neither skill checks out its branch in the shared develop worktree anymore, so a release or a deploy in progress no longer moves what a parallel session, or the orchestrator, reads as `develop`. Read `docs/release-worktrees.md` before changing either skill's worktree step.
 
 What a feature worktree may and may not contain is a contract, not a preference — a path that is both sparse-excluded and written by deploy breaks git outright. Read `docs/worktrees.md` before changing either list. Release and main worktrees are **not** sparse — they need the real `plans/**` content, which is the entire point of merging into them — see `docs/release-worktrees.md`.
 
 How a skill hands a plan back is also a contract: **commit the state transition, then close the gate, then unclaim** — never the reverse. Read `docs/guard-ordering.md` before editing any skill's exit path.
 
-State survives a compacted conversation because `wf-rehydrate.sh` re-reads it from the registry afterwards, wired to `SessionStart(compact)` — **not** `PostCompact`, whose output reaches the human and never the model. Read `docs/rehydration.md` before touching either hook.
+State survives a compacted conversation because `lv-rehydrate.sh` re-reads it from the registry afterwards, wired to `SessionStart(compact)` — **not** `PostCompact`, whose output reaches the human and never the model. Read `docs/rehydration.md` before touching either hook.
 
 ---
 
@@ -291,9 +291,10 @@ State survives a compacted conversation because `wf-rehydrate.sh` re-reads it fr
 
 All artifacts (plans, bugs, briefs) use a **global shared counter** embedded in `plans/REGISTRY.md` as `<!-- Counter: N -->`.
 
-- When creating a **brief or bug**, allocate a new counter number (`wf-counter-next.sh`). It advances past any live artifact first, so a counter left behind by a migration or a bad merge cannot hand out a number already in use.
-- When converting a brief/bug to a **plan**, the plan **inherits the same number** — no new allocation. BRF-041 → PLN-041, BUG-043 → PLN-043. `wf-plan-id.sh` decides this; when the inherited number is already taken it allocates a fresh one and says so, because the alternative is overwriting a live plan (WFI-011).
+- When creating a **brief or bug**, allocate a new counter number (`lv-counter-next.sh`). It advances past any live artifact first, so a counter left behind by a migration or a bad merge cannot hand out a number already in use.
+- When converting a brief/bug to a **plan**, the plan **inherits the same number** — no new allocation. BRF-041 → PLN-041, BUG-043 → PLN-043. `lv-plan-id.sh` decides this; when the inherited number is already taken it allocates a fresh one and says so, because the alternative is overwriting a live plan (WFI-011).
 - IDs are type-prefixed: `PLN-NNN`, `BUG-NNN`, `BRF-NNN`.
 - Numbers are globally unique across all types, and the number is what the orchestrator treats as identity — one claim and one already-running guard cover a brief and the plan it becomes.
+- **Never write a prefix into a script.** A project may rename any prefix in `claude-workflow.yml` (`scripts/v2.00/lv-ids.sh` holds the map and its rules). So match IDs with `$LV_PLN_RE`, `$LV_WORK_RE` and the rest, glob with a loop over `$LV_PLN_ALL`, and build new IDs from `$LV_PLN`. Every script that sources `lv-orch-lib.sh` has these variables. Skills, templates and docs keep the default spelling, and install renders it to the project's own prefixes. `tests/id-map.sh` fails on a literal prefix pattern in `scripts/v2.00/`. The map is deliberately left out of the user docs, which show only the defaults.
 
-**Schema version:** `6` (see `docs/schema.md`). Registry-based model — plans never move, state in REGISTRY.md, `.plan-ref` on feature branches. v5 added Tags and Deps columns plus the goal stack. v6 adds typed reason tags on `#### Manual` criteria (`eyes:blocking`, `eyes:cosmetic`, `external`, `soak`, linted by `wf-manual-lint.sh`), a live `## Steps` checklist in progress.md as the forward-progress signal, a `## Consistency` section, and a producer for `plans/deferred-criteria.md`.
+**Schema version:** `6` (see `docs/schema.md`). Registry-based model — plans never move, state in REGISTRY.md, `.plan-ref` on feature branches. v5 added Tags and Deps columns plus the goal stack. v6 adds typed reason tags on `#### Manual` criteria (`eyes:blocking`, `eyes:cosmetic`, `external`, `soak`, linted by `lv-manual-lint.sh`), a live `## Steps` checklist in progress.md as the forward-progress signal, a `## Consistency` section, and a producer for `plans/deferred-criteria.md`.

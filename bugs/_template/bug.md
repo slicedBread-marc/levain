@@ -6,7 +6,7 @@
 > **Filed:** YYYY-MM-DD
 > **Project:** [project name or path]
 > **Severity:** Critical | High | Medium | Low
-> **Plan:** _(none — link added by /wf-spec when a fix plan is created)_
+> **Plan:** _(none — link added by /lv-spec when a fix plan is created)_
 > **Links:** _(related bugs: caused by BUG-NNN, blocks BUG-NNN, regression from BUG-NNN, etc.)_
 
 ## Description

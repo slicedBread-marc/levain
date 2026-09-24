@@ -1,6 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
+# Pre-14.0.0 environment names: each WF_* still seeds its LV_* counterpart
+# unless that is set already, so shell profiles and daemons started before the
+# rename keep working.
+for _wf in $(compgen -e | grep '^WF_' || true); do
+  _lv="LV_${_wf#WF_}"; [ -n "${!_lv+x}" ] || export "$_lv=${!_wf}"
+done; unset _wf _lv
+
 # claude-workflow installer
 # Installs the workflow skills, templates, and folder structure into a project.
 
@@ -15,7 +22,7 @@ for arg in "$@"; do
         *)  TARGET_DIR="$arg" ;;
     esac
 done
-[ "${WF_INSTALL_NO_COMMIT:-0}" = "1" ] && INSTALL_COMMIT=false
+[ "${LV_INSTALL_NO_COMMIT:-0}" = "1" ] && INSTALL_COMMIT=false
 
 # Colors
 GREEN='\033[0;32m'
@@ -53,7 +60,7 @@ atomic_write() {
 #
 # Skills cite `docs/*.md` as the authority for the contracts they follow — guard
 # ordering for an exit path, worktrees for what a feature checkout may hold —
-# and link them relatively from `.claude/skills/wf-*/SKILL.md`, which resolves
+# and link them relatively from `.claude/skills/lv-*/SKILL.md`, which resolves
 # to `.claude/docs/`. Nothing ever put them there. Every one of those links has
 # been dead in every client since the day it was written, and a worker that
 # follows one to settle a question finds no file and no directory: client-b
@@ -73,7 +80,7 @@ install_referenced_docs() {
     mkdir -p "$docs_dest"
     for name in $wanted; do
         [ -f "$SCRIPT_DIR/docs/$name" ] || continue
-        atomic_install "$SCRIPT_DIR/docs/$name" "$docs_dest/$name"
+        render_ids < "$SCRIPT_DIR/docs/$name" | atomic_write "$docs_dest/$name"
         count=$((count + 1))
     done
     # Subtractive, like the rest of the generated harness: a doc the skills
@@ -125,7 +132,7 @@ gen_stage_begin() {
 
 gen_publish() {
     # Publish the staged build, then flip the pointer. THE FLIP DELIBERATELY
-    # PRECEDES the replacement of wf-exec.sh and version-map.txt in both
+    # PRECEDES the replacement of lv-exec.sh and version-map.txt in both
     # install paths — see docs/atomic-deploy.md, "Flip order". Reversing it
     # pairs a new dispatcher with a pointer that still names the outgoing
     # build, which is the one combination that does not resolve.
@@ -141,12 +148,33 @@ gen_publish() {
 build_in_use() {
     # Is any live process running out of this build? Its path appears verbatim
     # in the command line of anything launched from it — the daemon
-    # (`bash .../gen/<build>/v2.00/wf-orchestrate.sh --daemon`) and every
-    # worker wrapper wf-spawn.sh detaches, which carries the build's
-    # wf-event.sh for the whole life of the run.
+    # (`bash .../gen/<build>/v2.00/lv-orchestrate.sh --daemon`) and every
+    # worker wrapper lv-spawn.sh detaches, which carries the build's
+    # lv-event.sh for the whole life of the run.
     local base="$1"
     command -v pgrep >/dev/null 2>&1 || return 1
     pgrep -f "/gen/$base/" >/dev/null 2>&1
+}
+
+# ── The 14.0.0 prefix rename (wf- → lv-) ─────────────────────────────────
+#
+# Every shipped skill and top-level script was renamed. The install loops write
+# only lv-* names, so without this the old wf-* copies would stay invocable
+# beside their successors — two /spec skills, one of them frozen at 13.x. Only
+# the old names of skills this library ships are removed: a project's own wf-*
+# skill, if it has one, is its business. scripts/wf-exec.sh is not removed; it
+# is reinstalled as a shim that hands off to lv-exec.sh.
+prune_legacy_prefix() {
+    local d n
+    for d in "$SCRIPT_DIR/skills"/lv-*/; do
+        n=$(basename "$d"); n="${n#lv-}"
+        [ "$n" = tray ] && n=board
+        if [ -d "$TARGET_DIR/.claude/skills/wf-$n" ]; then
+            rm -rf "$TARGET_DIR/.claude/skills/wf-$n"
+            echo -e "${YELLOW}  Removed /wf-$n — renamed /$(basename "$d") in 14.0.0${NC}"
+        fi
+    done
+    rm -f "$TARGET_DIR/scripts/wf-prune-versions.sh"
 }
 
 gen_retire() {
@@ -160,7 +188,7 @@ gen_retire() {
     # deploys inside a minute retired a build under both — client-a WFI-256
     # (a finished worker lost its exit event) and WFI-257 (the daemon kept
     # sweeping from a deleted tree, every spawn rc=127, for 71 minutes while
-    # reporting itself healthy). Both now also defend themselves — wf-spawn.sh
+    # reporting itself healthy). Both now also defend themselves — lv-spawn.sh
     # falls back to the dispatcher, the daemon re-execs onto the live build —
     # but a deploy that deletes a tree out from under a running process is the
     # cause, and this is where it is prevented.
@@ -255,6 +283,24 @@ case "$ROLE" in
         exit 1 ;;
 esac
 
+# The artifact ID prefix map (scripts/v2.00/lv-ids.sh). Checked before anything
+# is written: a malformed prefix, or one claimed by two kinds, would have the
+# pipeline issue IDs it cannot read back.
+if ! IDS_ERR=$( cd "$TARGET_DIR" && bash "$SCRIPT_DIR/scripts/v2.00/lv-ids.sh" check 2>&1 >/dev/null ); then
+    RED='\033[0;31m'
+    echo -e "${RED}ERROR: the ids: map in $CONFIG_FILE is not usable:${NC}"
+    printf '%s\n' "$IDS_ERR" | sed 's/^/    /'
+    exit 1
+fi
+TARGET_PLAN_RE=$( cd "$TARGET_DIR" && bash "$SCRIPT_DIR/scripts/v2.00/lv-ids.sh" match plan )
+
+# render_ids — a filter: the default ID prefixes in prose become the ones this
+# project issues, so a skill that says "PLN-NNN" says "LOAF-NNN" where the map
+# renames plans. A straight copy under the default map.
+render_ids() {
+    ( cd "$TARGET_DIR" && bash "$SCRIPT_DIR/scripts/v2.00/lv-ids.sh" render )
+}
+
 # project_slug is required as of workflow v1.33.0 — it namespaces Docker
 # compose projects so multiple clients can coexist on one Docker daemon.
 if [ -z "$PROJECT_SLUG" ]; then
@@ -280,10 +326,10 @@ fi
 # exists for.
 #
 # It still needs the harness on disk, for two reasons that pull in the same
-# direction. First, filing has to go through the TARGET's own wf-bug-new.sh —
+# direction. First, filing has to go through the TARGET's own lv-bug-new.sh —
 # that is what makes the ID come from the target's own counter and the file land
-# where the target's own /wf-spec already looks (docs/cross-project-reports.md).
-# Reaching that requires wf-dep-notify.sh here. Second, a coordinator that has
+# where the target's own /lv-spec already looks (docs/cross-project-reports.md).
+# Reaching that requires lv-dep-notify.sh here. Second, a coordinator that has
 # to reason about work in five pipelines needs an accurate description of how
 # those pipelines behave, and the only description that cannot drift is one the
 # library regenerates on every deploy. Hence WORKFLOW-coordinator.md.
@@ -304,7 +350,7 @@ if [ "$ROLE" = "coordinator" ]; then
     # PATH-adjacent disk, and the only reason to withhold it is that running it
     # here is a bad idea — the same argument install.sh already makes for
     # pruning stale scripts out of a client.
-    COORD_SCRIPTS="wf-orch-lib.sh wf-lock.sh wf-dep-notify.sh wf-dep-bug.sh wf-issue.sh"
+    COORD_SCRIPTS="lv-orch-lib.sh lv-lock.sh lv-ids.sh lv-dep-notify.sh lv-dep-bug.sh lv-issue.sh"
 
     echo "Installing scripts..."
     # Built into a staging directory nothing resolves, then published and
@@ -317,10 +363,10 @@ if [ "$ROLE" = "coordinator" ]; then
     for version_dir in "$SCRIPT_DIR/scripts"/v*/; do
         [ -d "$version_dir" ] || continue
         # Only a generation that actually ships the filing path. An older
-        # folder without it would install as an empty directory that wf-exec.sh
+        # folder without it would install as an empty directory that lv-exec.sh
         # could still resolve to, and then fail with "missing or not
         # executable" on every call.
-        [ -f "$version_dir/wf-dep-notify.sh" ] || continue
+        [ -f "$version_dir/lv-dep-notify.sh" ] || continue
         folder_name=$(basename "$version_dir")
         COORD_FOLDERS="$COORD_FOLDERS $folder_name"
         DEST_VDIR="$GEN_STAGE/$folder_name"
@@ -338,17 +384,17 @@ if [ "$ROLE" = "coordinator" ]; then
 
     if [ -z "$COORD_FOLDERS" ]; then
         RED='\033[0;31m'
-        echo -e "${RED}ERROR: no script generation in the library ships wf-dep-notify.sh${NC}"
+        echo -e "${RED}ERROR: no script generation in the library ships lv-dep-notify.sh${NC}"
         exit 1
     fi
 
     gen_publish
 
-    for f in wf-exec.sh wf-prune-versions.sh; do
+    for f in lv-exec.sh lv-prune-versions.sh wf-exec.sh; do
         atomic_install "$SCRIPT_DIR/scripts/$f" "$TARGET_DIR/scripts/$f" +x
     done
     atomic_install "$SCRIPT_DIR/scripts/version-map.txt" "$TARGET_DIR/scripts/version-map.txt"
-    echo -e "${GREEN}  Installed scripts/wf-exec.sh + version-map.txt${NC}"
+    echo -e "${GREEN}  Installed scripts/lv-exec.sh + version-map.txt${NC}"
 
     gen_retire
 
@@ -361,7 +407,7 @@ if [ "$ROLE" = "coordinator" ]; then
     # their contents are cut back to the slice.
     for existing_dir in "$TARGET_DIR/scripts"/v*/; do
         [ -d "$existing_dir" ] || continue
-        for existing in "$existing_dir"wf-*.sh; do
+        for existing in "$existing_dir"lv-*.sh "$existing_dir"wf-*.sh; do
             [ -f "$existing" ] || continue
             base="${existing##*/}"
             case " $COORD_SCRIPTS " in *" $base "*) continue ;; esac
@@ -372,23 +418,25 @@ if [ "$ROLE" = "coordinator" ]; then
 
     # The one skill: how to file into the projects this one coordinates.
     echo "Installing skills..."
-    COORD_SKILL_DIR="$TARGET_DIR/.claude/skills/wf-dep-notify"
+    COORD_SKILL_DIR="$TARGET_DIR/.claude/skills/lv-dep-notify"
     mkdir -p "$COORD_SKILL_DIR"
     sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
-        "$SCRIPT_DIR/skills/wf-dep-notify/SKILL.md" | atomic_write "$COORD_SKILL_DIR/SKILL.md"
-    echo -e "${GREEN}  Installed /wf-dep-notify${NC}"
+        "$SCRIPT_DIR/skills/lv-dep-notify/SKILL.md" | render_ids | atomic_write "$COORD_SKILL_DIR/SKILL.md"
+    echo -e "${GREEN}  Installed /lv-dep-notify${NC}"
 
     # Same rule as a client, over a set of one skill: a coordinator gets only
-    # the docs /wf-dep-notify actually cites, and loses the pipeline docs a
+    # the docs /lv-dep-notify actually cites, and loses the pipeline docs a
     # former client install left behind.
     install_referenced_docs "$COORD_SKILL_DIR" "$TARGET_DIR/.claude/docs"
+
+    prune_legacy_prefix
 
     # Pipeline skills from a former client install. Left in place they are
     # invocable, and every one of them starts by grepping a REGISTRY.md that
     # does not exist here.
-    for stale in "$TARGET_DIR/.claude/skills"/wf-*/; do
+    for stale in "$TARGET_DIR/.claude/skills"/lv-*/; do
         [ -d "$stale" ] || continue
-        [ "$(basename "$stale")" = "wf-dep-notify" ] && continue
+        [ "$(basename "$stale")" = "lv-dep-notify" ] && continue
         rm -rf "$stale"
         echo -e "${YELLOW}  Removed /$(basename "$stale") — pipeline skill, not installed on a coordinator${NC}"
     done
@@ -402,11 +450,11 @@ if [ "$ROLE" = "coordinator" ]; then
     # so it cannot drift from the harness the coordinated projects are running.
     sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
         -e "s|{{workflow_version}}|$WORKFLOW_VERSION|g" \
-        "$SCRIPT_DIR/templates/WORKFLOW-coordinator.md" | atomic_write "$TARGET_DIR/WORKFLOW.md"
+        "$SCRIPT_DIR/templates/WORKFLOW-coordinator.md" | render_ids | atomic_write "$TARGET_DIR/WORKFLOW.md"
     echo -e "${GREEN}  Installed WORKFLOW.md (coordinator entry point)${NC}"
 
     if [ ! -f "$TARGET_DIR/WORKFLOW-ISSUES.md" ]; then
-        ( cd "$TARGET_DIR" && ./scripts/wf-exec.sh wf-issue.sh --count >/dev/null 2>&1 ) || true
+        ( cd "$TARGET_DIR" && ./scripts/lv-exec.sh lv-issue.sh --count >/dev/null 2>&1 ) || true
         [ -f "$TARGET_DIR/WORKFLOW-ISSUES.md" ] \
           && echo -e "${GREEN}  Seeded WORKFLOW-ISSUES.md (harness problems get reported here)${NC}"
     fi
@@ -414,7 +462,7 @@ if [ "$ROLE" = "coordinator" ]; then
     # Same rule as a client: what the harness generates, git does not track. The
     # list is shorter because the install is — but not as short as it was:
     # `.claude/orchestrator/` is created at RUNTIME in a coordinator checkout
-    # too (wf-issue.sh reaches it through wf-orch-lib.sh), and the rule for it
+    # too (lv-issue.sh reaches it through lv-orch-lib.sh), and the rule for it
     # was only appended on the client path, which a coordinator never reaches.
     # coordinator carried `?? .claude/orchestrator/` in every git status from the day it
     # first filed an issue — permanent noise, which trains an operator to skim
@@ -423,12 +471,14 @@ if [ "$ROLE" = "coordinator" ]; then
     GITIGNORE="$TARGET_DIR/.gitignore"
     COORD_IGNORED=0
     for pattern in \
+        ".claude/skills/lv-*/" \
         ".claude/skills/wf-*/" \
         ".claude/docs/" \
         ".claude/workflow-source" \
+        "scripts/lv-exec.sh" \
         "scripts/wf-exec.sh" \
         "scripts/version-map.txt" \
-        "scripts/wf-prune-versions.sh" \
+        "scripts/lv-prune-versions.sh" \
         "scripts/v*/" \
         "scripts/gen/" \
         "scripts/current" \
@@ -477,7 +527,7 @@ if [ "$ROLE" = "coordinator" ]; then
     echo -e "${GREEN}Coordinator installation complete!${NC}"
     echo ""
     echo "Available skill:"
-    echo "  /wf-dep-notify  — file a request, bug or notice into a coordinated project"
+    echo "  /lv-dep-notify  — file a request, bug or notice into a coordinated project"
     echo ""
     echo "This project runs no pipeline of its own. See WORKFLOW.md for what it may"
     echo "and may not do to a project it coordinates."
@@ -514,7 +564,7 @@ if ! grep -q "^orchestrator:" "$CONFIG_FILE" 2>/dev/null; then
     echo -e "${GREEN}  Added orchestrator: block to $CONFIG_FILE (disabled by default)${NC}"
 fi
 
-# The test-account keys existed only in wf-docker-up.sh's source comments, so
+# The test-account keys existed only in lv-docker-up.sh's source comments, so
 # no project ever found them: five clients on 5.2.4, zero hits for
 # test_account. The fix for "the tester gets a URL and no account" shipped in
 # the library and never reached the config it reads (WFI-074).
@@ -535,7 +585,7 @@ if ! grep -q "^testScopeFullSuiteGlobs:" "$CONFIG_FILE" 2>/dev/null; then
 fi
 
 # v3.0: manual-test gating keys on the surface the diff touches, not on how
-# many `#### Manual` criteria the planner wrote. Absent, wf-manual-gate.sh
+# many `#### Manual` criteria the planner wrote. Absent, lv-manual-gate.sh
 # falls back to pre-3.0 behavior (stop whenever anything manual remains).
 if ! grep -q "^manualTestGate:" "$CONFIG_FILE" 2>/dev/null; then
     printf '\n' >> "$CONFIG_FILE"
@@ -553,7 +603,7 @@ if ! grep -q "^specApproval:" "$CONFIG_FILE" 2>/dev/null; then
 fi
 
 # v6.29: the paths where THIS project talks about a plan without implementing
-# it. Absent, wf-prior-work.sh uses its four built-ins alone — today's
+# it. Absent, lv-prior-work.sh uses its four built-ins alone — today's
 # behavior — so nothing changes for an existing client until they list one.
 if ! grep -q "^priorWork:" "$CONFIG_FILE" 2>/dev/null; then
     printf '\n' >> "$CONFIG_FILE"
@@ -624,8 +674,8 @@ else
     fi
 
     # v5 migration: Tags and Deps. The seeded header shipped 7 columns while
-    # wf-spec was already writing 9-field rows, so header and rows disagreed
-    # from the first plan onwards — wf-set-tags.sh patched it per row, which
+    # lv-spec was already writing 9-field rows, so header and rows disagreed
+    # from the first plan onwards — lv-set-tags.sh patched it per row, which
     # hid the mismatch instead of fixing it.
     if grep -qE '^\| ID \|.*\| WF \|' "$REGISTRY_DEST" && ! grep -qE '^\| ID \|.*\| Tags \|' "$REGISTRY_DEST"; then
         echo "  Migrating REGISTRY.md → adding Tags and Deps columns"
@@ -634,7 +684,7 @@ else
              {
                if(FNR==hdr){sub(/\|[[:space:]]*$/, "| Tags | Deps |"); print; next}
                if(FNR==sep){sub(/\|[[:space:]]*$/, "|-|-|"); print; next}
-               # Only pad rows that are still 7-field; wf-set-tags.sh may
+               # Only pad rows that are still 7-field; lv-set-tags.sh may
                # already have widened some of them.
                if(/^\| (PLN|BUG|BRF)-/){
                  n=gsub(/\|/,"|"); if(n==8){sub(/\|[[:space:]]*$/, "| — | — |")}
@@ -680,7 +730,7 @@ for f in "$SCRIPT_DIR/templates/plans/TEMPLATE.md" "$SCRIPT_DIR/templates/plans/
             -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
             -e "s|{{production_logs_url}}|$PRODUCTION_LOGS_URL|g" \
             -e "s|{{production_url}}|$PRODUCTION_URL|g" \
-            "$f" > "$DEST.new"
+            "$f" | render_ids > "$DEST.new"
 
         if [ "$REPLACING" = true ]; then
             # Keep a copy only when git isn't already keeping one. plans/ is
@@ -708,9 +758,9 @@ done
 # Salvaged from /wf-init, which is retired below. It was the only thing in that
 # skill that worked and was not duplicated elsewhere, and it belongs here: an
 # install is when a project is being set up, which is when a missing `release`
-# is cheap to fix. /wf-release and /wf-deploy both assume the branch exists.
+# is cheap to fix. /lv-release and /lv-deploy both assume the branch exists.
 if ! git -C "$TARGET_DIR" show-ref --verify --quiet refs/heads/release 2>/dev/null; then
-    echo -e "${YELLOW}  ⚠️  No local 'release' branch — /wf-release and /wf-deploy need one:${NC}"
+    echo -e "${YELLOW}  ⚠️  No local 'release' branch — /lv-release and /lv-deploy need one:${NC}"
     echo "       git checkout develop && git checkout -b release && git push origin release"
 fi
 
@@ -730,12 +780,12 @@ fi
 RETIRED_SKILLS=(
     # wf-review — retired v10.6.0. It instructed the agent to write the `## Review`
     # verdict, decide Approved/Blocked, advance the plan to `ready` and commit.
-    # wf-spec:566 states the opposite as non-optional ("The spawning session writes
+    # lv-spec:566 states the opposite as non-optional ("The spawning session writes
     # `## Review`, and stamps it. Never the agent"), earned by client-b WFI-017/018,
-    # and wf-review-guard.sh exists solely to catch that write. It was also orphaned
+    # and lv-review-guard.sh exists solely to catch that write. It was also orphaned
     # — nothing in skills/, scripts/, templates/ or docs/ invoked it — while staying
     # user_invocable in nine clients, and its findings.md format was the pre-schema-v4
-    # FND table that wf-findings-route.sh cannot read. Review now runs inside wf-spec.
+    # FND table that lv-findings-route.sh cannot read. Review now runs inside lv-spec.
     "wf-review"
 
     # wf-init, wf-next — retired v12.0.0. /wf-init's job was to set TERMINAL_ROLE
@@ -745,11 +795,11 @@ RETIRED_SKILLS=(
     # the only branch reachable, and it told the user to run /wf-init. Unbuildable
     # as designed rather than broken: no skill can set an env var that outlives its
     # own call, so any fix is a rewrite wearing the old name, to restore "type
-    # /wf-next instead of /wf-spec" in a library whose orchestrator already routes
+    # /wf-next instead of /lv-spec" in a library whose orchestrator already routes
     # by registry state. Neither file had been touched since April, across six
     # major versions. The 4-terminal manual mode is unaffected: no skill requires
-    # a role, every one enters on a REGISTRY grep, and /wf-spec, /wf-implement and
-    # /wf-test are invoked directly. wf-init's logging setup was already dead too
+    # a role, every one enters on a REGISTRY grep, and /lv-spec, /lv-implement and
+    # /lv-test are invoked directly. wf-init's logging setup was already dead too
     # (it wrote .logs/SESSION_TIMESTAMP; .logs-utils.sh reads .logs/SESSION_ID, is
     # never deployed, and no skill calls log_start). Its one unique working
     # behaviour — the release-branch warning — is salvaged below.
@@ -763,6 +813,8 @@ for retired in "${RETIRED_SKILLS[@]}"; do
         echo -e "${YELLOW}  Removed /$retired — retired from the library${NC}"
     fi
 done
+
+prune_legacy_prefix
 
 # Copy and templatize skills
 echo "Installing skills..."
@@ -783,7 +835,7 @@ for skill_dir in "$SCRIPT_DIR/skills"/*/; do
         -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
         -e "s|{{production_logs_url}}|$PRODUCTION_LOGS_URL|g" \
         -e "s|{{production_url}}|$PRODUCTION_URL|g" \
-        "$skill_dir/SKILL.md" | atomic_write "$DEST_DIR/SKILL.md"
+        "$skill_dir/SKILL.md" | render_ids | atomic_write "$DEST_DIR/SKILL.md"
 
     echo -e "${GREEN}  Installed /$(basename "$skill_dir")${NC}"
 done
@@ -831,7 +883,7 @@ HARNESS_IGNORED=0
 # deploy writes these; the library is their source of truth. Tracking them made
 # every deploy dirty every client — 253 files across five repos, none written
 # by a human — and put a git-managed path under a second, independent writer.
-# wf-worktree-sparse.sh states where that leads: "Excluding a file you also
+# lv-worktree-sparse.sh states where that leads: "Excluding a file you also
 # write is not a stricter policy than tracking it; it is a broken one." The
 # same is true of tracking it. See docs/untracked-harness.md.
 #
@@ -839,9 +891,10 @@ HARNESS_IGNORED=0
 # .claude/workflow-version (the one-line stamp saying which harness a commit
 # was made under), WORKFLOW.md (the entry contract), and plans/ + bugs/.
 #
-# The `wf-` prefix on the skills glob is load-bearing: a project's own skills
+# The `lv-` prefix on the skills glob is load-bearing: a project's own skills
 # sit in the same directory and are its source, not ours.
 for pattern in \
+    ".claude/skills/lv-*/" \
     ".claude/skills/wf-*/" \
     ".claude/docs/" \
     ".claude/workflow.md" \
@@ -849,9 +902,10 @@ for pattern in \
     ".claude/settings.local.json" \
     ".claude/on-implement-commit.sh" \
     ".claude/on-verify-trigger.sh" \
+    "scripts/lv-exec.sh" \
     "scripts/wf-exec.sh" \
     "scripts/version-map.txt" \
-    "scripts/wf-prune-versions.sh" \
+    "scripts/lv-prune-versions.sh" \
     "scripts/v*/" \
     "scripts/gen/" \
     "scripts/current" ; do
@@ -862,16 +916,16 @@ for pattern in \
 done
 if [ "$HARNESS_IGNORED" -gt 0 ]; then
     echo -e "${GREEN}  Added $HARNESS_IGNORED generated-harness pattern(s) to .gitignore${NC}"
-    if git -C "$TARGET_DIR" ls-files --error-unmatch scripts/wf-exec.sh >/dev/null 2>&1; then
+    if git -C "$TARGET_DIR" ls-files --error-unmatch scripts/lv-exec.sh >/dev/null 2>&1; then
         echo -e "${YELLOW}  The harness is still TRACKED here. To finish the migration:${NC}"
         # --ignore-unmatch is not optional: `git rm` is atomic, so a single
         # pathspec matching nothing tracked (a client that already ignores
         # .claude/skills/*, as app did) aborts the WHOLE command and untracks
         # nothing — silently, if stderr is redirected.
         echo "    git rm -r --cached --quiet --ignore-unmatch \\"
-        echo "      .claude/skills/wf-* .claude/workflow.md \\"
+        echo "      .claude/skills/lv-* .claude/workflow.md \\"
         echo "      .claude/on-implement-commit.sh .claude/on-verify-trigger.sh \\"
-        echo "      scripts/wf-exec.sh scripts/version-map.txt scripts/wf-prune-versions.sh \\"
+        echo "      scripts/lv-exec.sh scripts/version-map.txt scripts/lv-prune-versions.sh \\"
         echo "      scripts/v* scripts/gen scripts/current"
         echo "    git commit -m 'chore: stop tracking the generated workflow harness'"
     fi
@@ -879,7 +933,7 @@ fi
 
 # Feature worktrees.
 #
-# `feature-branches/` is the workflow's own convention — wf-worktree-sparse.sh
+# `feature-branches/` is the workflow's own convention — lv-worktree-sparse.sh
 # creates it — so ignoring it is the harness's job, not each project's. Left
 # out, it sits untracked on develop from the moment the first plan gets a
 # worktree, and a `git add -A` on develop commits an entire feature worktree
@@ -892,8 +946,8 @@ fi
 # Release/deploy worktrees.
 #
 # `release-branches/` is the same idea as `feature-branches/` above, but
-# permanent rather than per-plan: `/wf-release` and `/wf-deploy` pin `release`
-# and `main` to their own worktrees here (`wf-worktree-pin.sh`) instead of
+# permanent rather than per-plan: `/lv-release` and `/lv-deploy` pin `release`
+# and `main` to their own worktrees here (`lv-worktree-pin.sh`) instead of
 # borrowing the shared develop checkout. See docs/release-worktrees.md. Left
 # out of .gitignore, the same class of accident applies — a `git add -A` on
 # develop would commit an entire pinned worktree into the planning branch.
@@ -912,12 +966,12 @@ fi
 #
 # A tracked pointer on develop is not cosmetic. `git worktree add` materialises
 # tracked files, so every NEW worktree starts life pointing at someone else's
-# finished plan until step 6 of wf-implement overwrites it — and that overwrite
+# finished plan until step 6 of lv-implement overwrites it — and that overwrite
 # then shows as a modification to a tracked file, which the next `git add -u`
 # commits and the next merge propagates. The loop feeds itself.
 #
 # Per docs/worktrees.md this is the gitignored row: the harness generates it,
-# and a session reads it off its own disk. wf-implement writes it into the
+# and a session reads it off its own disk. lv-implement writes it into the
 # worktree; nothing else needs it to exist.
 if ! grep -qxF ".plan-ref" "$GITIGNORE" 2>/dev/null; then
     echo ".plan-ref" >> "$GITIGNORE"
@@ -957,11 +1011,11 @@ echo -e "${GREEN}  Created .claude/orchestrator/ (gitignored)${NC}"
 #
 # In a git WORKTREE, `.git` is a FILE holding a `gitdir:` pointer, so
 # `$TARGET_DIR/.git/hooks/post-commit` is not a path at all and `cp` fails with
-# "Not a directory". client-a's WFI-191: /wf-release step 5a's documented
+# "Not a directory". client-a's WFI-191: /lv-release step 5a's documented
 # recovery ran install.sh against a dedicated release worktree, died right
 # here, and left the harness HALF INSTALLED — .claude/skills and
-# .claude/orchestrator written, wf-exec.sh and scripts/v*/ never reached. The
-# recheck still said HARNESS MISSING, with no wf-* script on disk to run. A
+# .claude/orchestrator written, lv-exec.sh and scripts/v*/ never reached. The
+# recheck still said HARNESS MISSING, with no lv-* script on disk to run. A
 # project with a release worktree hits that on every release.
 #
 # Hooks are shared by every worktree, so the right directory is always the
@@ -983,9 +1037,9 @@ HOOK="$GIT_COMMON_DIR/hooks/post-commit"
 # And it is a WARNING when it fails, not the end of the install.
 #
 # The other half of WFI-191: the hook is a convenience — it triggers the verify
-# agent — and `scripts/wf-exec.sh` is the harness itself. Under `set -e` this
+# agent — and `scripts/lv-exec.sh` is the harness itself. Under `set -e` this
 # block aborted before the dispatcher was ever written, so a recoverable
-# problem with an optional file cost the project every wf-* script. Whatever
+# problem with an optional file cost the project every lv-* script. Whatever
 # goes wrong here, the install continues and says what was lost.
 install_post_commit_hook() {
     mkdir -p "$GIT_COMMON_DIR/hooks" || return 1
@@ -1023,7 +1077,7 @@ fi
 #
 # SessionStart(compact) is the load-bearing one: it is the only event whose
 # output reaches the MODEL after a compaction. PostCompact's stdout is shown to
-# the human and nothing else. See docs/rehydration.md and wf-rehydrate.sh.
+# the human and nothing else. See docs/rehydration.md and lv-rehydrate.sh.
 #
 # settings.json is the client's file, not ours — it may hold their permissions,
 # env and their own hooks. So this MERGES rather than overwriting; the rules are
@@ -1036,18 +1090,18 @@ SETTINGS="$TARGET_DIR/.claude/settings.json"
 # writes it. In the main worktree that is fine: the write is committed there
 # and git carries it into every worktree afterwards.
 #
-# In a LINKED worktree it is the collision wf-worktree-sparse.sh names —
+# In a LINKED worktree it is the collision lv-worktree-sparse.sh names —
 # "excluding a file you also write is not a stricter policy than tracking it;
 # it is a broken one" — with `tracked` in place of `excluded`. Writing a
 # tracked path leaves that worktree dirty against its own branch, and the
 # dirt is invisible until something tries to merge.
 #
-# client-b WFI-029: /wf-deploy step 6 runs wf-harness-restore.sh inside
+# client-b WFI-029: /lv-deploy step 6 runs lv-harness-restore.sh inside
 # release-branches/main, which re-runs this installer there; the merge wrote
 # the promote-guard block that the incoming `release` ALSO carried. Step 7's
 # `git merge -X theirs --no-ff release` then aborted — "Your local changes to
 # .claude/settings.json would be overwritten by merge" — AFTER
-# wf-deploy-guard.sh --arm had already succeeded, leaving main armed but
+# lv-deploy-guard.sh --arm had already succeeded, leaving main armed but
 # unmerged. The local change was byte-identical to `git show
 # release:.claude/settings.json`; the merge could not know that, and refused.
 #
@@ -1061,18 +1115,18 @@ if git -C "$TARGET_DIR" rev-parse --git-dir >/dev/null 2>&1; then
     _gc=$(cd "$TARGET_DIR" && cd "$(git rev-parse --git-common-dir)" && pwd -P)
     [ "$_gd" = "$_gc" ] || IS_LINKED_WORKTREE=1
 fi
-REHYDRATE_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-rehydrate.sh --hook"
-GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-guard-write.sh"
-PROMOTE_GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-guard-promote.sh"
+REHYDRATE_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/lv-exec.sh lv-rehydrate.sh --hook"
+GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/lv-exec.sh lv-guard-write.sh"
+PROMOTE_GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/lv-exec.sh lv-guard-promote.sh"
 GUARD_LINE="    PreToolUse    matcher Edit|Write|NotebookEdit  → $GUARD_CMD"
 PROMOTE_GUARD_LINE="    PreToolUse    matcher Bash                    → $PROMOTE_GUARD_CMD"
-BASELINE_GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/wf-exec.sh wf-guard-baseline.sh"
+BASELINE_GUARD_CMD="\"\$CLAUDE_PROJECT_DIR\"/scripts/lv-exec.sh lv-guard-baseline.sh"
 BASELINE_GUARD_LINE="    PreToolUse    matcher *                       → $BASELINE_GUARD_CMD  (fail closed for workers; coordinator WFI-005)"
 if [ "$IS_LINKED_WORKTREE" -eq 1 ]; then
     echo -e "${YELLOW}  Linked worktree — leaving .claude/settings.json to git (WFI-029)${NC}"
 elif command -v python3 >/dev/null 2>&1; then
     # `|| true` for the same reason the git hook above is non-fatal (WFI-191):
-    # a merge that dies must not abort the install before scripts/wf-exec.sh is
+    # a merge that dies must not abort the install before scripts/lv-exec.sh is
     # written. An empty result falls through to the catch-all below and warns.
     SETTINGS_RESULT=$(SETTINGS_PATH="$SETTINGS" REHYDRATE_CMD="$REHYDRATE_CMD" \
         GUARD_CMD="$GUARD_CMD" PROMOTE_GUARD_CMD="$PROMOTE_GUARD_CMD" \
@@ -1132,7 +1186,7 @@ fi
 # branch names. It also made the documented row-based auto-merge rationale
 # describe a mechanism that could not occur.
 #
-# Feature branches still never see it: wf-worktree-sparse.sh excludes plans/**
+# Feature branches still never see it: lv-worktree-sparse.sh excludes plans/**
 # from every feature worktree, so registry churn cannot reach a feature branch
 # or arrive as a conflict when one merges back.
 GITIGNORE="$TARGET_DIR/.gitignore"
@@ -1165,7 +1219,7 @@ fi
 # Install workflow scripts — immutable builds (v9.0+).
 #
 # Each scripts/v*/ in the library is a complete, frozen snapshot, and the
-# unversioned dispatcher (scripts/wf-exec.sh) routes plans to the right one via
+# unversioned dispatcher (scripts/lv-exec.sh) routes plans to the right one via
 # scripts/version-map.txt. That much is unchanged. What changed in v9.0.0 is
 # WHERE the client's copy lands: a build directory named for this deploy, which
 # is published by one rename and then never written again. Nothing resolves it
@@ -1180,7 +1234,7 @@ for version_dir in "$SCRIPT_DIR/scripts"/v*/; do
     folder_name=$(basename "$version_dir")
     DEST_VDIR="$GEN_STAGE/$folder_name"
     mkdir -p "$DEST_VDIR"
-    for script in "$version_dir"/wf-*.sh; do
+    for script in "$version_dir"/lv-*.sh; do
         [ -f "$script" ] || continue
         # ${script##*/} rather than basename, and one chmod for the folder
         # rather than one per file: this loop runs ~80 times per client and
@@ -1196,9 +1250,9 @@ for version_dir in "$SCRIPT_DIR/scripts"/v*/; do
 done
 
 # No stale-script pruning pass any more, and none is possible: a build starts
-# empty, so a wf-*.sh the library no longer ships simply is not in it. That
+# empty, so a lv-*.sh the library no longer ships simply is not in it. That
 # pass existed because the old layout wrote into a folder it did not own the
-# whole contents of — four clients carried a deleted wf-infra-sync.sh from
+# whole contents of — four clients carried a deleted lv-infra-sync.sh from
 # August until v6.7.0 because deploy had no way to remove one. Residue is now
 # ruled out by construction rather than swept up afterwards.
 
@@ -1208,7 +1262,7 @@ gen_publish
 # the flip. An old dispatcher paired with a new pointer resolves correctly (it
 # ignores scripts/current and uses the legacy folder, which is still the old
 # harness); a new dispatcher paired with an old pointer would not.
-for f in wf-exec.sh wf-prune-versions.sh; do
+for f in lv-exec.sh lv-prune-versions.sh wf-exec.sh; do
     atomic_install "$SCRIPT_DIR/scripts/$f" "$TARGET_DIR/scripts/$f" +x
     echo -e "${GREEN}  Installed scripts/$f${NC}"
 done
@@ -1236,7 +1290,7 @@ echo -e "${GREEN}  Stamped workflow version $WORKFLOW_VERSION → .claude/workfl
 # TRACKED the harness — necessarily a ref from before the v5.0.0 untrack commit,
 # i.e. a v3.3.0-era harness — and installed it into a project stamped 6.2.1, with
 # no version check and a success message either way. Three major versions of
-# stale wf-* scripts, silently. Re-running the installer is the correct recovery
+# stale lv-* scripts, silently. Re-running the installer is the correct recovery
 # whenever the library is reachable; this file is what makes it reachable.
 #
 # Untracked, like the rest of the generated harness: it is a local fact about
@@ -1245,30 +1299,30 @@ printf '%s\n' "$SCRIPT_DIR" | atomic_write "$TARGET_DIR/.claude/workflow-source"
 
 # WORKFLOW.md at the project root — the entry-point contract for anyone (or
 # anything) that lands in this repo without prior context: how work enters the
-# pipeline, which hooks fire automatically, and the wf-orchestrate.sh exit codes
+# pipeline, which hooks fire automatically, and the lv-orchestrate.sh exit codes
 # an external process needs in order to drive a plan.
 # Regenerated on every install so it can't drift from the installed version.
 sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
     -e "s|{{workflow_version}}|$WORKFLOW_VERSION|g" \
-    "$SCRIPT_DIR/templates/WORKFLOW.md" | atomic_write "$TARGET_DIR/WORKFLOW.md"
+    "$SCRIPT_DIR/templates/WORKFLOW.md" | render_ids | atomic_write "$TARGET_DIR/WORKFLOW.md"
 echo -e "${GREEN}  Installed WORKFLOW.md (project-root entry point)${NC}"
 
 # Seed WORKFLOW-ISSUES.md so the reporting channel is discoverable before the
-# first problem, not after. Created via wf-issue.sh itself (--count is a no-op
+# first problem, not after. Created via lv-issue.sh itself (--count is a no-op
 # read that writes the header when missing) so the format has exactly one owner
 # and can't drift between the script and the installer.
 if [ ! -f "$TARGET_DIR/WORKFLOW-ISSUES.md" ]; then
-    ( cd "$TARGET_DIR" && ./scripts/wf-exec.sh wf-issue.sh --count >/dev/null 2>&1 ) || true
+    ( cd "$TARGET_DIR" && ./scripts/lv-exec.sh lv-issue.sh --count >/dev/null 2>&1 ) || true
     [ -f "$TARGET_DIR/WORKFLOW-ISSUES.md" ] \
       && echo -e "${GREEN}  Seeded WORKFLOW-ISSUES.md (harness problems get reported here)${NC}"
 fi
 
 # ── Propagate to feature worktrees ───────────────────────────────────────────
 # Resolve a worktree's plan WF stamp → script_folder using the same algorithm
-# as wf-exec.sh. Only that folder (plus the unversioned dispatcher + map) gets
+# as lv-exec.sh. Only that folder (plus the unversioned dispatcher + map) gets
 # copied into the worktree — so an in-flight plan keeps running the scripts it
 # was built against, even after we publish newer generations.
-# A version is dotted digits and nothing else — the same test wf-exec.sh:73
+# A version is dotted digits and nothing else — the same test lv-exec.sh:73
 # makes, and for the same reason. `sort -V` places any non-numeric string
 # ABOVE every numeric version, so an unstamped marker like the registry's
 # em-dash satisfies EVERY row of version-map.txt and resolves to the NEWEST
@@ -1297,7 +1351,7 @@ resolve_script_folder() {
     echo "$folder"
 }
 
-# A label is not a path any more. Resolve one the same way wf-exec.sh does:
+# A label is not a path any more. Resolve one the same way lv-exec.sh does:
 # the published build first, the legacy folder as the fallback that carries a
 # client across its first gen-era deploy.
 resolve_script_dir() {
@@ -1320,8 +1374,8 @@ if git -C "$TARGET_DIR" rev-parse --git-dir &>/dev/null; then
     # prefix — /var → /private/var on macOS, or any project reached through a
     # symlink — the logical form never matches, so install.sh sees its own
     # target in the list, decides it is a foreign feature worktree, and runs
-    # wf-worktree-harness.sh over it. That step deliberately installs only
-    # wf-exec.sh (a feature worktree resolves version-map.txt and scripts/v*/
+    # lv-worktree-harness.sh over it. That step deliberately installs only
+    # lv-exec.sh (a feature worktree resolves version-map.txt and scripts/v*/
     # from the main checkout), so it strips back out the very files the install
     # had just written — an install that reports success and leaves the target
     # unable to dispatch.
@@ -1340,7 +1394,7 @@ if git -C "$TARGET_DIR" rev-parse --git-dir &>/dev/null; then
             if [[ -n "$wt_path" && "$wt_path" != "$TARGET_ABS" && "$wt_branch" == *feature/* ]]; then
                 # Resolve this worktree's plan WF → script folder.
                 # Branch format: refs/heads/feature/PLN-NNN[-slug]
-                wt_plan_id=$(echo "$wt_branch" | grep -oE 'PLN-[0-9]+' | head -1 || true)
+                wt_plan_id=$(echo "$wt_branch" | grep -oE "($TARGET_PLAN_RE)-[0-9]+" | head -1 || true)
                 wt_wf=""
                 if [ -n "$wt_plan_id" ] && [ -f "$TARGET_ABS/plans/REGISTRY.md" ]; then
                     row=$(grep "^| ${wt_plan_id} " "$TARGET_ABS/plans/REGISTRY.md" | head -1 || true)
@@ -1353,8 +1407,8 @@ if git -C "$TARGET_DIR" rev-parse --git-dir &>/dev/null; then
                 # Re-run sparse configuration first: it repairs a worktree set
                 # up by an older pattern list, and clears the deploy copies
                 # this step used to leave behind.
-                if [ -n "$wt_dir" ] && [ -x "$wt_dir/wf-worktree-sparse.sh" ]; then
-                    "$wt_dir/wf-worktree-sparse.sh" "$wt_path" >/dev/null 2>&1 || true
+                if [ -n "$wt_dir" ] && [ -x "$wt_dir/lv-worktree-sparse.sh" ]; then
+                    "$wt_dir/lv-worktree-sparse.sh" "$wt_path" >/dev/null 2>&1 || true
                 fi
 
                 # Put the three must-exist paths on the worktree's disk.
@@ -1364,11 +1418,11 @@ if git -C "$TARGET_DIR" rev-parse --git-dir &>/dev/null; then
                 # them afterwards because an ignored file cannot be dirty,
                 # cannot conflict, and cannot abort a merge. Everything else
                 # workflow-owned resolves from the MAIN worktree.
-                if [ -n "$wt_dir" ] && [ -x "$wt_dir/wf-worktree-harness.sh" ]; then
-                    "$wt_dir/wf-worktree-harness.sh" "$wt_path" >/dev/null 2>&1 || true
+                if [ -n "$wt_dir" ] && [ -x "$wt_dir/lv-worktree-harness.sh" ]; then
+                    "$wt_dir/lv-worktree-harness.sh" "$wt_path" >/dev/null 2>&1 || true
                 fi
 
-                echo -e "  ${GREEN}Updated $(basename "$wt_path") (skills + wf-exec.sh; scripts/${wt_folder:-none} resolved from develop, WF=${wt_wf:-0.00})${NC}"
+                echo -e "  ${GREEN}Updated $(basename "$wt_path") (skills + lv-exec.sh; scripts/${wt_folder:-none} resolved from develop, WF=${wt_wf:-0.00})${NC}"
                 ((WT_COUNT++)) || true
             fi
             wt_path="" wt_branch=""
@@ -1384,7 +1438,7 @@ WORKFLOW_MD="$TARGET_DIR/.claude/workflow.md"
 sed -e "s|{{build_command}}|$BUILD_CMD|g" \
     -e "s|{{test_command}}|$TEST_CMD|g" \
     -e "s|{{source_dirs}}|$SOURCE_DIRS|g" \
-    "$SCRIPT_DIR/claude-md/workflow-snippet.md" | atomic_write "$WORKFLOW_MD"
+    "$SCRIPT_DIR/claude-md/workflow-snippet.md" | render_ids | atomic_write "$WORKFLOW_MD"
 echo -e "${GREEN}  Installed .claude/workflow.md${NC}"
 
 # Add @import to CLAUDE.md once — never needs updating after that
@@ -1406,7 +1460,7 @@ fi
 # ── Land the deploy's own tracked changes ────────────────────────────────
 #
 # Almost everything this installer writes is gitignored in the client as of
-# v5.0.0 — scripts/v*/, .claude/skills/wf-*/, the hooks. A handful of paths are
+# v5.0.0 — scripts/v*/, .claude/skills/lv-*/, the hooks. A handful of paths are
 # deliberately NOT: the project's config, the entry contract, the version
 # stamp, the plan template. Those are tracked, so a deploy left the client's
 # develop dirty and walked away.
@@ -1416,7 +1470,7 @@ fi
 # else's work in progress and has to decide what to do about it — client-a's
 # WFI-131 filed exactly that, mid-plan, and worked around it by leaving the
 # changes alone. Meanwhile the files are on the shared develop index, where the
-# next `wf-commit.sh` from any live worker would have carried them under that
+# next `lv-commit.sh` from any live worker would have carried them under that
 # plan's message.
 #
 # So the deploy owns its own changes: pathspec-scoped, its own commit, nothing
@@ -1456,27 +1510,27 @@ echo ""
 echo -e "${GREEN}Installation complete!${NC}"
 echo ""
 echo "Available skills:"
-echo "  /wf-help        — display workflow strategy & architecture"
-echo "  /wf-status      — see pipeline status and next action"
-echo "  /wf-brainstorm  — capture and explore ideas"
-echo "  /wf-spec        — create implementation plan from a brief"
-echo "  /wf-implement   — build from a plan"
-echo "  /wf-verify      — check implementation against plan"
-echo "  /wf-debug       — interactive debug session"
-echo "  /wf-bug         — file a bug report"
-echo "  /wf-info        — full history and status for any plan, bug, or brief"
-echo "  /wf-claim       — take or release the lease on an artifact you are driving"
-echo "  /wf-consistency — check a plan against its dependency closure"
-echo "  /wf-rollback    — revert a completed plan"
+echo "  /lv-help        — display workflow strategy & architecture"
+echo "  /lv-status      — see pipeline status and next action"
+echo "  /lv-brainstorm  — capture and explore ideas"
+echo "  /lv-spec        — create implementation plan from a brief"
+echo "  /lv-implement   — build from a plan"
+echo "  /lv-verify      — check implementation against plan"
+echo "  /lv-debug       — interactive debug session"
+echo "  /lv-bug         — file a bug report"
+echo "  /lv-info        — full history and status for any plan, bug, or brief"
+echo "  /lv-claim       — take or release the lease on an artifact you are driving"
+echo "  /lv-consistency — check a plan against its dependency closure"
+echo "  /lv-rollback    — revert a completed plan"
 echo ""
 echo "Orchestrated mode (run the pipeline from one terminal):"
-echo "  /wf-board       — live view: workers, gates, pipeline, events"
-echo "  /wf-attend      — drain the queue of decisions needing a human"
-echo "  /wf-orchestrate — drive one item end to end, or manage the daemon"
+echo "  /lv-tray       — live view: workers, gates, pipeline, events"
+echo "  /lv-attend      — drain the queue of decisions needing a human"
+echo "  /lv-orchestrate — drive one item end to end, or manage the daemon"
 echo ""
 echo "  The orchestrator ships DISABLED. Preview it before enabling:"
-echo "    scripts/wf-exec.sh wf-orchestrate.sh --sweep --dry-run"
+echo "    scripts/lv-exec.sh lv-orchestrate.sh --sweep --dry-run"
 echo "  Then set orchestrator.enabled: true in claude-workflow.yml."
 echo ""
-echo "Start with: /wf-status (see the pipeline) → the skill for the work in front of you"
+echo "Start with: /lv-status (see the pipeline) → the skill for the work in front of you"
 echo "See WORKFLOW.md in the project root for the full entry-point contract."

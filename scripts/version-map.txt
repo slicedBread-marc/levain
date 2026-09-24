@@ -2,7 +2,7 @@
 #
 # Resolution: find the highest row where min_workflow_version <= effective
 # workflow version (from plan WF column, .claude/workflow-version, or
-# $WF_VERSION env). That row's script_folder is where wf-exec.sh dispatches.
+# $LV_VERSION env). That row's script_folder is where lv-exec.sh dispatches.
 #
 # Add a new row ONLY when a script change is INCOMPATIBLE with plans stamped
 # under the current row. Most workflow bumps — including ones that rewrite
@@ -15,7 +15,7 @@
 # v3.0.0 is the case that exposed it — seven new scripts and a rewritten
 # orchestrator went into v2.00 with no new row, which looks like the guarantee
 # silently lapsing. It did not, because v3's scripts were built to serve v5
-# plans: wf-manual-lint.sh reads each plan's `schema_version` and applies v5
+# plans: lv-manual-lint.sh reads each plan's `schema_version` and applies v5
 # semantics below 6, so a plan stamped 2.5.3 gets v3's fixes and v5's rules.
 #
 # What the WF column actually pins is the script GENERATION, not a version.
@@ -50,13 +50,13 @@
 # still match 2.5.1, 2.10.0 and 3.0.0), but do not write new rows that way.
 #
 # Anything that is not dotted digits — the registry's "—", a blank, "n/a" — is
-# NOT a version. wf-exec.sh treats those as unstamped and falls back, because
+# NOT a version. lv-exec.sh treats those as unstamped and falls back, because
 # `sort -V` ranks non-numeric strings ABOVE every version: such a value would
 # otherwise satisfy every row and route to the newest folder, which is the
 # exact opposite of what pinning a plan is for.
 #
 # Verify a change before committing it:
-#   WF_VERSION=2.5.1 scripts/wf-exec.sh wf-plan-info.sh PLN-001
+#   LV_VERSION=2.5.1 scripts/lv-exec.sh lv-plan-info.sh PLN-001
 #
 #
 # min_workflow_version  script_folder

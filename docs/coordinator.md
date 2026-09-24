@@ -3,7 +3,7 @@
 `~/dev/coordinator` oversees every project in the portfolio and owns none of their code.
 When an initiative there needs something built, the work belongs in the target
 project's own pipeline. Until now there was no way to put it there: coordinator is not a
-client, has no `scripts/wf-exec.sh`, and its own instructions told it to write
+client, has no `scripts/lv-exec.sh`, and its own instructions told it to write
 `plans/briefs/` plus a REGISTRY row by hand — which means deriving an artifact
 number by hand, from a counter it is not allowed to touch.
 
@@ -20,34 +20,34 @@ projects it coordinates, through each of those projects' own scripts.
 
 It does not get a pipeline. No `plans/`, no `plans/REGISTRY.md`, no `bugs/`, no
 plan templates, no feature or release worktrees, no orchestrator, no git
-post-commit hook, no session hooks, and none of the `/wf-*` pipeline skills.
+post-commit hook, no session hooks, and none of the `/lv-*` pipeline skills.
 
 ## What it gets, exactly
 
 ```
-scripts/wf-exec.sh              the dispatcher
+scripts/lv-exec.sh              the dispatcher
 scripts/version-map.txt         version → script-folder map
-scripts/wf-prune-versions.sh
-scripts/v*/wf-orch-lib.sh       config + repo-root helpers
-scripts/v*/wf-lock.sh
-scripts/v*/wf-dep-notify.sh     file into the projects it coordinates
-scripts/v*/wf-dep-bug.sh        file into a declared dependency
-scripts/v*/wf-issue.sh          report a harness fault
-.claude/skills/wf-dep-notify/   the entry point a human or agent invokes
+scripts/lv-prune-versions.sh
+scripts/v*/lv-orch-lib.sh       config + repo-root helpers
+scripts/v*/lv-lock.sh
+scripts/v*/lv-dep-notify.sh     file into the projects it coordinates
+scripts/v*/lv-dep-bug.sh        file into a declared dependency
+scripts/v*/lv-issue.sh          report a harness fault
+.claude/skills/lv-dep-notify/   the entry point a human or agent invokes
 .claude/workflow-version        the stamp
 .claude/workflow-source         where the library lives on this machine
 WORKFLOW.md                     from templates/WORKFLOW-coordinator.md
 WORKFLOW-ISSUES.md              seeded, so the reporting channel is discoverable
 ```
 
-Only a script generation that actually ships `wf-dep-notify.sh` is installed;
+Only a script generation that actually ships `lv-dep-notify.sh` is installed;
 an older generation would otherwise land as an empty directory that
-`wf-exec.sh` can still resolve to and then fail in.
+`lv-exec.sh` can still resolve to and then fail in.
 
 The install is also **subtractive**. A coordinator that was previously a full
 client has its pipeline skills removed and its `scripts/v*/` pruned to the slice
 above, on every deploy. A pipeline script left behind on a coordinator's disk
-looks current and is one `wf-exec.sh` call away from running — the same argument
+looks current and is one `lv-exec.sh` call away from running — the same argument
 install.sh already makes for pruning scripts the library stopped shipping.
 
 ## Why it gets the harness at all
@@ -56,9 +56,9 @@ Two reasons that pull the same way.
 
 **Filing has to run the target's own scripts.** The whole guarantee of
 `docs/cross-project-reports.md` is that a report is allocated by the target's
-own counter and lands in the target's own `bugs/open/`, where its own `/wf-spec`
+own counter and lands in the target's own `bugs/open/`, where its own `/lv-spec`
 already looks — no second inbox, nothing to remember to check. Reaching that
-requires `wf-dep-notify.sh` on the coordinator's side. A hand-rolled wrapper in
+requires `lv-dep-notify.sh` on the coordinator's side. A hand-rolled wrapper in
 the coordinator's own `bin/` would duplicate the resolution, the branch guard
 and the `--source` stamping, and would drift from the library the first time
 either side changed.
@@ -108,7 +108,7 @@ had to be reverted wholesale. The convention is the only guard, which is why
 
 ## `coordinates:` vs `dependents:`
 
-`wf-dep-notify.sh` reads both and concatenates them, so a project that is both
+`lv-dep-notify.sh` reads both and concatenates them, so a project that is both
 depended upon and a coordinator keeps all of its targets.
 
 They are two names for the same list shape because the relationship runs in
@@ -119,7 +119,7 @@ maintains by hand, and a wrong word there is a cost paid on every read.
 ## Filing
 
 ```bash
-scripts/wf-exec.sh wf-dep-notify.sh "<title>" \
+scripts/lv-exec.sh lv-dep-notify.sh "<title>" \
   --to client-e \
   --kind request \
   --description "..." --expected "..." --actual "..."
@@ -143,4 +143,4 @@ targets did not land — nothing retries them.
   and reports harness faults like any client.
 - `check-profiles.sh` skips coordinators. A governance tier describes
   `specApproval`, `manualTestGate` and autonomy scope — none of which exist
-  without a pipeline — and there is no `wf-profile.sh` installed to ask.
+  without a pipeline — and there is no `lv-profile.sh` installed to ask.

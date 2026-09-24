@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # v3-manual-and-progress.sh — tests for the v3.0 additions:
 #
-#   wf-progress-tick.sh / wf-progress-count.sh   forward-progress signal (P-007)
-#   wf-manual-lint.sh                            manual criterion tags (P-002)
-#   wf-manual-gate.sh                            surface-gated manual test (P-003)
-#   wf-defer-criterion.sh                        deferred-criteria producer (P-004)
-#   wf-list-consistency.sh                       cross-plan pass candidates (P-005)
-#   wf-config-get.sh                             config reads from skills
+#   lv-progress-tick.sh / lv-progress-count.sh   forward-progress signal (P-007)
+#   lv-manual-lint.sh                            manual criterion tags (P-002)
+#   lv-manual-gate.sh                            surface-gated manual test (P-003)
+#   lv-defer-criterion.sh                        deferred-criteria producer (P-004)
+#   lv-list-consistency.sh                       cross-plan pass candidates (P-005)
+#   lv-config-get.sh                             config reads from skills
 #
 # Usage: ./tests/v3-manual-and-progress.sh
 # Exit 0 if all pass, 1 otherwise.
@@ -17,7 +17,7 @@ LIB_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LIB_SCRIPTS="$LIB_ROOT/scripts"
 SCRIPT_FOLDER=$(awk '{sub(/#.*/, "")} NF >= 2 {folder = $2} END {print folder}' "$LIB_SCRIPTS/version-map.txt")
 [ -n "$SCRIPT_FOLDER" ] || { echo "cannot resolve script folder from version-map.txt" >&2; exit 1; }
-SCRIPT_DIR="${WF_TEST_SCRIPT_DIR:-$LIB_SCRIPTS/$SCRIPT_FOLDER}"
+SCRIPT_DIR="${LV_TEST_SCRIPT_DIR:-$LIB_SCRIPTS/$SCRIPT_FOLDER}"
 
 TEST_DIR=""
 PASS=0
@@ -180,90 +180,90 @@ P
 setup_repo
 
 # ── P-007 forward progress ─────────────────────────────────────────────
-section "wf-progress-count / wf-progress-tick (P-007)"
+section "lv-progress-count / lv-progress-tick (P-007)"
 
-assert_eq "counts an untouched checklist" "0/3" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
-assert_eq "unknown plan reads 0/0" "0/0" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-999)"
+assert_eq "counts an untouched checklist" "0/3" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-020)"
+assert_eq "unknown plan reads 0/0" "0/0" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-999)"
 
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 2 "wired it" >/dev/null 2>&1
-assert_eq "a tick moves the count" "1/3" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 2 "wired it" >/dev/null 2>&1
+assert_eq "a tick moves the count" "1/3" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-020)"
 assert_contains "the Log line is written" "Step 2 — done (wired it)" "$(cat plans/PLN-020-legacy/progress.md)"
 
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 10 "double-digit step" >/dev/null 2>&1
-assert_eq "step 10 ticks, not step 1" "2/3" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 10 "double-digit step" >/dev/null 2>&1
+assert_eq "step 10 ticks, not step 1" "2/3" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-020)"
 assert_contains "step 1 is still open" "- \[ \] Step 1" "$(cat plans/PLN-020-legacy/progress.md)"
 
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 1 "no migration yet" --blocked >/dev/null 2>&1
-assert_eq "--blocked logs without ticking" "2/3" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 1 "no migration yet" --blocked >/dev/null 2>&1
+assert_eq "--blocked logs without ticking" "2/3" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-020)"
 assert_contains "the blocked reason is logged" "Step 1 — blocked" "$(cat plans/PLN-020-legacy/progress.md)"
 
 # An amendment grows plan.md's Steps and leaves progress.md's checklist behind.
 # The tick appends the missing row rather than reporting a frozen total (WFI-111).
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 11 "amendment step" >/dev/null 2>&1
-assert_eq "an amendment step joins the checklist" "3/4" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 11 "amendment step" >/dev/null 2>&1
+assert_eq "an amendment step joins the checklist" "3/4" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-020)"
 assert_contains "and is ticked where it landed" "- \[x\] Step 11: amendment step" \
   "$(cat plans/PLN-020-legacy/progress.md)"
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 11 "amendment step" >/dev/null 2>&1
-assert_eq "re-ticking it appends nothing" "3/4" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 11 "amendment step" >/dev/null 2>&1
+assert_eq "re-ticking it appends nothing" "3/4" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-020)"
 assert_eq "the appended row stays inside ## Steps" "1" \
   "$(awk '/^## Steps/{s=1;next} /^## /{s=0} s && /Step 11/' plans/PLN-020-legacy/progress.md | wc -l | tr -d ' ')"
 
 # An amendment's own steps are labelled by the amendment — `Step A1.1` … —
 # so the label carries a leading letter and dots. Those were a usage error
 # until WFI-263, and eight rows were ticked by hand instead.
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 A1.1 "amendment A-1 step one" >/dev/null 2>&1
-assert_eq "an amendment-numbered step is accepted" "4/5" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 A1.1 "amendment A-1 step one" >/dev/null 2>&1
+assert_eq "an amendment-numbered step is accepted" "4/5" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-020)"
 assert_contains "and lands with its whole label" "- \[x\] Step A1.1: amendment A-1 step one" \
   "$(cat plans/PLN-020-legacy/progress.md)"
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 A1.2 "amendment A-1 step two" >/dev/null 2>&1
-assert_eq "a sibling amendment step is its own row" "5/6" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 A1.2 "amendment A-1 step two" >/dev/null 2>&1
+assert_eq "a sibling amendment step is its own row" "5/6" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-020)"
 assert_contains "A1.1 was not re-ticked as A1.2" "- \[x\] Step A1.1: amendment A-1 step one" \
   "$(cat plans/PLN-020-legacy/progress.md)"
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 A1.1 "again" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 A1.1 "again" >/dev/null 2>&1
 assert_eq "re-ticking an amendment step appends nothing" "5/6" \
-  "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-020)"
+  "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-020)"
 # `A1` names the family, not a step — appending it beside A1.1/A1.2 would
 # corrupt the checklist the orchestrator reads (the WFI-115 rule).
 assert_exit "a bare amendment prefix is refused" 1 \
-  "$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 A1 "family, not a step"
+  "$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 A1 "family, not a step"
 assert_exit "a label with no digit is a usage error" 1 \
-  "$SCRIPT_DIR/wf-progress-tick.sh" PLN-020 foo "not a label"
+  "$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 foo "not a label"
 
 # ── P-002 manual criterion lint ────────────────────────────────────────
-section "wf-manual-lint (P-002)"
+section "lv-manual-lint (P-002)"
 
-assert_exit "a fully tagged plan is clean" 0 "$SCRIPT_DIR/wf-manual-lint.sh" PLN-004
-assert_exit "an offending plan exits 1" 1 "$SCRIPT_DIR/wf-manual-lint.sh" PLN-007
+assert_exit "a fully tagged plan is clean" 0 "$SCRIPT_DIR/lv-manual-lint.sh" PLN-004
+assert_exit "an offending plan exits 1" 1 "$SCRIPT_DIR/lv-manual-lint.sh" PLN-007
 
-lint_out=$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-007 2>/dev/null)
+lint_out=$("$SCRIPT_DIR/lv-manual-lint.sh" PLN-007 2>/dev/null)
 assert_contains "flags an untagged criterion" "untagged" "$lint_out"
 assert_contains "flags a bare (eyes) tag" "unknown-tag" "$lint_out"
 assert_contains "flags an assertable verb under eyes:*" "assertable" "$lint_out"
 assert_eq "does not flag the genuine eyes criterion" "0" \
   "$(printf '%s\n' "$lint_out" | grep -c 'usable one-handed')"
 
-assert_exit "a pre-v6 plan is not linted" 0 "$SCRIPT_DIR/wf-manual-lint.sh" PLN-020
+assert_exit "a pre-v6 plan is not linted" 0 "$SCRIPT_DIR/lv-manual-lint.sh" PLN-020
 
-eval "$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-004 --counts)"
+eval "$("$SCRIPT_DIR/lv-manual-lint.sh" PLN-004 --counts)"
 assert_eq "counts cosmetic criteria" "1" "$MANUAL_EYES_COSMETIC"
 assert_eq "counts external criteria" "1" "$MANUAL_EXTERNAL"
 assert_eq "counts soak criteria" "1" "$MANUAL_SOAK"
 assert_eq "no open blocking criteria" "0" "$MANUAL_OPEN_BLOCKING"
 
-eval "$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-020 --counts)"
+eval "$("$SCRIPT_DIR/lv-manual-lint.sh" PLN-020 --counts)"
 assert_eq "pre-v6 criteria count as blocking" "2" "$MANUAL_OPEN_BLOCKING"
 
 # ── The template's own Review block is not a review (WFI-236) ──────────
 #
 # wf_review_has_content filtered the menu line and the stamp hint and nothing
-# else, so a plan.md written verbatim from TEMPLATE.md — which wf-spec tells
+# else, so a plan.md written verbatim from TEMPLATE.md — which lv-spec tells
 # planners to follow — counted as "a review is written here but no Result:
 # line" and failed the pre-review self-lint on every brand-new plan.
 section "An unfilled Review reads as empty (WFI-236)"
 
 review_says() {
   # shellcheck disable=SC1090
-  ( source "$SCRIPT_DIR/wf-orch-lib.sh"
+  ( source "$SCRIPT_DIR/lv-orch-lib.sh"
     wf_review_has_content "$1" && echo HAS || echo EMPTY )
 }
 assert_eq "the template's placeholder block is empty" "EMPTY" \
@@ -281,9 +281,9 @@ assert_eq "a real verdict still reads as content" "HAS" \
 > **Result:** Approved')"
 
 # ── A transition can carry the reason it happened (WFI-235) ────────────
-section "wf-registry-update --note"
+section "lv-registry-update --note"
 
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-013 ready active - \
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-013 ready active - \
   --note "scope settled against the publish guard" >/dev/null 2>&1
 assert_contains "the note lands in the plan's progress.md" "scope settled against the publish guard" \
   "$(cat plans/PLN-013-done/progress.md 2>/dev/null || true)"
@@ -291,10 +291,10 @@ assert_contains "stamped with the transition it explains" "ready → active" \
   "$(cat plans/PLN-013-done/progress.md 2>/dev/null || true)"
 assert_eq "and REGISTRY.md is not where it went" "0" \
   "$(grep -c 'scope settled' plans/REGISTRY.md || true)"
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-013 active ready - >/dev/null 2>&1
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-013 active ready - >/dev/null 2>&1
 
 # ── P-003 surface-gated manual test ────────────────────────────────────
-section "wf-manual-gate (P-003)"
+section "lv-manual-gate (P-003)"
 
 git worktree add -q -b feature/PLN-004-cli feature-branches/PLN-004-cli develop
 ( cd feature-branches/PLN-004-cli && echo more >> src/App/Cli/Program.cs && git add -A && git commit -qm cli )
@@ -302,16 +302,16 @@ git worktree add -q -b feature/PLN-004-cli feature-branches/PLN-004-cli develop
 git worktree add -q -b feature/PLN-007-ui feature-branches/PLN-007-ui develop
 ( cd feature-branches/PLN-007-ui && mkdir -p src/App/wwwroot && echo y > src/App/wwwroot/app.js && git add -A && git commit -qm ui )
 
-eval "$("$SCRIPT_DIR/wf-manual-gate.sh" PLN-004)"
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-004)"
 assert_eq "a CLI-only diff never stops for a human" "false" "$GATE"
 assert_contains "and says why" "below minEyesCriteria" "$GATE_REASON"
 
-eval "$("$SCRIPT_DIR/wf-manual-gate.sh" PLN-007)"
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "a rendering-surface diff with open eyes gates" "true" "$GATE"
 assert_eq "and names the file that decided it" "src/App/wwwroot/app.js" "$SURFACE_HIT"
 
-# A criterion wf-test already recorded PASS against THIS build is not open —
-# wf-test writes the result to test-progress.md and deliberately leaves
+# A criterion lv-test already recorded PASS against THIS build is not open —
+# lv-test writes the result to test-progress.md and deliberately leaves
 # plan.md's checkbox alone, so the two files disagree for every criterion that
 # simply passed. client-b' PLN-011 was parked for a human with 8 of 8 recorded
 # PASS on the build standing there (WFI-013).
@@ -327,7 +327,7 @@ cat > plans/PLN-007-ui/test-progress.md << PROGRESS
 | 4 | a patch touching azure-pipelines.yml is refused with a message naming the file | Aug 01 09:15 ($ui_sha) | PASS | |
 PROGRESS
 
-eval "$("$SCRIPT_DIR/wf-manual-gate.sh" PLN-007)"
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "every criterion PASS on this build does not stop for a human" "false" "$GATE"
 assert_eq "and all four are counted as settled by the record" "4" "$MANUAL_RESOLVED_RECORD"
 assert_contains "and the reason says where that came from" "already PASS on this build" "$GATE_REASON"
@@ -335,58 +335,58 @@ assert_contains "and the reason says where that came from" "already PASS on this
 # The Build column is the whole point of that file: a PASS is a measurement of
 # one tree, and this is no longer that tree.
 sed -i.bak "s/$ui_sha/0000000/g" plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
-eval "$("$SCRIPT_DIR/wf-manual-gate.sh" PLN-007)"
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "a PASS recorded against an older build settles nothing" "true" "$GATE"
 assert_eq "and nothing is subtracted" "0" "$MANUAL_RESOLVED_RECORD"
 
 rm -f plans/PLN-007-ui/test-progress.md
 
 git worktree remove --force feature-branches/PLN-007-ui
-eval "$("$SCRIPT_DIR/wf-manual-gate.sh" PLN-007)"
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "an unreadable diff gates rather than assumes" "true" "$GATE"
 assert_contains "and admits it could not read the diff" "could not read" "$GATE_REASON"
 
 # ── P-004 deferred criteria ────────────────────────────────────────────
-section "wf-defer-criterion (P-004)"
+section "lv-defer-criterion (P-004)"
 
 assert_exit "rejects an eyes:* tag" 1 \
-  "$SCRIPT_DIR/wf-defer-criterion.sh" PLN-004 eyes:blocking "should not defer"
+  "$SCRIPT_DIR/lv-defer-criterion.sh" PLN-004 eyes:blocking "should not defer"
 
-"$SCRIPT_DIR/wf-defer-criterion.sh" PLN-004 external "push to the real remote succeeds" >/dev/null
-"$SCRIPT_DIR/wf-defer-criterion.sh" PLN-004 soak "the Stalled section surfaces something forgotten" --prereq PLN-011 >/dev/null
-"$SCRIPT_DIR/wf-defer-criterion.sh" PLN-007 unbuilt "admin can revoke a key" --note "revocation not built" >/dev/null
+"$SCRIPT_DIR/lv-defer-criterion.sh" PLN-004 external "push to the real remote succeeds" >/dev/null
+"$SCRIPT_DIR/lv-defer-criterion.sh" PLN-004 soak "the Stalled section surfaces something forgotten" --prereq PLN-011 >/dev/null
+"$SCRIPT_DIR/lv-defer-criterion.sh" PLN-007 unbuilt "admin can revoke a key" --note "revocation not built" >/dev/null
 
-listed=$("$SCRIPT_DIR/wf-defer-criterion.sh" --list)
+listed=$("$SCRIPT_DIR/lv-defer-criterion.sh" --list)
 assert_eq "three open rows" "3" "$(printf '%s\n' "$listed" | grep -c '^DC-')"
 assert_contains "external defaults to first-real-use" "first-real-use" "$listed"
 assert_contains "the note survives" "revocation not built" "$listed"
 
-filtered=$("$SCRIPT_DIR/wf-defer-criterion.sh" --list PLN-011)
+filtered=$("$SCRIPT_DIR/lv-defer-criterion.sh" --list PLN-011)
 assert_eq "filters by prereq" "1" "$(printf '%s\n' "$filtered" | grep -c '^DC-')"
 
-"$SCRIPT_DIR/wf-defer-criterion.sh" --consume DC-002 PLN-011 >/dev/null
+"$SCRIPT_DIR/lv-defer-criterion.sh" --consume DC-002 PLN-011 >/dev/null
 assert_eq "a consumed row leaves the open list" "2" \
-  "$("$SCRIPT_DIR/wf-defer-criterion.sh" --list | grep -c '^DC-')"
+  "$("$SCRIPT_DIR/lv-defer-criterion.sh" --list | grep -c '^DC-')"
 assert_contains "and stays in the file as the record" "consumed by PLN-011" \
   "$(cat plans/deferred-criteria.md)"
 
 # Zero-padded ids must not be read as octal — the WFI-008 → WFI-009 bug class.
 for i in 4 5 6 7 8 9; do
-  "$SCRIPT_DIR/wf-defer-criterion.sh" PLN-004 external "filler $i" >/dev/null
+  "$SCRIPT_DIR/lv-defer-criterion.sh" PLN-004 external "filler $i" >/dev/null
 done
 assert_contains "DC-009 increments to DC-010, not an octal error" "DC-010" \
-  "$("$SCRIPT_DIR/wf-defer-criterion.sh" PLN-004 external "the tenth")"
+  "$("$SCRIPT_DIR/lv-defer-criterion.sh" PLN-004 external "the tenth")"
 
 # ── P-005 consistency candidates ───────────────────────────────────────
-section "wf-list-consistency (P-005)"
+section "lv-list-consistency (P-005)"
 
-cand=$("$SCRIPT_DIR/wf-list-consistency.sh")
+cand=$("$SCRIPT_DIR/lv-list-consistency.sh")
 assert_contains "lists a ready plan with deps" "PLN-011-dep" "$cand"
 assert_eq "skips a plan with no deps" "0" "$(printf '%s\n' "$cand" | grep -c 'PLN-012')"
 assert_eq "skips an already-checked plan" "0" "$(printf '%s\n' "$cand" | grep -c 'PLN-013')"
 assert_eq "skips plans that are not ready" "0" "$(printf '%s\n' "$cand" | grep -c '^PLN-004')"
-assert_exit "filters to one plan when asked" 0 "$SCRIPT_DIR/wf-list-consistency.sh" PLN-011
-assert_exit "exits 1 when the filtered plan is done" 1 "$SCRIPT_DIR/wf-list-consistency.sh" PLN-013
+assert_exit "filters to one plan when asked" 0 "$SCRIPT_DIR/lv-list-consistency.sh" PLN-011
+assert_exit "exits 1 when the filtered plan is done" 1 "$SCRIPT_DIR/lv-list-consistency.sh" PLN-013
 
 # The plan template ships the Consistency section pre-filled. For as long as
 # any `> **Checked:**` line was the done-marker, every plan was born already
@@ -398,15 +398,15 @@ cat >> plans/PLN-011-dep/plan.md << 'P'
 > **Checked:** YYYY-MM-DD — closure: PLN-NNN, PLN-MMM
 > **Result:** clean | amended PLN-NNN
 P
-assert_exit "the template placeholder is not a pass" 0 "$SCRIPT_DIR/wf-list-consistency.sh" PLN-011
+assert_exit "the template placeholder is not a pass" 0 "$SCRIPT_DIR/lv-list-consistency.sh" PLN-011
 
 # ── config reads ───────────────────────────────────────────────────────
-section "wf-config-get"
+section "lv-config-get"
 
-assert_eq "reads a nested scalar" "verdict" "$("$SCRIPT_DIR/wf-config-get.sh" specApproval.mode gate)"
-assert_eq "falls back to the default" "3" "$("$SCRIPT_DIR/wf-config-get.sh" specApproval.maxReviewRounds 3)"
-assert_eq "reads a sequence" "2" "$("$SCRIPT_DIR/wf-config-get.sh" specApproval.gateTags --list | wc -l | tr -d ' ')"
-assert_eq "an absent key uses its default" "gate" "$("$SCRIPT_DIR/wf-config-get.sh" specApproval.nothingHere gate)"
+assert_eq "reads a nested scalar" "verdict" "$("$SCRIPT_DIR/lv-config-get.sh" specApproval.mode gate)"
+assert_eq "falls back to the default" "3" "$("$SCRIPT_DIR/lv-config-get.sh" specApproval.maxReviewRounds 3)"
+assert_eq "reads a sequence" "2" "$("$SCRIPT_DIR/lv-config-get.sh" specApproval.gateTags --list | wc -l | tr -d ' ')"
+assert_eq "an absent key uses its default" "gate" "$("$SCRIPT_DIR/lv-config-get.sh" specApproval.nothingHere gate)"
 
 # ── Summary ────────────────────────────────────────────────────────────
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"

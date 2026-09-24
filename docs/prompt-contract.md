@@ -25,12 +25,12 @@ Most of them are here because the failure already happened; those carry the WFI 
 and what it owns.** It goes immediately after the `#` heading, before any other section.
 
 A role is a position in a system, not a character. "You are a careful senior engineer" tells
-the model nothing it can act on. `wf-verify`'s "You are the **autonomous verify agent**. You
+the model nothing it can act on. `lv-verify`'s "You are the **autonomous verify agent**. You
 are triggered automatically when a plan's REGISTRY state changes to `verify`" tells it three
 things it will need: its identity for the log, the fact that no human typed anything, and the
 state it is allowed to be running in.
 
-The role sentence is also the scope fence. `wf-claim`'s "You do not read plans, edit files, or
+The role sentence is also the scope fence. `lv-claim`'s "You do not read plans, edit files, or
 move pipeline state" is one clause long and prevents an entire class of overreach.
 
 **Fails as:** a skill that opens on its first procedural section. The agent infers its role
@@ -48,7 +48,7 @@ whether it has reached it. Where order matters between them, give the order.
 Say what the empty case is, explicitly: *an empty findings section is a result, and must be
 written as one*. An unstated empty case is where an agent does nothing and reports success.
 
-**Fails as:** WFI-012. A `wf-verify` worker exited rc=0 after six minutes having written two
+**Fails as:** WFI-012. A `lv-verify` worker exited rc=0 after six minutes having written two
 lines, the second of which was "Waiting for the background test run to complete." It was still
 waiting. `findings.md` was never written, REGISTRY still read `verify`, and the plan sat in a
 state whose only owner had just exited.
@@ -60,8 +60,8 @@ state whose only owner had just exited.
 The mode changes the correct answer to every other question in the prompt. An unattended agent
 that asks hangs the pipeline; an attended one that guesses corrupts state that a human thought
 they were supervising. Skills that can run either way say so and name the switch
-(`WF_UNATTENDED=1`); skills that cannot say that too — `wf-verify`'s "this skill is **always**
-unattended … `WF_UNATTENDED=1` changes nothing here" closes off a question the reader would
+(`LV_UNATTENDED=1`); skills that cannot say that too — `lv-verify`'s "this skill is **always**
+unattended … `LV_UNATTENDED=1` changes nothing here" closes off a question the reader would
 otherwise have to answer by inference.
 
 **Fails as:** a prompt with interactive prose ("ask the user which option they prefer") that
@@ -72,11 +72,11 @@ the dispatcher runs at 3am.
 **Every fact the agent acts on comes from a command in the prompt, never from memory, never
 from the conversation.**
 
-Write `eval "$(scripts/wf-exec.sh wf-plan-info.sh PLN-NNN)"`, not "the plan you are working
+Write `eval "$(scripts/lv-exec.sh lv-plan-info.sh PLN-NNN)"`, not "the plan you are working
 on". Sessions get compacted, workers get dispatched with almost no context, and a prompt that
 assumes recall produces an agent that invents state confidently.
 
-Where a value does not survive to the next step, say so. `wf-verify` spends a blockquote on
+Where a value does not survive to the next step, say so. `lv-verify` spends a blockquote on
 exactly that — `$PLAN_*` are placeholders, every Bash call is a fresh shell — because the
 alternative is WFI-107, where an unset `$PLAN_NAME` claimed the empty string and printed a
 usage error that reads like a rejected plan name.
@@ -89,7 +89,7 @@ wrong state.
 **Name what the agent may change and what belongs to somebody else.**
 
 This is the highest-value guardrail in the file, because a capable model asked to find
-problems will fix them. `wf-verify` draws the line precisely: if the spec is wrong the finding
+problems will fix them. `lv-verify` draws the line precisely: if the spec is wrong the finding
 is `ESCALATED` and goes to the planner; if the code does not match a correct spec, it is the
 implementer's. Neither is the verifier's to fix.
 
@@ -143,9 +143,9 @@ pipeline's behavior is unreproducible and its bugs are unfileable.
 **State what to do with everything the table does not cover, as a runnable command with a
 destination.**
 
-`wf-verify`'s is two sentences: "Never guess. Anything not covered above is a [GATE] with gate
-name `needs-input`" — plus the invocation, `wf-gate-open.sh <ID> needs-input "<question>"
---skill wf-verify`. The gate parks the work, the question reaches a human through `/wf-attend`,
+`lv-verify`'s is two sentences: "Never guess. Anything not covered above is a [GATE] with gate
+name `needs-input`" — plus the invocation, `lv-gate-open.sh <ID> needs-input "<question>"
+--skill lv-verify`. The gate parks the work, the question reaches a human through `/lv-attend`,
 and the agent exits cleanly holding nothing.
 
 "Ask the user if unsure" is not an escalation path in an unattended system. There is no user.
@@ -173,7 +173,7 @@ model already knows what success looks like. It does not know your failure modes
 is nothing to report.**
 
 Where the output is consumed by a script rather than a human, say so and say which script.
-`wf-verify` does: "Routing is not a judgment call. `wf-findings-route.sh` decides the exit
+`lv-verify` does: "Routing is not a judgment call. `lv-findings-route.sh` decides the exit
 state from what you wrote in `findings.md`; write the findings honestly and let it route."
 That sentence converts a routing decision into an honest-reporting problem, which is the kind
 of problem a model is actually good at.
@@ -210,7 +210,7 @@ is never a pass whatever it exited with; an unrunnable check is a *result*, reco
 command and its output verbatim, not a blocker.
 
 And give the partial-failure rule as a first-class outcome rather than leaving it to the
-catch-all. `wf-verify`'s is one line and does the whole job: routing on incomplete evidence is
+catch-all. `lv-verify`'s is one line and does the whole job: routing on incomplete evidence is
 recoverable; exiting on none is not.
 
 **Fails as:** a green pipeline over a suite that never ran.
@@ -322,8 +322,8 @@ missing:
 
 ## What this contract deliberately does not say
 
-It does not set a house style, a length, or a section order. `wf-claim` is 60 lines and
-complete; `wf-test` is over a thousand and needs to be. What it requires is that the twelve
+It does not set a house style, a length, or a section order. `lv-claim` is 60 lines and
+complete; `lv-test` is over a thousand and needs to be. What it requires is that the twelve
 things are *findable* — not that they appear as thirteen headings.
 
 It also does not cover the client-facing `templates/WORKFLOW.md`, which is a different

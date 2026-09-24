@@ -23,7 +23,7 @@ So a path may be excluded **only if nothing materialises it**.
 
 ## Excluded — develop-owned, never written into a worktree
 
-Configured by `wf-worktree-sparse.sh`:
+Configured by `lv-worktree-sparse.sh`:
 
 | Path | Resolved instead from |
 |-|-|
@@ -31,20 +31,20 @@ Configured by `wf-worktree-sparse.sh`:
 | `templates/**` | develop |
 | `.claude/workflow-version` | the plan's `WF` column, then develop's stamp |
 | `scripts/version-map.txt` | the main worktree |
-| `scripts/v*/wf-*.sh` | the main worktree |
-| `scripts/wf-prune-versions.sh` | the main worktree |
+| `scripts/v*/lv-*.sh` | the main worktree |
+| `scripts/lv-prune-versions.sh` | the main worktree |
 
-`wf-exec.sh`'s `find_project_root` answers with the **main** worktree, so a
+`lv-exec.sh`'s `find_project_root` answers with the **main** worktree, so a
 worktree copy of a versioned script is never the one that runs. Copying them in
 bought nothing and cost the exclusion.
 
 ## Gitignored — a session reads these off its own disk
 
-`.claude/workflow.md`, `.claude/skills/wf-*/`, `.claude/docs/`, `scripts/wf-exec.sh`,
+`.claude/workflow.md`, `.claude/skills/lv-*/`, `.claude/docs/`, `scripts/lv-exec.sh`,
 `.plan-ref`.
 
 Claude Code loads skills from the tree it is running in, skills invoke
-`scripts/wf-exec.sh` by relative path, and a skill's link to
+`scripts/lv-exec.sh` by relative path, and a skill's link to
 `../../docs/<name>.md` resolves to `.claude/docs/` in that same tree — so these
 must **physically exist** in every feature worktree.
 
@@ -56,19 +56,19 @@ against its own branch, `git merge develop` aborted before it could conflict on
 anything real, and a script existed solely to commit develop's own bytes onto
 the feature branch to make it stop.
 
-As of **v5.0.0** they are gitignored and arrive one way: `wf-worktree-harness.sh`
+As of **v5.0.0** they are gitignored and arrive one way: `lv-worktree-harness.sh`
 copies them from the main worktree. An ignored file cannot go dirty, cannot
 conflict, and cannot abort a merge, so there is nothing left to reconcile —
-`wf-infra-sync.sh` was deleted rather than fixed. See
+`lv-infra-sync.sh` was deleted rather than fixed. See
 [`untracked-harness.md`](untracked-harness.md).
 
-The `wf-` prefix on the skills glob is load-bearing: a project's own skills sit
+The `lv-` prefix on the skills glob is load-bearing: a project's own skills sit
 in the same directory, are its source rather than ours, and stay tracked.
 
 ### `.plan-ref` — the same lesson, arrived at twice
 
-`.plan-ref` names the plan **this worktree** is building. `wf-implement` writes
-it at worktree creation; `wf-plan-ref.sh`, `wf-rehydrate.sh` and the
+`.plan-ref` names the plan **this worktree** is building. `lv-implement` writes
+it at worktree creation; `lv-plan-ref.sh`, `lv-rehydrate.sh` and the
 `on-implement-commit` hook read it off disk. Nothing reads it out of git.
 
 It was nonetheless *committed* until **v6.0.0** — and a committed pointer does
@@ -81,7 +81,7 @@ That is worse than litter, because the loop closes on itself:
 
 1. `git worktree add` materialises tracked files, so the next worktree is born
    pointing at a plan that finished weeks ago.
-2. `wf-implement` overwrites it with the right ID — which now registers as a
+2. `lv-implement` overwrites it with the right ID — which now registers as a
    modification to a **tracked** file rather than a new ignored one.
 3. The next `git add -A` in the implement loop stages that modification, and the
    next merge carries the new value onward. Go to 1.
@@ -97,12 +97,12 @@ Decide which one applies *before* adding a path, and put it in exactly one:
 
 | State | When | Where it goes |
 |-|-|-|
-| **Gitignored** | The library generates it, and a session needs it on the worktree's disk | the ignore list in `install.sh`, and the copy list in `wf-worktree-harness.sh` |
-| **Sparse-excluded** | Develop owns it and nothing materialises it in a worktree | the pattern list in `wf-worktree-sparse.sh` |
+| **Gitignored** | The library generates it, and a session needs it on the worktree's disk | the ignore list in `install.sh`, and the copy list in `lv-worktree-harness.sh` |
+| **Sparse-excluded** | Develop owns it and nothing materialises it in a worktree | the pattern list in `lv-worktree-sparse.sh` |
 | **Tracked normally** | The project authors it | neither list |
 
 The rule that makes this a contract rather than a preference, from
-`wf-worktree-sparse.sh`'s own header:
+`lv-worktree-sparse.sh`'s own header:
 
 > Excluding a file you also write is not a stricter policy than tracking it; it
 > is a broken one.

@@ -1,6 +1,6 @@
 # Rehydration — what happens to a skill when the conversation is compacted
 
-A `wf-*` skill keeps its state on disk: `plans/REGISTRY.md`, the plan's
+A `lv-*` skill keeps its state on disk: `plans/REGISTRY.md`, the plan's
 `progress.md`, gate files under `.claude/orchestrator/`. That is what lets a
 session be interrupted at all.
 
@@ -11,7 +11,7 @@ count that was true four commits ago. The registry has the right answer the
 whole time; nothing tells the model to go and look.
 
 So the harness re-reads state from disk immediately after compaction and hands
-it back. That is `wf-rehydrate.sh`.
+it back. That is `lv-rehydrate.sh`.
 
 ## Compaction cannot be controlled from inside a skill
 
@@ -60,7 +60,7 @@ difference between "the hook did nothing" and "the hook found nothing".
 
 ## What gets re-read
 
-`wf-rehydrate.sh` anchors to the **main worktree** — a worker compacting inside
+`lv-rehydrate.sh` anchors to the **main worktree** — a worker compacting inside
 a feature worktree must still read the real registry, not that worktree's
 sparse-excluded shadow.
 
@@ -100,7 +100,7 @@ used to say "re-read from disk just now. Where they disagree, these values win",
 with no timestamp on it. But a block from an *earlier* compaction survives into
 the *next* summary word for word, so a session can be holding an hour-old STATE
 line under a sentence claiming it is current. client-a's WFI-099: a block
-reading `PLN-007 draft` sat above a `wf-list-gates.sh` run that correctly said
+reading `PLN-007 draft` sat above a `lv-list-gates.sh` run that correctly said
 `testing`. The attendant believed the block, treated an `ok`-fit gate as
 stale-by-state, and closed a gate nobody had answered — which wrote a false
 resolution record (WFI-100) and let the daemon dispatch onto a plan a human was
@@ -109,7 +109,7 @@ mid-test on (WFI-102). One stale line, three reports.
 So every block now carries the UTC instant it was read, in its header and in the
 precedence sentence, and states three things: it does not outrank anything run
 after that instant, an older block above it is superseded, and
-`wf-rehydrate.sh` re-reads it on demand. A skill that has to choose between a
+`lv-rehydrate.sh` re-reads it on demand. A skill that has to choose between a
 block and a script it just ran should choose the script.
 
 ## Matchers
@@ -129,7 +129,7 @@ skill's entry grep anyway, so the block would be pure cost on every launch.
 
 That file is the **project's**, not the harness's — it holds their permissions,
 env and their own hooks — so the install merges rather than overwrites. It
-replaces only entries whose command names `wf-rehydrate.sh`, identified by that
+replaces only entries whose command names `lv-rehydrate.sh`, identified by that
 script name rather than by matcher or position: a matcher change then updates in
 place instead of stacking a second entry that runs the script twice on every
 compaction. It writes nothing when the result is byte-identical, because a
@@ -149,7 +149,7 @@ That is precisely the session most likely to compact mid-implementation. So the
 install warns when it finds the file untracked, and the client should commit it.
 
 The flip side: a **fresh clone** then has the hook and not the script it calls,
-because `scripts/v*/` and `wf-exec.sh` *are* gitignored build output. Every hook
+because `scripts/v*/` and `lv-exec.sh` *are* gitignored build output. Every hook
 command therefore ends `2>/dev/null || true`, so a repo that has not been
 deployed into yet is quiet rather than printing a dispatcher error on every
 session start. Run the script directly to see real errors.
@@ -157,9 +157,9 @@ session start. Run the script directly to see real errors.
 ## Checking it works
 
 ```bash
-scripts/wf-exec.sh wf-rehydrate.sh                     # the block, as plain text
+scripts/lv-exec.sh lv-rehydrate.sh                     # the block, as plain text
 printf '{"source":"compact"}' | \
-  scripts/wf-exec.sh wf-rehydrate.sh --hook session-start   # the JSON the hook emits
+  scripts/lv-exec.sh lv-rehydrate.sh --hook session-start   # the JSON the hook emits
 ./tests/rehydrate.sh                                   # in the library
 ```
 

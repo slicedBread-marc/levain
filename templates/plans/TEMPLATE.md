@@ -32,7 +32,7 @@ One-line summary of what this achieves.
 Why it matters and any additional context (optional paragraph).
 
 ### Goal History
-<!-- Managed by wf-spec via wf-goal-push.sh / wf-goal-pop.sh. Do not edit manually. -->
+<!-- Managed by lv-spec via lv-goal-push.sh / lv-goal-pop.sh. Do not edit manually. -->
 <!-- | Date | Previous Goal | Trigger | Resolution | -->
 
 ## Prerequisites
@@ -46,7 +46,7 @@ Each step must be independently completable and verifiable.
 
 **The test account is one of those entities, and it is provisioned once for the project, not once per plan.** If any criterion below needs a signed-in session, `test_account_command` and `test_account_note` in `claude-workflow.yml` are what make the fresh container testable — check they are set rather than writing a step. Without them the tester gets a URL and no way in, and every criterion behind the login is unreachable (WFI-072).
 
-**Do not instruct the implementer to write `findings.md`.** A finding is a verdict on the work, and the implementer is the work's author; the verify agent and `/wf-test` are the only writers. When a step or a checklist item needs the implementer to record an observation, say `progress.md`. When the observation is "another plan's untestable criterion can be tested now", say `wf-defer-criterion.sh` — `plans/deferred-criteria.md` is where `/wf-spec` reads it back. A plan that says otherwise puts the implementer between two instructions that contradict each other (WFI-068).
+**Do not instruct the implementer to write `findings.md`.** A finding is a verdict on the work, and the implementer is the work's author; the verify agent and `/lv-test` are the only writers. When a step or a checklist item needs the implementer to record an observation, say `progress.md`. When the observation is "another plan's untestable criterion can be tested now", say `lv-defer-criterion.sh` — `plans/deferred-criteria.md` is where `/lv-spec` reads it back. A plan that says otherwise puts the implementer between two instructions that contradict each other (WFI-068).
 
 ### Step N: [Short title]
 - **Files:** exact paths to create or modify
@@ -67,7 +67,7 @@ Maximize automated tests. Only mark a test as `Manual` when it genuinely cannot 
 | T3 | Manual | [only if not automatable] | Manual — [what to observe] |
 
 ## Test Scope
-_Read by `wf-verify` to decide which tests run on the feature branch. The actual scope is the union of: (1) categories declared here, (2) auto-detected categories from `git diff` file changes, and (3) mandatory smoke (always included). Leave blank only if the change truly affects nothing testable — verify falls back to the full suite._
+_Read by `lv-verify` to decide which tests run on the feature branch. The actual scope is the union of: (1) categories declared here, (2) auto-detected categories from `git diff` file changes, and (3) mandatory smoke (always included). Leave blank only if the change truly affects nothing testable — verify falls back to the full suite._
 
 _Valid category names are defined in `claude-workflow.yml → testScopes`. Declare generously; auto-detect adds more at verify time._
 
@@ -79,7 +79,7 @@ _Example:_
 ```
 
 ## E2E Scope
-_Optional. List e2e test file paths or patterns (one per line) that cover this plan. If blank, wf-test runs the full suite._
+_Optional. List e2e test file paths or patterns (one per line) that cover this plan. If blank, lv-test runs the full suite._
 
 ## Verification Checklist
 Structured checks for the **verifier** session to execute after implementation.
@@ -102,9 +102,9 @@ _`(eyes:blocking)` subjective judgment; failing it blocks the merge._
 _`(eyes:cosmetic)` subjective judgment; failing it files a bug and the plan ships._
 _`(external)` needs a real third-party system, real credentials, or a physical act._
 _`(soak)` needs real elapsed calendar time._
-_`(unbuilt)` the prerequisite feature does not exist yet — written by `wf-defer-criterion.sh`, not by hand._
+_`(unbuilt)` the prerequisite feature does not exist yet — written by `lv-defer-criterion.sh`, not by hand._
 
-_A criterion that fits none of them belongs in the Tests table. `wf-manual-lint.sh` enforces this and fails the plan back to `draft`._
+_A criterion that fits none of them belongs in the Tests table. `lv-manual-lint.sh` enforces this and fails the plan back to `draft`._
 
 - [ ] (eyes:blocking) `/route` — [can the user complete the task at all]
 - [ ] (eyes:cosmetic) `/route` — [layout, spacing, copy tone, animation feel]
@@ -150,10 +150,10 @@ How to confirm the rollback succeeded.
 - [ ] Build passes and tests are green
 
 ## Consistency
-> Not yet checked. Filled by the cross-plan consistency pass (`wf-consistency`)
+> Not yet checked. Filled by the cross-plan consistency pass (`lv-consistency`)
 > when this plan declares Deps — do not write it by hand. The pass appends a
 > line of the shape below; the ISO date in it is the done-marker
-> `wf-list-consistency.sh` reads, so nothing here may carry one.
+> `lv-list-consistency.sh` reads, so nothing here may carry one.
 >
 > `> **Checked:** <ISO date> — closure: <plan ids> — docs: <paths>`
 > `> **Result:** clean | amended PLN-NNN (<what and why>) | escalated (<migration>)`
@@ -162,7 +162,7 @@ How to confirm the rollback succeeded.
 <!--
 Filled by the planner's review gate before status is set to Ready, or by an
 independent /review invocation. Left as a comment, not as blockquoted
-scaffolding: wf-manual-lint.sh reads a non-empty ## Review as "a review was
+scaffolding: lv-manual-lint.sh reads a non-empty ## Review as "a review was
 written here", and a placeholder that looks like one failed the pre-review
 self-lint on every brand-new plan written verbatim from this template
 (WFI-236). An EMPTY Review section is silent by design.
@@ -187,7 +187,7 @@ The shape to write, once there is a verdict:
 ```markdown
 # Findings — [Feature Name]
 
-> Appended by the verify agent and human testing (`/wf-test`).
+> Appended by the verify agent and human testing (`/lv-test`).
 > T3 checks off items as they fix them. ESCALATED items route to T2.
 ```
 
@@ -207,7 +207,7 @@ Each verify/test session appends a dated section with a flat checklist:
 - [ ] **Design**: Users expect different flow than specified ← ESCALATED
 ```
 
-**Routing rules** (applied by `wf-findings-route.sh`, from the verify agent / wf-test exit logic):
+**Routing rules** (applied by `lv-findings-route.sh`, from the verify agent / lv-test exit logic):
 - Any `ESCALATED` or `PLAN-SCOPED` item → state goes to `draft` (T2 replans)
 - Any unchecked non-escalated items → state goes to `active` (T3 fix cycle)
 - All items checked → state advances (verify→testing, testing→complete)

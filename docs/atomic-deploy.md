@@ -3,8 +3,8 @@
 > **Status: implemented in v9.0.0.** Origin: coordinator WFI-003, and the review that followed it.
 >
 > Entry points: `install.sh` (`atomic_write` / `atomic_install`, the `scripts/gen/` build
-> and the `scripts/current` flip), `scripts/wf-exec.sh` (resolves through `current`),
-> `scripts/wf-prune-versions.sh` (retires old builds), `deploy-all.sh` (no longer refuses
+> and the `scripts/current` flip), `scripts/lv-exec.sh` (resolves through `current`),
+> `scripts/lv-prune-versions.sh` (retires old builds), `deploy-all.sh` (no longer refuses
 > to run while a daemon is live).
 
 ## The gap
@@ -12,13 +12,13 @@
 `install.sh` rewrote the running harness under whoever was running it:
 
 ```bash
-sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" "$script" > "$DEST"    # scripts/v2.00/wf-foo.sh
+sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" "$script" > "$DEST"    # scripts/v2.00/lv-foo.sh
 ```
 
 One `>` per file, ~102 files per generation, per client. For the duration of that loop
 `scripts/v2.00/` is a mixture of two harnesses, and each individual file is briefly
 truncated. An orchestrator daemon sweeps out of that same folder every 60s and re-reads
-`wf-orchestrate.sh` and `wf-orch-lib.sh` as it goes. A sweep landing in the window reads a
+`lv-orchestrate.sh` and `lv-orch-lib.sh` as it goes. A sweep landing in the window reads a
 half-replaced folder — or a zero-byte script.
 
 Nothing errors at deploy time. What it produces is confusing dispatch behaviour an hour
@@ -62,9 +62,9 @@ scripts/
       v1.x/
       v2.00/
     8.10.1-20260915101500/      the previous build, retained
-  wf-exec.sh                    unversioned dispatcher
+  lv-exec.sh                    unversioned dispatcher
   version-map.txt
-  wf-prune-versions.sh
+  lv-prune-versions.sh
 ```
 
 A **build id** is `<workflow version>-<UTC timestamp>`. The timestamp is not decoration: it
@@ -79,7 +79,7 @@ Resolution is unchanged in its first half and new in its second:
    is the existing pinning contract and nothing here touches it.
 2. label → **path**, via `scripts/gen/$(cat scripts/current)/<label>/`.
 
-If `current` is missing, or names a build with no such label, `wf-exec.sh` falls back to the
+If `current` is missing, or names a build with no such label, `lv-exec.sh` falls back to the
 legacy `scripts/<label>/` path. That fallback is what makes the first gen-era deploy safe on
 a client still running the old dispatcher, and it is load-bearing during the migration
 window described below — it is not dead code.
@@ -102,9 +102,9 @@ dereference but does unlink-then-symlink, which is the same non-atomic window in
 
 A **regular file** has none of this. `mv tmp scripts/current` where `current` is a regular
 file is a plain `rename(2)`: atomic, no dereference, portable. Readers do one `cat`. So the
-pointer is a file, and the only thing that reads it is `wf-exec.sh`.
+pointer is a file, and the only thing that reads it is `lv-exec.sh`.
 
-The same reasoning applies to every single generated file — `wf-exec.sh`, `version-map.txt`,
+The same reasoning applies to every single generated file — `lv-exec.sh`, `version-map.txt`,
 each `SKILL.md`, the hooks, `WORKFLOW.md`, `.claude/workflow.md`. They are written through
 `atomic_write` (write `$dest.wftmp.$$`, rename over `$dest`) rather than `>`. A skill is read
 by Claude Code at invocation; a truncated `SKILL.md` is the same class of fault as a
@@ -117,11 +117,11 @@ Within a single install, in this order:
 1. Build `scripts/gen/.building.$$/` complete — every label, every script.
 2. `mv` it to `scripts/gen/<build id>`. The build now exists and is immutable.
 3. Record the outgoing build id, then **flip** `scripts/current`. ← the deploy takes effect
-4. Atomically replace `wf-exec.sh`, `version-map.txt`, `wf-prune-versions.sh`.
+4. Atomically replace `lv-exec.sh`, `version-map.txt`, `lv-prune-versions.sh`.
 5. Retire old builds and legacy folders.
 
 **The flip precedes the dispatcher replacement deliberately.** Between 3 and 4 a caller runs
-the *old* `wf-exec.sh` against the *new* `current`:
+the *old* `lv-exec.sh` against the *new* `current`:
 
 - On the first gen-era deploy, the old dispatcher does not know `current` exists and resolves
   `scripts/<label>/` — still on disk, still the old harness, wholly consistent.
@@ -145,33 +145,33 @@ build open is a script subprocess living seconds to minutes. That was wrong in b
 that matter, and client-a paid for both inside one minute — two deploys, and the build under
 them was 9.4.0:
 
-- **A worker runs for hours out of the build it was launched from.** `wf-spawn.sh` detaches a
-  `bash -c` whose last line logs the run's exit through that build's `wf-event.sh`. WFI-256: a
+- **A worker runs for hours out of the build it was launched from.** `lv-spawn.sh` detaches a
+  `bash -c` whose last line logs the run's exit through that build's `lv-event.sh`. WFI-256: a
   completed implement run lost its exit event to `No such file or directory`.
 - **A daemon runs out of one indefinitely.** It resolves `SELF_DIR` once at startup and calls
-  every sibling from there. WFI-257: bash held the open file of `wf-orchestrate.sh` itself, so
+  every sibling from there. WFI-257: bash held the open file of `lv-orchestrate.sh` itself, so
   the loop kept sweeping, kept writing events, and kept answering `--daemon-status` *running*,
   while every spawn died `rc=127`. It then announced "the pipeline is empty or complete" — over
-  an active plan and an open gate — because `wf-list-gates.sh` was in the same deleted tree and
+  an active plan and an open gate — because `lv-list-gates.sh` was in the same deleted tree and
   its failure was indistinguishable from an empty list. 71 minutes, silently.
 
 So liveness is now part of the rule: `build_in_use` asks `pgrep -f "/gen/<build>/"`, which is
 exactly the shape both holders have — the daemon's own command line, and the detached wrapper
-carrying the build's `wf-event.sh`. The exemption is about liveness and not about the build, so
+carrying the build's `lv-event.sh`. The exemption is about liveness and not about the build, so
 the next deploy after the process exits collects it; otherwise this trades a deleted harness for
 an unbounded one.
 
 Both holders also defend themselves now, because a retention rule is a policy and the callers
 should not depend on it holding:
 
-- `wf-spawn.sh` prefers the pinned `wf-event.sh` and falls back to `scripts/wf-exec.sh`.
+- `lv-spawn.sh` prefers the pinned `lv-event.sh` and falls back to `scripts/lv-exec.sh`.
 - The daemon re-checks, once per sweep, where `scripts/current` says its own script lives, and
   `exec`s onto it when that is somewhere else. `exec` preserves the PID, so the pidfile, the
   claims stamped with it and `--stop` all stay valid — the daemon startup path allows a pidfile
   naming its own PID for precisely this case. With nothing to re-exec onto it stands down with
   exit 5 rather than sweep from a tree that no longer exists.
 
-`wf-prune-versions.sh` retires builds on demand and reports them in `--list`. It keeps its
+`lv-prune-versions.sh` retires builds on demand and reports them in `--list`. It keeps its
 existing job too: a *label* is retained while any non-complete plan's WF stamp resolves to
 it, which is the generation-pinning contract and is orthogonal to build retention.
 
@@ -198,7 +198,7 @@ them, and their comments still record why they are shaped the way they are.
   invocation. Atomic writes guarantee it never reads a torn one; nothing can retroactively
   change text the model has already read. "Next invocation gets the new skill" is the
   strongest available semantics, and it is now the actual one.
-- **A version switch mid-skill.** One skill invocation makes dozens of `wf-exec.sh` calls,
+- **A version switch mid-skill.** One skill invocation makes dozens of `lv-exec.sh` calls,
   and each resolves `current` independently, so a flip between two of them mixes builds.
   Every individual script is whole and every build is self-consistent, so this is far weaker
   than the fault being fixed — but it is real, and it is exactly what deferring the flip to a

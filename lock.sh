@@ -40,10 +40,17 @@
 
 set -uo pipefail
 
+# Pre-14.0.0 environment names: each WF_* still seeds its LV_* counterpart
+# unless that is set already, so shell profiles and daemons started before the
+# rename keep working.
+for _wf in $(compgen -e | grep '^WF_' || true); do
+  _lv="LV_${_wf#WF_}"; [ -n "${!_lv+x}" ] || export "$_lv=${!_wf}"
+done; unset _wf _lv
+
 LIB_ROOT="$(cd "$(dirname "$0")" && pwd)"
-# WF_LOCK_FILE points at an alternate lock — used by the test suite, so testing
+# LV_LOCK_FILE points at an alternate lock — used by the test suite, so testing
 # the switch never takes the real one out from under whoever is holding it.
-LOCK="${WF_LOCK_FILE:-$LIB_ROOT/LIBRARY-LOCK.md}"
+LOCK="${LV_LOCK_FILE:-$LIB_ROOT/LIBRARY-LOCK.md}"
 
 BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; DIM='\033[2m'; NC='\033[0m'
 [ -t 1 ] || { BOLD=''; GREEN=''; YELLOW=''; RED=''; DIM=''; NC=''; }
@@ -72,7 +79,7 @@ USAGE
 # holds the work. Same walk wf_session_pid does in the deployed harness.
 session_pid() {
   local pid name parent
-  if [ -n "${WF_SESSION_PID:-}" ]; then printf '%s' "$WF_SESSION_PID"; return 0; fi
+  if [ -n "${LV_SESSION_PID:-}" ]; then printf '%s' "$LV_SESSION_PID"; return 0; fi
   if [ -n "${CLAUDE_PID:-}" ] && kill -0 "$CLAUDE_PID" 2>/dev/null; then
     printf '%s' "$CLAUDE_PID"; return 0
   fi
@@ -94,7 +101,7 @@ session_pid() {
 
 # IDENTITY, NOT LIVENESS. A PID is reusable, so `kill -0` answering yes does not
 # prove the answerer is the session that took the lock — the same reason claims
-# carry one (wf_proc_start in wf-orch-lib.sh). Nothing parses the value; it is
+# carry one (wf_proc_start in lv-orch-lib.sh). Nothing parses the value; it is
 # only ever compared against another reading from the same `ps`.
 proc_start() {
   [ -n "${1:-}" ] || return 0

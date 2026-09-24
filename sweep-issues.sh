@@ -2,24 +2,31 @@
 # sweep-issues.sh — collect workflow-harness problems reported by every client.
 #
 # Clients file process bugs into their own WORKFLOW-ISSUES.md as they hit them
-# (scripts/wf-exec.sh wf-issue.sh). This walks deployments.txt, gathers the open
+# (scripts/lv-exec.sh lv-issue.sh). This walks deployments.txt, gathers the open
 # ones, and prints them grouped by project so they can be fixed HERE — in the
 # library — rather than worked around individually in each client.
 #
 #   ./sweep-issues.sh              open issues, grouped by client
 #   ./sweep-issues.sh --all        include already-resolved entries
 #   ./sweep-issues.sh --count      one "<client>: <n>" line per project
-#   ./sweep-issues.sh --resolve WFI-003 --client app "fixed in v2.6.0"
+#   ./sweep-issues.sh --resolve LVI-003 --client app "fixed in v2.6.0"
 #
 # Exit 0 if any open issues were found, 1 if every client is clean — so
 # `./sweep-issues.sh >/dev/null && echo "work to do"` reads correctly.
 
 set -uo pipefail
 
+# Pre-14.0.0 environment names: each WF_* still seeds its LV_* counterpart
+# unless that is set already, so shell profiles and daemons started before the
+# rename keep working.
+for _wf in $(compgen -e | grep '^WF_' || true); do
+  _lv="LV_${_wf#WF_}"; [ -n "${!_lv+x}" ] || export "$_lv=${!_wf}"
+done; unset _wf _lv
+
 LIB_ROOT="$(cd "$(dirname "$0")" && pwd)"
-# WF_DEPLOYMENTS points at an alternate client list — used by the test suite so
+# LV_DEPLOYMENTS points at an alternate client list — used by the test suite so
 # it never has to touch the real deployments.txt.
-DEPLOYMENTS="${WF_DEPLOYMENTS:-$LIB_ROOT/deployments.txt}"
+DEPLOYMENTS="${LV_DEPLOYMENTS:-$LIB_ROOT/deployments.txt}"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 [ -t 1 ] || { GREEN=''; YELLOW=''; BOLD=''; DIM=''; NC=''; }
@@ -36,7 +43,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --all)     show_all=true; shift ;;
     --count)   mode="count"; shift ;;
-    --resolve) mode="resolve"; resolve_id="${2:?--resolve requires WFI-NNN}"; shift 2 ;;
+    --resolve) mode="resolve"; resolve_id="${2:?--resolve requires LVI-NNN}"; shift 2 ;;
     --client)  resolve_client="${2:?--client requires a name}"; shift 2 ;;
     -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)         resolve_note="$1"; shift ;;
@@ -98,19 +105,19 @@ while IFS= read -r client; do
     resolve)
       if [ -n "$resolve_client" ] && [ "$resolve_client" != "$name" ]; then continue; fi
       [ -f "$issues" ] || continue
-      grep -q "^## $resolve_id " "$issues" 2>/dev/null || continue
+      grep -qE "^## [A-Z]{1,5}-${resolve_id#*-} " "$issues" 2>/dev/null || continue
       # Resolve through the client's own script so the format stays owned by
       # one place, and the client's version of it is the one that runs.
       #
       # Report what it actually said, not what we asked for: an entry resolved
       # earlier is left alone, and a caller sweeping a batch needs to see which
       # of its IDs were already on the record rather than a uniform "resolved".
-      out=$( cd "$client" && ./scripts/wf-exec.sh wf-issue.sh --resolve "$resolve_id" "$resolve_note" 2>&1 )
+      out=$( cd "$client" && ./scripts/lv-exec.sh lv-issue.sh --resolve "$resolve_id" "$resolve_note" 2>&1 )
       case "$out" in
         *"not overwriting"*) echo -e "${YELLOW}  $name: $out${NC}"; continue ;;
       esac
 
-      # Commit it, here, now. wf-issue.sh deliberately never touches git — the
+      # Commit it, here, now. lv-issue.sh deliberately never touches git — the
       # session that FILES an issue is inside that project and commits the file
       # with the rest of its work. A resolve has no such session: this loop is
       # the only thing that ran, it leaves a tracked file dirty in a repo it
@@ -178,7 +185,7 @@ if [ "$mode" = "list" ]; then
     echo -e "${YELLOW}${total} open workflow issue(s) across ${clients} client(s).${NC}"
     echo "Fix them in this library, then:"
     echo "  ./deploy-all.sh"
-    echo "  ./sweep-issues.sh --resolve WFI-NNN --client <name> \"fixed in vX.Y.Z\""
+    echo "  ./sweep-issues.sh --resolve LVI-NNN --client <name> \"fixed in vX.Y.Z\""
   else
     echo -e "${GREEN}No open workflow issues across ${clients} client(s).${NC}"
   fi

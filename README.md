@@ -28,13 +28,13 @@ vim claude-workflow.yml
 ```
 your-project/
   .claude/skills/
-    wf-status/SKILL.md     # /wf-status — pipeline dashboard
-    wf-brainstorm/SKILL.md # /wf-brainstorm — capture ideas
-    wf-spec/SKILL.md       # /wf-spec — write implementation specs
-    wf-implement/SKILL.md  # /wf-implement — build from specs
-    wf-verify/SKILL.md     # wf-verify — autonomous verify agent (not user-invocable)
-    wf-consistency/SKILL.md# /wf-consistency — cross-plan contract check
-    wf-test/SKILL.md       # /wf-test — human acceptance testing
+    lv-status/SKILL.md     # /lv-status — pipeline dashboard
+    lv-brainstorm/SKILL.md # /lv-brainstorm — capture ideas
+    lv-spec/SKILL.md       # /lv-spec — write implementation specs
+    lv-implement/SKILL.md  # /lv-implement — build from specs
+    lv-verify/SKILL.md     # lv-verify — autonomous verify agent (not user-invocable)
+    lv-consistency/SKILL.md# /lv-consistency — cross-plan contract check
+    lv-test/SKILL.md       # /lv-test — human acceptance testing
   plans/
     REGISTRY.md                  # SINGLE SOURCE OF TRUTH for plan state
     PLN-001-feature-name/        # immovable plan folder (never moves)
@@ -64,24 +64,24 @@ draft → ready → active → verify ──[agent]──→ testing → complet
 
 | Command | Model | Purpose |
 |-|-|-|
-| `/wf-status` | haiku | Read REGISTRY.md, recommend next action |
-| `/wf-brainstorm` | sonnet | Capture and explore ideas |
-| `/wf-spec` | opus | Convert decided brief → implementation spec |
-| `/wf-implement` | sonnet | Build from plan, fix findings |
-| `wf-verify` | sonnet | Autonomous verify agent (triggered by state change) |
-| `/wf-consistency` | sonnet | Check a plan against its dependency closure (automatic on `ready` + Deps) |
-| `/wf-test` | haiku | Human acceptance testing |
-| `/wf-board` | haiku | Live orchestrator view — workers, gates, events |
-| `/wf-attend` | haiku | Drain the gate queue |
-| `/wf-orchestrate` | haiku | Drive one item end to end, or manage the daemon |
+| `/lv-status` | haiku | Read REGISTRY.md, recommend next action |
+| `/lv-brainstorm` | sonnet | Capture and explore ideas |
+| `/lv-spec` | opus | Convert decided brief → implementation spec |
+| `/lv-implement` | sonnet | Build from plan, fix findings |
+| `lv-verify` | sonnet | Autonomous verify agent (triggered by state change) |
+| `/lv-consistency` | sonnet | Check a plan against its dependency closure (automatic on `ready` + Deps) |
+| `/lv-test` | haiku | Human acceptance testing |
+| `/lv-tray` | haiku | Live orchestrator view — workers, gates, events |
+| `/lv-attend` | haiku | Drain the gate queue |
+| `/lv-orchestrate` | haiku | Drive one item end to end, or manage the daemon |
 
 ## Orchestrated Workflow (one terminal)
 
 ```bash
-scripts/wf-exec.sh wf-orchestrate.sh --sweep --dry-run   # preview first, always
-scripts/wf-exec.sh wf-orchestrate.sh --daemon            # continuous dispatch
-scripts/wf-exec.sh wf-orchestrate.sh BUG-094             # drive one item end to end
-scripts/wf-exec.sh wf-board.sh --watch                   # live view
+scripts/lv-exec.sh lv-orchestrate.sh --sweep --dry-run   # preview first, always
+scripts/lv-exec.sh lv-orchestrate.sh --daemon            # continuous dispatch
+scripts/lv-exec.sh lv-orchestrate.sh BUG-094             # drive one item end to end
+scripts/lv-exec.sh lv-tray.sh --watch                   # live view
 ```
 
 The daemon reads `REGISTRY.md` and launches a headless worker per actionable
@@ -90,7 +90,7 @@ pure bash; the orchestrator never calls a model.** Only workers cost tokens.
 
 When a worker hits something a machine shouldn't decide — approving a spec, an
 acceptance criterion that needs human eyes, a failed push — it opens a **gate**
-and exits cleanly instead of guessing. `/wf-attend` walks that queue.
+and exits cleanly instead of guessing. `/lv-attend` walks that queue.
 
 Which stops are worth a human is measured, not assumed. A manual criterion only
 gates when the diff actually renders something to a human **and** the criterion
@@ -123,8 +123,8 @@ the dispatcher, the cross-project filing scripts and a generated `WORKFLOW.md`
 explaining the pipelines it files into — and no pipeline of its own: no plans,
 no registry, no bugs, no worktrees, no hooks, no pipeline skills.
 
-It files work down with `wf-dep-notify.sh --kind request`, resolving targets
-from `coordinates:`. That runs the *target's* own `wf-bug-new.sh`, so the ID
+It files work down with `lv-dep-notify.sh --kind request`, resolving targets
+from `coordinates:`. That runs the *target's* own `lv-bug-new.sh`, so the ID
 comes from the target's counter and the request lands in its own `bugs/open/` —
 the coordinator never derives an artifact number, and never writes into another
 project's pipeline beyond that filing.
@@ -138,7 +138,7 @@ own documentation doesn't describe, whoever hits it records it in that project
 rather than working around it silently:
 
 ```bash
-scripts/wf-exec.sh wf-issue.sh --source wf-implement \
+scripts/lv-exec.sh lv-issue.sh --source lv-implement \
   --expected "active→verify to succeed" \
   --actual   "Error: PLN-097 not found in state 'active'"
 ```
@@ -179,15 +179,15 @@ the collision visible while either side is still cheap to redirect.
 ```
 T1: Intake (sonnet)                T2: Planner (opus)
 ───────────────────                ──────────────────
-/wf-status                         
-/wf-brainstorm → Decided brief     
-                                   /wf-spec → review gate → ready
+/lv-status                         
+/lv-brainstorm → Decided brief     
+                                   /lv-spec → review gate → ready
 
 T3: Builder (sonnet)               T4: Tester (haiku)
 ────────────────────               ──────────────────
-/wf-implement → active → verify    
+/lv-implement → active → verify    
   [verify agent auto-runs]         
-                                   /wf-test → pass → complete
+                                   /lv-test → pass → complete
 ```
 
 ## Configuration

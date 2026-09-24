@@ -17,4 +17,4 @@
 
 ## Parked
 > Set aside on purpose — not being explored, kept for the record with a dated reason.
-> Written by `wf-brief-park.sh`, which stamps the brief with why and when.
+> Written by `lv-brief-park.sh`, which stamps the brief with why and when.

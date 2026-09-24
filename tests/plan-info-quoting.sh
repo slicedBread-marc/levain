@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # plan-info-quoting.sh — regression test for BUG-094
 #
-# wf-plan-info.sh output is consumed via `eval "$(...)"`. Values were emitted
+# lv-plan-info.sh output is consumed via `eval "$(...)"`. Values were emitted
 # bare, so any value containing a space (e.g. a comma-space Tags list like
 # "infra, hosting, security") word-split under eval: the second word was run as
 # a command, PLAN_TAGS was truncated, and every variable emitted on later lines
-# was lost — which made wf-implement see PLAN_GOAL_MISSING=true for a plan that
+# was lost — which made lv-implement see PLAN_GOAL_MISSING=true for a plan that
 # had a goal.
 #
-# Also covers wf-set-tags.sh normalizing whitespace out of the Tags column, and
-# wf-plan-ref.sh quoting its output.
+# Also covers lv-set-tags.sh normalizing whitespace out of the Tags column, and
+# lv-plan-ref.sh quoting its output.
 #
 # Usage: ./tests/plan-info-quoting.sh
 # Exit 0 if all pass, 1 on any failure.
@@ -67,23 +67,23 @@ SEED
   # eval must not error and must set every variable, including ones emitted
   # after PLAN_TAGS.
   local err
-  err=$(eval "$("$scripts/wf-plan-info.sh" PLN-093)" 2>&1 >/dev/null || true)
+  err=$(eval "$("$scripts/lv-plan-info.sh" PLN-093)" 2>&1 >/dev/null || true)
   assert_eq "eval produces no errors" "" "$err"
   # The check above ran in a subshell; eval again here so the vars land in scope.
-  eval "$("$scripts/wf-plan-info.sh" PLN-093)" 2>/dev/null || true
+  eval "$("$scripts/lv-plan-info.sh" PLN-093)" 2>/dev/null || true
   assert_eq "PLAN_TAGS intact" "infra, hosting, security" "${PLAN_TAGS:-<unset>}"
   assert_eq "PLAN_NAME set (emitted after tags)" "PLN-093-subdomain-split" "${PLAN_NAME:-<unset>}"
   assert_eq "PLAN_GOAL intact" "Split the portal; don't break auth" "${PLAN_GOAL:-<unset>}"
   assert_eq "PLAN_GOAL_MISSING false" "false" "${PLAN_GOAL_MISSING:-<unset>}"
 
-  # A blank line under the heading — the markdown convention, and what wf-spec
+  # A blank line under the heading — the markdown convention, and what lv-spec
   # writes. `grep -A 1 | tail -1` captured the blank, so a fully-written plan
   # reported PLAN_GOAL='' and PLAN_GOAL_MISSING=true, and the orchestrator
   # opened a goal-missing gate on it (client-a WFI-125, WFI-128).
   printf '# PLN-093\n\n## Goal\n\nSplit the portal; don'"'"'t break auth\n\n## Steps\n- [ ] one\n' \
     > plans/PLN-093-subdomain-split/plan.md
   unset PLAN_GOAL PLAN_GOAL_MISSING
-  eval "$("$scripts/wf-plan-info.sh" PLN-093)" 2>/dev/null || true
+  eval "$("$scripts/lv-plan-info.sh" PLN-093)" 2>/dev/null || true
   assert_eq "goal found under a blank line" "Split the portal; don't break auth" "${PLAN_GOAL:-<unset>}"
   assert_eq "and not reported missing" "false" "${PLAN_GOAL_MISSING:-<unset>}"
 
@@ -92,7 +92,7 @@ SEED
   printf '# PLN-093\n\n## Goal\n\n## Steps\n- [ ] one\n' \
     > plans/PLN-093-subdomain-split/plan.md
   unset PLAN_GOAL PLAN_GOAL_MISSING
-  eval "$("$scripts/wf-plan-info.sh" PLN-093)" 2>/dev/null || true
+  eval "$("$scripts/lv-plan-info.sh" PLN-093)" 2>/dev/null || true
   assert_eq "an empty Goal section is still missing" "" "${PLAN_GOAL-<unset>}"
   assert_eq "and says so" "true" "${PLAN_GOAL_MISSING:-<unset>}"
 
@@ -103,7 +103,7 @@ SEED
 
 # v1.x emits a subset of the fields — exercise it through the same hazards.
 run_v1x_suite() {
-  echo "── wf-plan-info.sh (v1.x) ──"
+  echo "── lv-plan-info.sh (v1.x) ──"
 
   TEST_DIR=$(mktemp -d)
   cd "$TEST_DIR"
@@ -117,9 +117,9 @@ SEED
     > plans/PLN-093-subdomain-split/plan.md
 
   local err
-  err=$(eval "$("$REPO_ROOT/scripts/v1.x/wf-plan-info.sh" PLN-093)" 2>&1 >/dev/null || true)
+  err=$(eval "$("$REPO_ROOT/scripts/v1.x/lv-plan-info.sh" PLN-093)" 2>&1 >/dev/null || true)
   assert_eq "eval produces no errors" "" "$err"
-  eval "$("$REPO_ROOT/scripts/v1.x/wf-plan-info.sh" PLN-093)" 2>/dev/null || true
+  eval "$("$REPO_ROOT/scripts/v1.x/lv-plan-info.sh" PLN-093)" 2>/dev/null || true
   assert_eq "PLAN_GOAL intact" "Split the portal; don't break auth" "${PLAN_GOAL:-<unset>}"
   assert_eq "PLAN_NAME set" "PLN-093-subdomain-split" "${PLAN_NAME:-<unset>}"
 
@@ -129,7 +129,7 @@ SEED
 }
 
 run_set_tags_suite() {
-  echo "── wf-set-tags.sh normalization ──"
+  echo "── lv-set-tags.sh normalization ──"
 
   TEST_DIR=$(mktemp -d)
   cd "$TEST_DIR"
@@ -140,7 +140,7 @@ run_set_tags_suite() {
 | PLN-093 | subdomain-split | verify | high | feature/PLN-093-subdomain-split | 2026-07-30 | 2.00 | — | — |
 SEED
 
-  "$REPO_ROOT/scripts/v2.00/wf-set-tags.sh" PLN-093 "infra, security" >/dev/null
+  "$REPO_ROOT/scripts/v2.00/lv-set-tags.sh" PLN-093 "infra, security" >/dev/null
   local written
   written=$(grep "| PLN-093 |" plans/REGISTRY.md | awk -F'|' '{print $9}' | xargs)
   assert_eq "comma-space normalized on write" "infra,security" "$written"
@@ -149,7 +149,7 @@ SEED
   # the vocabulary is derived from the project now, so the first legitimate use
   # of any tag has to be possible (client-a WFI-030).
   local rc=0
-  "$REPO_ROOT/scripts/v2.00/wf-set-tags.sh" PLN-093 "infra, hosting" >/dev/null 2>&1 || rc=$?
+  "$REPO_ROOT/scripts/v2.00/lv-set-tags.sh" PLN-093 "infra, hosting" >/dev/null 2>&1 || rc=$?
   assert_eq "a tag new to the project is accepted" "0" "$rc"
   written=$(grep "| PLN-093 |" plans/REGISTRY.md | awk -F'|' '{print $9}' | xargs)
   assert_eq "and normalized the same way" "infra,hosting" "$written"
@@ -159,7 +159,7 @@ SEED
   TEST_DIR=""
 }
 
-run_suite "$REPO_ROOT/scripts/v2.00" "wf-plan-info.sh (v2.00)"
+run_suite "$REPO_ROOT/scripts/v2.00" "lv-plan-info.sh (v2.00)"
 run_v1x_suite
 run_set_tags_suite
 

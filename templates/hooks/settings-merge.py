@@ -11,7 +11,7 @@ Everything else install.sh writes into .claude/ is generated harness the library
 owns outright, so it can be overwritten wholesale. settings.json is not that
 file. It is where a project keeps its own permissions, env and hooks, and it
 existed before the workflow arrived in most repos. So this replaces exactly the
-entries whose command names wf-rehydrate.sh and leaves the rest alone.
+entries whose command names lv-rehydrate.sh and leaves the rest alone.
 
 Ours are identified by that script name rather than by matcher or position. A
 matcher change then updates in place; identifying them by matcher would stack a
@@ -44,17 +44,17 @@ import sys
 #
 # PreToolUse matches on the TOOL. Edit|Write|NotebookEdit are the three that
 # write a file in place, and the three that can land a second writer on a
-# claimed artifact. Bash is separate: wf-guard-promote.sh only cares about one
+# claimed artifact. Bash is separate: lv-guard-promote.sh only cares about one
 # shape of one command (`git push origin release|main`), never about writes.
 HOOK_SPECS = [
     {"event": "SessionStart", "matcher": "compact|clear|resume", "kind": "rehydrate", "arg": "session-start"},
     {"event": "PostCompact", "matcher": "manual|auto", "kind": "rehydrate", "arg": "post-compact"},
-    {"event": "PreToolUse", "matcher": "Edit|Write|NotebookEdit", "kind": "guard", "env": "GUARD_CMD", "script": "wf-guard-write.sh"},
-    {"event": "PreToolUse", "matcher": "Bash", "kind": "failclosed", "env": "PROMOTE_GUARD_CMD", "script": "wf-guard-promote.sh"},
+    {"event": "PreToolUse", "matcher": "Edit|Write|NotebookEdit", "kind": "guard", "env": "GUARD_CMD", "script": "lv-guard-write.sh"},
+    {"event": "PreToolUse", "matcher": "Bash", "kind": "failclosed", "env": "PROMOTE_GUARD_CMD", "script": "lv-guard-promote.sh"},
     # The permission baseline (coordinator WFI-005). Every tool, because a secret can be
     # read with Read, Grep, Glob or Bash alike. It is a no-op outside unattended
-    # workers (WF_UNATTENDED=1), so interactive sessions pay one env test.
-    {"event": "PreToolUse", "matcher": "*", "kind": "failclosed", "env": "BASELINE_GUARD_CMD", "script": "wf-guard-baseline.sh"},
+    # workers (LV_UNATTENDED=1), so interactive sessions pay one env test.
+    {"event": "PreToolUse", "matcher": "*", "kind": "failclosed", "env": "BASELINE_GUARD_CMD", "script": "lv-guard-baseline.sh"},
 ]
 
 # Secret reads refused to EVERY session, attended or not, at the permission
@@ -75,14 +75,14 @@ BASELINE_DENY = [
 
 # Silence and a zero exit if the harness is not on disk.
 #
-# settings.json is TRACKED in the client while scripts/v*/ and wf-exec.sh are
+# settings.json is TRACKED in the client while scripts/v*/ and lv-exec.sh are
 # gitignored build output. A fresh clone therefore has the hook and not the
 # script it calls, and without this suffix every session start and every
 # compaction would print a dispatcher error until someone ran deploy-all.sh.
 #
-# wf-rehydrate.sh already exits 0 on its own failures; this covers the case
+# lv-rehydrate.sh already exits 0 on its own failures; this covers the case
 # where it is absent entirely. Run it directly to see real errors:
-#   scripts/wf-exec.sh wf-rehydrate.sh
+#   scripts/lv-exec.sh lv-rehydrate.sh
 TOLERATE_MISSING = " 2>/dev/null || true"
 
 # The guard hooks tolerate a missing harness the same way, but they CANNOT use
@@ -99,12 +99,12 @@ def guard_command(cmd):
 
 # A guard that must not fail open for an unattended worker. Exit 2 passes
 # through for everyone, as it always did. Any OTHER failure, including a
-# harness that is not on disk, refuses for a worker (WF_UNATTENDED=1) and
+# harness that is not on disk, refuses for a worker (LV_UNATTENDED=1) and
 # allows for an interactive session, whose own permission prompts still stand
 # and whose editor must not be bricked by a broken guard.
 def failclosed_command(cmd):
     exe = cmd.split()[0]
-    worker = '[ "${WF_UNATTENDED:-}" = 1 ]'
+    worker = '[ "${LV_UNATTENDED:-}" = 1 ]'
     return (
         f"if [ ! -x {exe} ]; then {worker} && {{ echo 'permission baseline: harness not on disk; refusing' >&2; exit 2; }}; exit 0; fi; "
         f"{cmd}; rc=$?; [ $rc -eq 0 ] && exit 0; [ $rc -eq 2 ] && exit 2; {worker} && exit 2; exit $rc"
@@ -113,7 +113,11 @@ def failclosed_command(cmd):
 
 # Every script this file installs. Entries are matched by script NAME so a
 # matcher or wrapper change updates in place rather than stacking a duplicate.
-OURS = ("wf-rehydrate.sh", "wf-guard-write.sh", "wf-guard-promote.sh", "wf-guard-baseline.sh")
+OURS = ("lv-rehydrate.sh", "lv-guard-write.sh", "lv-guard-promote.sh", "lv-guard-baseline.sh")
+# The same scripts under their pre-14.0.0 names. A client's settings.json still
+# carries these; they must be recognised as ours so the merge replaces them
+# instead of leaving each hook installed twice.
+OURS += tuple("wf-" + s[3:] for s in OURS)
 
 
 def is_ours(entry):

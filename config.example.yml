@@ -24,20 +24,20 @@ build_command: ""
 # .NET: a *.csproj takes `dotnet test <file>`, but a SOLUTION takes
 # `dotnet test --solution <file>`. Passing a solution positionally fails with
 # "Specifying a solution for 'dotnet test' should be via '--solution'." and runs
-# nothing. Only one consumer reads this key — wf-test's auto-test agent, handed
+# nothing. Only one consumer reads this key — lv-test's auto-test agent, handed
 # it as "Test command:" — so a wrong value fails quietly: the agent either
 # adapts on its own or reports a FAIL that looks like the criterion's fault
 # rather than the config's (WFI-035).
 test_command: ""
 
-# What validates the tree produced when /wf-test merges `release` into a feature
-# branch, just before that tree is pushed to `release` (wf-post-merge-check.sh).
+# What validates the tree produced when /lv-test merges `release` into a feature
+# branch, just before that tree is pushed to `release` (lv-post-merge-check.sh).
 #
 #   full   (default)  build_command, then test_command, whole and unfiltered.
 #   build             build_command only — the pre-9.8 behavior.
 #
 # `full` costs one suite run per plan exit, paid by the plan whose merge broke
-# something. `build` saves that and moves the discovery to /wf-deploy, which is
+# something. `build` saves that and moves the discovery to /lv-deploy, which is
 # hours later, after the plan is complete and its worktree destroyed, and after
 # a human has been asked to approve the promotion.
 #
@@ -51,8 +51,8 @@ test_command: ""
 # every plan exit, and an accepted cost of finding merge breaks at deploy.
 postMergeCheck: full
 
-# External services the E2E suite needs, checked by wf-preflight.sh before
-# /wf-release runs the suite. One name, one check, joined by the FIRST ':'.
+# External services the E2E suite needs, checked by lv-preflight.sh before
+# /lv-release runs the suite. One name, one check, joined by the FIRST ':'.
 # A check starting http:// or https:// is fetched; anything else is run as a
 # shell command and passes on exit 0.
 #
@@ -90,7 +90,7 @@ test_filter_flag: ""
 # fails on an e2e test the filter existed to exclude (WFI-088, WFI-090).
 test_exclude_e2e: ""
 
-# Filter to run only e2e tests (used by wf-test — human tester has the app running).
+# Filter to run only e2e tests (used by lv-test — human tester has the app running).
 # e.g., '--filter "FullyQualifiedName~E2E"' (dotnet VSTest),
 #       '--filter-namespace "*E2E*" --ignore-exit-code 8' (dotnet MTP),
 #       '--grep E2E' (mocha)
@@ -120,7 +120,7 @@ solution_file: ""
 # Detect from: directory name or repo name (e.g., "app" for /Users/you/dev/app).
 project_slug: ""
 
-# Production deploy references — shown in /wf-deploy completion message.
+# Production deploy references — shown in /lv-deploy completion message.
 # Leave blank if the project has no production deployment / CI pipeline.
 #   production_logs_url: URL to deploy logs (e.g., GitHub Actions page)
 #   production_url:      URL of the live site
@@ -140,8 +140,8 @@ local_deploy_command: ""
 local_stop_command: ""
 
 # Tiered test gating (BRF-080).
-# wf-verify reads testScopes to build a test-filter expression for feature-branch
-# runs; wf-release runs the full suite with no filter (aggregation guarantee).
+# lv-verify reads testScopes to build a test-filter expression for feature-branch
+# runs; lv-release runs the full suite with no filter (aggregation guarantee).
 #
 # testScopes — map a category name to a list of test FullyQualifiedName substrings
 # (dotnet) or regex fragments (mocha/jest) understood by {{test_filter_flag}}.
@@ -154,7 +154,7 @@ local_stop_command: ""
 # Leave these blocks empty to disable tiered gating — verify falls back to the
 # full suite (backward-compatible behavior).
 #
-# testFilterStyle — how wf-test-scope.sh renders the filter.
+# testFilterStyle — how lv-test-scope.sh renders the filter.
 #   auto    (default) vstest, unless the project is detected as Microsoft.
 #           Testing.Platform (global.json `runner`, or a csproj setting
 #           TestingPlatformDotnetTestSupport), in which case: mtp
@@ -201,15 +201,15 @@ testScopeMandatory: []
 #   - e2e-smoke
 
 # Auto-test growth.
-# When enabled, /wf-test offers an [a] choice per criterion: a sonnet agent
+# When enabled, /lv-test offers an [a] choice per criterion: a sonnet agent
 # writes (or locates) an automated test, runs it, and commits it to the
 # feature branch on pass. The test ships with the PR, so future plans that
 # touch the same area get the regression check for free.
 #
 # Every outcome is appended to logFile (default plans/auto-test-log.md):
-#   - ### Realized — agent succeeded. wf-spec reads this during planning to
+#   - ### Realized — agent succeeded. lv-spec reads this during planning to
 #     catch criteria that should have been classified automated up front.
-#     wf-implement reads it for style reference when writing tests.
+#     lv-implement reads it for style reference when writing tests.
 #   - ### Candidates — agent couldn't produce a passing test. Manual fallback
 #     runs for this criterion; the candidate is reviewed later.
 #
@@ -255,7 +255,7 @@ testScopeFullSuiteGlobs: []
 # the worse cost is the runs before it, where criteria behind a login were
 # recorded as skipped or passed by sessions that could not have executed them.
 #
-#   test_account_command: run by wf-docker-up.sh once the container is healthy,
+#   test_account_command: run by lv-docker-up.sh once the container is healthy,
 #                         with FEATURE_PORT and COMPOSE_PROJECT_NAME exported.
 #                         Must be idempotent — it runs on every start. e.g.
 #                         "docker exec -e APP_OWNER_PASSWORD='...' \
@@ -269,7 +269,7 @@ testScopeFullSuiteGlobs: []
 #
 # Do NOT append `|| true` to test_account_command. An idempotent seeder usually
 # exits non-zero on the already-provisioned path ("an owner already exists"),
-# and swallowing that also swallows a real failure. wf-docker-up.sh already
+# and swallowing that also swallows a real failure. lv-docker-up.sh already
 # treats a non-zero exit as a warning and brings the app up regardless, so the
 # already-provisioned case costs one line of noise and a genuine failure stays
 # visible (WFI-074).
@@ -279,7 +279,7 @@ test_account_command: ""
 test_account_note: ""
 
 # ── Device testing (phones, tablets) ────────────────────────────────────────
-# What `wf-docker-up.sh --tunnel` runs to put an HTTPS origin in front of the
+# What `lv-docker-up.sh --tunnel` runs to put an HTTPS origin in front of the
 # container.
 #
 # A LAN URL is not enough, and the way it fails gives no clue. A session cookie
@@ -290,7 +290,7 @@ test_account_note: ""
 # was untestable for this reason until someone tunnelled it by hand (WFI-113).
 #
 # The default is a cloudflared quick tunnel: no account, no config, a random
-# https://*.trycloudflare.com hostname, torn down by wf-docker-down.sh. Install
+# https://*.trycloudflare.com hostname, torn down by lv-docker-down.sh. Install
 # it with `brew install cloudflared`. Override for ngrok, a named tunnel, or a
 # local reverse proxy with a dev certificate. $FEATURE_PORT is exported.
 #
@@ -315,11 +315,11 @@ tunnel_command: "cloudflared tunnel --url http://localhost:$FEATURE_PORT"
 #                gate, manualTestGate.blockOnCosmetic: true, autonomy scoped
 #                to release/deploy at most — production-push stays attended.
 #
-# Leave unset until you've deliberately picked one — wf-profile.sh --show
+# Leave unset until you've deliberately picked one — lv-profile.sh --show
 # refuses rather than assume a tier for you.
 #
-#   scripts/wf-exec.sh wf-profile.sh --show     tier, reason, who, when
-#   scripts/wf-exec.sh wf-profile.sh --check    drift against the table above
+#   scripts/lv-exec.sh lv-profile.sh --show     tier, reason, who, when
+#   scripts/lv-exec.sh lv-profile.sh --check    drift against the table above
 projectProfile: {}
 #   tier: pre-launch
 #   reason: "No real users yet."
@@ -330,7 +330,7 @@ projectProfile: {}
 # ── Test ids ────────────────────────────────────────────────────────────────
 #
 # How this project numbers the test ids in a plan's `## Tests` table. Read by
-# wf-test-id-next.sh, which is what /wf-spec asks for the next free id.
+# lv-test-id-next.sh, which is what /lv-spec asks for the next free id.
 #
 # Getting this wrong is not cosmetic. Under the wrong scope the script's advice
 # is confidently backwards: a `flat` reading of a per-plan project reports every
@@ -356,7 +356,7 @@ testIds:
   prefix: T
   dir: tests
 
-# When an unattended /wf-test run stops for a human. See projectProfile above
+# When an unattended /lv-test run stops for a human. See projectProfile above
 # for what tier recommends blockOnCosmetic: true vs false.
 #
 # The rule used to be "stop if any `#### Manual` criterion remains". Every plan
@@ -366,8 +366,8 @@ testIds:
 # on the surface the diff touches — which the planner does not control when
 # classifying criteria — rather than on how many criteria were written.
 #
-# A gate opens only when ALL of these hold. `wf-manual-gate.sh` decides;
-# /wf-test does not second-guess it.
+# A gate opens only when ALL of these hold. `lv-manual-gate.sh` decides;
+# /lv-test does not second-guess it.
 manualTestGate:
   # 1. The diff must touch a rendering surface below.
   requireRenderingSurface: true
@@ -421,7 +421,7 @@ specApproval:
     - security
 
 # ── Prior work ──────────────────────────────────────────────────────────────
-# Before a builder starts, wf-prior-work.sh looks for a commit already on
+# Before a builder starts, lv-prior-work.sh looks for a commit already on
 # develop that names this plan (or the bug it consumes) and touches something
 # other than pipeline bookkeeping. If it finds one, the plan parks on a gate: a
 # human decides whether to accept that code or revert it and build per plan.md.
@@ -444,19 +444,19 @@ priorWork:
 # ── Cross-project reports ───────────────────────────────────────────────────
 # Who this project can file into, and who can file into it. Each entry is
 # "name:absolute-path" — the path is a LOCAL checkout of a project running this
-# harness, because filing runs that project's own wf-bug-new.sh so the ID comes
-# from its counter and the report lands where its own /wf-spec already looks.
+# harness, because filing runs that project's own lv-bug-new.sh so the ID comes
+# from its counter and the report lands where its own /lv-spec already looks.
 # Nothing scans for these; a human declares them. See
 # docs/cross-project-reports.md and docs/coordinator.md.
 #
 # All three are optional and all default to empty.
 #
-#   dependencies:  projects THIS one builds against. wf-dep-bug.sh files a bug
+#   dependencies:  projects THIS one builds against. lv-dep-bug.sh files a bug
 #                  or capability request INTO one of them.
-#   dependents:    projects that build against THIS one. wf-dep-notify.sh
+#   dependents:    projects that build against THIS one. lv-dep-notify.sh
 #                  announces a change here OUT to them.
 #   coordinates:   projects this one oversees (role: coordinator only).
-#                  wf-dep-notify.sh --kind request files work DOWN into them.
+#                  lv-dep-notify.sh --kind request files work DOWN into them.
 #                  Read together with dependents:, so a project that is both
 #                  depended upon and a coordinator keeps all of its targets.
 #
@@ -472,13 +472,13 @@ priorWork:
 # terminal instead of four. Routing is deterministic bash — only the workers
 # cost tokens.
 #
-#   scripts/wf-exec.sh wf-orchestrate.sh --daemon        continuous
-#   scripts/wf-exec.sh wf-orchestrate.sh --sweep         one pass
-#   scripts/wf-exec.sh wf-orchestrate.sh PLN-097         drive one plan
-#   scripts/wf-exec.sh wf-orchestrate.sh --sweep --dry-run   see the plan first
+#   scripts/lv-exec.sh lv-orchestrate.sh --daemon        continuous
+#   scripts/lv-exec.sh lv-orchestrate.sh --sweep         one pass
+#   scripts/lv-exec.sh lv-orchestrate.sh PLN-097         drive one plan
+#   scripts/lv-exec.sh lv-orchestrate.sh --sweep --dry-run   see the plan first
 #
 # Genuine judgment calls (spec approval, `#### Manual` criteria, release/deploy)
-# never run unattended — they park as gates and wait for /wf-attend.
+# never run unattended — they park as gates and wait for /lv-attend.
 orchestrator:
   # OFF by default. Run --sweep --dry-run a few times before turning this on:
   # workers run with --dangerously-skip-permissions.
@@ -492,7 +492,7 @@ orchestrator:
   #
   # COUNT TEST RUNS, NOT WORKERS. These caps bound the workers; each implement
   # and verify worker then runs the project's build and test commands, and
-  # wf-verify fans out to several agents that each run one. The defaults below
+  # lv-verify fans out to several agents that each run one. The defaults below
   # (2 + 2 + 1) reached nine simultaneous runs of one test assembly on a
   # client-a machine — load 27 on 12 cores — and two full-suite runs were
   # killed by their own 600s timeout without finishing (WFI-222). If a project's
@@ -539,7 +539,7 @@ orchestrator:
   # checklist gained a tick. That distinction is what keeps a clean resume of a
   # long plan from spending the same budget as an active⇄verify thrash — do not
   # raise this to work around a plan that parks mid-build. If that happens, the
-  # implementer is not calling wf-progress-tick.sh, and the fix is there.
+  # implementer is not calling lv-progress-tick.sh, and the fix is there.
   max_attempts_per_plan: 3
 
   # Hard ceiling on worker launches per hour, across all roles. The backstop

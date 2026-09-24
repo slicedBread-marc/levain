@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# lv-goal-delta.sh <plan-id> [--base <ref>]
+#
+# Puts a plan's ORIGINAL goal, its CURRENT goal, and the amendments added since
+# the last commit side by side, so a replan cannot quietly narrow what the plan
+# promised.
+#
+# Output:
+#
+#   GOAL_ORIGINAL: <the one-liner as first committed>
+#   GOAL_CURRENT:  <the one-liner in the working tree>
+#   GOAL_STATUS:   unchanged | changed | unknown
+#   AMENDMENTS_NEW: 2
+#   --- new amendment text, verbatim ---
+#   ...
+#
+# WHY THIS EXISTS
+#
+# Whether a capability the user asked for may be dropped is a product decision.
+# No review verdict answers it — a reviewer judges whether the plan is sound,
+# and a narrowing is very often sound engineering. Observed: an amendment
+# narrowed an unattended relay to ANSWER-ONLY for an entirely correct reason (a
+# looped write-capable skill over untrusted input was the injection the plan
+# existed to prevent). Its own text said "that is a deliberate reduction of the
+# Goal's headline capability". A reviewer would approve it, verdict mode would
+# transition it to `ready`, it would be built, and the user would learn that
+# "fix this while I'm out" no longer works the next time they tried it.
+#
+# GOAL_STATUS is the mechanical half — the goal line itself was edited. The
+# other half is a judgement only a reader can make: does a new amendment remove
+# or qualify a capability the Goal names, while leaving the Goal line intact?
+# That is the case that actually occurred, which is why the amendment text is
+# printed rather than just a verdict. See lv-spec's Replanning section.
+#
+# --base defaults to the commit that first added plan.md — the goal as
+# originally written, which is the thing a narrowing is measured against. Pass
+# `--base HEAD` to compare against the last commit only.
+#
+# Exit 0 always. Callers branch on GOAL_STATUS, matching lv-check-deps.sh.
+
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# shellcheck source=lv-orch-lib.sh
+source "$(dirname "$0")/lv-orch-lib.sh"
+
+cd "$(wf_develop_root)"   # plans/* is develop-root work — see lv-orch-lib.sh
+
+REGISTRY="plans/REGISTRY.md"
+
+raw_id="${1:-}"; shift || true
+base=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --base) base="${2:?--base requires a ref}"; shift 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+plan_id=$(printf '%s' "$raw_id" | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+[ -n "$plan_id" ] || { echo "Usage: $0 <$LV_PLN-NNN> [--base <ref>]" >&2; exit 1; }
+[ -f "$REGISTRY" ] || { echo "Error: $REGISTRY not found" >&2; exit 1; }
+
+slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
+[ -n "$slug" ] || { echo "Error: $plan_id has no registry row" >&2; exit 1; }
+
+plan_file="plans/$plan_id-$slug/plan.md"
+[ -f "$plan_file" ] || { echo "Error: $plan_file not found" >&2; exit 1; }
+
+# First non-empty, non-quote line under `## Goal`. Blockquote lines are the
+# metadata header (> **ID:**, > **Bug:**), not the goal.
+goal_of() {
+  awk '
+    /^## Goal[ \t]*$/ { in_goal = 1; next }
+    in_goal && /^## / { exit }
+    in_goal {
+      line = $0
+      sub(/^[ \t]+/, "", line); sub(/[ \t]+$/, "", line)
+      if (line == "" || line ~ /^>/) next
+      print line; exit
+    }
+  '
+}
+
+current=$(goal_of < "$plan_file")
+
+if [ -z "$base" ]; then
+  base=$(git log --diff-filter=A --format=%H -- "$plan_file" 2>/dev/null | tail -1 || true)
+fi
+
+original=""
+status="unknown"
+if [ -n "$base" ]; then
+  if original=$(git show "$base:$plan_file" 2>/dev/null | goal_of); then
+    if [ "$original" = "$current" ]; then status="unchanged"; else status="changed"; fi
+  else
+    original=""
+  fi
+fi
+
+printf 'GOAL_ORIGINAL: %s\n' "$original"
+printf 'GOAL_CURRENT:  %s\n' "$current"
+printf 'GOAL_STATUS:   %s\n' "$status"
+
+# ── Amendments added but not yet committed ────────────────────────────────
+# The narrowing case leaves the Goal line untouched and lands the reduction in
+# `## Amendments`, so the text has to reach the caller for the judgement half.
+new_amendments=$(git diff HEAD -- "$plan_file" 2>/dev/null \
+                 | sed -n 's/^+\([^+].*\)$/\1/p' || true)
+
+if [ -z "$new_amendments" ]; then
+  printf 'AMENDMENTS_NEW: 0\n'
+  exit 0
+fi
+
+# The id does NOT follow the heading marker directly. plans/TEMPLATE.md
+# specifies "[date] — description", so amendments are written
+# `### [2026-08-04] — A9: ...` and the old pattern — which required A<n>
+# immediately after `#`, `**` or `> **` — could never match one. AMENDMENTS_NEW
+# was therefore 0 for every project that follows the template, while the
+# amendment text itself was printed verbatim below: the script saw it and only
+# the count was wrong. A caller branching on the count concludes a narrowing
+# replan added nothing, immediately in front of the always-on scope-reduction
+# gate (WFI-051).
+#
+# So: allow an optional bracketed date and any non-letter run between the marker
+# and the id. `A[0-9]` still anchors it, so prose headings do not match.
+#
+# That fix was still one heading style short. A project whose amendments read
+# `### Amendment 2 — 2026-08-20 · <description>` puts the number AFTER the word
+# and has no A-prefixed token anywhere, so `A[0-9]` cannot anchor: every
+# amendment such a plan has ever carried counted as zero, with the amendment
+# text printed verbatim underneath (WFI-201). The word `Amendment` is as good an
+# anchor as `A<n>` and no more likely to appear in prose at the head of a
+# heading, so both are accepted, with or without the A on the number.
+#
+# And the separator between the A and its number is optional, because the
+# lv-spec skill's own gate wording is "Amendment <A-N> drops a capability the
+# Goal promises." — so `A-1` is the form the skill teaches, and it was the one
+# form this regex could not read. A heading of `### A-1 — …` counted zero;
+# renaming it to `### Amendment 1 — …` counted one, with nothing else changed
+# (WFI-230). Third widening of this pattern: the lesson is that the id is
+# `A`, an optional separator, and a number.
+count=$(printf '%s\n' "$new_amendments" \
+        | grep -cE '^(#+|\*\*|>|-)[[:space:]]*(\[[^]]*\])?[[:space:]]*([^A-Za-z]*A[-_ ]?[0-9]+([^0-9]|$)|[Aa]mendment[[:space:]]+A?[-_ ]?[0-9]+)' || true)
+printf 'AMENDMENTS_NEW: %s\n' "$count"
+printf -- '--- added to %s since HEAD ---\n' "$plan_file"
+printf '%s\n' "$new_amendments"

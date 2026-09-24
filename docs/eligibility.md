@@ -1,17 +1,17 @@
 # Plan Eligibility Rules
 
 Canonical reference for what makes an artifact eligible at each workflow stage.
-All eligibility is determined by `plans/REGISTRY.md` state. Scripts in `scripts/wf-list-*.sh` implement these rules.
+All eligibility is determined by `plans/REGISTRY.md` state. Scripts in `scripts/lv-list-*.sh` implement these rules.
 
 > **Gap:** there is no terminal state for work that is *dropped*. A plan abandoned mid-flight stays eligible forever, and — because four dependency checks read `!= complete` as unsatisfied — permanently blocks anything that depends on it. Proposed in [abandoned-plans.md](abandoned-plans.md); already hit in production by `app`.
 
-**The orchestrator does not reimplement any of this.** `wf-orchestrate.sh` parses the same list scripts a human terminal does, then applies its own *additional* skip rules on top — see [orchestrator.md](orchestrator.md#skip-rules). An artifact eligible here may still not be dispatched, because a gate is open on it, its role is at `max_concurrent`, it's over its attempt budget, or the hourly spawn budget is spent. Eligibility and dispatchability are different questions; this file only answers the first.
+**The orchestrator does not reimplement any of this.** `lv-orchestrate.sh` parses the same list scripts a human terminal does, then applies its own *additional* skip rules on top — see [orchestrator.md](orchestrator.md#skip-rules). An artifact eligible here may still not be dispatched, because a gate is open on it, its role is at `max_concurrent`, it's over its attempt budget, or the hourly spawn budget is spent. Eligibility and dispatchability are different questions; this file only answers the first.
 
 ---
 
-## wf-spec (T2 — Planner)
+## lv-spec (T2 — Planner)
 
-**Script:** `scripts/wf-list-specable.sh`
+**Script:** `scripts/lv-list-specable.sh`
 
 | Priority | Source | Eligible when |
 |-|-|-|
@@ -23,9 +23,9 @@ All eligibility is determined by `plans/REGISTRY.md` state. Scripts in `scripts/
 
 ---
 
-## wf-implement (T3 — Builder)
+## lv-implement (T3 — Builder)
 
-**Script:** `scripts/wf-list-implementable.sh`
+**Script:** `scripts/lv-list-implementable.sh`
 
 | Type | REGISTRY State | Eligible when |
 |-|-|-|
@@ -47,7 +47,7 @@ where it left off.
 
 **Not eligible:**
 - Plans in `draft`, `verify`, `testing`, `complete`, or `abandoned` state.
-- Plans in `active` with only ESCALATED findings — these need T2 (wf-spec).
+- Plans in `active` with only ESCALATED findings — these need T2 (lv-spec).
 
 ---
 
@@ -66,9 +66,9 @@ The verify agent runs autonomously and auto-routes:
 
 ---
 
-## wf-test (T4 — Human Testing)
+## lv-test (T4 — Human Testing)
 
-**Script:** `scripts/wf-list-testable.sh`
+**Script:** `scripts/lv-list-testable.sh`
 
 | Source | Eligible when |
 |-|-|
@@ -84,41 +84,41 @@ The verify agent runs autonomously and auto-routes:
 
 ---
 
-## wf-release (T-any, or daemon)
+## lv-release (T-any, or daemon)
 
-**Script:** `scripts/wf-list-release.sh`
+**Script:** `scripts/lv-list-release.sh`
 
 | Source | Eligible when |
 |-|-|
-| local `release` branch, diffed against `develop` | `git rev-list release..develop -1` is non-empty **and** at least one commit subject isn't `/wf-deploy` bookkeeping **and** the range's net diff is non-empty **and** at least one changed path falls outside `plans/` and `bugs/` |
+| local `release` branch, diffed against `develop` | `git rev-list release..develop -1` is non-empty **and** at least one commit subject isn't `/lv-deploy` bookkeeping **and** the range's net diff is non-empty **and** at least one changed path falls outside `plans/` and `bugs/` |
 
 **Not eligible:** `release` branch doesn't exist yet (bootstrapping the first release is left to a
 human). `release` and `develop` already in sync. `develop` is only ahead by planning commits —
 T2 commits spec drafts and review rounds straight to `plans/` on `develop`, outside any feature
 branch, and reviewing a spec is not releasing one (WFI-001, client-d). `develop` is only ahead
-by `/wf-deploy`'s own bookkeeping (the promote marker, completion and back-merge commits,
+by `/lv-deploy`'s own bookkeeping (the promote marker, completion and back-merge commits,
 registry transitions, bug closes) — that lands on `develop` after every deploy and is not work
-to release; `/wf-release` step 3 filters the same subjects and reports "nothing to release".
+to release; `/lv-release` step 3 filters the same subjects and reports "nothing to release".
 
 The net-diff check is not redundant with the path check: an empty range diff (an
 `--allow-empty` marker commit, which is how the promote marker is written) used to *pass* the
 path test, because the single blank line it produced didn't match `^(plans|bugs)/`. Together
-with the missing subject filter, that is what dispatched three no-op `/wf-release` runs in three
+with the missing subject filter, that is what dispatched three no-op `/lv-release` runs in three
 minutes on client-c and tripped a `stuck` gate over three runs that were each correct
 (WFI-035).
 
 Not REGISTRY-keyed — `release`/`deploy` aren't plans, they're a fixed singleton pipeline stage
 (artifact id `RELEASE`, capped at 1 in flight). Local-ref only, deliberately cheap: this is a
-candidacy check for the dispatcher, not a source of truth — `/wf-release` itself fetches and
+candidacy check for the dispatcher, not a source of truth — `/lv-release` itself fetches and
 re-verifies before doing anything. Eligibility here says nothing about *authorization*; a
-dispatched worker still checks `wf-autonomy.sh release` and opens `release-approval` if nothing
+dispatched worker still checks `lv-autonomy.sh release` and opens `release-approval` if nothing
 covers it (see [`autonomy.md`](autonomy.md)).
 
 ---
 
-## wf-deploy (T-any, or daemon)
+## lv-deploy (T-any, or daemon)
 
-**Script:** `scripts/wf-list-deploy.sh`
+**Script:** `scripts/lv-list-deploy.sh`
 
 | Source | Eligible when |
 |-|-|
@@ -126,19 +126,19 @@ covers it (see [`autonomy.md`](autonomy.md)).
 
 **Not eligible:** `main` and `release` already in sync. Local `release` holds unpushed commits.
 
-Artifact id `DEPLOY`, capped at 1 in flight, same shape as `wf-list-release.sh` above. This
-signal is only safe because `/wf-release` pushes `release` *after* its local E2E run passes, not
+Artifact id `DEPLOY`, capped at 1 in flight, same shape as `lv-list-release.sh` above. This
+signal is only safe because `/lv-release` pushes `release` *after* its local E2E run passes, not
 before — so "release is ahead of main" means "these commits passed E2E," for both attended and
-unattended runs. See `skills/wf-release/SKILL.md` steps 7-8.
+unattended runs. See `skills/lv-release/SKILL.md` steps 7-8.
 
 Which is why unpushed commits are part of the check rather than a nicety: they are, by
-construction, commits `/wf-release` did *not* push — a failed suite, or a worker killed mid-run.
+construction, commits `/lv-release` did *not* push — a failed suite, or a worker killed mid-run.
 client-b WFI-007 is that state reaching production's doorstep: E2E failed 1/117, the run exited
 without resetting the local merge, this check counted 30 commits 71 seconds later, and the
 deploy worker it dispatched opened a `deploy-approval` gate quoting the whole red batch as ready
-to promote. `/wf-release` now rolls that merge back (`wf-release-rollback.sh`), and this check
+to promote. `/lv-release` now rolls that merge back (`lv-release-rollback.sh`), and this check
 is the second line rather than the only one (coordinator WFI-002). Eligibility here is not
-authorization either — `/wf-deploy` checks `wf-autonomy.sh deploy` itself.
+authorization either — `/lv-deploy` checks `lv-autonomy.sh deploy` itself.
 
 ---
 
@@ -146,13 +146,13 @@ authorization either — `/wf-deploy` checks `wf-autonomy.sh deploy` itself.
 
 | REGISTRY State | Who acts | Skill/Agent |
 |-|-|-|
-| `draft` (no findings) | T2 | wf-spec (new plan) |
-| `draft` (ESCALATED findings) | T2 | wf-spec (replanning) |
-| `ready` | T3 | wf-implement (new) |
-| `active` (no findings) | T3 | wf-implement (resume) |
-| `active` (unchecked findings) | T3 | wf-implement (fix cycle) |
-| `verify` | Agent | wf-verify (automatic) |
-| `testing` | T4 | wf-test (human acceptance) |
+| `draft` (no findings) | T2 | lv-spec (new plan) |
+| `draft` (ESCALATED findings) | T2 | lv-spec (replanning) |
+| `ready` | T3 | lv-implement (new) |
+| `active` (no findings) | T3 | lv-implement (resume) |
+| `active` (unchecked findings) | T3 | lv-implement (fix cycle) |
+| `verify` | Agent | lv-verify (automatic) |
+| `testing` | T4 | lv-test (human acceptance) |
 | `complete` | — | Done |
 | `rolled-back` | — | Reverted |
 | `abandoned` | — | Dropped on purpose. Terminal. Revivable only to `draft` |

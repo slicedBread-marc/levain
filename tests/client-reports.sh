@@ -15,7 +15,7 @@ LIB_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LIB_SCRIPTS="$LIB_ROOT/scripts"
 SCRIPT_FOLDER=$(awk '{sub(/#.*/, "")} NF >= 2 {folder = $2} END {print folder}' "$LIB_SCRIPTS/version-map.txt")
 [ -n "$SCRIPT_FOLDER" ] || { echo "cannot resolve script folder from version-map.txt" >&2; exit 1; }
-SCRIPT_DIR="${WF_TEST_SCRIPT_DIR:-$LIB_SCRIPTS/$SCRIPT_FOLDER}"
+SCRIPT_DIR="${LV_TEST_SCRIPT_DIR:-$LIB_SCRIPTS/$SCRIPT_FOLDER}"
 SCRIPT_FOLDER_LIVE=$(basename "$SCRIPT_DIR")
 
 # Where a real install.sh puts the live scripts. Since v9.0.0 that is inside
@@ -107,9 +107,9 @@ git commit -qm seed >/dev/null 2>&1
 # ═══════════════════════════════════════════════════════════════════════
 section "Seeded REGISTRY header (client-a WFI-002)"
 
-# The shipped template was still the 7-column v4 header while wf-spec had been
+# The shipped template was still the 7-column v4 header while lv-spec had been
 # writing 9-field rows since v5, so header and rows disagreed from the very
-# first plan. wf-set-tags.sh patched each row on the way past, which hid the
+# first plan. lv-set-tags.sh patched each row on the way past, which hid the
 # mismatch instead of fixing it.
 assert_eq "template header carries Tags and Deps" "true" \
   "$(grep -q '^| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |$' plans/REGISTRY.md && echo true || echo false)"
@@ -123,7 +123,7 @@ section "Branch check on a greenfield repo (client-a WFI-001)"
 # and stderr, so "develop does not exist yet" was indistinguishable from any
 # other failure. Every greenfield project hit this on its first spec.
 git checkout -q -b main 2>/dev/null || git checkout -q main
-out=$("$SCRIPT_DIR/wf-branch-check.sh" nonexistent-branch true 2>/dev/null)
+out=$("$SCRIPT_DIR/lv-branch-check.sh" nonexistent-branch true 2>/dev/null)
 assert_eq "a missing branch is created rather than failing silently" "true" \
   "$(printf '%s' "$out" | grep -q "CREATED_BRANCH='nonexistent-branch" && echo true || echo false)"
 assert_eq "and the caller is told what it is now on" "true" \
@@ -134,8 +134,8 @@ git branch -q -D nonexistent-branch main 2>/dev/null || true
 # ═══════════════════════════════════════════════════════════════════════
 section "Branch check stdout is an eval contract (client-a WFI-124)"
 
-# Callers run `eval "$(wf-branch-check.sh develop true)"`. Switching a DIRTY
-# checkout let git's carried-over "M <file>" list and wf-infra-reset.sh's
+# Callers run `eval "$(lv-branch-check.sh develop true)"`. Switching a DIRTY
+# checkout let git's carried-over "M <file>" list and lv-infra-reset.sh's
 # progress note reach stdout, so eval tried to run them: `no matches found:
 # (was  M)`, then `command not found: M` once per modified file.
 # Empty output is not a pass: a script that printed nothing would satisfy
@@ -154,7 +154,7 @@ printf 'seed\n' > carried.txt
 git add -A && git commit -q -m "wfi124 fixture: tracked file on develop"
 git checkout -q -b feature/wfi124-side
 printf 'local edit\n' >> carried.txt   # uncommitted
-out=$("$SCRIPT_DIR/wf-branch-check.sh" develop true 2>/dev/null)
+out=$("$SCRIPT_DIR/lv-branch-check.sh" develop true 2>/dev/null)
 assert_eq "a dirty switch emits only KEY=VALUE lines" "true" "$(stdout_is_assignments "$out")"
 assert_eq "and still reports the branch it landed on" "true" \
   "$(printf '%s' "$out" | grep -q 'CURRENT_BRANCH=develop' && echo true || echo false)"
@@ -180,12 +180,12 @@ git add -A >/dev/null 2>&1 && git commit -qm "add PLN-101" >/dev/null 2>&1
 git worktree add -q -b feature/PLN-101 "$TEST_DIR/wt-101" develop 2>/dev/null
 
 assert_ok "registry update runs from inside a feature worktree" \
-  env -C "$TEST_DIR/wt-101" "$SCRIPT_DIR/wf-registry-update.sh" PLN-101 verify testing
+  env -C "$TEST_DIR/wt-101" "$SCRIPT_DIR/lv-registry-update.sh" PLN-101 verify testing
 assert_eq "the DEVELOP registry is the one that moved" "testing" "$(registry_state PLN-101)"
 
 # The same path bug made every read report the worktree's copy.
 assert_eq "reads from a worktree see develop's registry" "true" \
-  "$(env -C "$TEST_DIR/wt-101" "$SCRIPT_DIR/wf-list-testable.sh" 2>/dev/null \
+  "$(env -C "$TEST_DIR/wt-101" "$SCRIPT_DIR/lv-list-testable.sh" 2>/dev/null \
      | grep -q 'PLN-101-worktree-write' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -196,7 +196,7 @@ section "Sparse checkout in a linked worktree (client-a WFI-004, app WFI-006)"
 # — but a linked worktree's .git is a regular file, a gitdir pointer — and died
 # with "Not a directory" before configuring anything.
 assert_ok "sparse-checkout configures a linked worktree" \
-  "$SCRIPT_DIR/wf-worktree-sparse.sh" "$TEST_DIR/wt-101"
+  "$SCRIPT_DIR/lv-worktree-sparse.sh" "$TEST_DIR/wt-101"
 assert_eq "patterns landed in the worktree's own admin dir" "true" \
   "$(grep -q '^!plans/\*\*$' "$(git -C "$TEST_DIR/wt-101" rev-parse --git-dir)/info/sparse-checkout" && echo true || echo false)"
 assert_eq "develop's sparse-checkout stayed a catch-all" "/**" \
@@ -207,7 +207,7 @@ git worktree remove --force "$TEST_DIR/wt-101" >/dev/null 2>&1
 # The frozen v1.x snapshot carried the same line and the same failure — it is a
 # pure bug fix, so it propagates in place rather than forking a folder.
 assert_eq "the v1.x snapshot no longer derives REPO_ROOT from --show-toplevel" "false" \
-  "$(grep -q 'REPO_ROOT=$(git rev-parse --show-toplevel)' "$LIB_SCRIPTS/v1.x/wf-worktree-sparse.sh" && echo true || echo false)"
+  "$(grep -q 'REPO_ROOT=$(git rev-parse --show-toplevel)' "$LIB_SCRIPTS/v1.x/lv-worktree-sparse.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Implementable type vs. existing worktree (client-a WFI-014)"
@@ -219,15 +219,15 @@ section "Implementable type vs. existing worktree (client-a WFI-014)"
 registry_add_row PLN-102 replanned ready feature/PLN-102
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-102" >/dev/null 2>&1
 assert_eq "ready with no worktree is 'new'" "new" \
-  "$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null | awk -F'\t' '$2 == "PLN-102-replanned" { print $1 }')"
+  "$("$SCRIPT_DIR/lv-list-implementable.sh" 2>/dev/null | awk -F'\t' '$2 == "PLN-102-replanned" { print $1 }')"
 
 git worktree add -q -b feature/PLN-102 "$TEST_DIR/wt-102" develop 2>/dev/null
 assert_eq "ready WITH a worktree is a resume, not a new build" "resume" \
-  "$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null | awk -F'\t' '$2 == "PLN-102-replanned" { print $1 }')"
+  "$("$SCRIPT_DIR/lv-list-implementable.sh" 2>/dev/null | awk -F'\t' '$2 == "PLN-102-replanned" { print $1 }')"
 
 printf '# Findings\n\n- [ ] Replan: implement Amendment A1\n' > plans/PLN-102-replanned/findings.md
 assert_eq "…and a fix when findings are outstanding" "fix" \
-  "$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null | awk -F'\t' '$2 == "PLN-102-replanned" { print $1 }')"
+  "$("$SCRIPT_DIR/lv-list-implementable.sh" 2>/dev/null | awk -F'\t' '$2 == "PLN-102-replanned" { print $1 }')"
 
 git worktree remove --force "$TEST_DIR/wt-102" >/dev/null 2>&1
 
@@ -246,7 +246,7 @@ cat > plans/PLN-103-goal-table/plan.md <<'PLAN'
 Freeze the v1 capsule envelope contract
 
 ### Goal History
-<!-- Managed by wf-spec via wf-goal-push.sh / wf-goal-pop.sh. Do not edit manually. -->
+<!-- Managed by lv-spec via lv-goal-push.sh / lv-goal-pop.sh. Do not edit manually. -->
 <!-- | Date | Previous Goal | Trigger | Resolution | -->
 
 ## Tests
@@ -255,7 +255,7 @@ Freeze the v1 capsule envelope contract
 | T1 | round-trips | dotnet test | pass |
 PLAN
 
-"$SCRIPT_DIR/wf-goal-push.sh" PLN-103 "Implement Amendment A1" "Verify: 1 finding" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-goal-push.sh" PLN-103 "Implement Amendment A1" "Verify: 1 finding" >/dev/null 2>&1
 hist=$(awk '/^### Goal History/{f=1;next} /^## /{f=0} f' plans/PLN-103-goal-table/plan.md)
 assert_eq "the row is inside ### Goal History" "true" \
   "$(printf '%s' "$hist" | grep -q 'Freeze the v1 capsule envelope contract' && echo true || echo false)"
@@ -269,7 +269,7 @@ assert_eq "the commented header became a real one" "1" \
 # ═══════════════════════════════════════════════════════════════════════
 section "The 'unbuilt' manual tag (client-a WFI-010)"
 
-# wf-defer-criterion.sh documents and writes `unbuilt`, and the v3.0.0 response
+# lv-defer-criterion.sh documents and writes `unbuilt`, and the v3.0.0 response
 # named it as the fourth tag — but the lint's tag switch never learned it, so
 # deferring a criterion the documented way produced a plan that failed back to
 # draft for an "unknown tag".
@@ -287,8 +287,8 @@ cat > plans/PLN-104-unbuilt-tag/plan.md <<'PLAN'
 PLAN
 
 assert_ok "a plan using (unbuilt) lints clean" \
-  "$SCRIPT_DIR/wf-manual-lint.sh" --file plans/PLN-104-unbuilt-tag/plan.md
-eval "$("$SCRIPT_DIR/wf-manual-lint.sh" --file plans/PLN-104-unbuilt-tag/plan.md --counts)"
+  "$SCRIPT_DIR/lv-manual-lint.sh" --file plans/PLN-104-unbuilt-tag/plan.md
+eval "$("$SCRIPT_DIR/lv-manual-lint.sh" --file plans/PLN-104-unbuilt-tag/plan.md --counts)"
 assert_eq "unbuilt is counted as its own tag" "1" "${MANUAL_UNBUILT:-unset}"
 assert_eq "and not as untagged" "0" "${MANUAL_UNTAGGED:-unset}"
 assert_eq "it does not gate — only open eyes:* do" "1" "${MANUAL_OPEN_EYES:-unset}"
@@ -296,7 +296,7 @@ assert_eq "it does not gate — only open eyes:* do" "1" "${MANUAL_OPEN_EYES:-un
 # A tag that really is unknown must still fail, or the lint means nothing.
 printf -- '- [ ] (whenever) something vague\n' >> plans/PLN-104-unbuilt-tag/plan.md
 assert_fails "an actually-unknown tag is still rejected" \
-  "$SCRIPT_DIR/wf-manual-lint.sh" --file plans/PLN-104-unbuilt-tag/plan.md
+  "$SCRIPT_DIR/lv-manual-lint.sh" --file plans/PLN-104-unbuilt-tag/plan.md
 
 # ═══════════════════════════════════════════════════════════════════════
 section "BROAD-SCOPE findings do not route (app WFI-003)"
@@ -310,21 +310,21 @@ mkdir -p plans/PLN-105-broad-scope
 printf '# Findings\n\n- [ ] SQLitePCLRaw CVE in an unrelated package ← BROAD-SCOPE\n' \
   > plans/PLN-105-broad-scope/findings.md
 assert_eq "a lone BROAD-SCOPE finding leaves the plan clean" "clean" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-105-broad-scope 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-105-broad-scope 2>/dev/null)"
 
 printf -- '- [ ] the retry loop swallows cancellation\n' >> plans/PLN-105-broad-scope/findings.md
 assert_eq "an in-scope finding alongside it still routes to active" "active" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-105-broad-scope 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-105-broad-scope 2>/dev/null)"
 
 printf -- '- [ ] the spec never said which store wins ← ESCALATED\n' >> plans/PLN-105-broad-scope/findings.md
 assert_eq "escalation still wins over everything" "escalated" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-105-broad-scope 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-105-broad-scope 2>/dev/null)"
 
 # ═══════════════════════════════════════════════════════════════════════
-section "wf-verify documents its unattended contract (reported 3×)"
+section "lv-verify documents its unattended contract (reported 3×)"
 
-VERIFY_SKILL="$LIB_ROOT/skills/wf-verify/SKILL.md"
-assert_eq "wf-verify has an Unattended mode section" "true" \
+VERIFY_SKILL="$LIB_ROOT/skills/lv-verify/SKILL.md"
+assert_eq "lv-verify has an Unattended mode section" "true" \
   "$(grep -qi '^## Unattended mode' "$VERIFY_SKILL" && echo true || echo false)"
 assert_eq "it resolves prompts with [AUTO]/[GATE] like its siblings" "true" \
   "$(grep -q '\[AUTO\]' "$VERIFY_SKILL" && grep -q '\[GATE\]' "$VERIFY_SKILL" && echo true || echo false)"
@@ -346,7 +346,7 @@ registry_add_row PLN-108 tracked verify
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-108" >/dev/null 2>&1
 # Written after the baseline commit, so it is genuinely part of the transition.
 printf '# Findings\n\n## Verify — 2026-08-02\n\n- [x] all clear\n' > plans/PLN-108-tracked/findings.md
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-108 verify testing \
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-108 verify testing \
   --commit "verify(PLN-108-tracked): clean — ready for human test" \
   --add plans/PLN-108-tracked/findings.md >/dev/null 2>&1
 committed=$(git show --stat --name-only --pretty=format: HEAD | tr -d ' ')
@@ -359,7 +359,7 @@ assert_eq "and HEAD agrees with the working tree" "testing" \
 
 # Feature branches must still never carry it.
 assert_eq "sparse-checkout still excludes plans/ from feature worktrees" "true" \
-  "$(grep -q '^!plans/\*\*$' "$SCRIPT_DIR/wf-worktree-sparse.sh" && echo true || echo false)"
+  "$(grep -q '^!plans/\*\*$' "$SCRIPT_DIR/lv-worktree-sparse.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Test filter vs. Microsoft.Testing.Platform (client-a, unnumbered)"
@@ -370,8 +370,8 @@ section "Test filter vs. Microsoft.Testing.Platform (client-a, unnumbered)"
 if command -v yq >/dev/null 2>&1; then
   SCOPE_DIR="$TEST_DIR/scope"
   mkdir -p "$SCOPE_DIR/plans/PLN-107-scoped" "$SCOPE_DIR/scripts"
-  cp "$SCRIPT_DIR"/wf-test-scope.sh "$SCRIPT_DIR"/wf-plan-info.sh \
-     "$SCRIPT_DIR"/wf-orch-lib.sh "$SCRIPT_DIR"/wf-lock.sh "$SCOPE_DIR/scripts/" 2>/dev/null
+  cp "$SCRIPT_DIR"/lv-test-scope.sh "$SCRIPT_DIR"/lv-plan-info.sh \
+     "$SCRIPT_DIR"/lv-orch-lib.sh "$SCRIPT_DIR"/lv-ids.sh "$SCRIPT_DIR"/lv-lock.sh "$SCOPE_DIR/scripts/" 2>/dev/null
   cp plans/REGISTRY.md "$SCOPE_DIR/plans/REGISTRY.md"
   printf '| PLN-107 | scoped | verify | — | — | 2026-08-02 | 2.00 | — | — |\n' >> "$SCOPE_DIR/plans/REGISTRY.md"
   printf '# PLN-107\n\n## Goal\nscoped\n\n## Test Scope\n- unit\n' > "$SCOPE_DIR/plans/PLN-107-scoped/plan.md"
@@ -382,19 +382,19 @@ testScopes:
     - Core.Tests
 YML
 
-  out=$(cd "$SCOPE_DIR" && ./scripts/wf-test-scope.sh PLN-107-scoped 2>/dev/null || true)
+  out=$(cd "$SCOPE_DIR" && ./scripts/lv-test-scope.sh PLN-107-scoped 2>/dev/null || true)
   assert_eq "a VSTest project still gets a filter" "true" \
     "$(printf '%s' "$out" | grep -q 'FullyQualifiedName~Core.Tests' && echo true || echo false)"
 
   printf '{ "test": { "runner": "Microsoft.Testing.Platform" } }\n' > "$SCOPE_DIR/global.json"
   rc=0
-  out=$(cd "$SCOPE_DIR" && ./scripts/wf-test-scope.sh PLN-107-scoped 2>/dev/null) || rc=$?
+  out=$(cd "$SCOPE_DIR" && ./scripts/lv-test-scope.sh PLN-107-scoped 2>/dev/null) || rc=$?
   assert_eq "an MTP project gets no filter at all" "" "$out"
   assert_eq "and it is a clean exit, not a failure" "0" "$rc"
 
   # An explicit setting must beat the detection in both directions.
   printf 'testFilterStyle: vstest\ntestScopes:\n  unit:\n    - Core.Tests\n' > "$SCOPE_DIR/claude-workflow.yml"
-  out=$(cd "$SCOPE_DIR" && ./scripts/wf-test-scope.sh PLN-107-scoped 2>/dev/null || true)
+  out=$(cd "$SCOPE_DIR" && ./scripts/lv-test-scope.sh PLN-107-scoped 2>/dev/null || true)
   assert_eq "testFilterStyle: vstest overrides the detection" "true" \
     "$(printf '%s' "$out" | grep -q 'FullyQualifiedName~Core.Tests' && echo true || echo false)"
 else
@@ -442,14 +442,14 @@ git checkout -q develop
 rm -f .git/hooks/post-commit .claude/on-implement-commit.sh .claude/deploy-ran
 
 # ═══════════════════════════════════════════════════════════════════════
-section "wf-bug points at a template that exists (app WFI-005)"
+section "lv-bug points at a template that exists (app WFI-005)"
 
 # Step 5 sent the planner to bugs/_template/bug.md, which install.sh has never
 # deployed. The skill's own inline format block was complete all along.
 assert_eq "no reference to an undeployed template file" "false" \
-  "$(grep -q 'bugs/_template' "$LIB_ROOT/skills/wf-bug/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'bugs/_template' "$LIB_ROOT/skills/lv-bug/SKILL.md" && echo true || echo false)"
 assert_eq "the inline bug.md format is still there" "true" \
-  "$(grep -q '^## Steps to Reproduce' "$LIB_ROOT/skills/wf-bug/SKILL.md" && echo true || echo false)"
+  "$(grep -q '^## Steps to Reproduce' "$LIB_ROOT/skills/lv-bug/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A deploy must not dirty a feature worktree (client-a WFI-021)"
@@ -462,37 +462,37 @@ section "A deploy must not dirty a feature worktree (client-a WFI-021)"
 # re-exclude them, and `git merge develop` ABORTED with "your local changes
 # would be overwritten" before reaching a real conflict.
 cd "$TEST_DIR/main" || exit 1
-mkdir -p scripts/v2.00 .claude/skills/wf-attend
+mkdir -p scripts/v2.00 .claude/skills/lv-attend
 printf 'orig\n' > scripts/v2.00/wf-sample.sh
 printf 'orig\n' > scripts/version-map.txt
-printf 'orig\n' > .claude/skills/wf-attend/SKILL.md
-printf 'orig\n' > scripts/wf-exec.sh
+printf 'orig\n' > .claude/skills/lv-attend/SKILL.md
+printf 'orig\n' > scripts/lv-exec.sh
 git add -A >/dev/null 2>&1 && git commit -qm "seed infra" >/dev/null 2>&1
 
 registry_add_row PLN-121 deploy-drift active feature/PLN-121-deploy-drift
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-121" >/dev/null 2>&1
 git worktree add -q -b feature/PLN-121-deploy-drift "$TEST_DIR/wt-103" develop 2>/dev/null
-"$SCRIPT_DIR/wf-worktree-sparse.sh" "$TEST_DIR/wt-103" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-worktree-sparse.sh" "$TEST_DIR/wt-103" >/dev/null 2>&1
 
 # What a deploy does: newer content into every path a session reads on disk,
 # and — as install.sh used to — into the develop-owned ones as well.
-mkdir -p "$TEST_DIR/wt-103/scripts/v2.00" "$TEST_DIR/wt-103/.claude/skills/wf-attend"
+mkdir -p "$TEST_DIR/wt-103/scripts/v2.00" "$TEST_DIR/wt-103/.claude/skills/lv-attend"
 printf 'v3.4.0\n' > "$TEST_DIR/wt-103/scripts/v2.00/wf-sample.sh"
 printf 'v3.4.0\n' > "$TEST_DIR/wt-103/scripts/version-map.txt"
-printf 'v3.4.0\n' > "$TEST_DIR/wt-103/.claude/skills/wf-attend/SKILL.md"
-printf 'v3.4.0\n' > "$TEST_DIR/wt-103/scripts/wf-exec.sh"
+printf 'v3.4.0\n' > "$TEST_DIR/wt-103/.claude/skills/lv-attend/SKILL.md"
+printf 'v3.4.0\n' > "$TEST_DIR/wt-103/scripts/lv-exec.sh"
 # ...and develop adopts the same release.
 printf 'v3.4.0\n' > scripts/v2.00/wf-sample.sh
 printf 'v3.4.0\n' > scripts/version-map.txt
-printf 'v3.4.0\n' > .claude/skills/wf-attend/SKILL.md
-printf 'v3.4.0\n' > scripts/wf-exec.sh
-chmod +x scripts/wf-exec.sh
+printf 'v3.4.0\n' > .claude/skills/lv-attend/SKILL.md
+printf 'v3.4.0\n' > scripts/lv-exec.sh
+chmod +x scripts/lv-exec.sh
 git add -A >/dev/null 2>&1 && git commit -qm "chore: adopt v3.4.0" >/dev/null 2>&1
 
 # Re-running sparse configuration is what install.sh now does first. It clears
 # deploy copies of develop-owned paths — identified as byte-identical to
 # develop's, so a file someone actually edited here is left alone.
-"$SCRIPT_DIR/wf-worktree-sparse.sh" "$TEST_DIR/wt-103" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-worktree-sparse.sh" "$TEST_DIR/wt-103" >/dev/null 2>&1
 assert_eq "develop-owned script copies no longer dirty the worktree" "0" \
   "$(git -C "$TEST_DIR/wt-103" status --porcelain -- scripts/v2.00 scripts/version-map.txt | wc -l | xargs)"
 
@@ -501,18 +501,18 @@ assert_eq "develop-owned script copies no longer dirty the worktree" "0" \
 # migrates, so the merge assertion below tests the CURRENT contract: under
 # tracking, a mid-plan deploy left them modified and the merge aborted before it
 # could conflict on anything real.
-printf '.claude/skills/wf-*/\n.claude/workflow.md\nscripts/wf-exec.sh\n' >> .gitignore
-git rm -r -q --cached .claude/skills scripts/wf-exec.sh >/dev/null 2>&1 || true
+printf '.claude/skills/lv-*/\n.claude/workflow.md\nscripts/lv-exec.sh\n' >> .gitignore
+git rm -r -q --cached .claude/skills scripts/lv-exec.sh >/dev/null 2>&1 || true
 git add .gitignore >/dev/null 2>&1
 git commit -qm "chore: stop tracking the generated harness" >/dev/null 2>&1
 
-# The worktree takes the migration through wf-merge-develop.sh, which is what
+# The worktree takes the migration through lv-merge-develop.sh, which is what
 # clears the deploy's local modifications first — a plain `git merge` ABORTS on
 # them and the worktree can then never receive the untrack commit at all.
-( cd "$TEST_DIR/wt-103" && "$SCRIPT_DIR/wf-merge-develop.sh" ) >/dev/null 2>&1 || true
+( cd "$TEST_DIR/wt-103" && "$SCRIPT_DIR/lv-merge-develop.sh" ) >/dev/null 2>&1 || true
 
 assert_eq "the runtime files are on the worktree's disk" "true" \
-  "$([ -f "$TEST_DIR/wt-103/.claude/skills/wf-attend/SKILL.md" ] && [ -f "$TEST_DIR/wt-103/scripts/wf-exec.sh" ] && echo true || echo false)"
+  "$([ -f "$TEST_DIR/wt-103/.claude/skills/lv-attend/SKILL.md" ] && [ -f "$TEST_DIR/wt-103/scripts/lv-exec.sh" ] && echo true || echo false)"
 assert_eq "and cannot dirty it, because git cannot see them" "0" \
   "$(git -C "$TEST_DIR/wt-103" status --porcelain | wc -l | xargs)"
 
@@ -528,21 +528,21 @@ printf 'brand new\n' > scripts/v2.00/wf-added-later.sh
 git add -A >/dev/null 2>&1 && git commit -qm "add a script post-branch" >/dev/null 2>&1
 mkdir -p "$TEST_DIR/wt-103/scripts/v2.00"
 printf 'brand new\n' > "$TEST_DIR/wt-103/scripts/v2.00/wf-added-later.sh"
-"$SCRIPT_DIR/wf-worktree-sparse.sh" "$TEST_DIR/wt-103" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-worktree-sparse.sh" "$TEST_DIR/wt-103" >/dev/null 2>&1
 assert_eq "an untracked deploy leftover is cleared too" "false" \
   "$([ -f "$TEST_DIR/wt-103/scripts/v2.00/wf-added-later.sh" ] && echo true || echo false)"
 
-# Legacy clients keep scripts flat at scripts/wf-*.sh. An untracked copy of one
-# is a deploy artifact by the same reasoning — but wf-exec.sh shares the glob
+# Legacy clients keep scripts flat at scripts/lv-*.sh. An untracked copy of one
+# is a deploy artifact by the same reasoning — but lv-exec.sh shares the glob
 # and is the one file a session inside the worktree must be able to invoke.
-printf 'flat legacy\n' > scripts/wf-claim.sh
+printf 'flat legacy\n' > scripts/lv-claim.sh
 git add -A >/dev/null 2>&1 && git commit -qm "flat-layout script" >/dev/null 2>&1
-printf 'flat legacy\n' > "$TEST_DIR/wt-103/scripts/wf-claim.sh"
-"$SCRIPT_DIR/wf-worktree-sparse.sh" "$TEST_DIR/wt-103" >/dev/null 2>&1
+printf 'flat legacy\n' > "$TEST_DIR/wt-103/scripts/lv-claim.sh"
+"$SCRIPT_DIR/lv-worktree-sparse.sh" "$TEST_DIR/wt-103" >/dev/null 2>&1
 assert_eq "a flat-layout leftover is cleared" "false" \
-  "$([ -f "$TEST_DIR/wt-103/scripts/wf-claim.sh" ] && echo true || echo false)"
-assert_eq "but wf-exec.sh survives the same glob" "true" \
-  "$([ -f "$TEST_DIR/wt-103/scripts/wf-exec.sh" ] && echo true || echo false)"
+  "$([ -f "$TEST_DIR/wt-103/scripts/lv-claim.sh" ] && echo true || echo false)"
+assert_eq "but lv-exec.sh survives the same glob" "true" \
+  "$([ -f "$TEST_DIR/wt-103/scripts/lv-exec.sh" ] && echo true || echo false)"
 
 # The exclusion list and the propagation list are the same decision made twice;
 # a path may not appear in both.
@@ -552,12 +552,12 @@ assert_eq "nor stamps the sparse-excluded workflow-version there" "false" \
   "$(grep -q 'wt_path/.claude/workflow-version' "$LIB_ROOT/install.sh" && echo true || echo false)"
 
 # The reconciliation that used to run here is gone, not relocated.
-assert_eq "wf-infra-sync.sh no longer exists" "false" \
-  "$([ -e "$SCRIPT_DIR/wf-infra-sync.sh" ] && echo true || echo false)"
+assert_eq "lv-infra-sync.sh no longer exists" "false" \
+  "$([ -e "$SCRIPT_DIR/lv-infra-sync.sh" ] && echo true || echo false)"
 
 # Deleting it from the library was only half the job: deploy wrote scripts and
 # never removed one, so every client installed before v5.0.0 still had the
-# August copy of wf-infra-sync.sh sitting in scripts/v2.00/ at v6.7.0 — a
+# August copy of lv-infra-sync.sh sitting in scripts/v2.00/ at v6.7.0 — a
 # script deleted precisely because running it commits develop's own bytes onto
 # a feature branch.
 #
@@ -569,15 +569,15 @@ prune_client="$TEST_DIR/prune-client"
 rm -rf "$prune_client"; mkdir -p "$prune_client"
 git init -q "$prune_client"
 printf 'project_slug: "prune-client"\n' > "$prune_client/claude-workflow.yml"
-WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$prune_client" >/dev/null 2>&1
+LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$prune_client" >/dev/null 2>&1
 printf 'residue\n' > "$(live_script_dir "$prune_client")/wf-gone-from-the-library.sh"
-WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$prune_client" >/dev/null 2>&1
+LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$prune_client" >/dev/null 2>&1
 assert_eq "a script the library no longer ships is absent from the next build" "false" \
   "$([ -f "$(live_script_dir "$prune_client")/wf-gone-from-the-library.sh" ] && echo true || echo false)"
 assert_eq "and the build it replaced still holds everything it shipped" "true" \
-  "$([ -f "$(live_script_dir "$prune_client")/wf-worktree-sparse.sh" ] && echo true || echo false)"
+  "$([ -f "$(live_script_dir "$prune_client")/lv-worktree-sparse.sh" ] && echo true || echo false)"
 assert_eq "and merge-develop restores the harness on every worktree instead" "true" \
-  "$(grep -q 'wf-worktree-harness.sh' "$SCRIPT_DIR/wf-merge-develop.sh" && echo true || echo false)"
+  "$(grep -q 'lv-worktree-harness.sh' "$SCRIPT_DIR/lv-merge-develop.sh" && echo true || echo false)"
 
 git worktree remove --force "$TEST_DIR/wt-103" >/dev/null 2>&1
 git branch -q -D feature/PLN-121-deploy-drift 2>/dev/null || true
@@ -587,14 +587,14 @@ section "State transitions reach the commit that claims them (client-a WFI-022)"
 
 # Every skill's post-transition commit was written when REGISTRY.md was
 # gitignored, so none of their `git add` lists names it. Since v3.2.0 it is
-# tracked — and wf-implement's Phase 3 commit, documented as "this commit
+# tracked — and lv-implement's Phase 3 commit, documented as "this commit
 # triggers the verify agent", contained no registry change at all. Staging it
-# inside wf-registry-update.sh fixes every call site at once, including ones
+# inside lv-registry-update.sh fixes every call site at once, including ones
 # not yet written.
 registry_add_row PLN-120 unstaged ready
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-120" >/dev/null 2>&1
 
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-120 ready active >/dev/null 2>&1
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-120 ready active >/dev/null 2>&1
 
 # Staged was never enough (client-a WFI-065): a dirty REGISTRY.md on the
 # develop root is taken by any other worker's stash and carried by any other
@@ -612,8 +612,8 @@ assert_eq "and the message names the transition" "true" \
 
 # --no-commit is the opt-out, for a caller that really does want to bundle it.
 registry_add_row PLN-121 staged-only ready
-"$SCRIPT_DIR/wf-commit.sh" "add PLN-121" --add plans/REGISTRY.md >/dev/null 2>&1
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-121 ready active --no-commit >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "add PLN-121" --add plans/REGISTRY.md >/dev/null 2>&1
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-121 ready active --no-commit >/dev/null 2>&1
 assert_eq "--no-commit stages without committing" "true" \
   "$(git diff --cached --name-only | grep -qx 'plans/REGISTRY.md' && echo true || echo false)"
 git commit -qm "implement(PLN-121-staged-only): carries its own transition" >/dev/null 2>&1
@@ -622,16 +622,16 @@ git commit -qm "implement(PLN-121-staged-only): carries its own transition" >/de
 # ticks that step 21 writes were dropped on the floor too.
 #
 # It is now one call rather than a transition followed by a `git add`: the
-# `--add` carries the whole plan folder and wf-registry-update.sh stages
+# `--add` carries the whole plan folder and lv-registry-update.sh stages
 # REGISTRY.md itself, so the row and the files it describes share a commit.
 # That also removes the window where the post-commit hook could fire against a
 # transition that had not landed (WFI-079).
 phase3=$(awk '/^25\. \*\*Move the plan to/,/^26\./' \
-  "$LIB_ROOT/skills/wf-implement/SKILL.md")
+  "$LIB_ROOT/skills/lv-implement/SKILL.md")
 assert_eq "Phase 3 commits the whole plan folder and the registry" "true" \
   "$(printf '%s' "$phase3" | grep -q -- '--add plans/PLN-NNN-<slug>/' && echo true || echo false)"
 assert_eq "and carries the transition in that same commit" "true" \
-  "$(printf '%s' "$phase3" | grep -q 'wf-registry-update.sh PLN-NNN active verify' && echo true || echo false)"
+  "$(printf '%s' "$phase3" | grep -q 'lv-registry-update.sh PLN-NNN active verify' && echo true || echo false)"
 # The hook that launches the verify agent matches on the commit SUBJECT, so
 # fusing the two commits only works if the fused one still says the words.
 assert_eq "and its message still triggers the verify hook" "true" \
@@ -640,15 +640,15 @@ assert_eq "and its message still triggers the verify hook" "true" \
 # A bare `git add -A` on a feature branch commits whatever the last deploy
 # wrote as if the plan had changed it.
 assert_eq "no bare 'git add -A' left in the implementer" "0" \
-  "$(grep -c '^\s*git add -A$' "$LIB_ROOT/skills/wf-implement/SKILL.md" | xargs)"
+  "$(grep -c '^\s*git add -A$' "$LIB_ROOT/skills/lv-implement/SKILL.md" | xargs)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A replan lands where its builder's exit expects (client-a WFI-027, WFI-026)"
 
-# wf-spec's replanning exit wrote `draft → ready` unconditionally. A replanned
+# lv-spec's replanning exit wrote `draft → ready` unconditionally. A replanned
 # plan keeps its branch and worktree, so the dispatcher correctly read
 # ready+worktree as a `resume` and sent it to the fix cycle — whose exit runs
-# `wf-registry-update.sh <id> active verify`. That from_state does not match
+# `lv-registry-update.sh <id> active verify`. That from_state does not match
 # `ready`, so the transition silently no-opped: work committed on the branch,
 # registry still `ready`, and verify then refused for the same reason.
 registry_add_row PLN-122 replan-fresh draft
@@ -656,31 +656,31 @@ registry_add_row PLN-123 replan-resume draft feature/PLN-123-replan-resume
 git add -A >/dev/null 2>&1 && git commit -qm "add replan fixtures" >/dev/null 2>&1
 
 assert_eq "a replan with no worktree goes back to ready" "ready" \
-  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-122)"
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-122)"
 
 git worktree add -q -b feature/PLN-123-replan-resume "$TEST_DIR/wt-123" develop 2>/dev/null
 assert_eq "a replan WITH a worktree goes to active" "active" \
-  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-123)"
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-123)"
 
 assert_ok "--apply performs the transition" \
-  "$SCRIPT_DIR/wf-replan-target.sh" PLN-123 --apply
+  "$SCRIPT_DIR/lv-replan-target.sh" PLN-123 --apply
 assert_eq "the registry agrees" "active" "$(registry_state PLN-123)"
 
-# Which is exactly the state wf-implement's exit contract requires.
+# Which is exactly the state lv-implement's exit contract requires.
 assert_ok "and the builder's exit transition now matches" \
-  "$SCRIPT_DIR/wf-registry-update.sh" PLN-123 active verify
+  "$SCRIPT_DIR/lv-registry-update.sh" PLN-123 active verify
 
 # The error that sent a worker looking for a missing row.
-err=$("$SCRIPT_DIR/wf-registry-update.sh" PLN-122 active verify 2>&1 || true)
+err=$("$SCRIPT_DIR/lv-registry-update.sh" PLN-122 active verify 2>&1 || true)
 assert_eq "a from_state mismatch names the state the plan IS in" "true" \
   "$(printf '%s' "$err" | grep -q "is in state 'draft', not 'active'" && echo true || echo false)"
 
-assert_eq "wf-spec no longer hardcodes ready on the replan exit" "true" \
-  "$(grep -q 'wf-replan-target.sh PLN-NNN --apply' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+assert_eq "lv-spec no longer hardcodes ready on the replan exit" "true" \
+  "$(grep -q 'lv-replan-target.sh PLN-NNN --apply' "$LIB_ROOT/skills/lv-spec/SKILL.md" && echo true || echo false)"
 
 # The exit sequence must not commit a transition that was refused.
 assert_eq "Phase 3 stops rather than committing a refused transition" "true" \
-  "$(grep -q 'do NOT run step 26' "$LIB_ROOT/skills/wf-implement/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'do NOT run step 26' "$LIB_ROOT/skills/lv-implement/SKILL.md" && echo true || echo false)"
 
 git worktree remove --force "$TEST_DIR/wt-123" >/dev/null 2>&1
 git branch -q -D feature/PLN-123-replan-resume 2>/dev/null || true
@@ -694,18 +694,18 @@ section "The fix cycle sets its own container name and port (client-a WFI-025)"
 # session — so docker-compose.yml fell back to its defaults, which are another
 # plan's name and port. One fix-cycle commit deployed a PLN-002 build as
 # ...-pln001 on 8101.
-assert_eq "the fix cycle runs wf-plan-port.sh" "true" \
-  "$(awk '/^## Fix cycle/, /^## Worktree workflow/' "$LIB_ROOT/skills/wf-implement/SKILL.md" \
-     | grep -q 'wf-plan-port.sh' && echo true || echo false)"
+assert_eq "the fix cycle runs lv-plan-port.sh" "true" \
+  "$(awk '/^## Fix cycle/, /^## Worktree workflow/' "$LIB_ROOT/skills/lv-implement/SKILL.md" \
+     | grep -q 'lv-plan-port.sh' && echo true || echo false)"
 assert_eq "and says why a second session cannot inherit it" "true" \
-  "$(awk '/^## Fix cycle/, /^## Worktree workflow/' "$LIB_ROOT/skills/wf-implement/SKILL.md" \
+  "$(awk '/^## Fix cycle/, /^## Worktree workflow/' "$LIB_ROOT/skills/lv-implement/SKILL.md" \
      | grep -q 'COMPOSE_PROJECT_NAME' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "The tag vocabulary is the project's own (client-a WFI-030)"
 
-# wf-spec offered `security, arcade, admin, lessons, ux, infra, e2e, bugfix`
-# and wf-set-tags.sh REJECTED everything else. Three of those names are one
+# lv-spec offered `security, arcade, admin, lessons, ux, infra, e2e, bugfix`
+# and lv-set-tags.sh REJECTED everything else. Three of those names are one
 # project's game/admin/lessons app. Elsewhere the list named tags that meant
 # nothing and omitted `contract` — the tag marking that program's frozen wire
 # surface, and the only tag in its specApproval.gateTags. The list was already
@@ -722,7 +722,7 @@ registry_add_row PLN-131 relay-store ready — infra,relay
 registry_add_row PLN-132 relay-host  ready — relay
 git add -A >/dev/null 2>&1 && git commit -qm "tag fixture" >/dev/null 2>&1
 
-tags_out=$("$SCRIPT_DIR/wf-list-tags.sh" 2>/dev/null || true)
+tags_out=$("$SCRIPT_DIR/lv-list-tags.sh" 2>/dev/null || true)
 assert_eq "a tag no shipped list contained is reported" "true" \
   "$(printf '%s' "$tags_out" | grep -q '^contract' && echo true || echo false)"
 assert_eq "gating tags are marked as such" "true" \
@@ -731,30 +731,30 @@ assert_eq "and non-gating ones are not" "true" \
   "$(printf '%s' "$tags_out" | grep -qE '^relay\s+2\s+—$' && echo true || echo false)"
 assert_eq "most-used first" "relay" "$(printf '%s' "$tags_out" | head -1 | cut -f1)"
 assert_eq "--gating lists only what carries a gate" "contract" \
-  "$("$SCRIPT_DIR/wf-list-tags.sh" --gating 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
+  "$("$SCRIPT_DIR/lv-list-tags.sh" --gating 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
 
 # A gate tag nobody has used yet is the one a planner most needs offered.
 printf 'specApproval:\n  mode: verdict\n  gateTags:\n    - contract\n    - unused-gate\n' > claude-workflow.yml
 assert_eq "an unused gate tag is still listed" "true" \
-  "$("$SCRIPT_DIR/wf-list-tags.sh" 2>/dev/null | grep -qE '^unused-gate\s+0\s+gate$' && echo true || echo false)"
+  "$("$SCRIPT_DIR/lv-list-tags.sh" 2>/dev/null | grep -qE '^unused-gate\s+0\s+gate$' && echo true || echo false)"
 printf 'specApproval:\n  mode: verdict\n  gateTags:\n    - contract\n' > claude-workflow.yml
 
 # The hard failure: the tag that gates could not be assigned at all.
 assert_ok "a tag outside the old hardcoded list can be assigned" \
-  "$SCRIPT_DIR/wf-set-tags.sh" PLN-132 relay,contract
+  "$SCRIPT_DIR/lv-set-tags.sh" PLN-132 relay,contract
 assert_eq "and it lands in the registry" "relay,contract" \
   "$(grep '^| PLN-132 |' plans/REGISTRY.md | awk -F'|' '{print $9}' | xargs)"
 # Captured, not piped straight into `grep -q`: grep exits on its first match
 # and SIGPIPEs the producer, which pipefail then reports as a failed pipeline.
-warn=$("$SCRIPT_DIR/wf-set-tags.sh" PLN-132 relay,brand-new 2>&1 >/dev/null || true)
+warn=$("$SCRIPT_DIR/lv-set-tags.sh" PLN-132 relay,brand-new 2>&1 >/dev/null || true)
 assert_eq "a name new to the project warns rather than failing" "true" \
   "$(printf '%s' "$warn" | grep -q 'new tag' && echo true || echo false)"
 
 assert_eq "the prompt no longer offers another project's vocabulary" "false" \
-  "$(grep -q 'Tags (comma-separated): security, arcade' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'Tags (comma-separated): security, arcade' "$LIB_ROOT/skills/lv-spec/SKILL.md" && echo true || echo false)"
 assert_eq "step 4c reads the project's own tags" "true" \
-  "$(awk '/^4c\./, /^5\./' "$LIB_ROOT/skills/wf-spec/SKILL.md" \
-     | grep -q 'wf-list-tags.sh' && echo true || echo false)"
+  "$(awk '/^4c\./, /^5\./' "$LIB_ROOT/skills/lv-spec/SKILL.md" \
+     | grep -q 'lv-list-tags.sh' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "The review runs before the gate, not after it (client-a WFI-028)"
@@ -767,25 +767,25 @@ section "The review runs before the gate, not after it (client-a WFI-028)"
 # four gates were consumed only to end at `draft` with findings — exactly where
 # an unattended Blocked verdict routes them anyway.
 assert_eq "the skill no longer forbids reviewing a tagged plan" "false" \
-  "$(grep -q 'Do \*\*not\*\* run the review agent' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'Do \*\*not\*\* run the review agent' "$LIB_ROOT/skills/lv-spec/SKILL.md" && echo true || echo false)"
 assert_eq "every unattended exit runs the review" "true" \
-  "$(grep -q 'The review always runs. Nothing here skips it' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'The review always runs. Nothing here skips it' "$LIB_ROOT/skills/lv-spec/SKILL.md" && echo true || echo false)"
 assert_eq "the gate mode and the tag path share one exit" "true" \
-  "$(grep -q '^## Exit — unattended' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+  "$(grep -q '^## Exit — unattended' "$LIB_ROOT/skills/lv-spec/SKILL.md" && echo true || echo false)"
 assert_eq "a Blocked verdict never reaches a human directly" "true" \
-  "$(awk '/^## Exit — unattended/, /^## Replanning/' "$LIB_ROOT/skills/wf-spec/SKILL.md" \
+  "$(awk '/^## Exit — unattended/, /^## Replanning/' "$LIB_ROOT/skills/lv-spec/SKILL.md" \
      | grep -q 'same fix loop' && echo true || echo false)"
 assert_eq "the gate question carries the verdict" "true" \
-  "$(awk '/^## Exit — unattended/, /^## Replanning/' "$LIB_ROOT/skills/wf-spec/SKILL.md" \
+  "$(awk '/^## Exit — unattended/, /^## Replanning/' "$LIB_ROOT/skills/lv-spec/SKILL.md" \
      | grep -q 'Review: Approved with notes' && echo true || echo false)"
 # v4.2.0 asserted a flat "do not re-run the review". WFI-046 made it
 # conditional — a verdict that predates the plan's last amendment MUST be
 # re-run — so the assertion tracks the narrower contract: don't re-run one that
 # is current.
-assert_eq "wf-attend reads the review instead of commissioning it" "true" \
-  "$(grep -q 'do not re-run a review step 1 already found current' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
+assert_eq "lv-attend reads the review instead of commissioning it" "true" \
+  "$(grep -q 'do not re-run a review step 1 already found current' "$LIB_ROOT/skills/lv-attend/SKILL.md" && echo true || echo false)"
 assert_eq "and a batch drain does not re-review what already has a verdict" "true" \
-  "$(grep -q 'Read the verdicts that are already there' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'Read the verdicts that are already there' "$LIB_ROOT/skills/lv-attend/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "The consistency closure reaches the docs the plans cite (client-a WFI-029)"
@@ -806,12 +806,12 @@ printf '# PLN-141\n\n## Goal\nHost the relay.\n\nBuild block per docs/plan/refer
   > plans/PLN-141-host/plan.md
 git add -A >/dev/null 2>&1 && git commit -qm "closure fixture" >/dev/null 2>&1
 
-closure=$("$SCRIPT_DIR/wf-list-closure.sh" PLN-142 2>/dev/null | cut -f1 | tr '\n' ',' | sed 's/,$//')
+closure=$("$SCRIPT_DIR/lv-list-closure.sh" PLN-142 2>/dev/null | cut -f1 | tr '\n' ',' | sed 's/,$//')
 assert_eq "the closure is transitive, not just direct Deps" "PLN-141,PLN-140" "$closure"
 assert_eq "and carries each plan's state" "ready" \
-  "$("$SCRIPT_DIR/wf-list-closure.sh" PLN-142 2>/dev/null | head -1 | cut -f3)"
+  "$("$SCRIPT_DIR/lv-list-closure.sh" PLN-142 2>/dev/null | head -1 | cut -f3)"
 
-docs_out=$("$SCRIPT_DIR/wf-list-cited-docs.sh" PLN-142 2>/dev/null || true)
+docs_out=$("$SCRIPT_DIR/lv-list-cited-docs.sh" PLN-142 2>/dev/null || true)
 assert_eq "a doc cited by a TRANSITIVE dependency is reached" "true" \
   "$(printf '%s' "$docs_out" | grep -q '20-multi-instance.md' && echo true || echo false)"
 assert_eq "the doc cited by two plans is listed first" "docs/plan/reference/07-remote-cli.md" \
@@ -821,18 +821,18 @@ assert_eq "and names both citing plans, which is the pair to cross-read" "PLN-14
 assert_eq "a cited path that does not exist is dropped" "false" \
   "$(printf '%s' "$docs_out" | grep -q '99-absent' && echo true || echo false)"
 assert_eq "a plan citing nothing is not an error" "0" \
-  "$("$SCRIPT_DIR/wf-list-cited-docs.sh" PLN-140 >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-list-cited-docs.sh" PLN-140 >/dev/null 2>&1; echo $?)"
 
 # A mutual Deps pair must terminate rather than loop forever.
 registry_add_row PLN-143 loop-a ready — — PLN-144
 registry_add_row PLN-144 loop-b ready — — PLN-143
 assert_eq "a dependency cycle terminates" "PLN-144" \
-  "$("$SCRIPT_DIR/wf-list-closure.sh" PLN-143 2>/dev/null | cut -f1 | tr '\n' ',' | sed 's/,$//')"
+  "$("$SCRIPT_DIR/lv-list-closure.sh" PLN-143 2>/dev/null | cut -f1 | tr '\n' ',' | sed 's/,$//')"
 
-assert_eq "wf-consistency reads the cited docs" "true" \
-  "$(grep -q 'wf-list-cited-docs.sh' "$LIB_ROOT/skills/wf-consistency/SKILL.md" && echo true || echo false)"
+assert_eq "lv-consistency reads the cited docs" "true" \
+  "$(grep -q 'lv-list-cited-docs.sh' "$LIB_ROOT/skills/lv-consistency/SKILL.md" && echo true || echo false)"
 assert_eq "and checks them against each other, not just the plan" "true" \
-  "$(grep -q 'Two reference docs that disagree' "$LIB_ROOT/skills/wf-consistency/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'Two reference docs that disagree' "$LIB_ROOT/skills/lv-consistency/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A replan cannot quietly shrink the Goal (client-a WFI-031)"
@@ -849,7 +849,7 @@ printf '# PLN-150\n\n## Goal\nRelay answers and applies fixes while the user is 
   > plans/PLN-150-relay-scope/plan.md
 git add -A >/dev/null 2>&1 && git commit -qm "goal fixture" >/dev/null 2>&1
 
-delta=$("$SCRIPT_DIR/wf-goal-delta.sh" PLN-150 2>/dev/null || true)
+delta=$("$SCRIPT_DIR/lv-goal-delta.sh" PLN-150 2>/dev/null || true)
 assert_eq "an untouched goal reports unchanged" "true" \
   "$(printf '%s' "$delta" | grep -q '^GOAL_STATUS:   unchanged' && echo true || echo false)"
 
@@ -857,7 +857,7 @@ assert_eq "an untouched goal reports unchanged" "true" \
 # reduction lands in an amendment, so a goal-line diff alone would miss it.
 printf '# PLN-150\n\n## Goal\nRelay answers and applies fixes while the user is away.\n\n## Amendments\n### A1.1(c)\nNarrow unattended relay to ANSWER-ONLY — a write-capable loop over untrusted input is the injection this plan prevents.\n' \
   > plans/PLN-150-relay-scope/plan.md
-delta=$("$SCRIPT_DIR/wf-goal-delta.sh" PLN-150 2>/dev/null || true)
+delta=$("$SCRIPT_DIR/lv-goal-delta.sh" PLN-150 2>/dev/null || true)
 assert_eq "the goal line alone still reads unchanged" "true" \
   "$(printf '%s' "$delta" | grep -q '^GOAL_STATUS:   unchanged' && echo true || echo false)"
 assert_eq "so the new amendment text is printed for the judgement" "true" \
@@ -868,30 +868,30 @@ assert_eq "and the amendment is counted" "1" \
 git add -A >/dev/null 2>&1 && git commit -qm "amend PLN-150" >/dev/null 2>&1
 printf '# PLN-150\n\n## Goal\nRelay answers questions while the user is away.\n' \
   > plans/PLN-150-relay-scope/plan.md
-delta=$("$SCRIPT_DIR/wf-goal-delta.sh" PLN-150 2>/dev/null || true)
+delta=$("$SCRIPT_DIR/lv-goal-delta.sh" PLN-150 2>/dev/null || true)
 assert_eq "an edited goal is measured against the ORIGINAL, not the last commit" "true" \
   "$(printf '%s' "$delta" | grep -q '^GOAL_ORIGINAL: Relay answers and applies fixes' && echo true || echo false)"
 assert_eq "and reports changed" "true" \
   "$(printf '%s' "$delta" | grep -q '^GOAL_STATUS:   changed' && echo true || echo false)"
 
 assert_eq "replanning runs the scope check" "true" \
-  "$(awk '/^## Replanning/, /^## Cross-plan consistency/' "$LIB_ROOT/skills/wf-spec/SKILL.md" \
-     | grep -q 'wf-goal-delta.sh' && echo true || echo false)"
+  "$(awk '/^## Replanning/, /^## Cross-plan consistency/' "$LIB_ROOT/skills/lv-spec/SKILL.md" \
+     | grep -q 'lv-goal-delta.sh' && echo true || echo false)"
 assert_eq "and gates on it whatever the review verdict says" "true" \
-  "$(awk '/^## Replanning/, /^## Cross-plan consistency/' "$LIB_ROOT/skills/wf-spec/SKILL.md" \
+  "$(awk '/^## Replanning/, /^## Cross-plan consistency/' "$LIB_ROOT/skills/lv-spec/SKILL.md" \
      | grep -q 'whatever the review verdict says' && echo true || echo false)"
-assert_eq "wf-attend knows what to do with a scope-reduction gate" "true" \
-  "$(grep -q '^### `scope-reduction`' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
+assert_eq "lv-attend knows what to do with a scope-reduction gate" "true" \
+  "$(grep -q '^### `scope-reduction`' "$LIB_ROOT/skills/lv-attend/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Port vars reach the post-commit hook (client-a WFI-039/041/043)"
 
-# `eval "$(wf-plan-port.sh ...)"` on bare KEY=VALUE lines sets UNEXPORTED shell
+# `eval "$(lv-plan-port.sh ...)"` on bare KEY=VALUE lines sets UNEXPORTED shell
 # variables. The consumer is the post-commit hook, which git runs as a child
 # process — and a child inherits the environment, not plain shell variables.
 # The eval appeared to work and every plan deployed under the first plan's
 # container name and port.
-port_out=$("$SCRIPT_DIR/wf-plan-port.sh" PLN-004-capsule-service)
+port_out=$("$SCRIPT_DIR/lv-plan-port.sh" PLN-004-capsule-service)
 assert_eq "the port line is exported" "true" \
   "$(printf '%s' "$port_out" | grep -q '^export FEATURE_PORT=8104$' && echo true || echo false)"
 assert_eq "the project name is exported" "true" \
@@ -904,7 +904,7 @@ assert_eq "a child process sees the port" "8104" "$port_seen"
 # Captured before grepping: `script | grep -q` races under pipefail — grep exits
 # on the first match, SIGPIPEs the producer, and the pipeline reports the
 # producer's 141 rather than grep's 0.
-v1x_out=$("$LIB_SCRIPTS/v1.x/wf-plan-port.sh" PLN-004-x)
+v1x_out=$("$LIB_SCRIPTS/v1.x/lv-plan-port.sh" PLN-004-x)
 assert_eq "the v1.x snapshot exports too" "true" \
   "$(printf '%s' "$v1x_out" | grep -q '^export FEATURE_PORT=' && echo true || echo false)"
 
@@ -912,7 +912,7 @@ assert_eq "the v1.x snapshot exports too" "true" \
 # so it must re-resolve rather than inherit.
 assert_eq "the fix cycle's commit step sets the port itself" "true" \
   "$(awk '/^7\. \*\*When all findings are checked off/, /^## Worktree workflow/' \
-       "$LIB_ROOT/skills/wf-implement/SKILL.md" | grep -q 'wf-plan-port.sh' && echo true || echo false)"
+       "$LIB_ROOT/skills/lv-implement/SKILL.md" | grep -q 'lv-plan-port.sh' && echo true || echo false)"
 
 # The hook derives its own identity rather than trusting the caller at all.
 assert_eq "the commit hook reads .plan-ref" "true" \
@@ -924,7 +924,7 @@ assert_eq "and install.sh bakes the slug into it" "true" \
   "$(awk '/{{local_start_command}}/, /on-implement-commit.sh"$/' "$LIB_ROOT/install.sh" \
      | grep -q 'project_slug' && echo true || echo false)"
 
-# The hook duplicates wf-plan-port.sh's formula, so prove they agree — by
+# The hook duplicates lv-plan-port.sh's formula, so prove they agree — by
 # RUNNING the hook's copy against the same input, not by pattern-matching the
 # source. The first cut of this asserted `awk '/8100 \+ _plan_num/ {print "8104"}'`
 # equals 8104, which is true whenever the pattern matches and says nothing at
@@ -939,10 +939,10 @@ hook_derived=$(
   cd "$hook_dir" && PROJECT_DIR="$hook_dir" \
     bash -c "$(awk '/^if \[ -f "\$PROJECT_DIR\/.plan-ref" \]/, /^fi$/' "$hook_dir/hook.sh"); echo \"\$FEATURE_PORT \$COMPOSE_PROJECT_NAME\"" 2>/dev/null | tail -1
 )
-port_ref=$(sed 's|{{project_slug}}|testproj|g' "$LIB_SCRIPTS/$SCRIPT_FOLDER/wf-plan-port.sh" > "$hook_dir/port.sh"
+port_ref=$(sed 's|{{project_slug}}|testproj|g' "$LIB_SCRIPTS/$SCRIPT_FOLDER/lv-plan-port.sh" > "$hook_dir/port.sh"
            chmod +x "$hook_dir/port.sh"
            eval "$("$hook_dir/port.sh" PLN-004-x)"; echo "$FEATURE_PORT $COMPOSE_PROJECT_NAME")
-assert_eq "the hook's port formula agrees with wf-plan-port.sh" "$port_ref" "$hook_derived"
+assert_eq "the hook's port formula agrees with lv-plan-port.sh" "$port_ref" "$hook_derived"
 rm -rf "$hook_dir"
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -953,7 +953,7 @@ section "Rendering-surface globs span directories (client-a WFI-044)"
 # directory level of at least two characters, so renderingSurfaces matched
 # nothing in a real source tree and a plan changing three .razor pages shipped
 # with its manual gate closed as "the diff renders nothing to a human".
-eval "$(sed -n '/^glob_to_regex() {/,/^}/p' "$SCRIPT_DIR/wf-manual-gate.sh")"
+eval "$(sed -n '/^glob_to_regex() {/,/^}/p' "$SCRIPT_DIR/lv-manual-gate.sh")"
 
 changed_files='src/Tracker.Web.Client/Pages/Admin/Capsules.razor
 src/Tracker.Web.Client/wwwroot/css/app.css
@@ -992,26 +992,26 @@ mkdir -p "$STASH_DIR" && (
   echo FOREIGN > a.txt && git stash push -m "someone else's work" >/dev/null
 ) >/dev/null 2>&1
 
-pushed=$(cd "$STASH_DIR" && "$SCRIPT_DIR/wf-stash.sh" push merge 2>/dev/null)
-assert_eq "a clean tree stashes nothing" "WF_STASHED=false" "$pushed"
-restored=$(cd "$STASH_DIR" && "$SCRIPT_DIR/wf-stash.sh" pop merge 2>/dev/null)
-assert_eq "and popping restores nothing" "WF_RESTORED=false" "$restored"
+pushed=$(cd "$STASH_DIR" && "$SCRIPT_DIR/lv-stash.sh" push merge 2>/dev/null)
+assert_eq "a clean tree stashes nothing" "LV_STASHED=false" "$pushed"
+restored=$(cd "$STASH_DIR" && "$SCRIPT_DIR/lv-stash.sh" pop merge 2>/dev/null)
+assert_eq "and popping restores nothing" "LV_RESTORED=false" "$restored"
 assert_eq "the foreign stash is untouched" "one" "$(cat "$STASH_DIR/a.txt")"
 assert_eq "and is still in the stack" "1" \
   "$(cd "$STASH_DIR" && git stash list | wc -l | tr -d ' ')"
 
 # A real round trip still works, and survives another stash landing on top.
-(cd "$STASH_DIR" && echo MINE > a.txt && "$SCRIPT_DIR/wf-stash.sh" push merge) >/dev/null 2>&1
+(cd "$STASH_DIR" && echo MINE > a.txt && "$SCRIPT_DIR/lv-stash.sh" push merge) >/dev/null 2>&1
 (cd "$STASH_DIR" && echo INTERLOPER > b.txt && git add b.txt && git stash push -m interloper) >/dev/null 2>&1
-(cd "$STASH_DIR" && "$SCRIPT_DIR/wf-stash.sh" pop merge) >/dev/null 2>&1
+(cd "$STASH_DIR" && "$SCRIPT_DIR/lv-stash.sh" pop merge) >/dev/null 2>&1
 assert_eq "our stash is found after the stack shifts under it" "MINE" "$(cat "$STASH_DIR/a.txt")"
 
-assert_eq "wf-test no longer pops positionally" "false" \
-  "$(grep -q 'git stash pop 2>/dev/null' "$LIB_ROOT/skills/wf-test/SKILL.md" && echo true || echo false)"
-assert_eq "nor does wf-chrome-test" "false" \
-  "$(grep -q 'git stash pop 2>/dev/null' "$LIB_ROOT/skills/wf-chrome-test/SKILL.md" && echo true || echo false)"
-assert_eq "and the restored-changes commit is guarded on WF_RESTORED" "true" \
-  "$(grep -q 'WF_RESTORED:-false' "$LIB_ROOT/skills/wf-test/SKILL.md" && echo true || echo false)"
+assert_eq "lv-test no longer pops positionally" "false" \
+  "$(grep -q 'git stash pop 2>/dev/null' "$LIB_ROOT/skills/lv-test/SKILL.md" && echo true || echo false)"
+assert_eq "nor does lv-chrome-test" "false" \
+  "$(grep -q 'git stash pop 2>/dev/null' "$LIB_ROOT/skills/lv-chrome-test/SKILL.md" && echo true || echo false)"
+assert_eq "and the restored-changes commit is guarded on LV_RESTORED" "true" \
+  "$(grep -q 'LV_RESTORED:-false' "$LIB_ROOT/skills/lv-test/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "MTP projects get a real filter (client-a WFI-045/038/035)"
@@ -1021,8 +1021,8 @@ section "MTP projects get a real filter (client-a WFI-045/038/035)"
 # full suite. The MTP syntax has since been confirmed against real runs.
 SCOPE2="$TEST_DIR/mtp"
 mkdir -p "$SCOPE2/scripts" "$SCOPE2/plans/PLN-160-mtp"
-cp "$SCRIPT_DIR/wf-test-scope.sh" "$SCRIPT_DIR/wf-plan-info.sh" \
-   "$SCRIPT_DIR/wf-orch-lib.sh" "$SCOPE2/scripts/"
+cp "$SCRIPT_DIR/lv-test-scope.sh" "$SCRIPT_DIR/lv-plan-info.sh" \
+   "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$SCOPE2/scripts/"
 printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-160 | mtp | verify | — | — | 2026-08-04 | %s | — | — |\n' \
   "${SCRIPT_FOLDER#v}" > "$SCOPE2/plans/REGISTRY.md"
 printf '## Goal\nx\n\n## Test Scope\n- unit\n' > "$SCOPE2/plans/PLN-160-mtp/plan.md"
@@ -1030,7 +1030,7 @@ printf 'test_filter_flag: "--filter"\ntestFilterStyle: mtp\ntestScopes:\n  unit:
   > "$SCOPE2/claude-workflow.yml"
 
 if command -v yq >/dev/null 2>&1; then
-  mtp_args=$(cd "$SCOPE2" && ./scripts/wf-test-scope.sh PLN-160-mtp --args 2>/dev/null || true)
+  mtp_args=$(cd "$SCOPE2" && ./scripts/lv-test-scope.sh PLN-160-mtp --args 2>/dev/null || true)
   assert_eq "an MTP scope emits --filter-class, not FullyQualifiedName" "true" \
     "$(printf '%s' "$mtp_args" | grep -q -- "--filter-class '\*Core.Tests\*'" && echo true || echo false)"
   # Filtering across a solution makes zero-match projects exit 8, so a run whose
@@ -1040,7 +1040,7 @@ if command -v yq >/dev/null 2>&1; then
 
   printf 'test_filter_flag: "--filter"\ntestFilterStyle: vstest\ntestScopes:\n  unit:\n    - Core.Tests\n' \
     > "$SCOPE2/claude-workflow.yml"
-  vs_args=$(cd "$SCOPE2" && ./scripts/wf-test-scope.sh PLN-160-mtp --args 2>/dev/null || true)
+  vs_args=$(cd "$SCOPE2" && ./scripts/lv-test-scope.sh PLN-160-mtp --args 2>/dev/null || true)
   assert_eq "vstest --args still renders flag plus value" "--filter 'FullyQualifiedName~Core.Tests'" "$vs_args"
   # On an UNFILTERED run exit 8 means the suite really found no tests, so the
   # ignore must never leak into the vstest path.
@@ -1049,13 +1049,13 @@ if command -v yq >/dev/null 2>&1; then
 
   printf 'testFilterStyle: auto\ntestScopes:\n  unit:\n    - Core.Tests\n' > "$SCOPE2/claude-workflow.yml"
   printf '{ "test": { "runner": "Microsoft.Testing.Platform" } }\n' > "$SCOPE2/global.json"
-  auto_args=$(cd "$SCOPE2" && ./scripts/wf-test-scope.sh PLN-160-mtp --args 2>/dev/null || true)
+  auto_args=$(cd "$SCOPE2" && ./scripts/lv-test-scope.sh PLN-160-mtp --args 2>/dev/null || true)
   assert_eq "auto-detection routes an MTP project to mtp, not to the full suite" "true" \
     "$(printf '%s' "$auto_args" | grep -q -- '--filter-class' && echo true || echo false)"
 fi
 
-assert_eq "wf-verify asks for the whole argument string" "true" \
-  "$(grep -q 'wf-test-scope.sh PLN-NNN-<slug> --args' "$LIB_ROOT/skills/wf-verify/SKILL.md" && echo true || echo false)"
+assert_eq "lv-verify asks for the whole argument string" "true" \
+  "$(grep -q 'lv-test-scope.sh PLN-NNN-<slug> --args' "$LIB_ROOT/skills/lv-verify/SKILL.md" && echo true || echo false)"
 assert_eq "a solution takes --solution, not a positional path" "true" \
   "$(grep -q 'dotnet test --solution <file>' "$LIB_ROOT/config.example.yml" && echo true || echo false)"
 
@@ -1063,7 +1063,7 @@ assert_eq "a solution takes --solution, not a positional path" "true" \
 section "A verdict is found, and known to be current (client-a WFI-046)"
 
 # Two failures at one gate: the verdict was written to findings.md under
-# `## Spec Review` (so wf-attend, reading only plan.md, would have called it a
+# `## Spec Review` (so lv-attend, reading only plan.md, would have called it a
 # harness fault and re-run a review that existed), and both verdicts were
 # Blocked on the PRE-amendment plan — the amendment then resolved every finding
 # and nothing re-reviewed it.
@@ -1088,15 +1088,15 @@ cat > plans/PLN-018-fresh/plan.md <<'PLAN18'
 > Append-only.
 PLAN18
 
-# Read through eval, the way wf-attend and wf-spec do — the output is quoted
+# Read through eval, the way lv-attend and lv-spec do — the output is quoted
 # precisely so that a verdict containing an apostrophe survives that eval.
-eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-013 2>/dev/null)"
+eval "$("$SCRIPT_DIR/lv-review-status.sh" PLN-013 2>/dev/null)"
 assert_eq "a verdict filed in findings.md is still found" "findings" "$REVIEW_LOCATION"
 assert_eq "and its verdict is read out of prose" "Blocked" "$REVIEW_RESULT"
 assert_eq "a verdict older than the amendment is stale" "true" "$REVIEW_STALE"
 
 # A review recorded as BLOCKQUOTE lines is still a review. The shipped template
-# and wf-spec's own example both write the record that way, so a "filled means
+# and lv-spec's own example both write the record that way, so a "filled means
 # unquoted" test reports a correctly-filed verdict as missing — the same false
 # harness fault this script exists to prevent. Caught against client-a's real
 # PLN-018 after the first cut of the fix shipped.
@@ -1114,11 +1114,11 @@ cat > plans/PLN-019-quoted/plan.md <<'PLAN19'
 ## Amendments
 > Append-only.
 PLAN19
-eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-019 2>/dev/null)"
+eval "$("$SCRIPT_DIR/lv-review-status.sh" PLN-019 2>/dev/null)"
 assert_eq "a blockquoted verdict is found, not read as a placeholder" "plan" "$REVIEW_LOCATION"
 assert_eq "and the LAST round's verdict is the one reported" "Approved" "$REVIEW_RESULT"
 
-eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-018 2>/dev/null)"
+eval "$("$SCRIPT_DIR/lv-review-status.sh" PLN-018 2>/dev/null)"
 assert_eq "a fresh spec records its verdict in plan.md" "plan" "$REVIEW_LOCATION"
 assert_eq "and an unamended plan is not stale" "false" "$REVIEW_STALE"
 
@@ -1132,18 +1132,18 @@ cat > plans/PLN-020-sameday/plan.md <<'PLAN20'
 ## Amendments
 A1 — 2026-08-04 — narrowed
 PLAN20
-eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-020 2>/dev/null)"
+eval "$("$SCRIPT_DIR/lv-review-status.sh" PLN-020 2>/dev/null)"
 assert_eq "a same-day review and amendment is neither, and says so" "unknown" "$REVIEW_STALE"
 
-assert_eq "wf-attend looks in both places before crying harness fault" "true" \
-  "$(grep -q 'wf-review-status.sh' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
+assert_eq "lv-attend looks in both places before crying harness fault" "true" \
+  "$(grep -q 'lv-review-status.sh' "$LIB_ROOT/skills/lv-attend/SKILL.md" && echo true || echo false)"
 assert_eq "and re-reviews a plan amended since its verdict" "true" \
-  "$(grep -q 'REVIEW_STALE=true' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'REVIEW_STALE=true' "$LIB_ROOT/skills/lv-attend/SKILL.md" && echo true || echo false)"
 assert_eq "the replan path is told where the verdict goes" "true" \
-  "$(awk '/^## Replanning/, /^## Cross-plan consistency/' "$LIB_ROOT/skills/wf-spec/SKILL.md" \
+  "$(awk '/^## Replanning/, /^## Cross-plan consistency/' "$LIB_ROOT/skills/lv-spec/SKILL.md" \
      | grep -q 'Never in `findings.md`' && echo true || echo false)"
 # wf-review was retired in v10.6.0 — it told the agent to write the verdict that
-# wf-spec:566 reserves for the spawning session and wf-review-guard.sh exists to
+# lv-spec:566 reserves for the spawning session and lv-review-guard.sh exists to
 # block. Guard both halves: the skill stays gone, and it stays on the retirement
 # list so clients that missed one deploy still get their copy removed.
 assert_eq "the retired wf-review skill is not back in the library" "true" \
@@ -1183,7 +1183,7 @@ assert_eq "the release-branch warning survived the retirement" "true" \
 # ═══════════════════════════════════════════════════════════════════════
 section "Consuming a freshly filed bug (client-a WFI-037)"
 
-# `git mv` exits 128 on a folder git has never seen, and wf-bug commits only at
+# `git mv` exits 128 on a folder git has never seen, and lv-bug commits only at
 # the end of its run — so the FIRST consumption of any new bug failed. Separately
 # the Status/Plan rewrites were pure sub() calls, silently no-ops on a header
 # lacking those lines, so a "triaged" bug recorded neither.
@@ -1200,7 +1200,7 @@ Copy says "beta".
 BUG17
 
 assert_ok "an untracked bug can be consumed at all" \
-  "$SCRIPT_DIR/wf-bug-consume.sh" BUG-017 PLN-017-landing-copy
+  "$SCRIPT_DIR/lv-bug-consume.sh" BUG-017 PLN-017-landing-copy
 assert_eq "the bug moved to triaged" "true" \
   "$([ -d bugs/triaged/BUG-017-landing-copy ] && echo true || echo false)"
 assert_eq "a missing Status line is inserted, not skipped" "true" \
@@ -1215,55 +1215,55 @@ assert_eq "the insert lands inside the header block" "true" \
 section "A terminal state for dropped work (app WFI-008)"
 
 # Six dropped plans were written as `abandoned` — a state that did not exist.
-# wf-registry-update.sh accepted it silently, so any typo became a live value.
+# lv-registry-update.sh accepted it silently, so any typo became a live value.
 registry_add_row PLN-035 dropped verify
 registry_add_row PLN-090 dependent draft "—" "—" PLN-035
 printf '' > plans/PLN-035-dropped/progress.md
 
 assert_fails "a state outside the documented set is rejected" \
-  "$SCRIPT_DIR/wf-registry-update.sh" PLN-035 verify abandonned
+  "$SCRIPT_DIR/lv-registry-update.sh" PLN-035 verify abandonned
 assert_eq "and the plan did not move" "verify" "$(registry_state PLN-035)"
 
 assert_fails "abandoning without a reason is refused" \
-  "$SCRIPT_DIR/wf-abandon.sh" PLN-035
+  "$SCRIPT_DIR/lv-abandon.sh" PLN-035
 assert_ok "abandoning with one works from any state" \
-  "$SCRIPT_DIR/wf-abandon.sh" PLN-035 --reason "Superseded by PLN-073."
+  "$SCRIPT_DIR/lv-abandon.sh" PLN-035 --reason "Superseded by PLN-073."
 assert_eq "the plan is terminal" "abandoned" "$(registry_state PLN-035)"
 assert_eq "and the reason survives in progress.md" "true" \
   "$(grep -q 'Superseded by PLN-073' plans/PLN-035-dropped/progress.md && echo true || echo false)"
 
 # An incomplete dep is "not yet"; an abandoned one is "never". Reported the same
 # way, an abandoned dep blocked its dependents forever with no way to clear it.
-deps_out=$("$SCRIPT_DIR/wf-check-deps.sh" PLN-090 2>/dev/null)
+deps_out=$("$SCRIPT_DIR/lv-check-deps.sh" PLN-090 2>/dev/null)
 assert_eq "a dependent is told the dep is dead, not late" "DEAD PLN-035" "$deps_out"
 
 assert_fails "a terminal plan cannot jump back to a working state" \
-  "$SCRIPT_DIR/wf-registry-update.sh" PLN-035 abandoned active
+  "$SCRIPT_DIR/lv-registry-update.sh" PLN-035 abandoned active
 assert_ok "but it can be revived to draft" \
-  "$SCRIPT_DIR/wf-abandon.sh" PLN-035 --revive
+  "$SCRIPT_DIR/lv-abandon.sh" PLN-035 --revive
 assert_eq "which is where revival lands" "draft" "$(registry_state PLN-035)"
 
 assert_eq "the orchestrator routes abandoned instead of hard-failing" "true" \
-  "$(grep -qE 'abandoned\|rolled-back\) *result="abandoned"' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+  "$(grep -qE 'abandoned\|rolled-back\) *result="abandoned"' "$SCRIPT_DIR/lv-orchestrate.sh" && echo true || echo false)"
 assert_eq "and gives it its own exit code" "true" \
-  "$(grep -q 'exit 40' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+  "$(grep -q 'exit 40' "$SCRIPT_DIR/lv-orchestrate.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "The registry and plans/ still describe one world (app WFI-009/010)"
 
 # A plan folder with no row is not partly tracked — it is invisible. Every
-# wf-list-* script and the orchestrator see plans only through the registry, so
+# lv-list-* script and the orchestrator see plans only through the registry, so
 # nothing can report a plan the registry does not know about.
 mkdir -p plans/PLN-051-maze-crumbs plans/PLN-064-session-telemetry plans/PLN-064-learning-portal
 printf '# x\n' > plans/PLN-051-maze-crumbs/plan.md
 
-audit=$("$SCRIPT_DIR/wf-registry-audit.sh" 2>/dev/null || true)
+audit=$("$SCRIPT_DIR/lv-registry-audit.sh" 2>/dev/null || true)
 assert_eq "a plan folder with no registry row is reported" "true" \
   "$(printf '%s' "$audit" | grep -q 'MISSING ROW.*PLN-051' && echo true || echo false)"
 assert_eq "two folders sharing an ID are reported" "true" \
   "$(printf '%s' "$audit" | grep -q 'DUPLICATE DIR PLN-064' && echo true || echo false)"
 assert_eq "the audit exits non-zero when it finds something" "1" \
-  "$("$SCRIPT_DIR/wf-registry-audit.sh" >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-registry-audit.sh" >/dev/null 2>&1; echo $?)"
 
 # A `draft` plan carrying 21 commits of finished work means a state write was
 # lost — visible only from the branch side, which nothing else looks at.
@@ -1289,7 +1289,7 @@ mkdir -p "$STALE_DIR/plans/PLN-037-lost" && (
   git checkout -q develop
 ) >/dev/null 2>&1
 
-stale_audit=$(cd "$STALE_DIR" && "$SCRIPT_DIR/wf-registry-audit.sh" 2>/dev/null || true)
+stale_audit=$(cd "$STALE_DIR" && "$SCRIPT_DIR/lv-registry-audit.sh" 2>/dev/null || true)
 assert_eq "a draft plan sitting on real commits is reported" "true" \
   "$(printf '%s' "$stale_audit" | grep -q 'STALE STATE.*PLN-037' && echo true || echo false)"
 
@@ -1319,20 +1319,20 @@ mkdir -p "$SLUG/plans/PLN-019-capsule-base64url-encoding" \
   mkdir -p plans/PLN-020-tool-cli
 ) >/dev/null 2>&1
 
-slug_audit=$(cd "$SLUG" && "$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+slug_audit=$(cd "$SLUG" && "$SCRIPT_DIR/lv-registry-audit.sh" 2>&1 || true)
 assert_eq "a number inside a slug is not mistaken for an artifact ID" "true" \
   "$(printf '%s' "$slug_audit" | grep -q 'COUNTER' && echo false || echo true)"
 assert_eq "and the audit is clean on client-a's actual shape" "registry audit: clean" \
   "$(printf '%s' "$slug_audit" | grep 'registry audit:')"
 
 # The check must still fire for a counter that really is behind — but as a note,
-# not a fault. wf-counter-next.sh derives its floor from the artifacts that
+# not a fault. lv-counter-next.sh derives its floor from the artifacts that
 # exist and advances past drift, so the collision the old wording asserted
 # cannot happen; the one way to cause it is to take the old advice and
 # hand-edit the counter. client-a read a standing "1 problem(s)" on every
-# /wf-status and /wf-board render for a registry with nothing wrong (WFI-133).
+# /lv-status and /lv-tray render for a registry with nothing wrong (WFI-133).
 ( cd "$SLUG" && sed -i.bak 's/<!-- Counter: 21 -->/<!-- Counter: 19 -->/' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak )
-behind_audit=$(cd "$SLUG" && "$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+behind_audit=$(cd "$SLUG" && "$SCRIPT_DIR/lv-registry-audit.sh" 2>&1 || true)
 assert_eq "a counter behind the highest live ID is still surfaced" "true" \
   "$(printf '%s' "$behind_audit" | grep -q 'COUNTER.*highest ID in use (20)' && echo true || echo false)"
 assert_eq "and it says the allocator handles it, not 'set it by hand'" "true" \
@@ -1342,35 +1342,35 @@ assert_eq "no hand-edit is advised — that is the one way to cause a collision"
 assert_eq "and it does not count as a problem" "registry audit: clean" \
   "$(printf '%s' "$behind_audit" | grep 'registry audit:')"
 # The allocator's own behaviour is the reason the audit can stand down.
-( cd "$SLUG" && "$SCRIPT_DIR/wf-counter-next.sh" BUG >/dev/null 2>&1 ) || true
+( cd "$SLUG" && "$SCRIPT_DIR/lv-counter-next.sh" BUG >/dev/null 2>&1 ) || true
 assert_eq "the next allocation skips every live ID rather than colliding" "true" \
   "$(cd "$SLUG" && grep -qE '<!-- Counter: 2[12] -->' plans/REGISTRY.md && echo true || echo false)"
 
-assert_eq "wf-status runs the audit" "true" \
-  "$(grep -q 'wf-registry-audit.sh' "$LIB_ROOT/skills/wf-status/SKILL.md" && echo true || echo false)"
+assert_eq "lv-status runs the audit" "true" \
+  "$(grep -q 'lv-registry-audit.sh' "$LIB_ROOT/skills/lv-status/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Claiming is not a mode-specific rule (client-a WFI-130)"
 
-# "Claim the artifact before you read anything" lived inside wf-spec's
+# "Claim the artifact before you read anything" lived inside lv-spec's
 # Unattended-mode section, and the attended menu claimed on ONE path out of
 # three — the escalated plan. So an attended session creating a plan from a bug
 # wrote plans/PLN-NNN-<slug>/ and committed a draft REGISTRY row holding no
 # claim, and a draft row is dispatchable the moment it is committed. The daemon
 # put three unattended spec workers onto PLN-048/049/050 within ~3 minutes;
 # both sessions then edited the same plan.md files.
-spec_skill="$LIB_ROOT/skills/wf-spec/SKILL.md"
+spec_skill="$LIB_ROOT/skills/lv-spec/SKILL.md"
 assert_eq "the rule has its own section, not a home inside Unattended mode" "true" \
   "$(grep -q '^## Claiming' "$spec_skill" && echo true || echo false)"
 assert_eq "and says it applies in both modes" "true" \
   "$(grep -q 'before you read anything, in both modes' "$spec_skill" && echo true || echo false)"
-for path in 'wf-claim.sh BUG-NNN`, then go to \[Plan from bug\]' 'wf-claim.sh BRF-NNN`, then go to step 1' 'wf-claim.sh PLN-NNN-<slug>`, then go to \[Replanning\]'; do
+for path in 'lv-claim.sh BUG-NNN`, then go to \[Plan from bug\]' 'lv-claim.sh BRF-NNN`, then go to step 1' 'lv-claim.sh PLN-NNN-<slug>`, then go to \[Replanning\]'; do
   assert_eq "the attended menu claims on this path: ${path%%\`*}" "true" \
     "$(grep -qE "$path" "$spec_skill" && echo true || echo false)"
 done
 # The unattended rule still exists — it is now a pointer, not a second copy.
 assert_eq "unattended rule 0 still claims, with --if-free" "true" \
-  "$(grep -q 'wf-claim.sh BRF-NNN --if-free' "$spec_skill" && echo true || echo false)"
+  "$(grep -q 'lv-claim.sh BRF-NNN --if-free' "$spec_skill" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A deploy owns its own changes (client-a WFI-131)"
@@ -1379,7 +1379,7 @@ section "A deploy owns its own changes (client-a WFI-131)"
 # paths are deliberately not — the config, the entry contract, the version
 # stamp — so a deploy left develop dirty and walked away. The next worker in
 # read those as somebody else's work in progress and filed WFI-131 mid-plan;
-# meanwhile they sat on the shared develop index, where the next wf-commit.sh
+# meanwhile they sat on the shared develop index, where the next lv-commit.sh
 # from any live worker would have carried them under that plan's message.
 DEPLOYC="$TEST_DIR/deployclient"
 mkdir -p "$DEPLOYC" && (
@@ -1446,14 +1446,14 @@ mkdir -p "$TREE" && (
 ) >/dev/null 2>&1
 
 assert_fails "a run from the main worktree is refused" \
-  env -C "$TREE" "$SCRIPT_DIR/wf-test-tree.sh" PLN-051-mint-names
-tree_err=$(cd "$TREE" && "$SCRIPT_DIR/wf-test-tree.sh" PLN-051-mint-names 2>&1 >/dev/null || true)
+  env -C "$TREE" "$SCRIPT_DIR/lv-test-tree.sh" PLN-051-mint-names
+tree_err=$(cd "$TREE" && "$SCRIPT_DIR/lv-test-tree.sh" PLN-051-mint-names 2>&1 >/dev/null || true)
 assert_eq "and says the result would be about develop, not this plan" "true" \
   "$(printf '%s' "$tree_err" | grep -q 'main worktree' && echo true || echo false)"
 assert_eq "and gives the cd that fixes it" "true" \
   "$(printf '%s' "$tree_err" | grep -q 'Fix: cd .*feature-branches/PLN-051-mint-names' && echo true || echo false)"
 
-tree_ok=$(cd "$TREE/feature-branches/PLN-051-mint-names" && "$SCRIPT_DIR/wf-test-tree.sh" PLN-051-mint-names)
+tree_ok=$(cd "$TREE/feature-branches/PLN-051-mint-names" && "$SCRIPT_DIR/lv-test-tree.sh" PLN-051-mint-names)
 assert_eq "from the plan's own worktree it stamps the run" "true" \
   "$(printf '%s' "$tree_ok" | grep -qE '^TREE feature-branches/PLN-051-mint-names @ feature/PLN-051-mint-names [0-9a-f]+ \(' && echo true || echo false)"
 
@@ -1461,12 +1461,12 @@ assert_eq "from the plan's own worktree it stamps the run" "true" \
 # another. The stamp must not vouch for that.
 ( cd "$TREE/feature-branches/PLN-051-mint-names" && git checkout -q -b feature/PLN-052-something-else ) >/dev/null 2>&1
 assert_fails "a worktree moved off its own branch is refused too" \
-  env -C "$TREE/feature-branches/PLN-051-mint-names" "$SCRIPT_DIR/wf-test-tree.sh" PLN-051-mint-names
+  env -C "$TREE/feature-branches/PLN-051-mint-names" "$SCRIPT_DIR/lv-test-tree.sh" PLN-051-mint-names
 
-assert_eq "wf-test chains the stamp ahead of the test command" "true" \
-  "$(grep -q 'wf-test-tree.sh' "$LIB_ROOT/skills/wf-test/SKILL.md" && echo true || echo false)"
+assert_eq "lv-test chains the stamp ahead of the test command" "true" \
+  "$(grep -q 'lv-test-tree.sh' "$LIB_ROOT/skills/lv-test/SKILL.md" && echo true || echo false)"
 assert_eq "and forbids transcribing a figure from an earlier run" "true" \
-  "$(grep -q 'Never transcribe a figure you did not just produce' "$LIB_ROOT/skills/wf-test/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'Never transcribe a figure you did not just produce' "$LIB_ROOT/skills/lv-test/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Filing a bug goes through the counter (client-a WFI-133)"
@@ -1475,7 +1475,7 @@ section "Filing a bug goes through the counter (client-a WFI-133)"
 # "create bugs/open/BUG-NNN-<slug>/bug.md with these fields". A comment
 # addressed to a model is a suggestion: client-a hand-created BUG-051 and
 # BUG-052, bypassing the counter, then reported that no script for this existed
-# and reached for a `wf-bug-new.sh` that wasn't there.
+# and reached for a `lv-bug-new.sh` that wasn't there.
 BUGNEW="$TEST_DIR/bugnew"
 mkdir -p "$BUGNEW/plans" "$BUGNEW/bugs/open" && (
   cd "$BUGNEW" && git init -qb develop . && git config user.email t@t && git config user.name t
@@ -1483,29 +1483,29 @@ mkdir -p "$BUGNEW/plans" "$BUGNEW/bugs/open" && (
   git add -A && git commit -qm seed
 ) >/dev/null 2>&1
 
-bugnew_out=$(cd "$BUGNEW" && "$SCRIPT_DIR/wf-bug-new.sh" 'Guest logout loops forever' \
-  --severity High --source agent:wf-test --description 'session cookie is never cleared' 2>/dev/null)
+bugnew_out=$(cd "$BUGNEW" && "$SCRIPT_DIR/lv-bug-new.sh" 'Guest logout loops forever' \
+  --severity High --source agent:lv-test --description 'session cookie is never cleared' 2>/dev/null)
 assert_eq "stdout is the eval contract and nothing else" "true" \
   "$(printf '%s' "$bugnew_out" | grep -qvE "^(BUG_ID|BUG_DIR)='.*'$" && echo false || echo true)"
 eval "$bugnew_out"
 assert_eq "the ID came from the counter, not from a guess" "BUG-040" "$BUG_ID"
 assert_eq "the counter advanced" "true" \
   "$(grep -q '<!-- Counter: 41 -->' "$BUGNEW/plans/REGISTRY.md" && echo true || echo false)"
-assert_eq "bug.md is written where wf-list-bugs.sh looks" "true" \
+assert_eq "bug.md is written where lv-list-bugs.sh looks" "true" \
   "$([ -f "$BUGNEW/$BUG_DIR/bug.md" ] && echo true || echo false)"
 assert_eq "and in the shape it parses" "BUG-040	High	Guest logout loops forever" \
-  "$(cd "$BUGNEW" && "$SCRIPT_DIR/wf-list-bugs.sh" 2>/dev/null | grep '^BUG-040' | cut -f1-3)"
+  "$(cd "$BUGNEW" && "$SCRIPT_DIR/lv-list-bugs.sh" 2>/dev/null | grep '^BUG-040' | cut -f1-3)"
 assert_eq "unstated fields are TBD, never invented" "true" \
   "$(grep -q '^TBD$' "$BUGNEW/$BUG_DIR/bug.md" && echo true || echo false)"
 assert_eq "it commits its own work rather than leaving it staged" "true" \
   "$(cd "$BUGNEW" && git status --short | grep -q . && echo false || echo true)"
 assert_fails "a bad severity is refused, not silently recorded" \
-  env -C "$BUGNEW" "$SCRIPT_DIR/wf-bug-new.sh" 'whatever' --severity Urgent
+  env -C "$BUGNEW" "$SCRIPT_DIR/lv-bug-new.sh" 'whatever' --severity Urgent
 
 # The skills that used to hand-write the folder now call it.
-for skill in wf-bug wf-test wf-verify wf-implement; do
-  assert_eq "$skill files through wf-bug-new.sh" "true" \
-    "$(grep -q 'wf-bug-new.sh' "$LIB_ROOT/skills/$skill/SKILL.md" && echo true || echo false)"
+for skill in lv-bug lv-test lv-verify lv-implement; do
+  assert_eq "$skill files through lv-bug-new.sh" "true" \
+    "$(grep -q 'lv-bug-new.sh' "$LIB_ROOT/skills/$skill/SKILL.md" && echo true || echo false)"
 done
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1513,10 +1513,10 @@ section "A dependency bug lands in the HOST's own pipeline, not the reporter's"
 
 # client-e integrates client-c's OIDC and has no way to tell client-c
 # about a bug or request in that integration except by hand — there was no
-# shared channel and no convention either side's skills followed. wf-dep-bug.sh
-# cd's into the dependency's own checkout and runs ITS OWN wf-bug-new.sh
-# through ITS OWN wf-exec.sh, so the report is allocated through that
-# project's counter and lands where its own /wf-spec already looks.
+# shared channel and no convention either side's skills followed. lv-dep-bug.sh
+# cd's into the dependency's own checkout and runs ITS OWN lv-bug-new.sh
+# through ITS OWN lv-exec.sh, so the report is allocated through that
+# project's counter and lands where its own /lv-spec already looks.
 DEPA="$TEST_DIR/dep-caller"
 DEPB="$TEST_DIR/dep-host"
 
@@ -1524,10 +1524,10 @@ DEPB="$TEST_DIR/dep-host"
 setup_dep_project() {
   local d="$1"
   mkdir -p "$d/plans" "$d/bugs/open" "$d/scripts/$SCRIPT_FOLDER_LIVE" "$d/.claude"
-  cp "$LIB_SCRIPTS/wf-exec.sh" "$d/scripts/wf-exec.sh"
+  cp "$LIB_SCRIPTS/lv-exec.sh" "$d/scripts/lv-exec.sh"
   cp "$LIB_SCRIPTS/version-map.txt" "$d/scripts/version-map.txt"
   cp "$SCRIPT_DIR"/*.sh "$d/scripts/$SCRIPT_FOLDER_LIVE/"
-  chmod +x "$d/scripts/wf-exec.sh" "$d/scripts/$SCRIPT_FOLDER_LIVE"/*.sh
+  chmod +x "$d/scripts/lv-exec.sh" "$d/scripts/$SCRIPT_FOLDER_LIVE"/*.sh
   printf '99.99.99\n' > "$d/.claude/workflow-version"
   printf '| ID | Slug | State |\n|-|-|-|\n\n<!-- Counter: 10 -->\n' > "$d/plans/REGISTRY.md"
   ( cd "$d" && git init -qb develop . && git config user.email t@t && git config user.name t \
@@ -1543,7 +1543,7 @@ dependencies:
 YML
 ( cd "$DEPA" && git add -A && git commit -qm "declare dependency" ) >/dev/null 2>&1
 
-dep_out=$(cd "$DEPA" && scripts/wf-exec.sh wf-dep-bug.sh --host dep-host \
+dep_out=$(cd "$DEPA" && scripts/lv-exec.sh lv-dep-bug.sh --host dep-host \
   'OIDC refresh token rejected before real expiry' \
   --severity High --description 'reporter sees a still-valid token 401' \
   --expected 'refresh succeeds until real expiry' --actual '401 from /connect/token' 2>/dev/null)
@@ -1566,7 +1566,7 @@ assert_eq "the host's branch was never touched" "develop" \
   "$(cd "$DEPB" && git branch --show-current)"
 
 # A request (not a defect) is tagged as such, distinctly from the default.
-req_out=$(cd "$DEPA" && scripts/wf-exec.sh wf-dep-bug.sh --host dep-host \
+req_out=$(cd "$DEPA" && scripts/lv-exec.sh lv-dep-bug.sh --host dep-host \
   'Longer-lived refresh tokens' --kind request \
   --description 'would remove a re-login client-e cannot avoid today' 2>/dev/null)
 eval "$req_out"
@@ -1576,15 +1576,15 @@ assert_eq "and a plain bug still defaults to Kind: Bug" "true" \
   "$(grep -q '\*\*Kind:\*\* Bug' "$DEPB/bugs/open/BUG-010"*/bug.md && echo true || echo false)"
 
 # An unconfigured host name fails clearly and lists what IS configured.
-unknown_err=$(cd "$DEPA" && scripts/wf-exec.sh wf-dep-bug.sh --host nope 'x' 2>&1 >/dev/null)
+unknown_err=$(cd "$DEPA" && scripts/lv-exec.sh lv-dep-bug.sh --host nope 'x' 2>&1 >/dev/null)
 assert_eq "an unknown --host is refused" "true" \
   "$(printf '%s' "$unknown_err" | grep -q "no dependency named 'nope'" && echo true || echo false)"
 assert_eq "and it names what IS configured" "true" \
   "$(printf '%s' "$unknown_err" | grep -q 'Configured dependencies: dep-host' && echo true || echo false)"
 
 # A host a human has parked on their own branch is left alone — it is NEVER
-# switched, no matter what it's on. wf-dep-bug.sh used to force the host onto
-# develop (wf-branch-check.sh, WF_UNATTENDED=1), file, then switch back — and
+# switched, no matter what it's on. lv-dep-bug.sh used to force the host onto
+# develop (lv-branch-check.sh, LV_UNATTENDED=1), file, then switch back — and
 # that switch was silent, not refused, for any `feature/*` branch, since the
 # branch-check treated `feature/*` as a pipeline branch safe to move away
 # from without comment. That moved a host's own in-progress feature work out
@@ -1593,7 +1593,7 @@ assert_eq "and it names what IS configured" "true" \
 # land only when it is already on develop.
 ( cd "$DEPB" && git checkout -qb someones-feature-branch ) >/dev/null 2>&1
 before_bugs=$(ls "$DEPB/bugs/open" | wc -l | tr -d ' ')
-dep_refused_out=$(cd "$DEPA" && scripts/wf-exec.sh wf-dep-bug.sh --host dep-host 'should not land' 2>/dev/null)
+dep_refused_out=$(cd "$DEPA" && scripts/lv-exec.sh lv-dep-bug.sh --host dep-host 'should not land' 2>/dev/null)
 dep_refused_exit=$?
 after_bugs=$(ls "$DEPB/bugs/open" | wc -l | tr -d ' ')
 assert_eq "a host not on develop is refused with exit 2" "2" "$dep_refused_exit"
@@ -1609,7 +1609,7 @@ assert_eq "the host's branch is untouched" "someones-feature-branch" \
 # orchestrator is using.
 ( cd "$DEPB" && git checkout -qb feature/PLN-020-host-work ) >/dev/null 2>&1
 before_bugs=$(ls "$DEPB/bugs/open" | wc -l | tr -d ' ')
-dep_refused_feature_out=$(cd "$DEPA" && scripts/wf-exec.sh wf-dep-bug.sh --host dep-host 'should not land either' 2>/dev/null)
+dep_refused_feature_out=$(cd "$DEPA" && scripts/lv-exec.sh lv-dep-bug.sh --host dep-host 'should not land either' 2>/dev/null)
 dep_refused_feature_exit=$?
 after_bugs=$(ls "$DEPB/bugs/open" | wc -l | tr -d ' ')
 assert_eq "a host on feature/* is ALSO refused, not silently switched" "2" "$dep_refused_feature_exit"
@@ -1618,8 +1618,8 @@ assert_eq "the host's feature branch is untouched" "feature/PLN-020-host-work" \
   "$(cd "$DEPB" && git branch --show-current)"
 ( cd "$DEPB" && git checkout -q develop && git branch -D feature/PLN-020-host-work ) >/dev/null 2>&1
 
-assert_eq "wf-bug documents the dependency path, not just the local one" "true" \
-  "$(grep -q 'wf-dep-bug.sh' "$LIB_ROOT/skills/wf-bug/SKILL.md" && echo true || echo false)"
+assert_eq "lv-bug documents the dependency path, not just the local one" "true" \
+  "$(grep -q 'lv-dep-bug.sh' "$LIB_ROOT/skills/lv-bug/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A coordinator files work DOWN without deriving an artifact number"
@@ -1641,7 +1641,7 @@ YML
 ( cd "$COORD" && git init -qb main . && git config user.email t@t && git config user.name t \
   && git add -A && git commit -qm seed ) >/dev/null 2>&1
 
-coord_install=$(WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" 2>&1)
+coord_install=$(LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" 2>&1)
 assert_eq "install.sh recognises the coordinator role" "true" \
   "$(printf '%s' "$coord_install" | grep -q 'Role: coordinator' && echo true || echo false)"
 
@@ -1653,17 +1653,17 @@ assert_eq "no bugs/ inbox of its own" "true" \
   "$([ -d "$COORD/bugs" ] && echo false || echo true)"
 assert_eq "no orchestrator runtime" "true" \
   "$([ -d "$COORD/.claude/orchestrator" ] && echo false || echo true)"
-assert_eq "no pipeline skills — only the filing one" "wf-dep-notify" \
+assert_eq "no pipeline skills — only the filing one" "lv-dep-notify" \
   "$(ls "$COORD/.claude/skills")"
 
 # The slice is an allowlist, not "whatever the library ships". A pipeline
-# script on a coordinator's disk looks current and is one wf-exec.sh call from
+# script on a coordinator's disk looks current and is one lv-exec.sh call from
 # running.
 coord_scripts=$(ls "$(live_script_dir "$COORD")" | sort | tr '\n' ' ')
 assert_eq "scripts/ is pruned to the filing slice" \
-  "wf-dep-bug.sh wf-dep-notify.sh wf-issue.sh wf-lock.sh wf-orch-lib.sh " "$coord_scripts"
-assert_eq "wf-implement's scripts are not installed" "true" \
-  "$([ -f "$(live_script_dir "$COORD")/wf-worktree-sparse.sh" ] && echo false || echo true)"
+  "lv-dep-bug.sh lv-dep-notify.sh lv-ids.sh lv-issue.sh lv-lock.sh lv-orch-lib.sh " "$coord_scripts"
+assert_eq "lv-implement's scripts are not installed" "true" \
+  "$([ -f "$(live_script_dir "$COORD")/lv-worktree-sparse.sh" ] && echo false || echo true)"
 
 # The entry contract explains the pipelines it files INTO, and where its own
 # authority stops — the only part of this that a convention, not a script,
@@ -1675,7 +1675,7 @@ assert_eq "and states that filing is the terminal action" "true" \
 
 # The point of all of it: the ID comes from the TARGET's own counter.
 before_counter=$(grep -o 'Counter: [0-9]*' "$DEPB/plans/REGISTRY.md" | grep -o '[0-9]*')
-coord_out=$(cd "$COORD" && scripts/wf-exec.sh wf-dep-notify.sh 'Add a logout link to the nav' \
+coord_out=$(cd "$COORD" && scripts/lv-exec.sh lv-dep-notify.sh 'Add a logout link to the nav' \
   --to dep-host --kind request \
   --description 'initiative 007 needs a visible logout' \
   --expected 'a logout link for signed-in users' --actual 'no way to sign out' 2>/dev/null)
@@ -1700,10 +1700,10 @@ assert_eq "nothing was written in the coordinator itself" "true" \
 # Captured into a variable before grepping, never piped: the script exits 1 on
 # a refusal and `set -o pipefail` above would take that as the pipeline's
 # status, so `refused | grep -q` reports failure no matter what grep matched.
-coord_to_err=$(cd "$COORD" && scripts/wf-exec.sh wf-dep-notify.sh 'x' --to nope 2>&1 >/dev/null)
+coord_to_err=$(cd "$COORD" && scripts/lv-exec.sh lv-dep-notify.sh 'x' --to nope 2>&1 >/dev/null)
 assert_eq "an unknown --to lists the configured targets" "true" \
   "$(printf '%s' "$coord_to_err" | grep -q 'Configured targets: dep-host' && echo true || echo false)"
-coord_kind_err=$(cd "$COORD" && scripts/wf-exec.sh wf-dep-notify.sh 'x' --kind plan 2>&1 >/dev/null)
+coord_kind_err=$(cd "$COORD" && scripts/lv-exec.sh lv-dep-notify.sh 'x' --kind plan 2>&1 >/dev/null)
 assert_eq "a bad --kind is refused rather than filed as something else" "true" \
   "$(printf '%s' "$coord_kind_err" | grep -q "must be 'notice', 'request' or 'bug'" && echo true || echo false)"
 
@@ -1711,14 +1711,14 @@ assert_eq "a bad --kind is refused rather than filed as something else" "true" \
 # disk — but its plans/ and bugs/ are a human's tracked work and are reported,
 # never deleted.
 sed -i.bak 's/^role: "coordinator"/role: "client"/' "$COORD/claude-workflow.yml" && rm -f "$COORD/claude-workflow.yml.bak"
-WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" >/dev/null 2>&1
+LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" >/dev/null 2>&1
 assert_eq "as a client it gets the full harness" "true" \
-  "$([ -f "$(live_script_dir "$COORD")/wf-worktree-sparse.sh" ] && echo true || echo false)"
+  "$([ -f "$(live_script_dir "$COORD")/lv-worktree-sparse.sh" ] && echo true || echo false)"
 sed -i.bak 's/^role: "client"/role: "coordinator"/' "$COORD/claude-workflow.yml" && rm -f "$COORD/claude-workflow.yml.bak"
-coord_reinstall=$(WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" 2>&1)
+coord_reinstall=$(LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" 2>&1)
 assert_eq "switching back prunes the pipeline scripts" "true" \
-  "$([ -f "$(live_script_dir "$COORD")/wf-worktree-sparse.sh" ] && echo false || echo true)"
-assert_eq "and the pipeline skills" "wf-dep-notify" "$(ls "$COORD/.claude/skills")"
+  "$([ -f "$(live_script_dir "$COORD")/lv-worktree-sparse.sh" ] && echo false || echo true)"
+assert_eq "and the pipeline skills" "lv-dep-notify" "$(ls "$COORD/.claude/skills")"
 assert_eq "the client install's plans/ is reported, not deleted" "true" \
   "$([ -f "$COORD/plans/REGISTRY.md" ] && echo true || echo false)"
 assert_eq "and the deploy says so rather than staying silent" "true" \
@@ -1728,18 +1728,18 @@ assert_eq "and the deploy says so rather than staying silent" "true" \
 # install a whole pipeline into a repo that asked for none.
 role_rc=0
 sed -i.bak 's/^role: "coordinator"/role: "coordnator"/' "$COORD/claude-workflow.yml" && rm -f "$COORD/claude-workflow.yml.bak"
-WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" >/dev/null 2>&1 || role_rc=$?
+LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" >/dev/null 2>&1 || role_rc=$?
 assert_eq "a misspelled role is refused, not defaulted" "1" "$role_rc"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "client-c's first three reports (WFI-001/002/003)"
 
-# WFI-001 — wf-spec cited templates/plans/TEMPLATE.md, a path that exists in
+# WFI-001 — lv-spec cited templates/plans/TEMPLATE.md, a path that exists in
 # the LIBRARY. install.sh deploys it to the client as plans/TEMPLATE.md.
-assert_eq "wf-spec cites the client's template path, not the library's" "false" \
-  "$(grep -q 'templates/plans/TEMPLATE.md' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+assert_eq "lv-spec cites the client's template path, not the library's" "false" \
+  "$(grep -q 'templates/plans/TEMPLATE.md' "$LIB_ROOT/skills/lv-spec/SKILL.md" && echo true || echo false)"
 assert_eq "and cites the one install.sh actually writes" "true" \
-  "$(grep -q 'following `plans/TEMPLATE.md`' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'following `plans/TEMPLATE.md`' "$LIB_ROOT/skills/lv-spec/SKILL.md" && echo true || echo false)"
 
 # WFI-002 — the implementer spawns its own verify agent on exit. The
 # orchestrator reached verify a moment later, was turned away by the
@@ -1747,25 +1747,25 @@ assert_eq "and cites the one install.sh actually writes" "true" \
 # as "something is wrong with the plan or the skill" — while that verify agent
 # ran healthily. A retry would have burned one of max_attempts_per_plan.
 assert_eq "an already-running peer is waited for, not called a stall" "true" \
-  "$(grep -q 'rc" -eq 2' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+  "$(grep -q 'rc" -eq 2' "$SCRIPT_DIR/lv-orchestrate.sh" && echo true || echo false)"
 assert_eq "and has an exit code distinct from no-progress" "true" \
-  "$(grep -q 'exit 41' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+  "$(grep -q 'exit 41' "$SCRIPT_DIR/lv-orchestrate.sh" && echo true || echo false)"
 assert_eq "the contract published to clients lists it" "true" \
   "$(grep -q '`41`' "$LIB_ROOT/templates/WORKFLOW.md" && echo true || echo false)"
 
-# WFI-003 — wf-deploy asserted a deploy.yml that a project need not have. A
+# WFI-003 — lv-deploy asserted a deploy.yml that a project need not have. A
 # user reading "deployed to production" when only CI ran cannot detect it.
-assert_eq "wf-deploy checks what pushing main actually does" "true" \
-  "$(grep -q '.github/workflows/\*.yml' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+assert_eq "lv-deploy checks what pushing main actually does" "true" \
+  "$(grep -q '.github/workflows/\*.yml' "$LIB_ROOT/skills/lv-deploy/SKILL.md" && echo true || echo false)"
 assert_eq "and no longer asserts a deploy workflow unconditionally" "false" \
-  "$(grep -q 'Pushing `main` automatically triggers' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'Pushing `main` automatically triggers' "$LIB_ROOT/skills/lv-deploy/SKILL.md" && echo true || echo false)"
 assert_eq "a blank production_url omits the live-site line" "true" \
-  "$(grep -q 'omit the Live site line entirely' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'omit the Live site line entirely' "$LIB_ROOT/skills/lv-deploy/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Feature worktrees are ignored by the planning branch (client-a WFI-032)"
 
-# feature-branches/ is the workflow's own convention — wf-worktree-sparse.sh
+# feature-branches/ is the workflow's own convention — lv-worktree-sparse.sh
 # creates it — so a `git add -A` on develop committed an entire feature worktree
 # into the planning branch.
 assert_eq "install.sh seeds the ignore" "true" \
@@ -1782,19 +1782,19 @@ section "A gate remembers it was answered (client-a WFI-047)"
 # which nothing reads.
 registry_add_row PLN-018 wire draft "—" "infra,contract"
 
-st=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
+st=$("$SCRIPT_DIR/lv-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
 assert_eq "an unasked gate is not answered" "false" \
   "$(printf '%s' "$st" | sed -n "s/^GATE_ANSWERED='\\(.*\\)'$/\\1/p")"
 
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-018 spec-approval "Approve?" --skill wf-spec >/dev/null 2>&1
-st=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-018 spec-approval "Approve?" --skill lv-spec >/dev/null 2>&1
+st=$("$SCRIPT_DIR/lv-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
 assert_eq "an open gate reads as open" "true" \
   "$(printf '%s' "$st" | sed -n "s/^GATE_OPEN='\\(.*\\)'$/\\1/p")"
 assert_eq "and not yet answered" "false" \
   "$(printf '%s' "$st" | sed -n "s/^GATE_ANSWERED='\\(.*\\)'$/\\1/p")"
 
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-018 "plain approve, scope unchanged" >/dev/null 2>&1
-st=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-018 "plain approve, scope unchanged" >/dev/null 2>&1
+st=$("$SCRIPT_DIR/lv-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
 assert_eq "a re-dispatch sees the answer, so it must not re-gate" "true" \
   "$(printf '%s' "$st" | sed -n "s/^GATE_ANSWERED='\\(.*\\)'$/\\1/p")"
 assert_eq "and the resolution is readable by a script, not just prose" \
@@ -1804,15 +1804,15 @@ assert_eq "and the resolution is readable by a script, not just prose" \
 # An approval is given to a REVISION, not to an ID forever. Edit the plan and
 # the question is genuinely open again.
 printf '## Goal\nWire contract, now with extra scope\n' > plans/PLN-018-wire/plan.md
-st=$("$SCRIPT_DIR/wf-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
+st=$("$SCRIPT_DIR/lv-gate-status.sh" PLN-018 spec-approval 2>/dev/null)
 assert_eq "editing the plan after approval re-opens the question" "true" \
   "$(printf '%s' "$st" | sed -n "s/^GATE_STALE='\\(.*\\)'$/\\1/p")"
 assert_eq "and it no longer counts as answered" "false" \
   "$(printf '%s' "$st" | sed -n "s/^GATE_ANSWERED='\\(.*\\)'$/\\1/p")"
 
-assert_eq "wf-spec checks before re-opening spec-approval" "true" \
-  "$(awk '/^## Exit — unattended/, /^## Replanning/' "$LIB_ROOT/skills/wf-spec/SKILL.md" \
-     | grep -q 'wf-gate-status.sh' && echo true || echo false)"
+assert_eq "lv-spec checks before re-opening spec-approval" "true" \
+  "$(awk '/^## Exit — unattended/, /^## Replanning/' "$LIB_ROOT/skills/lv-spec/SKILL.md" \
+     | grep -q 'lv-gate-status.sh' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A commit carries only its own paths (client-a WFI-048/049)"
@@ -1824,7 +1824,7 @@ section "A commit carries only its own paths (client-a WFI-048/049)"
 #
 # Both directions were observed within two minutes:
 #   WFI-048 — a consistency commit swallowed a stranger's staged bug rename.
-#   WFI-049 — a stranger's commit swallowed wf-spec's staged plan + REGISTRY
+#   WFI-049 — a stranger's commit swallowed lv-spec's staged plan + REGISTRY
 #             transition, leaving `git log --grep PLN-020` empty for a plan
 #             that had been reviewed and approved.
 CO_DIR="$TEST_DIR/commit"
@@ -1838,7 +1838,7 @@ mkdir -p "$CO_DIR/plans/PLN-020-x" "$CO_DIR/bugs/open/BUG-020-y" && (
 # A concurrent worker stages a bug rename; we then commit only our plan.
 ( cd "$CO_DIR" && mkdir -p bugs/triaged && git mv bugs/open/BUG-020-y bugs/triaged/BUG-020-y ) >/dev/null 2>&1
 printf '# plan\n' > "$CO_DIR/plans/PLN-020-x/plan.md"
-( cd "$CO_DIR" && "$SCRIPT_DIR/wf-commit.sh" "spec: PLN-020 — plan ready" --add plans/PLN-020-x/ ) >/dev/null 2>&1
+( cd "$CO_DIR" && "$SCRIPT_DIR/lv-commit.sh" "spec: PLN-020 — plan ready" --add plans/PLN-020-x/ ) >/dev/null 2>&1
 
 assert_eq "the commit carries only the paths it was given" "plans/PLN-020-x/plan.md" \
   "$(cd "$CO_DIR" && git show --pretty=format: --name-only HEAD | tr -d '\n')"
@@ -1850,7 +1850,7 @@ assert_eq "and the plan's own message stays attached to the plan's own change" "
 
 # An empty marker commit is the other way the index gets swept: a bare
 # `git commit --allow-empty` commits whatever is staged.
-( cd "$CO_DIR" && "$SCRIPT_DIR/wf-commit.sh" "test(PLN-020): complete" --allow-empty ) >/dev/null 2>&1
+( cd "$CO_DIR" && "$SCRIPT_DIR/lv-commit.sh" "test(PLN-020): complete" --allow-empty ) >/dev/null 2>&1
 assert_eq "an empty marker commit changes no tree" "true" \
   "$(cd "$CO_DIR" && [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse 'HEAD~1^{tree}')" ] && echo true || echo false)"
 assert_eq "and still does not swallow the staged rename" "bugs/triaged/BUG-020-y/bug.md" \
@@ -1858,7 +1858,7 @@ assert_eq "and still does not swallow the staged rename" "bugs/triaged/BUG-020-y
 
 # Nothing to commit is a no-op, not a failure — skills call this unconditionally.
 assert_ok "nothing to commit exits clean" \
-  bash -c "cd '$CO_DIR' && '$SCRIPT_DIR/wf-commit.sh' 'spec: no change' --add plans/PLN-020-x/"
+  bash -c "cd '$CO_DIR' && '$SCRIPT_DIR/lv-commit.sh' 'spec: no change' --add plans/PLN-020-x/"
 
 # The registry transition must travel WITH the findings that justify it, and
 # still not pick up a bystander.
@@ -1872,7 +1872,7 @@ mkdir -p "$RU_DIR/plans/PLN-004-x" && (
   printf 'stranger\n' > other.txt && git add other.txt
   printf 'finding\n' >> plans/PLN-004-x/findings.md
 ) >/dev/null 2>&1
-( cd "$RU_DIR" && "$SCRIPT_DIR/wf-registry-update.sh" PLN-004 verify active \
+( cd "$RU_DIR" && "$SCRIPT_DIR/lv-registry-update.sh" PLN-004 verify active \
     --commit "verify(PLN-004): findings" --add plans/PLN-004-x/findings.md ) >/dev/null 2>&1
 
 assert_eq "a transition commits together with its justification" "true" \
@@ -1884,8 +1884,8 @@ assert_eq "but not the bystander another worker staged" "other.txt" \
   "$(cd "$RU_DIR" && git diff --cached --name-only | tr -d '\n')"
 
 # The skills that run on develop must not hand-roll `git add && git commit`.
-for sk in wf-spec wf-consistency wf-bug wf-attend wf-brainstorm; do
-  assert_eq "$sk commits through wf-commit.sh" "0" \
+for sk in lv-spec lv-consistency lv-bug lv-attend lv-brainstorm; do
+  assert_eq "$sk commits through lv-commit.sh" "0" \
     "$(grep -c 'git commit -m' "$LIB_ROOT/skills/$sk/SKILL.md")"
 done
 
@@ -1899,16 +1899,16 @@ section "Untracking the generated harness (v5.0.0 migration)"
 #
 # The migration's one dangerous step is exercised here: the untrack commit
 # DELETES those paths on develop, so a feature branch cut earlier loses them on
-# its next `git merge develop` — mid-plan. wf-merge-develop.sh restoring the
+# its next `git merge develop` — mid-plan. lv-merge-develop.sh restoring the
 # harness afterwards is what makes that survivable.
 UT="$TEST_DIR/untracked"
 mkdir -p "$UT" && (
   cd "$UT" && git init -qb develop . && git config user.email t@t && git config user.name t
-  mkdir -p .claude/skills/wf-spec .claude/skills/ref-project scripts/v2.00
-  printf 'spec v1\n'    > .claude/skills/wf-spec/SKILL.md
+  mkdir -p .claude/skills/lv-spec .claude/skills/ref-project scripts/v2.00
+  printf 'spec v1\n'    > .claude/skills/lv-spec/SKILL.md
   printf 'mine\n'       > .claude/skills/ref-project/SKILL.md
   printf 'wf\n'         > .claude/workflow.md
-  printf '#!/bin/sh\n'  > scripts/wf-exec.sh && chmod +x scripts/wf-exec.sh
+  printf '#!/bin/sh\n'  > scripts/lv-exec.sh && chmod +x scripts/lv-exec.sh
   printf 'v\n'          > scripts/v2.00/wf-sample.sh
   printf 'feature-branches/\n' > .gitignore
   printf 'src\n' > src.txt
@@ -1917,45 +1917,45 @@ mkdir -p "$UT" && (
 ) >/dev/null 2>&1
 
 assert_eq "before migrating, a worktree gets the harness from git" "true" \
-  "$([ -f "$UT/feature-branches/PLN-001-x/.claude/skills/wf-spec/SKILL.md" ] && echo true || echo false)"
+  "$([ -f "$UT/feature-branches/PLN-001-x/.claude/skills/lv-spec/SKILL.md" ] && echo true || echo false)"
 
 # The migration, on develop.
 ( cd "$UT"
-  printf '.claude/skills/wf-*/\n.claude/workflow.md\nscripts/wf-exec.sh\nscripts/v*/\n' >> .gitignore
-  git rm -r -q --cached .claude/skills/wf-spec .claude/workflow.md scripts/wf-exec.sh scripts/v2.00
+  printf '.claude/skills/lv-*/\n.claude/workflow.md\nscripts/lv-exec.sh\nscripts/v*/\n' >> .gitignore
+  git rm -r -q --cached .claude/skills/lv-spec .claude/workflow.md scripts/lv-exec.sh scripts/v2.00
   git add .gitignore && git commit -qm "chore: stop tracking the generated workflow harness"
 ) >/dev/null 2>&1
 
 assert_eq "develop's tree is clean after the untrack commit" "0" \
   "$(git -C "$UT" status --porcelain | wc -l | xargs)"
 assert_eq "the files are still on disk, just ignored" "true" \
-  "$([ -f "$UT/scripts/wf-exec.sh" ] && [ -f "$UT/.claude/skills/wf-spec/SKILL.md" ] && echo true || echo false)"
-assert_eq "a project's own skill stays tracked — the wf- prefix is load-bearing" "true" \
+  "$([ -f "$UT/scripts/lv-exec.sh" ] && [ -f "$UT/.claude/skills/lv-spec/SKILL.md" ] && echo true || echo false)"
+assert_eq "a project's own skill stays tracked — the lv- prefix is load-bearing" "true" \
   "$(git -C "$UT" ls-files --error-unmatch .claude/skills/ref-project/SKILL.md >/dev/null 2>&1 && echo true || echo false)"
 
 # THE DANGEROUS STEP: the live worktree merges develop and takes the deletion.
-cp "$SCRIPT_DIR/wf-worktree-harness.sh" "$UT/scripts/" 2>/dev/null || true
+cp "$SCRIPT_DIR/lv-worktree-harness.sh" "$UT/scripts/" 2>/dev/null || true
 ( cd "$UT/feature-branches/PLN-001-x" && git merge develop --no-edit ) >/dev/null 2>&1
 assert_eq "merging the migration strips the harness from a live worktree" "false" \
-  "$([ -f "$UT/feature-branches/PLN-001-x/.claude/skills/wf-spec/SKILL.md" ] && echo true || echo false)"
+  "$([ -f "$UT/feature-branches/PLN-001-x/.claude/skills/lv-spec/SKILL.md" ] && echo true || echo false)"
 
 # ...and the restore that makes it survivable.
-( cd "$UT/feature-branches/PLN-001-x" && "$SCRIPT_DIR/wf-worktree-harness.sh" . ) >/dev/null 2>&1
+( cd "$UT/feature-branches/PLN-001-x" && "$SCRIPT_DIR/lv-worktree-harness.sh" . ) >/dev/null 2>&1
 assert_eq "the harness copier puts it back" "true" \
-  "$([ -f "$UT/feature-branches/PLN-001-x/.claude/skills/wf-spec/SKILL.md" ] && echo true || echo false)"
-assert_eq "wf-exec.sh too" "true" \
-  "$([ -x "$UT/feature-branches/PLN-001-x/scripts/wf-exec.sh" ] && echo true || echo false)"
+  "$([ -f "$UT/feature-branches/PLN-001-x/.claude/skills/lv-spec/SKILL.md" ] && echo true || echo false)"
+assert_eq "lv-exec.sh too" "true" \
+  "$([ -x "$UT/feature-branches/PLN-001-x/scripts/lv-exec.sh" ] && echo true || echo false)"
 assert_eq "and the worktree is CLEAN — ignored files cannot dirty it" "0" \
   "$(git -C "$UT/feature-branches/PLN-001-x" status --porcelain | wc -l | xargs)"
 
 # A later deploy changes the harness. Under tracking this is what dirtied every
 # worktree and aborted the next merge; now it is invisible to git.
-printf 'spec v2\n' > "$UT/.claude/skills/wf-spec/SKILL.md"
-( cd "$UT/feature-branches/PLN-001-x" && "$SCRIPT_DIR/wf-worktree-harness.sh" . ) >/dev/null 2>&1
+printf 'spec v2\n' > "$UT/.claude/skills/lv-spec/SKILL.md"
+( cd "$UT/feature-branches/PLN-001-x" && "$SCRIPT_DIR/lv-worktree-harness.sh" . ) >/dev/null 2>&1
 assert_eq "a mid-plan deploy leaves the worktree clean" "0" \
   "$(git -C "$UT/feature-branches/PLN-001-x" status --porcelain | wc -l | xargs)"
 assert_eq "and the worktree has the new content" "spec v2" \
-  "$(cat "$UT/feature-branches/PLN-001-x/.claude/skills/wf-spec/SKILL.md")"
+  "$(cat "$UT/feature-branches/PLN-001-x/.claude/skills/lv-spec/SKILL.md")"
 assert_ok "so git merge develop still runs" \
   git -C "$UT/feature-branches/PLN-001-x" merge develop --no-edit
 
@@ -1968,35 +1968,35 @@ assert_ok "so git merge develop still runs" \
 MD="$TEST_DIR/modifydelete"
 mkdir -p "$MD" && (
   cd "$MD" && git init -qb develop . && git config user.email t@t && git config user.name t
-  mkdir -p .claude/skills/wf-spec scripts
-  printf 'v1\n' > .claude/skills/wf-spec/SKILL.md
-  printf 'v1\n' > scripts/wf-exec.sh && chmod +x scripts/wf-exec.sh
+  mkdir -p .claude/skills/lv-spec scripts
+  printf 'v1\n' > .claude/skills/lv-spec/SKILL.md
+  printf 'v1\n' > scripts/lv-exec.sh && chmod +x scripts/lv-exec.sh
   printf 'feature-branches/\n' > .gitignore && printf 'code\n' > src.txt
   git add -A && git commit -qm init
   git worktree add -q feature-branches/wt -b feature/PLN-004-x HEAD
   # the old infra-sync behaviour: the BRANCH commits its own harness change
-  cd feature-branches/wt && printf 'v2-branch\n' > .claude/skills/wf-spec/SKILL.md
+  cd feature-branches/wt && printf 'v2-branch\n' > .claude/skills/lv-spec/SKILL.md
   git add -A && git commit -qm "chore: sync workflow infra from develop"
   cd "$MD"
-  printf 'v3-develop\n' > .claude/skills/wf-spec/SKILL.md
+  printf 'v3-develop\n' > .claude/skills/lv-spec/SKILL.md
   git add -A && git commit -qm deploy
-  printf '.claude/skills/wf-*/\nscripts/wf-exec.sh\n' >> .gitignore
-  git rm -r -q --cached --ignore-unmatch .claude/skills/wf-* scripts/wf-exec.sh
+  printf '.claude/skills/lv-*/\nscripts/lv-exec.sh\n' >> .gitignore
+  git rm -r -q --cached --ignore-unmatch .claude/skills/lv-* scripts/lv-exec.sh
   git add .gitignore && git commit -qm untrack
 ) >/dev/null 2>&1
 
-( cd "$MD/feature-branches/wt" && "$SCRIPT_DIR/wf-merge-develop.sh" ) >/dev/null 2>&1
+( cd "$MD/feature-branches/wt" && "$SCRIPT_DIR/lv-merge-develop.sh" ) >/dev/null 2>&1
 assert_eq "a modify/delete conflict on a deleted path resolves" "0" \
   "$(git -C "$MD/feature-branches/wt" ls-files -u | wc -l | xargs)"
 assert_eq "the worktree is clean after taking the migration" "0" \
   "$(git -C "$MD/feature-branches/wt" status --porcelain | wc -l | xargs)"
 assert_eq "and the harness is back on disk, from the main worktree" "v3-develop" \
-  "$(cat "$MD/feature-branches/wt/.claude/skills/wf-spec/SKILL.md" 2>/dev/null)"
-assert_eq "wf-exec.sh restored and executable" "true" \
-  "$([ -x "$MD/feature-branches/wt/scripts/wf-exec.sh" ] && echo true || echo false)"
+  "$(cat "$MD/feature-branches/wt/.claude/skills/lv-spec/SKILL.md" 2>/dev/null)"
+assert_eq "lv-exec.sh restored and executable" "true" \
+  "$([ -x "$MD/feature-branches/wt/scripts/lv-exec.sh" ] && echo true || echo false)"
 
 # install.sh must seed the ignores, or a client migrates halfway and re-dirties.
-for pat in '.claude/skills/wf-\*/' '.claude/workflow.md' 'scripts/wf-exec.sh' 'scripts/v\*/'; do
+for pat in '.claude/skills/lv-\*/' '.claude/skills/wf-\*/' '.claude/workflow.md' 'scripts/lv-exec.sh' 'scripts/v\*/'; do
   assert_eq "install.sh seeds the ignore for $pat" "true" \
     "$(grep -q "\"$pat\"" "$LIB_ROOT/install.sh" && echo true || echo false)"
 done
@@ -2011,14 +2011,14 @@ assert_eq "the printed migration command survives a pathspec that matches nothin
 MIG="$TEST_DIR/atomicmig"
 mkdir -p "$MIG/scripts" && (
   cd "$MIG" && git init -q . && git config user.email t@t && git config user.name t
-  printf 'x\n' > scripts/wf-exec.sh
+  printf 'x\n' > scripts/lv-exec.sh
   printf 'x\n' > .gitignore
   git add -A && git commit -qm init
 ) >/dev/null 2>&1
-# .claude/skills/wf-* is absent — exactly app's shape.
-( cd "$MIG" && git rm -r --cached --quiet --ignore-unmatch .claude/skills/wf-* scripts/wf-exec.sh ) >/dev/null 2>&1
+# .claude/skills/lv-* is absent — exactly app's shape.
+( cd "$MIG" && git rm -r --cached --quiet --ignore-unmatch .claude/skills/lv-* scripts/lv-exec.sh ) >/dev/null 2>&1
 assert_eq "and it does untrack what IS tracked" "0" \
-  "$(git -C "$MIG" ls-files scripts/wf-exec.sh | wc -l | xargs)"
+  "$(git -C "$MIG" ls-files scripts/lv-exec.sh | wc -l | xargs)"
 
 # The v6 template swap used to drop plans/TEMPLATE.md.v5.bak beside the new
 # one — an untracked file in a TRACKED directory that nothing ever removes.
@@ -2037,14 +2037,14 @@ assert_eq "while an untracked one still keeps its copy" "true" \
      | grep -q 'mv "\$DEST" "\$DEST.v5.bak"' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
-section "wf-commit stages each path on its own (client-a WFI-053/057)"
+section "lv-commit stages each path on its own (client-a WFI-053/057)"
 
 # `git add` is atomic across its pathspecs, and callers pass a fixed list that
 # includes optional files. One missing file aborted the whole add, so nothing
 # staged and the plan folder was silently left out of its own commit.
 CMT="$TEST_DIR/commit"
 mkdir -p "$CMT/scripts" "$CMT/plans/PLN-021-arg-injection"
-cp "$SCRIPT_DIR/wf-commit.sh" "$SCRIPT_DIR/wf-lock.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$CMT/scripts/"
+cp "$SCRIPT_DIR/lv-commit.sh" "$SCRIPT_DIR/lv-lock.sh" "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$CMT/scripts/"
 (
   cd "$CMT" && git init -q . && git config user.email t@t && git config user.name t
   echo seed > seed.txt && git add seed.txt && git commit -qm seed
@@ -2053,7 +2053,7 @@ echo "the plan" > "$CMT/plans/PLN-021-arg-injection/plan.md"
 echo "registry" > "$CMT/plans/REGISTRY.md"
 
 # plans/deferred-criteria.md does not exist — this project has never deferred one.
-(cd "$CMT" && ./scripts/wf-commit.sh "spec: PLN-021" \
+(cd "$CMT" && ./scripts/lv-commit.sh "spec: PLN-021" \
    --add plans/PLN-021-arg-injection/ plans/REGISTRY.md plans/deferred-criteria.md) >/dev/null 2>&1
 assert_eq "a missing optional pathspec does not discard the rest of the add" "plans/PLN-021-arg-injection/plan.md" \
   "$(cd "$CMT" && git ls-files plans/PLN-021-arg-injection/plan.md)"
@@ -2065,7 +2065,7 @@ assert_eq "and the registry lands in the same commit" "plans/REGISTRY.md" \
 # and the two outcomes had the same message AND the same exit code.
 echo "changed" >> "$CMT/plans/REGISTRY.md"
 touch "$CMT/.git/index.lock"
-lock_out=$(cd "$CMT" && WF_LOCK_TIMEOUT=2 ./scripts/wf-commit.sh "workflow: file WFI-056" \
+lock_out=$(cd "$CMT" && LV_LOCK_TIMEOUT=2 ./scripts/lv-commit.sh "workflow: file WFI-056" \
              --add plans/REGISTRY.md 2>&1); lock_rc=$?
 rm -f "$CMT/.git/index.lock"
 assert_eq "a held index.lock fails loudly rather than reporting nothing to commit" "1" "$lock_rc"
@@ -2075,16 +2075,16 @@ assert_eq "and does not print the benign skip message" "false" \
 # ═══════════════════════════════════════════════════════════════════════
 section "A CLI plan's human criteria still gate (client-a WFI-054)"
 
-# wf-manual-lint reads a pre-v6 plan the v5 way and promotes every untagged
-# criterion to eyes:blocking. wf-manual-gate then closed the gate because the
+# lv-manual-lint reads a pre-v6 plan the v5 way and promotes every untagged
+# criterion to eyes:blocking. lv-manual-gate then closed the gate because the
 # diff touched no rendering surface — so in a CLI project, where no diff ever
 # touches one, EVERY plan auto-completed EVERY human criterion. PLN-004 went
 # testing → complete in ~40s with five criteria untested, two of them safety
 # assertions about private key material on a shared drive.
 GATE_DIR="$TEST_DIR/manualgate"
 mkdir -p "$GATE_DIR/scripts" "$GATE_DIR/plans/PLN-004-tool-cli"
-cp "$SCRIPT_DIR/wf-manual-gate.sh" "$SCRIPT_DIR/wf-manual-lint.sh" \
-   "$SCRIPT_DIR/wf-plan-info.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$GATE_DIR/scripts/"
+cp "$SCRIPT_DIR/lv-manual-gate.sh" "$SCRIPT_DIR/lv-manual-lint.sh" \
+   "$SCRIPT_DIR/lv-plan-info.sh" "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$GATE_DIR/scripts/"
 printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-004 | tool-cli | testing | — | — | 2026-08-04 | %s | — | — |\n' \
   "${SCRIPT_FOLDER#v}" > "$GATE_DIR/plans/REGISTRY.md"
 # schema_version 5: no tags, exactly the population the surface rule mishandled.
@@ -2119,7 +2119,7 @@ mkdir -p "$GATE_DIR/src/Cli"
   git add -A && git commit -qm cli
 ) >/dev/null 2>&1
 
-gate_out=$(cd "$GATE_DIR" && ./scripts/wf-manual-gate.sh PLN-004 2>/dev/null || true)
+gate_out=$(cd "$GATE_DIR" && ./scripts/lv-manual-gate.sh PLN-004 2>/dev/null || true)
 assert_eq "untagged criteria are counted as untagged, not silently as eyes" "2" \
   "$(printf '%s' "$gate_out" | grep "^MANUAL_OPEN_UNTAGGED=" | tr -d "MANUAL_OPEN_UNTAGGED='")"
 assert_eq "a CLI plan whose diff renders nothing still gates" "GATE='true'" \
@@ -2140,14 +2140,14 @@ A CLI.
 #### Manual
 - [ ] (eyes:cosmetic) /app/board — the column spacing reads clearly at 1280px
 PLANEOF
-tagged_out=$(cd "$GATE_DIR" && ./scripts/wf-manual-gate.sh PLN-004 2>/dev/null || true)
+tagged_out=$(cd "$GATE_DIR" && ./scripts/lv-manual-gate.sh PLN-004 2>/dev/null || true)
 assert_eq "a cosmetic eyes criterion still skips on a surface miss" "GATE='false'" \
   "$(printf '%s' "$tagged_out" | grep "^GATE=")"
 
 # A BLOCKING criterion fails into a deadlock instead: an unattended worker
 # cannot judge it, and with no matching surface no gate opens, so the plan
 # neither ships nor asks. client-a's PLN-041 sat in `testing` through three
-# wf-test runs until the stuck detector noticed (WFI-129).
+# lv-test runs until the stuck detector noticed (WFI-129).
 cat > "$GATE_DIR/plans/PLN-004-tool-cli/plan.md" << 'PLANEOF'
 schema_version: 6
 
@@ -2157,7 +2157,7 @@ A CLI.
 #### Manual
 - [ ] (eyes:blocking) tool --help — the command list is readable enough to use
 PLANEOF
-blocking_out=$(cd "$GATE_DIR" && ./scripts/wf-manual-gate.sh PLN-004 2>/dev/null || true)
+blocking_out=$(cd "$GATE_DIR" && ./scripts/lv-manual-gate.sh PLN-004 2>/dev/null || true)
 assert_eq "a blocking eyes criterion gates even on a surface miss" "GATE='true'" \
   "$(printf '%s' "$blocking_out" | grep "^GATE=")"
 assert_eq "and the reason names the blocking criterion, not the surface" "true" \
@@ -2166,12 +2166,12 @@ assert_eq "and the reason names the blocking criterion, not the surface" "true" 
 # ═══════════════════════════════════════════════════════════════════════
 section "One gate is one record (client-a WFI-049)"
 
-# GATE_QUESTION is free text and wf-spec's scope-reduction question embeds
+# GATE_QUESTION is free text and lv-spec's scope-reduction question embeds
 # paragraphs. The lister emitted and counted LINES, so one open gate printed 11
 # rows — 10 of them phantom, with empty ids — and reported GATES: 11.
 GATES_DIR="$TEST_DIR/gates"
 mkdir -p "$GATES_DIR/scripts" "$GATES_DIR/.claude/orchestrator/gates" "$GATES_DIR/plans"
-cp "$SCRIPT_DIR/wf-list-gates.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$GATES_DIR/scripts/"
+cp "$SCRIPT_DIR/lv-list-gates.sh" "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$GATES_DIR/scripts/"
 printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-004 | tool-cli | draft | — | — | 2026-08-04 | 2.00 | — | — |\n' \
   > "$GATES_DIR/plans/REGISTRY.md"
 cat > "$GATES_DIR/.claude/orchestrator/gates/PLN-004.gate" << 'GATEEOF'
@@ -2186,21 +2186,21 @@ After: build only tool take.
 
 Reason: the rest depends on PLN-008.'
 GATE_CONTEXT='replan'
-GATE_SKILL='wf-spec'
+GATE_SKILL='lv-spec'
 GATE_OPENED='2026-08-04T14:47:36Z'
 GATEEOF
 (cd "$GATES_DIR" && git init -q . && git config user.email t@t && git config user.name t) >/dev/null 2>&1
 
-gates_rows=$(cd "$GATES_DIR" && ./scripts/wf-list-gates.sh 2>/dev/null | wc -l | xargs)
-gates_count=$(cd "$GATES_DIR" && ./scripts/wf-list-gates.sh 2>&1 >/dev/null | grep '^GATES:' || true)
+gates_rows=$(cd "$GATES_DIR" && ./scripts/lv-list-gates.sh 2>/dev/null | wc -l | xargs)
+gates_count=$(cd "$GATES_DIR" && ./scripts/lv-list-gates.sh 2>&1 >/dev/null | grep '^GATES:' || true)
 assert_eq "a multi-line question still emits exactly one row" "1" "$gates_rows"
 assert_eq "and the count reports gates, not lines" "GATES: 1" "$gates_count"
 assert_eq "the question text survives, flattened onto the row" "true" \
-  "$(cd "$GATES_DIR" && ./scripts/wf-list-gates.sh 2>/dev/null \
+  "$(cd "$GATES_DIR" && ./scripts/lv-list-gates.sh 2>/dev/null \
      | grep -q 'The goal narrowed. Goal: build the whole CLI.' && echo true || echo false)"
 # The single-artifact probe is the dispatcher's "skip this one?" test and shares
 # the same contract.
-probe_rows=$(cd "$GATES_DIR" && ./scripts/wf-list-gates.sh PLN-004 2>/dev/null | wc -l | xargs)
+probe_rows=$(cd "$GATES_DIR" && ./scripts/lv-list-gates.sh PLN-004 2>/dev/null | wc -l | xargs)
 assert_eq "the single-artifact probe is one row too" "1" "$probe_rows"
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -2212,8 +2212,8 @@ section "Dated amendments are counted (client-a WFI-051)"
 # caller standing in front of the always-on scope-reduction gate.
 DELTA="$TEST_DIR/goaldelta"
 mkdir -p "$DELTA/scripts" "$DELTA/plans/PLN-004-tool-cli"
-cp "$SCRIPT_DIR/wf-goal-delta.sh" "$SCRIPT_DIR/wf-plan-info.sh" \
-   "$SCRIPT_DIR/wf-orch-lib.sh" "$DELTA/scripts/" 2>/dev/null || true
+cp "$SCRIPT_DIR/lv-goal-delta.sh" "$SCRIPT_DIR/lv-plan-info.sh" \
+   "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$DELTA/scripts/" 2>/dev/null || true
 printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-004 | tool-cli | draft | — | — | 2026-08-04 | %s | — | — |\n' \
   "${SCRIPT_FOLDER#v}" > "$DELTA/plans/REGISTRY.md"
 printf '## Goal\nBuild the CLI.\n\n## Amendments\n' > "$DELTA/plans/PLN-004-tool-cli/plan.md"
@@ -2222,7 +2222,7 @@ printf '## Goal\nBuild the CLI.\n\n## Amendments\n' > "$DELTA/plans/PLN-004-tool
   git add -A && git commit -qm seed
 ) >/dev/null 2>&1
 printf '\n### [2026-08-04] — A9: narrow to tool take only\n' >> "$DELTA/plans/PLN-004-tool-cli/plan.md"
-delta_out=$(cd "$DELTA" && ./scripts/wf-goal-delta.sh PLN-004 2>/dev/null || true)
+delta_out=$(cd "$DELTA" && ./scripts/lv-goal-delta.sh PLN-004 2>/dev/null || true)
 assert_eq "an amendment written in the template's own dated form is counted" "1" \
   "$(printf '%s' "$delta_out" | grep '^AMENDMENTS_NEW:' | awk '{print $2}')"
 
@@ -2234,8 +2234,8 @@ section "Deferring a criterion ticks its box (client-a WFI-056)"
 # identical — the same ambiguity that made WFI-054 hard to notice.
 DEFER="$TEST_DIR/defer"
 mkdir -p "$DEFER/scripts" "$DEFER/plans/PLN-018-capsule-wire"
-cp "$SCRIPT_DIR/wf-defer-criterion.sh" "$SCRIPT_DIR/wf-plan-info.sh" \
-   "$SCRIPT_DIR/wf-orch-lib.sh" "$SCRIPT_DIR/wf-lock.sh" "$DEFER/scripts/"
+cp "$SCRIPT_DIR/lv-defer-criterion.sh" "$SCRIPT_DIR/lv-plan-info.sh" \
+   "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$SCRIPT_DIR/lv-lock.sh" "$DEFER/scripts/"
 printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-018 | capsule-wire | testing | — | — | 2026-08-04 | %s | — | — |\n' \
   "${SCRIPT_FOLDER#v}" > "$DEFER/plans/REGISTRY.md"
 cat > "$DEFER/plans/PLN-018-capsule-wire/plan.md" << 'PLANEOF'
@@ -2249,7 +2249,7 @@ Wire contract.
 PLANEOF
 (cd "$DEFER" && git init -q . && git config user.email t@t && git config user.name t) >/dev/null 2>&1
 
-(cd "$DEFER" && ./scripts/wf-defer-criterion.sh PLN-018 external \
+(cd "$DEFER" && ./scripts/lv-defer-criterion.sh PLN-018 external \
    "the relay accepts a sealed capsule from a real second device" --prereq PLN-008) >/dev/null 2>&1
 defer_line=$(grep -- '- \[' "$DEFER/plans/PLN-018-capsule-wire/plan.md")
 assert_eq "the deferred criterion is checked off in its own plan" "true" \
@@ -2267,8 +2267,8 @@ section "A formatted criterion still ticks (client-a WFI-137)"
 # day on client-a (PLN-051, PLN-052).
 DEFERMD="$TEST_DIR/defer-md"
 mkdir -p "$DEFERMD/scripts" "$DEFERMD/plans/PLN-052-gitignore-probe"
-cp "$SCRIPT_DIR/wf-defer-criterion.sh" "$SCRIPT_DIR/wf-plan-info.sh" \
-   "$SCRIPT_DIR/wf-orch-lib.sh" "$SCRIPT_DIR/wf-lock.sh" "$DEFERMD/scripts/"
+cp "$SCRIPT_DIR/lv-defer-criterion.sh" "$SCRIPT_DIR/lv-plan-info.sh" \
+   "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$SCRIPT_DIR/lv-lock.sh" "$DEFERMD/scripts/"
 printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-052 | gitignore-probe | testing | — | — | 2026-08-14 | %s | — | — |\n' \
   "${SCRIPT_FOLDER#v}" > "$DEFERMD/plans/REGISTRY.md"
 cat > "$DEFERMD/plans/PLN-052-gitignore-probe/plan.md" << 'PLANEOF'
@@ -2283,7 +2283,7 @@ PLANEOF
 (cd "$DEFERMD" && git init -q . && git config user.email t@t && git config user.name t) >/dev/null 2>&1
 
 # The stripped form — what a caller actually passes.
-(cd "$DEFERMD" && ./scripts/wf-defer-criterion.sh PLN-052 external \
+(cd "$DEFERMD" && ./scripts/lv-defer-criterion.sh PLN-052 external \
    'run tool doctor on D:\git\Enterprise_DevDrive and confirm gitignore:ddN names .git/info/exclude') >/dev/null 2>&1
 defermd_line=$(grep -- '- \[' "$DEFERMD/plans/PLN-052-gitignore-probe/plan.md")
 assert_eq "a criterion whose plan text carries backticks and ** still ticks" "true" \
@@ -2295,7 +2295,7 @@ assert_eq "and the plan's own formatting survives the tick" "true" \
 
 # When it genuinely cannot match, the miss has to read as work to do — the
 # worker treated the old lowercase 'note:' as informational and completed anyway.
-defermd_miss=$(cd "$DEFERMD" && ./scripts/wf-defer-criterion.sh PLN-052 soak \
+defermd_miss=$(cd "$DEFERMD" && ./scripts/lv-defer-criterion.sh PLN-052 soak \
    'something no line in the plan resembles' 2>&1 >/dev/null || true)
 assert_eq "an unmatched criterion says ACTION REQUIRED, not 'note'" "true" \
   "$(printf '%s' "$defermd_miss" | grep -q 'ACTION REQUIRED' && echo true || echo false)"
@@ -2304,18 +2304,18 @@ assert_eq "an unmatched criterion says ACTION REQUIRED, not 'note'" "true" \
 section "Verify reads the branch's own config (client-a WFI-052)"
 
 # claude-workflow.yml was located by walking up from SCRIPT_DIR, which
-# wf-exec.sh always resolves to the MAIN worktree. A plan whose Step 1 adds a
+# lv-exec.sh always resolves to the MAIN worktree. A plan whose Step 1 adds a
 # test project to testScopes commits that on its own branch; verify then read
 # develop's config, did not see it, and filed a finding saying the scope was
 # "never added" — citing the lines where the branch's own commit added it.
 assert_eq "the config root is the invoking worktree when it has one" "true" \
-  "$(grep -q 'CONFIG_ROOT="\$WORKTREE_ROOT"' "$SCRIPT_DIR/wf-test-scope.sh" && echo true || echo false)"
+  "$(grep -q 'CONFIG_ROOT="\$WORKTREE_ROOT"' "$SCRIPT_DIR/lv-test-scope.sh" && echo true || echo false)"
 assert_eq "and the runner detection reads that same tree" "true" \
-  "$(grep -q 'if \[ -f "\$CONFIG_ROOT/global.json" \]' "$SCRIPT_DIR/wf-test-scope.sh" && echo true || echo false)"
+  "$(grep -q 'if \[ -f "\$CONFIG_ROOT/global.json" \]' "$SCRIPT_DIR/lv-test-scope.sh" && echo true || echo false)"
 # On DEVELOP_ROOT, HEAD *is* develop, so this diff was empty by definition and
 # the whole testMappings auto-detection could never fire.
 assert_eq "the auto-detect diff runs in the branch worktree, not on develop" "true" \
-  "$(grep -q 'changed_files=\$(git -C "\$CONFIG_ROOT" diff --name-only develop..HEAD' "$SCRIPT_DIR/wf-test-scope.sh" && echo true || echo false)"
+  "$(grep -q 'changed_files=\$(git -C "\$CONFIG_ROOT" diff --name-only develop..HEAD' "$SCRIPT_DIR/lv-test-scope.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Plan test commands come from the config (client-a WFI-055)"
@@ -2325,17 +2325,17 @@ section "Plan test commands come from the config (client-a WFI-055)"
 # exit 5, zero tests run — and a verify agent reading the exit code fails a good
 # plan. client-a's config had said `--filter-method` the whole time; the
 # stale example in its seeded plans/TEMPLATE.md is what taught the wrong syntax.
-assert_eq "wf-spec reads the filter flag from the config" "true" \
-  "$(grep -q 'wf-config-get.sh test_filter_flag' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+assert_eq "lv-spec reads the filter flag from the config" "true" \
+  "$(grep -q 'lv-config-get.sh test_filter_flag' "$LIB_ROOT/skills/lv-spec/SKILL.md" && echo true || echo false)"
 assert_eq "and is warned off writing FullyQualifiedName from memory" "true" \
-  "$(grep -q 'FullyQualifiedName~X`\*\* is \*\*VSTest\*\* syntax\|is \*\*VSTest\*\* syntax' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'FullyQualifiedName~X`\*\* is \*\*VSTest\*\* syntax\|is \*\*VSTest\*\* syntax' "$LIB_ROOT/skills/lv-spec/SKILL.md" && echo true || echo false)"
 assert_eq "and told the seeded template is the stale one, not a second opinion" "true" \
-  "$(grep -q 'never re-rendered' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'never re-rendered' "$LIB_ROOT/skills/lv-spec/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A never-reviewed draft is dispatchable (client-a WFI-058)"
 
-# The daemon reaches the spec role through wf-list-specable.sh, which emitted a
+# The daemon reaches the spec role through lv-list-specable.sh, which emitted a
 # draft plan only when its findings.md carried an unchecked box — the replanning
 # shape. A draft that has a plan.md and has never been reviewed has empty
 # findings, so nothing emitted it and the sweep could not see it. client-a
@@ -2346,7 +2346,7 @@ mkdir -p "$SPEC_DIR/scripts" \
          "$SPEC_DIR/plans/PLN-008-capsule-take" \
          "$SPEC_DIR/plans/PLN-020-relay-wire" \
          "$SPEC_DIR/plans/PLN-030-row-only"
-cp "$SCRIPT_DIR/wf-list-specable.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$SPEC_DIR/scripts/"
+cp "$SCRIPT_DIR/lv-list-specable.sh" "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$SPEC_DIR/scripts/"
 cat > "$SPEC_DIR/plans/REGISTRY.md" << 'REGEOF'
 | ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |
 |-|-|-|-|-|-|-|-|-|
@@ -2363,7 +2363,7 @@ printf -- '- [ ] ESCALATED: the wire format is undecided\n' \
 # and it belongs to whatever created the row.
 (cd "$SPEC_DIR" && git init -q . && git config user.email t@t && git config user.name t) >/dev/null 2>&1
 
-spec_out=$(cd "$SPEC_DIR" && ./scripts/wf-list-specable.sh 2>/dev/null || true)
+spec_out=$(cd "$SPEC_DIR" && ./scripts/lv-list-specable.sh 2>/dev/null || true)
 assert_eq "a draft with a plan.md and no findings is emitted" "true" \
   "$(printf '%s' "$spec_out" | grep -q '^PLN-008-capsule-take	never reviewed' && echo true || echo false)"
 assert_eq "the replanning shape still is" "true" \
@@ -2376,13 +2376,13 @@ assert_eq "a folder with no plan.md is left alone" "false" \
   "$(printf '%s' "$spec_out" | grep -q 'PLN-030' && echo true || echo false)"
 assert_eq "a plan past draft is not spec work" "false" \
   "$(printf '%s' "$spec_out" | grep -q 'PLN-005' && echo true || echo false)"
-# Both shapes ship under the existing header: the wf-spec entry menu parses
+# Both shapes ship under the existing header: the lv-spec entry menu parses
 # exactly three section names and would drop rows under a fourth.
 assert_eq "both shapes go out under # replanning" "1" \
   "$(printf '%s' "$spec_out" | grep -c '^# replanning' | xargs)"
 assert_ok "the script reports work found" \
-  bash -c "cd '$SPEC_DIR' && ./scripts/wf-list-specable.sh >/dev/null 2>&1"
-# What candidates_spec() in wf-orchestrate.sh actually feeds the dispatcher.
+  bash -c "cd '$SPEC_DIR' && ./scripts/lv-list-specable.sh >/dev/null 2>&1"
+# What candidates_spec() in lv-orchestrate.sh actually feeds the dispatcher.
 assert_eq "the dispatcher's own parse yields both plans" "2" \
   "$(printf '%s\n' "$spec_out" | awk -F'\t' '/^# / { next } NF && $1 != "—" { print $1 }' | grep -c '^PLN-' | xargs)"
 
@@ -2391,18 +2391,18 @@ assert_eq "the dispatcher's own parse yields both plans" "2" \
 # of an empty array is an unbound variable, so the fix above printed the header
 # and then exited 1 mid-list against the real registry.
 rm -rf "$SPEC_DIR/plans/PLN-020-relay-wire"
-only_unreviewed=$(cd "$SPEC_DIR" && ./scripts/wf-list-specable.sh 2>&1 || true)
+only_unreviewed=$(cd "$SPEC_DIR" && ./scripts/lv-list-specable.sh 2>&1 || true)
 assert_eq "unreviewed drafts with no escalated work list cleanly" "true" \
   "$(printf '%s' "$only_unreviewed" | grep -q 'unbound variable' && echo false || echo true)"
 assert_eq "and the plan is still there" "true" \
   "$(printf '%s' "$only_unreviewed" | grep -q '^PLN-008-capsule-take	never reviewed' && echo true || echo false)"
 assert_ok "and the exit code still says work is available" \
-  bash -c "cd '$SPEC_DIR' && ./scripts/wf-list-specable.sh >/dev/null 2>&1"
+  bash -c "cd '$SPEC_DIR' && ./scripts/lv-list-specable.sh >/dev/null 2>&1"
 # The mirror case: escalated only, no unreviewed.
 rm -f "$SPEC_DIR/plans/PLN-008-capsule-take/plan.md"
 printf -- '- [ ] ESCALATED: the wire format is undecided\n' \
   > "$SPEC_DIR/plans/PLN-008-capsule-take/findings.md"
-only_escalated=$(cd "$SPEC_DIR" && ./scripts/wf-list-specable.sh 2>&1 || true)
+only_escalated=$(cd "$SPEC_DIR" && ./scripts/lv-list-specable.sh 2>&1 || true)
 assert_eq "escalated work with no unreviewed drafts lists cleanly" "true" \
   "$(printf '%s' "$only_escalated" | grep -q 'unbound variable' && echo false || echo true)"
 
@@ -2410,16 +2410,16 @@ assert_eq "escalated work with no unreviewed drafts lists cleanly" "true" \
 section "A rename commits both of its halves (client-a WFI-066)"
 
 # `git diff --cached --name-only` reports a rename as ONE path — the
-# destination. wf-commit.sh read its commit list back that way, so the source
+# destination. lv-commit.sh read its commit list back that way, so the source
 # never reached the pathspec and its deletion stayed staged: HEAD held the same
 # bug in bugs/open/ AND bugs/triaged/, and the next worklist re-offered the
 # still-open copy as unplanned work.
 cd "$TEST_DIR/main" || exit 1
 mkdir -p bugs/open/BUG-900-dup bugs/triaged
 echo 'a bug' > bugs/open/BUG-900-dup/bug.md
-"$SCRIPT_DIR/wf-commit.sh" "bug: file BUG-900" --add bugs/ >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "bug: file BUG-900" --add bugs/ >/dev/null 2>&1
 git mv bugs/open/BUG-900-dup bugs/triaged/BUG-900-dup >/dev/null 2>&1
-"$SCRIPT_DIR/wf-commit.sh" "spec: consume BUG-900" --add bugs/ >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "spec: consume BUG-900" --add bugs/ >/dev/null 2>&1
 assert_eq "the triaged copy is committed" "true" \
   "$(git ls-tree -r --name-only HEAD | grep -qx 'bugs/triaged/BUG-900-dup/bug.md' && echo true || echo false)"
 assert_eq "and the open copy is gone from HEAD, not merely from the worktree" "false" \
@@ -2430,7 +2430,7 @@ assert_eq "and nothing is left staged" "true" \
 # ═══════════════════════════════════════════════════════════════════════
 section "Closing a bug commits its own rename (client-a WFI-136)"
 
-# wf-bug-close.sh left the rename staged and wf-test's completion commit was
+# lv-bug-close.sh left the rename staged and lv-test's completion commit was
 # pathspec-scoped to bugs/closed/ — a path the caller chose without knowing the
 # source side existed. The addition committed, the deletion did not, and six
 # bugs ended up tracked at BOTH paths in the same HEAD, each with a stale
@@ -2439,8 +2439,8 @@ cd "$TEST_DIR/main" || exit 1
 mkdir -p bugs/triaged/BUG-901-close bugs/closed
 printf '# guest logout loops\n\n> **Status:** Triaged\n\n## Notes\n' \
   > bugs/triaged/BUG-901-close/bug.md
-"$SCRIPT_DIR/wf-commit.sh" "bug: triage BUG-901" --add bugs/triaged/BUG-901-close >/dev/null 2>&1
-"$SCRIPT_DIR/wf-bug-close.sh" BUG-901 PLN-901-claimed >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "bug: triage BUG-901" --add bugs/triaged/BUG-901-close >/dev/null 2>&1
+"$SCRIPT_DIR/lv-bug-close.sh" BUG-901 PLN-901-claimed >/dev/null 2>&1
 assert_eq "the closed copy is in HEAD" "true" \
   "$(git ls-tree -r --name-only HEAD | grep -qx 'bugs/closed/BUG-901-close/bug.md' && echo true || echo false)"
 assert_eq "and the triaged copy is gone from HEAD, not just from the worktree" "false" \
@@ -2453,11 +2453,11 @@ assert_eq "and the commit is attributed to the bug, not to whoever commits next"
 # --no-commit still exists for a caller that really does want to bundle it.
 mkdir -p bugs/triaged/BUG-902-close
 printf '# stale token\n\n> **Status:** Triaged\n\n## Notes\n' > bugs/triaged/BUG-902-close/bug.md
-"$SCRIPT_DIR/wf-commit.sh" "bug: triage BUG-902" --add bugs/triaged/BUG-902-close >/dev/null 2>&1
-"$SCRIPT_DIR/wf-bug-close.sh" BUG-902 PLN-901-claimed --no-commit >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "bug: triage BUG-902" --add bugs/triaged/BUG-902-close >/dev/null 2>&1
+"$SCRIPT_DIR/lv-bug-close.sh" BUG-902 PLN-901-claimed --no-commit >/dev/null 2>&1
 assert_eq "--no-commit leaves the move staged for the caller" "true" \
   "$(git diff --cached --name-only | grep -q 'BUG-902-close' && echo true || echo false)"
-"$SCRIPT_DIR/wf-commit.sh" "test: bundle BUG-902" \
+"$SCRIPT_DIR/lv-commit.sh" "test: bundle BUG-902" \
   --add bugs/triaged/BUG-902-close bugs/closed/BUG-902-close >/dev/null 2>&1
 
 # A bug that somehow reached both paths reports as closed, not as work to redo.
@@ -2465,7 +2465,7 @@ mkdir -p bugs/triaged/BUG-903-dup bugs/closed/BUG-903-dup
 printf '# double\n\n> **Status:** Triaged\n' > bugs/triaged/BUG-903-dup/bug.md
 printf '# double\n\n> **Status:** Closed\n' > bugs/closed/BUG-903-dup/bug.md
 assert_eq "a bug tracked at two paths is not re-offered as triaged" "false" \
-  "$("$SCRIPT_DIR/wf-list-bugs.sh" 2>/dev/null | grep -q 'BUG-903' && echo true || echo false)"
+  "$("$SCRIPT_DIR/lv-list-bugs.sh" 2>/dev/null | grep -q 'BUG-903' && echo true || echo false)"
 rm -rf bugs/triaged/BUG-903-dup bugs/closed/BUG-903-dup
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -2481,7 +2481,7 @@ registry_add_row PLN-901 claimed active
 # on the plan folder — a brief being specced has no folder and still needs one
 # (client-c WFI-004).
 claim_901=".claude/orchestrator/claims/901/.wf-claim"
-"$SCRIPT_DIR/wf-claim.sh" PLN-901-claimed >/dev/null 2>&1
+"$SCRIPT_DIR/lv-claim.sh" PLN-901-claimed >/dev/null 2>&1
 claim_pid=$(sed -n '2p' "$claim_901")
 assert_eq "the claim records a live process" "true" \
   "$(kill -0 "$claim_pid" 2>/dev/null && echo true || echo false)"
@@ -2495,22 +2495,22 @@ assert_eq "and not the shell that has already exited" "false" \
 sleep 30 & other_session=$!
 printf '%s\n%s\n' "$(date +%s)" "$other_session" > "$claim_901"
 assert_eq "so the plan reads as processing, not free" "processing" \
-  "$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null | awk -F'\t' '$2 == "PLN-901-claimed" { print $1 }')"
+  "$("$SCRIPT_DIR/lv-list-implementable.sh" 2>/dev/null | awk -F'\t' '$2 == "PLN-901-claimed" { print $1 }')"
 
 # --if-free is what lets a second worker stand down instead of racing.
 assert_fails "a live claim refuses a second claimant" \
-  "$SCRIPT_DIR/wf-claim.sh" PLN-901-claimed --if-free
+  "$SCRIPT_DIR/lv-claim.sh" PLN-901-claimed --if-free
 { kill "$other_session"; wait "$other_session"; } 2>/dev/null
 # A claim whose owner is gone must not park the artifact forever.
 printf '%s\n999999\n' "$(date +%s)" > "$claim_901"
 assert_ok "a dead owner's claim is reaped" \
-  "$SCRIPT_DIR/wf-claim.sh" PLN-901-claimed --if-free
-"$SCRIPT_DIR/wf-unclaim.sh" PLN-901-claimed >/dev/null 2>&1
+  "$SCRIPT_DIR/lv-claim.sh" PLN-901-claimed --if-free
+"$SCRIPT_DIR/lv-unclaim.sh" PLN-901-claimed >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════
 section "An open gate is part of eligibility (client-a WFI-063)"
 
-# The dispatcher checked gates before spawning; wf-list-implementable.sh, which
+# The dispatcher checked gates before spawning; lv-list-implementable.sh, which
 # every human and skill treats as the source of truth for what is buildable,
 # did not. An implementer landed on a plan carrying an unanswered
 # consistency-migration gate with the worklist calling it ordinary `new` work.
@@ -2522,10 +2522,10 @@ GATE_ARTIFACT='PLN-902'
 GATE_NAME='consistency-migration'
 GATE_QUESTION='Which capsule format wins?'
 GATE_CONTEXT=''
-GATE_SKILL='wf-consistency'
+GATE_SKILL='lv-consistency'
 GATE_OPENED='2026-08-04T19:45:44Z'
 GATEEOF
-gated_out=$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null || true)
+gated_out=$("$SCRIPT_DIR/lv-list-implementable.sh" 2>/dev/null || true)
 assert_eq "a gated plan is not offered as new work" "gated" \
   "$(printf '%s' "$gated_out" | awk -F'\t' '$2 == "PLN-902-gated" { print $1 }')"
 assert_eq "and the row names the gate that holds it" "consistency-migration" \
@@ -2541,61 +2541,61 @@ section "An answered gate can be recorded after the fact (client-a WFI-060)"
 
 # The resolved-gate ledger was introduced after some gates had already closed,
 # and there was no way to write a resolution proven by commit history into it.
-# wf-spec then re-derived its gating rule, saw GATE_ANSWERED=false, and re-asked
+# lv-spec then re-derived its gating rule, saw GATE_ANSWERED=false, and re-asked
 # a question the user had answered in writing.
 registry_add_row PLN-903 backfill draft
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-903 "approved as reviewed (5c369e2)" --gate spec-approval >/dev/null 2>&1
-eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-903 spec-approval)"
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-903 "approved as reviewed (5c369e2)" --gate spec-approval >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-903 spec-approval)"
 assert_eq "the backfilled resolution answers the gate" "true" "$GATE_ANSWERED"
 assert_eq "and carries the evidence forward" "approved as reviewed (5c369e2)" "$GATE_RESOLUTION"
 # Scoped to the revision, like any other resolution: edit the plan and it re-opens.
 echo 'a new step' >> plans/PLN-903-backfill/plan.md
-eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-903 spec-approval)"
+eval "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-903 spec-approval)"
 assert_eq "an edited plan makes it stale again" "true" "$GATE_STALE"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A skill closes its own gate, not whatever is open (client-b WFI-010)"
 
-# An attended /wf-test held PLN-010's claim; an unattended worker opened a
+# An attended /lv-test held PLN-010's claim; an unattended worker opened a
 # needs-input gate on it asking about a test account. The tester's exit ran
-# `wf-gate-close.sh PLN-010 "manual test found 1 issue(s)"` with no gate named,
+# `lv-gate-close.sh PLN-010 "manual test found 1 issue(s)"` with no gate named,
 # closed the needs-input gate, and recorded the test-exit message as the answer
 # to a question about test credentials — a wrong decision of record.
 registry_add_row PLN-943 wrong-gate testing
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-943 needs-input "which account tests the login?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-943 needs-input "which account tests the login?" >/dev/null 2>&1
 assert_eq "closing a gate that is not the caller's is refused" "5" \
-  "$("$SCRIPT_DIR/wf-gate-close.sh" PLN-943 "manual test found 1 issue(s)" --only manual-test >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-gate-close.sh" PLN-943 "manual test found 1 issue(s)" --only manual-test >/dev/null 2>&1; echo $?)"
 # Captured, never piped into `grep -q`: this file runs under `pipefail`, and a
 # -q grep exits on its first match, so the writer takes SIGPIPE and the
 # pipeline reports 141 however good the output was.
-eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-943 needs-input)"
+eval "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-943 needs-input)"
 assert_eq "and the question it would have deleted is still parked" "true" "$GATE_OPEN"
-eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-943 manual-test)"
+eval "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-943 manual-test)"
 assert_eq "nothing was recorded against the gate the caller named" "false" "$GATE_ANSWERED"
 
 # The caller's own gate closes normally.
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-943 "account is seeded by the fixture" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-943 manual-test "2 criteria need eyes" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-943 "manual test passed" --only manual-test >/dev/null 2>&1
-eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-943 manual-test)"
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-943 "account is seeded by the fixture" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-943 manual-test "2 criteria need eyes" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-943 "manual test passed" --only manual-test >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-943 manual-test)"
 assert_eq "its own gate closes as before" "true" "$GATE_ANSWERED"
 
 # No gate open is a no-op, never a backfill — that is what separates --only
 # from --gate, and why an unattended pass cannot leave a record saying a human
 # signed something off.
 registry_add_row PLN-944 never-gated testing
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-944 "manual test passed" --only manual-test >/dev/null 2>&1
-eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-944 manual-test)"
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-944 "manual test passed" --only manual-test >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-944 manual-test)"
 assert_eq "no gate open records nothing" "false" "$GATE_ANSWERED"
 assert_eq "and --only with --gate is refused outright" "1" \
-  "$("$SCRIPT_DIR/wf-gate-close.sh" PLN-943 x --only manual-test --gate manual-test >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-gate-close.sh" PLN-943 x --only manual-test --gate manual-test >/dev/null 2>&1; echo $?)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A review says which text it judged (client-a WFI-069)"
 
 # Staleness was a comparison of two day-granular dates, so a plan reviewed and
 # amended in one session — every replan that finishes in one sitting — was
-# unorderable. The script correctly said `unknown`, and wf-spec's gate condition
+# unorderable. The script correctly said `unknown`, and lv-spec's gate condition
 # ("REVIEW_STALE must be false") could then never be met.
 registry_add_row PLN-904 stamped draft
 cat > plans/PLN-904-stamped/plan.md << 'PLANEOF'
@@ -2611,10 +2611,10 @@ Prove staleness is answerable.
 > **2026-08-04 — Plan Review (round 1 of 3)**
 > **Result:** Approved
 PLANEOF
-eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-904)"
+eval "$("$SCRIPT_DIR/lv-review-status.sh" PLN-904)"
 assert_eq "same-day review and amendment are unorderable by date" "unknown" "$REVIEW_STALE"
-"$SCRIPT_DIR/wf-review-stamp.sh" PLN-904 >/dev/null 2>&1
-eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-904)"
+"$SCRIPT_DIR/lv-review-stamp.sh" PLN-904 >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/lv-review-status.sh" PLN-904)"
 assert_eq "a stamp settles it" "false" "$REVIEW_STALE"
 assert_eq "and says it is stamped" "true" "$REVIEW_STAMPED"
 assert_eq "the verdict survives stamping" "Approved" "$REVIEW_RESULT"
@@ -2624,12 +2624,12 @@ assert_eq "the verdict survives stamping" "Approved" "$REVIEW_RESULT"
 awk '/^## Review/ && !done { print "2026-08-04 — dropped the retry path."; done = 1 } { print }' \
   plans/PLN-904-stamped/plan.md > plans/PLN-904-stamped/plan.tmp \
   && mv plans/PLN-904-stamped/plan.tmp plans/PLN-904-stamped/plan.md
-eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-904)"
+eval "$("$SCRIPT_DIR/lv-review-status.sh" PLN-904)"
 assert_eq "editing the plan makes the verdict stale" "true" "$REVIEW_STALE"
 # Re-stamping after a re-review replaces the old stamp rather than stacking.
-"$SCRIPT_DIR/wf-review-stamp.sh" PLN-904 >/dev/null 2>&1
+"$SCRIPT_DIR/lv-review-stamp.sh" PLN-904 >/dev/null 2>&1
 assert_eq "one stamp, not two" "1" \
-  "$(grep -c 'wf-review-stamp' plans/PLN-904-stamped/plan.md | xargs)"
+  "$(grep -c 'lv-review-stamp' plans/PLN-904-stamped/plan.md | xargs)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Progress ticks and registry rows are durable (client-a WFI-064, WFI-065)"
@@ -2648,28 +2648,28 @@ cat > plans/PLN-905-durable/progress.md << 'PROGEOF'
 
 ## Log
 PROGEOF
-"$SCRIPT_DIR/wf-commit.sh" "spec: seed PLN-905" --add plans/ >/dev/null 2>&1
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-905 ready active feature/PLN-905-durable >/dev/null 2>&1
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-905 1 "wired the reader" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "spec: seed PLN-905" --add plans/ >/dev/null 2>&1
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-905 ready active feature/PLN-905-durable >/dev/null 2>&1
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-905 1 "wired the reader" >/dev/null 2>&1
 
 # The test for durability is the one that actually happened: a concurrent
 # worker stashes the whole working tree and pops it later.
 git stash push --include-untracked -m "another worker" >/dev/null 2>&1 || true
 assert_eq "the transition survives a stranger's stash" "active" "$(registry_state PLN-905)"
 assert_eq "and so does the tick" "1" \
-  "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-905 | cut -d/ -f1)"
+  "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-905 | cut -d/ -f1)"
 git stash pop >/dev/null 2>&1 || true
-"$SCRIPT_DIR/wf-unclaim.sh" PLN-905-durable >/dev/null 2>&1
+"$SCRIPT_DIR/lv-unclaim.sh" PLN-905-durable >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A stamp tracks the spec, not the bookkeeping (client-a WFI-092, WFI-093, WFI-095)"
 
 # Three mechanical writes moved the hashed body while the specification stood
-# still, and each one made wf-spec's replan gate ("REVIEW_STALE must be false")
+# still, and each one made lv-spec's replan gate ("REVIEW_STALE must be false")
 # demand a fresh architectural review of byte-identical text:
 #   - ticking a Verification Checklist box, which implement and verify do every
 #     cycle (WFI-095);
-#   - wf-goal-pop.sh resolving a Goal History row (WFI-092, WFI-093).
+#   - lv-goal-pop.sh resolving a Goal History row (WFI-092, WFI-093).
 registry_add_row PLN-906 fingerprint draft
 cat > plans/PLN-906-fingerprint/plan.md << 'PLANEOF'
 # Fingerprint
@@ -2689,45 +2689,45 @@ Prove the fingerprint tracks the specification.
 > **2026-08-06 — Plan Review (round 1 of 3)**
 > **Result:** Approved
 PLANEOF
-"$SCRIPT_DIR/wf-review-stamp.sh" PLN-906 >/dev/null 2>&1
-eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-906)"
+"$SCRIPT_DIR/lv-review-stamp.sh" PLN-906 >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/lv-review-status.sh" PLN-906)"
 assert_eq "the stamp starts fresh" "false" "$REVIEW_STALE"
 
 sed 's/- \[ \] Build passes/- [x] Build passes/' plans/PLN-906-fingerprint/plan.md \
   > plans/PLN-906-fingerprint/plan.tmp && mv plans/PLN-906-fingerprint/plan.tmp plans/PLN-906-fingerprint/plan.md
-eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-906)"
+eval "$("$SCRIPT_DIR/lv-review-status.sh" PLN-906)"
 assert_eq "ticking a criterion is not a spec change" "false" "$REVIEW_STALE"
 
 # Adding one is. The box state is normalised; the text is not.
 awk '/^- \[ \] Tests pass/ { print; print "- [ ] Docs updated"; next } { print }' \
   plans/PLN-906-fingerprint/plan.md > plans/PLN-906-fingerprint/plan.tmp \
   && mv plans/PLN-906-fingerprint/plan.tmp plans/PLN-906-fingerprint/plan.md
-eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-906)"
+eval "$("$SCRIPT_DIR/lv-review-status.sh" PLN-906)"
 assert_eq "adding a criterion is" "true" "$REVIEW_STALE"
 
 # Goal History is script-managed end to end: push archives a row, pop resolves
 # it. Neither is a decision anyone reviewed.
-"$SCRIPT_DIR/wf-review-stamp.sh" PLN-906 >/dev/null 2>&1
-"$SCRIPT_DIR/wf-goal-push.sh" PLN-906 "Fix the two verify findings" "Verify: 2 findings" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-goal-pop.sh" PLN-906 >/dev/null 2>&1
-eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-906)"
+"$SCRIPT_DIR/lv-review-stamp.sh" PLN-906 >/dev/null 2>&1
+"$SCRIPT_DIR/lv-goal-push.sh" PLN-906 "Fix the two verify findings" "Verify: 2 findings" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-goal-pop.sh" PLN-906 >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/lv-review-status.sh" PLN-906)"
 assert_eq "a push and pop that restore the goal leave the verdict standing" "false" "$REVIEW_STALE"
 
 # The Goal one-liner itself stays in the hash — a scope reduction is exactly
-# what a stale verdict has to catch, which is why wf-spec stamps AFTER the pop.
-"$SCRIPT_DIR/wf-goal-amend.sh" PLN-906 "Prove much less than promised" --reason "scope reduction" >/dev/null 2>&1
-eval "$("$SCRIPT_DIR/wf-review-status.sh" PLN-906)"
+# what a stale verdict has to catch, which is why lv-spec stamps AFTER the pop.
+"$SCRIPT_DIR/lv-goal-amend.sh" PLN-906 "Prove much less than promised" --reason "scope reduction" >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/lv-review-status.sh" PLN-906)"
 assert_eq "changing what the plan promises is" "true" "$REVIEW_STALE"
 
 # --no-commit leaves the stamp for the caller's own commit, so a replan lands
 # under a message describing the amendment rather than "stamp review" (WFI-085).
-"$SCRIPT_DIR/wf-commit.sh" "spec: PLN-906 amended" --add plans/PLN-906-fingerprint/ >/dev/null 2>&1
-"$SCRIPT_DIR/wf-review-stamp.sh" PLN-906 --no-commit >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "spec: PLN-906 amended" --add plans/PLN-906-fingerprint/ >/dev/null 2>&1
+"$SCRIPT_DIR/lv-review-stamp.sh" PLN-906 --no-commit >/dev/null 2>&1
 assert_eq "--no-commit stages the stamp instead of committing it" "true" \
   "$(git diff --cached --name-only | grep -q 'PLN-906-fingerprint/plan.md' && echo true || echo false)"
 assert_eq "and the last commit is still the caller's" "spec: PLN-906 amended" \
   "$(git log -1 --pretty=%s)"
-"$SCRIPT_DIR/wf-commit.sh" "spec: PLN-906 stamped" --add plans/PLN-906-fingerprint/ >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "spec: PLN-906 stamped" --add plans/PLN-906-fingerprint/ >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A goal a human corrected stays corrected (client-a WFI-084)"
@@ -2739,20 +2739,20 @@ section "A goal a human corrected stays corrected (client-a WFI-084)"
 # only the live line let the unreduced promise come back and undo the human.
 registry_add_row PLN-907 archived-goal draft
 printf '# Archived\n\n## Goal\nShip a browser timer and a CLI timer.\n' > plans/PLN-907-archived-goal/plan.md
-"$SCRIPT_DIR/wf-goal-push.sh" PLN-907 "Fix the auth bypass" "Verify: 1 ESCALATED" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-goal-amend.sh" PLN-907 "Ship a CLI timer." --reason "browser timer deferred to BRF-908" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-goal-push.sh" PLN-907 "Fix the auth bypass" "Verify: 1 ESCALATED" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-goal-amend.sh" PLN-907 "Ship a CLI timer." --reason "browser timer deferred to BRF-908" >/dev/null 2>&1
 
 # The live goal is untouched: the fix cycle is still about the auth bypass.
 assert_eq "the active sub-goal is left alone" "Fix the auth bypass" \
   "$(grep -A1 '^## Goal' plans/PLN-907-archived-goal/plan.md | tail -1)"
-"$SCRIPT_DIR/wf-goal-pop.sh" PLN-907 >/dev/null 2>&1
+"$SCRIPT_DIR/lv-goal-pop.sh" PLN-907 >/dev/null 2>&1
 assert_eq "the pop restores the CORRECTED promise" "Ship a CLI timer." \
   "$(grep -A1 '^## Goal' plans/PLN-907-archived-goal/plan.md | tail -1)"
 assert_eq "and the reason is on the record" "true" \
   "$(grep -q 'goal amended .*browser timer deferred to BRF-908' plans/PLN-907-archived-goal/plan.md && echo true || echo false)"
 
 # With nothing pending restore, the same call amends the live one-liner.
-"$SCRIPT_DIR/wf-goal-amend.sh" PLN-907 "Ship a CLI timer with --watch." >/dev/null 2>&1
+"$SCRIPT_DIR/lv-goal-amend.sh" PLN-907 "Ship a CLI timer with --watch." >/dev/null 2>&1
 assert_eq "no archived row means amend the live goal" "Ship a CLI timer with --watch." \
   "$(grep -A1 '^## Goal' plans/PLN-907-archived-goal/plan.md | tail -1)"
 
@@ -2769,10 +2769,10 @@ cat > plans/PLN-908-routing/findings.md << 'FEOF'
 - [ ] **Code**: the guard runs after the write — a code-only fix, not `← PLAN-SCOPED`
 FEOF
 assert_eq "prose naming a tag does not wear it" "active" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-908-routing)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-908-routing)"
 printf -- '- [ ] **Design**: the auth model cannot express this ← ESCALATED\n' >> plans/PLN-908-routing/findings.md
 assert_eq "a trailing tag still routes" "escalated" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-908-routing)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-908-routing)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A worker's own claim does not block its successor (client-a WFI-086, WFI-091)"
@@ -2784,9 +2784,9 @@ section "A worker's own claim does not block its successor (client-a WFI-086, WF
 # trigger belongs at the release, which is the first moment every guard can
 # answer honestly.
 registry_add_row PLN-909 deferred-spawn verify
-export WF_CLAIM_PID=$$
+export LV_CLAIM_PID=$$
 printf '%s\n%s\n' "$(date +%s)" "$$" > plans/PLN-909-deferred-spawn/.wf-claim
-out=$("$SCRIPT_DIR/wf-spawn.sh" verify PLN-909-deferred-spawn --dry-run 2>&1); rc=$?
+out=$("$SCRIPT_DIR/lv-spawn.sh" verify PLN-909-deferred-spawn --dry-run 2>&1); rc=$?
 assert_eq "a spawn behind our own claim is queued, not declined outright" "true" \
   "$(printf '%s' "$out" | grep -q 'queued until it is released' && echo true || echo false)"
 assert_eq "and says so with 'nothing to do' rather than an error" "2" "$rc"
@@ -2797,7 +2797,7 @@ assert_eq "and says so with 'nothing to do' rather than an error" "2" "$rc"
 assert_eq "a dry run does not write the marker" "false" \
   "$([ -f .claude/orchestrator/pending/909-verify.spawn ] && echo true || echo false)"
 
-"$SCRIPT_DIR/wf-spawn.sh" verify PLN-909-deferred-spawn >/dev/null 2>&1 || true
+"$SCRIPT_DIR/lv-spawn.sh" verify PLN-909-deferred-spawn >/dev/null 2>&1 || true
 assert_eq "the marker is keyed on the artifact number" "true" \
   "$([ -f .claude/orchestrator/pending/909-verify.spawn ] && echo true || echo false)"
 
@@ -2807,23 +2807,23 @@ assert_eq "the marker is keyed on the artifact number" "true" \
 sleep 30 & stranger=$!
 disown "$stranger" 2>/dev/null || true
 printf '%s\n%s\n' "$(date +%s)" "$stranger" > plans/PLN-909-deferred-spawn/.wf-claim
-out=$("$SCRIPT_DIR/wf-spawn.sh" verify PLN-909-deferred-spawn --dry-run 2>&1)
+out=$("$SCRIPT_DIR/lv-spawn.sh" verify PLN-909-deferred-spawn --dry-run 2>&1)
 assert_eq "someone else's claim still declines" "true" \
   "$(printf '%s' "$out" | grep -q 'claimed by a live session' && echo true || echo false)"
 kill "$stranger" 2>/dev/null || true
 
 # Releasing serves the queue. Launching a real worker is out of scope here, so
-# move the plan to a state no role acts on first: wf-spawn.sh then declines at
+# move the plan to a state no role acts on first: lv-spawn.sh then declines at
 # its own last-moment state check, after the release has done its part.
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-909 verify testing >/dev/null 2>&1
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-909 testing complete >/dev/null 2>&1
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-909 verify testing >/dev/null 2>&1
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-909 testing complete >/dev/null 2>&1
 printf '%s\n%s\n' "$(date +%s)" "$$" > plans/PLN-909-deferred-spawn/.wf-claim
-"$SCRIPT_DIR/wf-unclaim.sh" PLN-909-deferred-spawn >/dev/null 2>&1
+"$SCRIPT_DIR/lv-unclaim.sh" PLN-909-deferred-spawn >/dev/null 2>&1
 assert_eq "the release consumes the deferred spawn" "false" \
   "$([ -f .claude/orchestrator/pending/909-verify.spawn ] && echo true || echo false)"
 assert_eq "and the claim is gone" "false" \
   "$([ -f plans/PLN-909-deferred-spawn/.wf-claim ] && echo true || echo false)"
-unset WF_CLAIM_PID
+unset LV_CLAIM_PID
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Config values arrive unquoted (client-a WFI-088, WFI-090)"
@@ -2852,37 +2852,37 @@ section "A gate is presented against the state it can be answered from (client-a
 # A gate outlives the state it was opened in. A manual-test gate left behind by
 # an earlier bug sat on a plan that had gone back to draft with five unaddressed
 # findings; the queue showed it as ordinary work and sent the attendant to
-# /wf-test, which cannot run on a draft plan.
+# /lv-test, which cannot run on a draft plan.
 registry_add_row PLN-910 stale-gate draft
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-910 manual-test "Ready to test?" --skill wf-test >/dev/null 2>&1
-row=$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null)
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-910 manual-test "Ready to test?" --skill lv-test >/dev/null 2>&1
+row=$("$SCRIPT_DIR/lv-list-gates.sh" PLN-910 2>/dev/null)
 assert_eq "the row carries the plan's current state" "draft" "$(printf '%s' "$row" | cut -f7)"
 assert_eq "and says the gate cannot be answered from there" "mismatch" "$(printf '%s' "$row" | cut -f8)"
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-910 draft testing >/dev/null 2>&1
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-910 draft testing >/dev/null 2>&1
 assert_eq "in the state it belongs to, it is ordinary work" "ok" \
-  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
+  "$("$SCRIPT_DIR/lv-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
 # A gate any state can answer makes no claim, so it never reads as stale.
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-910 "tested" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-910 needs-input "Which way?" --skill wf-implement >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-910 "tested" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-910 needs-input "Which way?" --skill lv-implement >/dev/null 2>&1
 assert_eq "needs-input fits any state" "ok" \
-  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
+  "$("$SCRIPT_DIR/lv-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
 # …except a terminal one. A gate that outlives its plan's completion asks a
 # question the pipeline has already answered. client-a's WFI-126: a
 # needs-input gate reading "land PLN-039 and drive it through the pipeline"
 # listed state=complete fit=ok, 45 minutes after PLN-039 was committed, merged,
 # completed and promoted to main. Answering it as written would have re-landed
 # all of it; only reading git history caught that.
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-910 testing complete >/dev/null 2>&1
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-910 testing complete >/dev/null 2>&1
 assert_eq "but not once the plan is complete" "mismatch" \
-  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-910 complete abandoned >/dev/null 2>&1
+  "$("$SCRIPT_DIR/lv-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-910 complete abandoned >/dev/null 2>&1
 assert_eq "nor abandoned" "mismatch" \
-  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-910 abandoned testing >/dev/null 2>&1
+  "$("$SCRIPT_DIR/lv-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-910 abandoned testing >/dev/null 2>&1
 # The six documented fields are untouched — consumers index by position.
 assert_eq "the original contract still holds at field 6" "0" \
-  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-910 2>/dev/null | cut -f6)"
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-910 "answered" >/dev/null 2>&1
+  "$("$SCRIPT_DIR/lv-list-gates.sh" PLN-910 2>/dev/null | cut -f6)"
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-910 "answered" >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A parked question outlives the plan it describes (client-b WFI-018)"
@@ -2890,16 +2890,16 @@ section "A parked question outlives the plan it describes (client-b WFI-018)"
 # The question is a claim of fact fixed when the gate opened — here a verdict.
 # Round 1 opened spec-approval carrying "Approved with notes (0 Critical)"; a
 # second review then found a Critical and the plan was rewritten around it. The
-# gate file was untouched, because re-running wf-gate-open.sh on an open gate
+# gate file was untouched, because re-running lv-gate-open.sh on an open gate
 # leaves it as is by design, so the human draining the queue was shown
 # "Approved with notes" as the thing to approve.
 registry_add_row PLN-930 question-drift draft
 printf '\n## Human Test Criteria\n- [ ] it renders\n' >> plans/PLN-930-question-drift/plan.md
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-930 spec-approval \
-  "Review: Approved with notes (0 Critical). Approve?" --skill wf-spec >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-930 spec-approval \
+  "Review: Approved with notes (0 Critical). Approve?" --skill lv-spec >/dev/null 2>&1
 assert_eq "a question just asked describes its plan" "current" \
-  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-930 2>/dev/null | cut -f9)"
-eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-930 spec-approval)"
+  "$("$SCRIPT_DIR/lv-list-gates.sh" PLN-930 2>/dev/null | cut -f9)"
+eval "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-930 spec-approval)"
 assert_eq "and gate-status says so" "false" "$GATE_QUESTION_STALE"
 
 # Bookkeeping is not a revision. The body fingerprint normalises ticked boxes
@@ -2908,35 +2908,35 @@ assert_eq "and gate-status says so" "false" "$GATE_QUESTION_STALE"
 sed -i.bak 's/- \[ \] it renders/- [x] it renders/' plans/PLN-930-question-drift/plan.md
 rm -f plans/PLN-930-question-drift/plan.md.bak
 assert_eq "ticking a criterion is not a revision" "current" \
-  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-930 2>/dev/null | cut -f9)"
+  "$("$SCRIPT_DIR/lv-list-gates.sh" PLN-930 2>/dev/null | cut -f9)"
 
 # An amendment is. This is WFI-018's own shape: the plan is rewritten around a
 # Critical the parked question says does not exist.
 printf '\n## Amendments\nA-1 — restore rehearsal must pin --entrypoint\n' \
   >> plans/PLN-930-question-drift/plan.md
 assert_eq "an amendment leaves the question behind" "stale" \
-  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-930 2>/dev/null | cut -f9)"
-eval "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-930 spec-approval)"
+  "$("$SCRIPT_DIR/lv-list-gates.sh" PLN-930 2>/dev/null | cut -f9)"
+eval "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-930 spec-approval)"
 assert_eq "and gate-status agrees" "true" "$GATE_QUESTION_STALE"
 assert_eq "the gate is still ordinary work by state" "ok" \
-  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-930 2>/dev/null | cut -f8)"
+  "$("$SCRIPT_DIR/lv-list-gates.sh" PLN-930 2>/dev/null | cut -f8)"
 
 # --requestion is the repair, and it has to actually clear the flag: copying
 # the at-open fingerprint forward left the row stale for the life of the gate.
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-930 spec-approval \
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-930 spec-approval \
   "Review: Blocked, round 2 — scratch machine replicated to the live path. Approve the fix?" \
-  --skill wf-spec --requestion >/dev/null 2>&1
+  --skill lv-spec --requestion >/dev/null 2>&1
 assert_eq "--requestion re-anchors the question to the current plan" "current" \
-  "$("$SCRIPT_DIR/wf-list-gates.sh" PLN-930 2>/dev/null | cut -f9)"
+  "$("$SCRIPT_DIR/lv-list-gates.sh" PLN-930 2>/dev/null | cut -f9)"
 assert_eq "and the superseded wording is kept" "true" \
   "$(grep -q "GATE_QUESTION_PREV='Review: Approved with notes" \
       .claude/orchestrator/gates/PLN-930.gate && echo true || echo false)"
 
 # The eight documented fields are untouched — consumers index by position.
-row=$("$SCRIPT_DIR/wf-list-gates.sh" PLN-930 2>/dev/null)
+row=$("$SCRIPT_DIR/lv-list-gates.sh" PLN-930 2>/dev/null)
 assert_eq "field 1 is still the id" "PLN-930" "$(printf '%s' "$row" | cut -f1)"
 assert_eq "field 8 is still the state fit" "ok" "$(printf '%s' "$row" | cut -f8)"
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-930 "approved" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-930 "approved" >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════
 section "The review agent does not hold the pen (client-b WFI-017, WFI-018)"
@@ -2950,25 +2950,25 @@ section "The review agent does not hold the pen (client-b WFI-017, WFI-018)"
 registry_add_row PLN-931 pen-holder draft
 git add plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
 git commit -q -m "spec(PLN-931-pen-holder): plan" -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
-"$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --record >/dev/null 2>&1
-assert_ok "an untouched plan passes" "$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --check
-eval "$("$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --check 2>/dev/null)"
+"$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --record >/dev/null 2>&1
+assert_ok "an untouched plan passes" "$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --check
+eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --check 2>/dev/null)"
 assert_eq "and says so" "clean" "$REVIEW_GUARD"
 
 # The WFI-017 write: a `## Review` block the agent put there itself. Deliberately
 # the section wf_plan_body_fingerprint EXCLUDES — which is why the guard hashes
 # the whole file instead of reusing it.
 printf '\n## Review\n> **Result:** Approved with notes\n' >> plans/PLN-931-pen-holder/plan.md
-assert_fails "a plan the agent wrote to does not" "$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --check
-eval "$("$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --check 2>/dev/null)"
+assert_fails "a plan the agent wrote to does not" "$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --check
+eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --check 2>/dev/null)"
 assert_eq "it names the file" "plan.md" "$REVIEW_GUARD_TOUCHED"
 assert_eq "and a revert would take only the agent's write" "true" "$REVIEW_GUARD_REVERTABLE"
 
 # findings.md is watched too, and a file the agent CREATES is a write.
 git checkout -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
-"$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --record >/dev/null 2>&1
+"$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --record >/dev/null 2>&1
 printf '# Findings\n' > plans/PLN-931-pen-holder/findings.md
-eval "$("$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --check 2>/dev/null)"
+eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --check 2>/dev/null)"
 assert_eq "a created findings.md counts" "findings.md" "$REVIEW_GUARD_TOUCHED"
 
 # But a `git checkout --` is only safe where the agent's write is the ONLY one.
@@ -2978,9 +2978,9 @@ assert_eq "a created findings.md counts" "findings.md" "$REVIEW_GUARD_TOUCHED"
 rm -f plans/PLN-931-pen-holder/findings.md
 printf '\n## Amendments\nA-1 — the session own edit, not yet committed\n' \
   >> plans/PLN-931-pen-holder/plan.md
-"$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --record >/dev/null 2>&1
+"$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --record >/dev/null 2>&1
 printf '\n## Review\n> **Result:** Approved\n' >> plans/PLN-931-pen-holder/plan.md
-eval "$("$SCRIPT_DIR/wf-review-guard.sh" PLN-931 --check 2>/dev/null)"
+eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --check 2>/dev/null)"
 assert_eq "the write is still caught" "touched" "$REVIEW_GUARD"
 assert_eq "but a revert is not offered" "false" "$REVIEW_GUARD_REVERTABLE"
 git checkout -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
@@ -2988,8 +2988,8 @@ git checkout -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
 # A guard that was never armed is not evidence of anything, and failing the
 # review over it would be worse than the miss.
 registry_add_row PLN-932 never-armed draft
-assert_ok "an unarmed guard does not fail the review" "$SCRIPT_DIR/wf-review-guard.sh" PLN-932 --check
-eval "$("$SCRIPT_DIR/wf-review-guard.sh" PLN-932 --check 2>/dev/null)"
+assert_ok "an unarmed guard does not fail the review" "$SCRIPT_DIR/lv-review-guard.sh" PLN-932 --check
+eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-932 --check 2>/dev/null)"
 assert_eq "but it says it was never armed" "unrecorded" "$REVIEW_GUARD"
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -3014,12 +3014,12 @@ cat > plans/PLN-911-not-reproducible/progress.md << 'PEOF'
 - [x] Step 1: add the link
 PEOF
 assert_eq "an answered human-test bounce with a live worktree goes to testing" "testing" \
-  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-911)"
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-911)"
 
 # One outstanding finding and it is a fix cycle again.
 printf -- '- [ ] **Behavior**: the second one does reproduce\n' >> plans/PLN-911-not-reproducible/findings.md
 assert_eq "an outstanding finding is still a fix cycle" "active" \
-  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-911)"
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-911)"
 
 # A verify bounce has code to answer even when every finding is checked off —
 # only the tester's own bounce can go straight back to the tester.
@@ -3033,7 +3033,7 @@ cat > plans/PLN-911-not-reproducible/findings.md << 'FEOF'
 - [x] **Code**: null guard added
 FEOF
 assert_eq "a verify bounce still routes to the builder" "active" \
-  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-911)"
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-911)"
 
 # And an unfinished checklist means there is work outstanding whatever the
 # findings say.
@@ -3044,7 +3044,7 @@ cat > plans/PLN-911-not-reproducible/findings.md << 'FEOF'
 FEOF
 printf -- '- [ ] Step 2: wire the reader\n' >> plans/PLN-911-not-reproducible/progress.md
 assert_eq "an unfinished checklist keeps it with the builder" "active" \
-  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-911)"
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-911)"
 git worktree remove --force "$TEST_DIR/wt-911" >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -3083,7 +3083,7 @@ cat > plans/PLN-912-token-rework/progress.md << 'PEOF'
 ## Steps
 - [x] Step 1: build A-1
 PEOF
-assert_eq "an amendment the build already carries still goes to the tester" "testing"   "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-912)"
+assert_eq "an amendment the build already carries still goes to the tester" "testing"   "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-912)"
 
 # Now the replan writes a new amendment. Nothing else changes — every box stays
 # ticked, the newest findings section is still the tester's, the worktree is
@@ -3091,9 +3091,9 @@ assert_eq "an amendment the build already carries still goes to the tester" "tes
 printf '\n### [2026-09-03] — A-2: per-join participant token, nine call sites, two new tests\n' \
   >> plans/PLN-912-token-rework/plan.md
 assert_eq "an amendment the build predates is work outstanding" "active" \
-  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-912)"
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-912)"
 assert_eq "and it says why on stderr" "1" \
-  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-912 2>&1 >/dev/null | grep -c 'WFI-027')"
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-912 2>&1 >/dev/null | grep -c 'WFI-027')"
 
 # A ticked checkbox is not an amendment — the WFI-005 lesson, which is why the
 # count is of HEADINGS and not of diff lines.
@@ -3101,13 +3101,13 @@ git checkout -- plans/PLN-912-token-rework/plan.md >/dev/null 2>&1
 printf -- '\n## Verification Checklist\n\n### Build & Tests\n- [x] dotnet test\n' \
   >> plans/PLN-912-token-rework/plan.md
 assert_eq "bookkeeping written after the build is not new work" "testing" \
-  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-912)"
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-912)"
 
 # And a plan that cites A-1 in prose has not amended itself by saying so.
 printf -- '- [x] regression: A-1 covered by the existing suite\n' \
   >> plans/PLN-912-token-rework/plan.md
 assert_eq "a bullet citing an amendment is a reference, not one" "testing" \
-  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-912)"
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-912)"
 git worktree remove --force "$TEST_DIR/wt-912" >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -3122,22 +3122,22 @@ cat > WORKFLOW-ISSUES.md << 'IEOF'
 
 <!-- New entries are inserted directly below this line, newest first. -->
 
-## WFI-001 — wf-spec — 2026-08-01T10:00:00Z
+## WFI-001 — lv-spec — 2026-08-01T10:00:00Z
 
 **Status:** resolved 2026-08-02 — fixed in v5.2.4
 **Workflow version:** 5.0.15
 
-## WFI-002 — wf-test — 2026-08-01T09:00:00Z
+## WFI-002 — lv-test — 2026-08-01T09:00:00Z
 
 **Status:** open
 **Workflow version:** 5.0.15
 IEOF
-"$SCRIPT_DIR/wf-issue.sh" --resolve WFI-001 "fixed in v9.9.9" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-issue.sh" --resolve WFI-001 "fixed in v9.9.9" >/dev/null 2>&1
 assert_eq "an already-resolved entry keeps its original record" "true" \
   "$(grep -q '^\*\*Status:\*\* resolved 2026-08-02 — fixed in v5.2.4$' WORKFLOW-ISSUES.md && echo true || echo false)"
 assert_eq "and the caller is told why nothing happened" "true" \
-  "$("$SCRIPT_DIR/wf-issue.sh" --resolve WFI-001 "fixed in v9.9.9" 2>&1 | grep -q 'not overwriting' && echo true || echo false)"
-"$SCRIPT_DIR/wf-issue.sh" --resolve WFI-002 "fixed in v5.5.1" >/dev/null 2>&1
+  "$("$SCRIPT_DIR/lv-issue.sh" --resolve WFI-001 "fixed in v9.9.9" 2>&1 | grep -q 'not overwriting' && echo true || echo false)"
+"$SCRIPT_DIR/lv-issue.sh" --resolve WFI-002 "fixed in v5.5.1" >/dev/null 2>&1
 assert_eq "an open entry still resolves" "true" \
   "$(grep -q "^\*\*Status:\*\* resolved .* — fixed in v5.5.1$" WORKFLOW-ISSUES.md && echo true || echo false)"
 rm -f WORKFLOW-ISSUES.md
@@ -3145,11 +3145,11 @@ rm -f WORKFLOW-ISSUES.md
 # ═══════════════════════════════════════════════════════════════════════
 section "A goal pop reads the Goal History table, not any table (client-e WFI-013)"
 
-# wf-goal-pop.sh found its row with `grep "| — |$"` over the whole file. A plan
+# lv-goal-pop.sh found its row with `grep "| — |$"` over the whole file. A plan
 # amended by A3 carries withdrawn Tests rows whose last cell is a bare em dash,
 # and PLN-100 had one: the pop wrote `~~E2E~~` into `## Goal`, stamped
 # "Resolved" onto the Tests row, and reported success. `## Goal` is what
-# wf-plan-info.sh feeds to wf-implement, wf-test and every PR description.
+# lv-plan-info.sh feeds to lv-implement, lv-test and every PR description.
 registry_add_row PLN-913 goal-scope draft
 cat > plans/PLN-913-goal-scope/plan.md << 'PLAN913'
 # PLN-913
@@ -3170,7 +3170,7 @@ Remove the duplicated brochure pages
 | ~~T14~~ | ~~E2E~~ | **Withdrawn by A3** | — |
 PLAN913
 
-"$SCRIPT_DIR/wf-goal-pop.sh" PLN-913 >/dev/null 2>&1
+"$SCRIPT_DIR/lv-goal-pop.sh" PLN-913 >/dev/null 2>&1
 goal913=$(awk '/^## Goal([ \t]|$)/ { g = 1; next } g && /^#/ { exit } g && NF { print; exit }' \
   plans/PLN-913-goal-scope/plan.md)
 assert_eq "the pop restores the archived goal" "Retire the duplicate brochure routes" "$goal913"
@@ -3183,7 +3183,7 @@ assert_eq "and the history row is the one marked resolved" "true" \
 
 # Nothing left to pop is an error, not a silent grab at some other table.
 assert_fails "a second pop finds no unresolved row" \
-  "$SCRIPT_DIR/wf-goal-pop.sh" PLN-913
+  "$SCRIPT_DIR/lv-goal-pop.sh" PLN-913
 
 # client-a's PLN-007 printed "Goal restored: '2'" and wrote `2` as the whole
 # `## Goal` one-liner, exit 0 — the only signal was the 2 in the success line
@@ -3203,13 +3203,13 @@ The live sub-goal that must survive a refusal
 PLAN915
 
 assert_fails "a pop refuses to restore something that is not a goal" \
-  "$SCRIPT_DIR/wf-goal-pop.sh" PLN-915
+  "$SCRIPT_DIR/lv-goal-pop.sh" PLN-915
 assert_eq "and leaves the live goal standing" "true" \
   "$(grep -q '^The live sub-goal that must survive a refusal$' plans/PLN-915-goal-guard/plan.md && echo true || echo false)"
 assert_eq "and does not stamp the row it refused" "true" \
   "$(grep -q '| 2026-08-08 | 2 | Human Test | — |' plans/PLN-915-goal-guard/plan.md && echo true || echo false)"
 
-# wf-goal-amend.sh matched rows the same way, so it could rewrite a Tests row
+# lv-goal-amend.sh matched rows the same way, so it could rewrite a Tests row
 # with the plan's goal.
 registry_add_row PLN-914 amend-scope draft
 cat > plans/PLN-914-amend-scope/plan.md << 'PLAN914'
@@ -3225,7 +3225,7 @@ The live sub-goal
 | ~~T9~~ | ~~E2E~~ | Withdrawn | — |
 PLAN914
 
-"$SCRIPT_DIR/wf-goal-amend.sh" PLN-914 "A narrower promise" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-goal-amend.sh" PLN-914 "A narrower promise" >/dev/null 2>&1
 assert_eq "an amend with no history row edits the live goal" "true" \
   "$(grep -q '^A narrower promise$' plans/PLN-914-amend-scope/plan.md && echo true || echo false)"
 assert_eq "and leaves the Tests table untouched" "true" \
@@ -3237,43 +3237,43 @@ section "A merge that deletes the harness is recoverable (client-c WFI-006)"
 # The harness is gitignored as of 5.0.0, so the first merge that carries the
 # untrack commit onto a branch which still tracks it deletes the files from
 # disk — and nothing puts them back. client-c lost 106 files including
-# wf-exec.sh inside /wf-release step 5 and found out at step 8, exit 127.
+# lv-exec.sh inside /lv-release step 5 and found out at step 8, exit 127.
 harness_repo=$(mktemp -d)
 (
   cd "$harness_repo" || exit 1
   git init -qb main && git config user.email t@t && git config user.name t
-  mkdir -p scripts/v2.00 .claude/skills/wf-spec
-  printf '#!/bin/sh\n' > scripts/wf-exec.sh && chmod +x scripts/wf-exec.sh
+  mkdir -p scripts/v2.00 .claude/skills/lv-spec
+  printf '#!/bin/sh\n' > scripts/lv-exec.sh && chmod +x scripts/lv-exec.sh
   printf 'x\n' > scripts/version-map.txt
-  printf '#!/bin/sh\n' > scripts/v2.00/wf-claim.sh
-  printf 'skill\n' > .claude/skills/wf-spec/SKILL.md
+  printf '#!/bin/sh\n' > scripts/v2.00/lv-claim.sh
+  printf 'skill\n' > .claude/skills/lv-spec/SKILL.md
   printf 'the project own tooling\n' > scripts/my-own-tool.sh
   git add -A && git commit -qm "tracked harness"
 
   git checkout -qb release
-  git rm -r --cached -q scripts/wf-exec.sh scripts/version-map.txt scripts/v2.00 .claude/skills/wf-spec
-  printf 'scripts/wf-exec.sh\nscripts/version-map.txt\nscripts/v2.00/\n.claude/skills/wf-*/\n' > .gitignore
+  git rm -r --cached -q scripts/lv-exec.sh scripts/version-map.txt scripts/v2.00 .claude/skills/lv-spec
+  printf 'scripts/lv-exec.sh\nscripts/version-map.txt\nscripts/v2.00/\n.claude/skills/lv-*/\n' > .gitignore
   git add .gitignore && git commit -qm "chore: stop tracking generated workflow harness"
 
   git checkout -q main && git merge -q --no-edit release -m merge
 ) >/dev/null 2>&1
 
 assert_eq "the merge deletes the harness from disk" "false" \
-  "$([ -x "$harness_repo/scripts/wf-exec.sh" ] && echo true || echo false)"
+  "$([ -x "$harness_repo/scripts/lv-exec.sh" ] && echo true || echo false)"
 assert_fails "--check reports it missing rather than passing silently" \
-  bash -c "cd '$harness_repo' && '$SCRIPT_DIR/wf-harness-restore.sh' --check"
+  bash -c "cd '$harness_repo' && '$SCRIPT_DIR/lv-harness-restore.sh' --check"
 
-( cd "$harness_repo" && "$SCRIPT_DIR/wf-harness-restore.sh" ) >/dev/null 2>&1
+( cd "$harness_repo" && "$SCRIPT_DIR/lv-harness-restore.sh" ) >/dev/null 2>&1
 assert_eq "the restore puts the dispatcher back" "true" \
-  "$([ -x "$harness_repo/scripts/wf-exec.sh" ] && echo true || echo false)"
+  "$([ -x "$harness_repo/scripts/lv-exec.sh" ] && echo true || echo false)"
 assert_eq "and the versioned scripts with it" "true" \
-  "$([ -f "$harness_repo/scripts/v2.00/wf-claim.sh" ] && echo true || echo false)"
+  "$([ -f "$harness_repo/scripts/v2.00/lv-claim.sh" ] && echo true || echo false)"
 assert_eq "and the skills" "true" \
-  "$([ -f "$harness_repo/.claude/skills/wf-spec/SKILL.md" ] && echo true || echo false)"
+  "$([ -f "$harness_repo/.claude/skills/lv-spec/SKILL.md" ] && echo true || echo false)"
 assert_eq "the tree is left clean, not dirty with restored files" "" \
   "$(git -C "$harness_repo" status --porcelain)"
 assert_eq "the restored harness is untracked, as the ignore rules say" "false" \
-  "$(git -C "$harness_repo" ls-files | grep -q 'scripts/wf-exec.sh' && echo true || echo false)"
+  "$(git -C "$harness_repo" ls-files | grep -q 'scripts/lv-exec.sh' && echo true || echo false)"
 # The recovery must never reach for scripts/ wholesale: a project keeps its own
 # tooling there, and untracking it would turn a recovery into a bigger accident.
 assert_eq "the project's own tooling is still tracked" "true" \
@@ -3294,10 +3294,10 @@ assert_eq "install.sh seeds the .plan-ref ignore" "true" \
 # client keeps propagating it until told to run the one-time removal.
 assert_eq "install.sh prints the untrack migration when it is still tracked" "true" \
   "$(grep -q 'git rm --cached --quiet --ignore-unmatch \.plan-ref' "$LIB_ROOT/install.sh" && echo true || echo false)"
-assert_eq "wf-implement no longer commits it" "false" \
-  "$(grep -q 'commit -m "chore(PLN-NNN): add \.plan-ref"' "$LIB_ROOT/skills/wf-implement/SKILL.md" && echo true || echo false)"
+assert_eq "lv-implement no longer commits it" "false" \
+  "$(grep -q 'commit -m "chore(PLN-NNN): add \.plan-ref"' "$LIB_ROOT/skills/lv-implement/SKILL.md" && echo true || echo false)"
 assert_eq "and says not to" "true" \
-  "$(grep -q '\*\*Do not commit it\.\*\*' "$LIB_ROOT/skills/wf-implement/SKILL.md" && echo true || echo false)"
+  "$(grep -q '\*\*Do not commit it\.\*\*' "$LIB_ROOT/skills/lv-implement/SKILL.md" && echo true || echo false)"
 
 # A branch cut BEFORE the migration still tracks it, so the conflict path is
 # still reachable — and must resolve by dropping it from the index while
@@ -3318,7 +3318,7 @@ mkdir -p "$PR" && (
   git add -f .plan-ref && git commit -qm "another plan leaked its ref onto develop"
 ) >/dev/null 2>&1
 
-( cd "$PR/feature-branches/wt" && "$SCRIPT_DIR/wf-merge-develop.sh" ) >/dev/null 2>&1
+( cd "$PR/feature-branches/wt" && "$SCRIPT_DIR/lv-merge-develop.sh" ) >/dev/null 2>&1
 assert_eq "the .plan-ref conflict resolves" "0" \
   "$(git -C "$PR/feature-branches/wt" ls-files -u | wc -l | xargs)"
 assert_eq "the worktree still knows which plan it is building" "PLN-042" \
@@ -3351,30 +3351,30 @@ git worktree add -q -b feature/PLN-920 "$TEST_DIR/wt-909" HEAD~1 2>/dev/null \
 rm -rf "$TEST_DIR/wt-909/plans"
 
 assert_eq "an unchecked finding routes active from the develop root" "active" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-920-route-cwd 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-920-route-cwd 2>/dev/null)"
 assert_eq "and reads the same from inside the feature worktree" "active" \
-  "$(env -C "$TEST_DIR/wt-909" "$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-920-route-cwd 2>/dev/null)"
+  "$(env -C "$TEST_DIR/wt-909" "$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-920-route-cwd 2>/dev/null)"
 assert_eq "an absolute path still works" "active" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" "$TEST_DIR/main/plans/PLN-920-route-cwd" 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" "$TEST_DIR/main/plans/PLN-920-route-cwd" 2>/dev/null)"
 
 # "I could not look" must never wear the same output as "I looked and it was
 # clean" — that verdict promotes a plan.
 assert_fails "a plan directory that exists nowhere is an error, not a verdict" \
-  "$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-999-does-not-exist
+  "$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-999-does-not-exist
 assert_eq "and it emits no verdict at all" "" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-999-does-not-exist 2>/dev/null || true)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-999-does-not-exist 2>/dev/null || true)"
 
 # A plan dir with no findings.md is the genuine clean case and still routes.
 mkdir -p plans/PLN-920-route-cwd-empty
 assert_eq "no findings.md in a real plan dir is still clean" "clean" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-920-route-cwd-empty 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-920-route-cwd-empty 2>/dev/null)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A tick names one step, not a family (client-a WFI-115)"
 
 # The label was reduced to its leading digits, so a checklist written as
 # `Step 1a-i` … `Step 1a-v`, `Step 1b` collapsed to six rows all keyed `1` and
-# one `wf-progress-tick.sh PLN-016 1` ticked every one of them — including a
+# one `lv-progress-tick.sh PLN-016 1` ticked every one of them — including a
 # soak window that could not close for another three weeks.
 registry_add_row PLN-921 sub-lettered active
 cat > plans/PLN-921-sub-lettered/progress.md << 'PEOF'
@@ -3395,32 +3395,32 @@ git add -A >/dev/null 2>&1 && git commit -qm "add PLN-921" >/dev/null 2>&1
 ticked() { grep -c "^- \[x\] Step $1" plans/PLN-921-sub-lettered/progress.md | xargs; }
 
 assert_fails "the bare family label is refused" \
-  "$SCRIPT_DIR/wf-progress-tick.sh" PLN-921 1 "everything at once"
+  "$SCRIPT_DIR/lv-progress-tick.sh" PLN-921 1 "everything at once"
 # Captured first, then matched: the refusal exits 1, and under `pipefail` a
 # pipeline off it reports that failure no matter what grep found.
-tick_refusal=$("$SCRIPT_DIR/wf-progress-tick.sh" PLN-921 1 x 2>&1 || true)
+tick_refusal=$("$SCRIPT_DIR/lv-progress-tick.sh" PLN-921 1 x 2>&1 || true)
 assert_eq "the refusal names the rows it could have meant" "true" \
   "$(printf '%s' "$tick_refusal" | grep -q '1a-i 1a-ii 1b' && echo true || echo false)"
-assert_eq "and nothing was ticked" "0/5" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-921)"
+assert_eq "and nothing was ticked" "0/5" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-921)"
 # Nor invented: appending `- [x] Step 1` beside `Step 1a-i` would corrupt the
 # one checklist the orchestrator reads for forward progress.
 assert_eq "nor was a bogus row appended" "0" "$(ticked 1$)"
 
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-921 1a-i "parsed" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-921 1a-i "parsed" >/dev/null 2>&1
 assert_eq "the named sub-step ticks" "1" "$(ticked '1a-i')"
-assert_eq "and only that one" "1/5" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-921)"
+assert_eq "and only that one" "1/5" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-921)"
 assert_eq "the soak window is untouched" "0" "$(ticked '1b')"
 
 # `2` must not reach `12` either — the same prefix bug, one digit over.
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-921 2 "wired" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-921 2 "wired" >/dev/null 2>&1
 assert_eq "a plain step still ticks" "1" "$(ticked '2:')"
 assert_eq "and does not reach the step it prefixes" "0" "$(ticked '12')"
-assert_eq "two of five" "2/5" "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-921)"
+assert_eq "two of five" "2/5" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-921)"
 
 # A label matching nothing at all is still an amendment's new step (WFI-111).
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-921 7 "added by amendment" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-921 7 "added by amendment" >/dev/null 2>&1
 assert_eq "an unheard-of step is still appended, ticked" "3/6" \
-  "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-921)"
+  "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-921)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A Test Scope bullet may carry a comment (client-a WFI-116)"
@@ -3433,7 +3433,7 @@ section "A Test Scope bullet may carry a comment (client-a WFI-116)"
 # a plan whose changed files did not also map to it would have silently lost
 # the category and run a narrower suite than it declared.
 #
-# wf-test-scope.sh finds its config by walking up from its OWN directory, so
+# lv-test-scope.sh finds its config by walking up from its OWN directory, so
 # the fixture needs a copy of the scripts beside a claude-workflow.yml.
 if ! command -v yq >/dev/null 2>&1; then
   printf '  \033[33m—\033[0m skipped: yq not installed\n'
@@ -3459,9 +3459,9 @@ YEOF
   ( cd "$SC" && git init -qb develop . && git config user.email t@t && git config user.name t \
       && git add -A && git commit -qm seed ) >/dev/null 2>&1
 
-  # env -C: wf-plan-info.sh, which resolves the plan directory, anchors on the
+  # env -C: lv-plan-info.sh, which resolves the plan directory, anchors on the
   # CALLER's repo — and the caller here is standing in a different fixture.
-  scope_run() { env -C "$SC" "$SC/scripts/$SCRIPT_FOLDER/wf-test-scope.sh" "$@"; }
+  scope_run() { env -C "$SC" "$SC/scripts/$SCRIPT_FOLDER/lv-test-scope.sh" "$@"; }
   annotated=$(scope_run PLN-950-annotated 2>/dev/null)
   annotated_err=$(scope_run PLN-950-annotated 2>&1 >/dev/null || true)
   assert_eq "the annotated bullet resolves" "FullyQualifiedName~Demo.Vector.Tests" "$annotated"
@@ -3475,7 +3475,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════
 section "A skipped commit proves the tree was clean (client-a WFI-141)"
 
-# wf-commit.sh printed "nothing to commit for the given paths — skipped" and
+# lv-commit.sh printed "nothing to commit for the given paths — skipped" and
 # exited 0 over a path `git status` reported as ' M' with a 47-insertion diff,
 # under four concurrent daemon workers. The message reads as a benign no-op, so
 # an unattended caller trusting rc=0 loses the write silently.
@@ -3494,11 +3494,11 @@ exec "$real_git" "\$@"
 FAKEGIT
 chmod +x fakebin/git
 printf 'seed\n' > wfi141.txt
-"$SCRIPT_DIR/wf-commit.sh" "seed wfi141" --add wfi141.txt >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "seed wfi141" --add wfi141.txt >/dev/null 2>&1
 printf 'a write that must not be lost\n' > wfi141.txt
 
 fake_path="$TEST_DIR/main/fakebin:$PATH"
-out=$(PATH="$fake_path" "$SCRIPT_DIR/wf-commit.sh" "should not skip" --add wfi141.txt 2>&1)
+out=$(PATH="$fake_path" "$SCRIPT_DIR/lv-commit.sh" "should not skip" --add wfi141.txt 2>&1)
 rc=$?
 assert_eq "a dirty path with nothing staged is not 'skipped'" "false" \
   "$(printf '%s' "$out" | grep -q 'nothing to commit for the given paths' && echo true || echo false)"
@@ -3509,12 +3509,12 @@ assert_eq "and names the path it refused to lose" "true" \
 
 # The benign case still has to stay benign, or every caller naming an optional
 # path (WFI-053) breaks.
-out=$("$SCRIPT_DIR/wf-commit.sh" "genuinely nothing" --add plans/does-not-exist.md 2>&1)
+out=$("$SCRIPT_DIR/lv-commit.sh" "genuinely nothing" --add plans/does-not-exist.md 2>&1)
 assert_eq "a path that was never created is still a skip" "true" \
   "$(printf '%s' "$out" | grep -q 'nothing to commit for the given paths' && echo true || echo false)"
-assert_ok "and that skip exits 0" "$SCRIPT_DIR/wf-commit.sh" "genuinely nothing" --add plans/does-not-exist.md
+assert_ok "and that skip exits 0" "$SCRIPT_DIR/lv-commit.sh" "genuinely nothing" --add plans/does-not-exist.md
 
-"$SCRIPT_DIR/wf-commit.sh" "wfi141 write lands on retry" --add wfi141.txt >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "wfi141 write lands on retry" --add wfi141.txt >/dev/null 2>&1
 assert_eq "re-running commits the write it protected" "a write that must not be lost" \
   "$(git show HEAD:wfi141.txt 2>/dev/null)"
 rm -rf fakebin
@@ -3537,7 +3537,7 @@ cat > plans/PLN-940-wrapped/findings.md << 'FEOF'
   <- BROAD-SCOPE
 FEOF
 assert_eq "a wrapped BROAD-SCOPE finding does not route" "clean" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
 
 cat > plans/PLN-940-wrapped/findings.md << 'FEOF'
 - [ ] **Design**: users expect a different flow, and the plan cannot absorb
@@ -3545,14 +3545,14 @@ cat > plans/PLN-940-wrapped/findings.md << 'FEOF'
   ← ESCALATED
 FEOF
 assert_eq "a wrapped ESCALATED finding still escalates" "escalated" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
 
 cat > plans/PLN-940-wrapped/findings.md << 'FEOF'
 - [ ] **Behavior**: the button does not respond
   on mobile Safari.
 FEOF
 assert_eq "a wrapped untagged finding routes back to the builder" "active" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
 
 # WFI-089 must survive the rewrite: prose may name a tag without wearing it.
 cat > plans/PLN-940-wrapped/findings.md << 'FEOF'
@@ -3560,7 +3560,7 @@ cat > plans/PLN-940-wrapped/findings.md << 'FEOF'
   and gets fixed in place.
 FEOF
 assert_eq "a wrapped mention of a tag is still not a tag" "active" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
 
 # An indented checkbox has never been a finding here; folding one into its
 # parent would push the parent's tag off the end and un-tag a tagged finding.
@@ -3569,14 +3569,14 @@ cat > plans/PLN-940-wrapped/findings.md << 'FEOF'
   - [ ] a sub-note nobody routes on
 FEOF
 assert_eq "an indented checkbox does not un-tag its parent" "clean" \
-  "$("$SCRIPT_DIR/wf-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-findings-route.sh" plans/PLN-940-wrapped 2>/dev/null)"
 rm -rf plans/PLN-940-wrapped
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Both sides of a deferral land in one commit (client-a WFI-144)"
 
-# wf-defer-criterion.sh writes the DC row AND the plan.md checkoff, and
-# committed neither. /wf-test's exit pathspec names deferred-criteria.md and
+# lv-defer-criterion.sh writes the DC row AND the plan.md checkoff, and
+# committed neither. /lv-test's exit pathspec names deferred-criteria.md and
 # never that plan's plan.md, so six checkoffs across one 16-plan sweep stayed
 # uncommitted on plans already marked complete — read from git those plans show
 # the criterion as '[ ]', the "silently dropped" reading deferral exists to
@@ -3591,8 +3591,8 @@ cat > plans/PLN-941-defer-both/plan.md << 'PEOF'
 
 - [ ] (external) run `tool doctor` **against a real signing service**
 PEOF
-"$SCRIPT_DIR/wf-commit.sh" "seed PLN-941" --add plans/PLN-941-defer-both plans/REGISTRY.md >/dev/null 2>&1
-"$SCRIPT_DIR/wf-defer-criterion.sh" PLN-941 external \
+"$SCRIPT_DIR/lv-commit.sh" "seed PLN-941" --add plans/PLN-941-defer-both plans/REGISTRY.md >/dev/null 2>&1
+"$SCRIPT_DIR/lv-defer-criterion.sh" PLN-941 external \
   "(external) run tool doctor **against a real signing service**" >/dev/null 2>&1
 
 assert_eq "the checkoff is in HEAD, not just the working tree" "true" \
@@ -3607,8 +3607,8 @@ assert_eq "nothing is left dirty for a caller to forget" "" \
 # ═══════════════════════════════════════════════════════════════════════
 section "Closing a bug is idempotent, and takes a duplicate (client-a WFI-143, WFI-139)"
 
-# WFI-143: /wf-test closed 8 of 11 completed plans' bugs and left 3, with
-# identical plan metadata, so /wf-deploy step 9 met a mix of hard errors and
+# WFI-143: /lv-test closed 8 of 11 completed plans' bugs and left 3, with
+# identical plan metadata, so /lv-deploy step 9 met a mix of hard errors and
 # real work with nothing distinguishing them. WFI-139: a duplicate is never
 # triaged and has no fixing plan, so no scripted path could close one at all —
 # BUG-061 was closed by hand across two paths, the shape that put six bugs at
@@ -3618,16 +3618,16 @@ printf '# BUG-942 — x\n\n> **Status:** Triaged\n> **Plan:** PLN-942\n\n## Note
   > bugs/triaged/BUG-942-already/bug.md
 printf '# BUG-943 — same as the brief\n\n> **Status:** Open\n\n## Description\nx\n' \
   > bugs/open/BUG-943-dup/bug.md
-"$SCRIPT_DIR/wf-commit.sh" "seed bugs" --add bugs >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "seed bugs" --add bugs >/dev/null 2>&1
 
-"$SCRIPT_DIR/wf-bug-close.sh" BUG-942 PLN-942-fix >/dev/null 2>&1
-out=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-942 PLN-942-fix 2>&1)
+"$SCRIPT_DIR/lv-bug-close.sh" BUG-942 PLN-942-fix >/dev/null 2>&1
+out=$("$SCRIPT_DIR/lv-bug-close.sh" BUG-942 PLN-942-fix 2>&1)
 rc=$?
 assert_eq "a second close of the same bug exits 0" "0" "$rc"
 assert_eq "and says so rather than erroring" "true" \
   "$(printf '%s' "$out" | grep -q 'already closed' && echo true || echo false)"
 
-out=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-943 --duplicate-of BRF-944 2>&1)
+out=$("$SCRIPT_DIR/lv-bug-close.sh" BUG-943 --duplicate-of BRF-944 2>&1)
 assert_eq "a duplicate closes from bugs/open/" "0" "$?"
 assert_eq "the record says it was not fixed" "true" \
   "$(grep -q 'Closed as duplicate of: BRF-944' bugs/closed/BUG-943-dup/bug.md && echo true || echo false)"
@@ -3636,19 +3636,19 @@ assert_eq "its status is Closed" "true" \
 assert_eq "and the open/ side of the rename is gone from HEAD" "false" \
   "$(git ls-tree -r --name-only HEAD | grep -q 'bugs/open/BUG-943-dup' && echo true || echo false)"
 assert_fails "a bug that exists nowhere is still an error" \
-  "$SCRIPT_DIR/wf-bug-close.sh" BUG-999 PLN-999-nope
+  "$SCRIPT_DIR/lv-bug-close.sh" BUG-999 PLN-999-nope
 assert_fails "and a plan and a duplicate are mutually exclusive" \
-  "$SCRIPT_DIR/wf-bug-close.sh" BUG-942 PLN-942-fix --duplicate-of BRF-944
+  "$SCRIPT_DIR/lv-bug-close.sh" BUG-942 PLN-942-fix --duplicate-of BRF-944
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A new registry row is committed where it is written (client-a WFI-140)"
 
-# The one write to REGISTRY.md left outside wf-registry-update.sh's rule. A
+# The one write to REGISTRY.md left outside lv-registry-update.sh's rule. A
 # hand-edited row sat dirty on the shared develop checkout through the whole
 # review loop, and PLN-060's was carried off by a concurrent implement worker's
 # correctly-pathspecced commit. Both workers legitimately name
 # plans/REGISTRY.md, so no pathspec defends against it — only not being dirty.
-out=$("$SCRIPT_DIR/wf-registry-add.sh" PLN-945 new-row --tags "docs,security" 2>&1)
+out=$("$SCRIPT_DIR/lv-registry-add.sh" PLN-945 new-row --tags "docs,security" 2>&1)
 assert_eq "the row is added" "draft" "$(registry_state PLN-945)"
 assert_eq "and committed, not left dirty" "" "$(git status --porcelain -- plans/REGISTRY.md)"
 assert_eq "the commit names the registry" "true" \
@@ -3660,13 +3660,13 @@ assert_eq "the WF column is stamped from .claude/workflow-version" "$(tr -d '[:s
 assert_eq "the row is inside the table, above the Counter comment" "true" \
   "$(awk '/^\| PLN-945 \|/ { row = NR } /<!-- Counter:/ { counter = NR } END { print (row > 0 && row < counter) ? "true" : "false" }' plans/REGISTRY.md)"
 assert_fails "a second row for the same plan is refused" \
-  "$SCRIPT_DIR/wf-registry-add.sh" PLN-945 new-row
+  "$SCRIPT_DIR/lv-registry-add.sh" PLN-945 new-row
 assert_eq "so the plan still has exactly one row" "1" \
   "$(grep -c '^| PLN-945 |' plans/REGISTRY.md | xargs)"
 assert_fails "an invented state is refused" \
-  "$SCRIPT_DIR/wf-registry-add.sh" PLN-946 bad-state --state wibble
+  "$SCRIPT_DIR/lv-registry-add.sh" PLN-946 bad-state --state wibble
 # A PLN-NNN-slug is the folder name; passing it as the slug must not double it.
-"$SCRIPT_DIR/wf-registry-add.sh" PLN-947 PLN-947-folder-form >/dev/null 2>&1
+"$SCRIPT_DIR/lv-registry-add.sh" PLN-947 PLN-947-folder-form >/dev/null 2>&1
 assert_eq "a PLN-NNN-slug argument is read as the slug" "folder-form" \
   "$(grep '^| PLN-947 |' plans/REGISTRY.md | awk -F'|' '{print $3}' | xargs)"
 
@@ -3674,16 +3674,16 @@ assert_eq "a PLN-NNN-slug argument is read as the slug" "folder-form" \
 section "A bug fixed without a plan can be closed (client-a WFI-149)"
 
 # BUG-076 was fixed on develop in one 12-line commit. No plan exists, so
-# /wf-deploy's close-by-plan path never reaches it and wf-bug-close.sh demanded
+# /lv-deploy's close-by-plan path never reaches it and lv-bug-close.sh demanded
 # a plan name — the bug was fixed and stuck at Open, invisible to the board,
 # with "invent a plan ID that does not exist" as the only scripted way out.
 mkdir -p bugs/open/BUG-948-small-fix
 printf '# BUG-948 — a one-commit fix\n\n> **Status:** Open\n\n## Description\nx\n' \
   > bugs/open/BUG-948-small-fix/bug.md
-"$SCRIPT_DIR/wf-commit.sh" "seed BUG-948" --add bugs/open/BUG-948-small-fix >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "seed BUG-948" --add bugs/open/BUG-948-small-fix >/dev/null 2>&1
 fix_sha=$(git rev-parse --short HEAD)
 
-out=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-948 --fixed-in "$fix_sha" --note "no acceptance criteria to check" 2>&1)
+out=$("$SCRIPT_DIR/lv-bug-close.sh" BUG-948 --fixed-in "$fix_sha" --note "no acceptance criteria to check" 2>&1)
 assert_eq "a bug closes against a commit, with no plan" "true" \
   "$([ -f bugs/closed/BUG-948-small-fix/bug.md ] && echo true || echo false)"
 assert_eq "its status is Closed" "true" \
@@ -3694,11 +3694,11 @@ assert_eq "the note the caller passed is kept" "true" \
   "$(grep -q 'no acceptance criteria to check' bugs/closed/BUG-948-small-fix/bug.md && echo true || echo false)"
 assert_eq "and the open/ side of the rename is gone from HEAD" "false" \
   "$(git ls-tree -r --name-only HEAD | grep -q 'bugs/open/BUG-948-small-fix' && echo true || echo false)"
-reclose=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-948 --fixed-in "$fix_sha" 2>&1 || true)
+reclose=$("$SCRIPT_DIR/lv-bug-close.sh" BUG-948 --fixed-in "$fix_sha" 2>&1 || true)
 assert_eq "a second close says so rather than erroring" "true" \
   "$(printf '%s' "$reclose" | grep -q 'already closed' && echo true || echo false)"
 assert_fails "a commit and a plan are mutually exclusive" \
-  "$SCRIPT_DIR/wf-bug-close.sh" BUG-948 PLN-948-nope --fixed-in "$fix_sha"
+  "$SCRIPT_DIR/lv-bug-close.sh" BUG-948 PLN-948-nope --fixed-in "$fix_sha"
 
 # An unresolvable sha is still recorded — the fix may live in another repo —
 # but the caller is told it was not verified, rather than being handed a record
@@ -3706,8 +3706,8 @@ assert_fails "a commit and a plan are mutually exclusive" \
 mkdir -p bugs/open/BUG-949-elsewhere
 printf '# BUG-949 — fixed in another repo\n\n> **Status:** Open\n\n## Description\nx\n' \
   > bugs/open/BUG-949-elsewhere/bug.md
-"$SCRIPT_DIR/wf-commit.sh" "seed BUG-949" --add bugs/open/BUG-949-elsewhere >/dev/null 2>&1
-out=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-949 --fixed-in deadbee 2>&1)
+"$SCRIPT_DIR/lv-commit.sh" "seed BUG-949" --add bugs/open/BUG-949-elsewhere >/dev/null 2>&1
+out=$("$SCRIPT_DIR/lv-bug-close.sh" BUG-949 --fixed-in deadbee 2>&1)
 assert_eq "an unknown sha does not block the close" "true" \
   "$([ -f bugs/closed/BUG-949-elsewhere/bug.md ] && echo true || echo false)"
 assert_eq "and it says the commit was not verified" "true" \
@@ -3725,13 +3725,13 @@ dc=$(grep -oE '^\| DC-[0-9]+' plans/deferred-criteria.md | tail -1 | tr -d '| ')
 assert_eq "the fixture left a DC row to work with" "true" \
   "$([ -n "$dc" ] && echo true || echo false)"
 
-out=$("$SCRIPT_DIR/wf-defer-criterion.sh" --satisfy "$dc" --evidence "run 31898065270 green on 2026-08-15" 2>&1)
+out=$("$SCRIPT_DIR/lv-defer-criterion.sh" --satisfy "$dc" --evidence "run 31898065270 green on 2026-08-15" 2>&1)
 assert_eq "the row records satisfaction, not consumption" "true" \
   "$(grep "^| $dc " plans/deferred-criteria.md | grep -q 'satisfied .* — run 31898065270 green' && echo true || echo false)"
 assert_eq "no plan is named as owing it" "false" \
   "$(grep "^| $dc " plans/deferred-criteria.md | grep -q 'consumed by' && echo true || echo false)"
-open_list=$("$SCRIPT_DIR/wf-defer-criterion.sh" --list || true)
-assert_eq "it drops out of the open list /wf-spec reads" "false" \
+open_list=$("$SCRIPT_DIR/lv-defer-criterion.sh" --list || true)
+assert_eq "it drops out of the open list /lv-spec reads" "false" \
   "$(printf '%s' "$open_list" | grep -q "^$dc" && echo true || echo false)"
 assert_eq "the row is committed, not left dirty on develop" "" \
   "$(git status --porcelain -- plans/deferred-criteria.md)"
@@ -3739,18 +3739,18 @@ assert_eq "and the commit names the file" "true" \
   "$(git show --name-only --format= HEAD 2>/dev/null | grep -q 'plans/deferred-criteria.md' && echo true || echo false)"
 # Captured first, then grepped: under `pipefail` a `grep -q` that exits on the
 # first match SIGPIPEs a script still writing, and the pipeline reports 141.
-again=$("$SCRIPT_DIR/wf-defer-criterion.sh" --satisfy "$dc" --evidence "again" 2>&1 || true)
+again=$("$SCRIPT_DIR/lv-defer-criterion.sh" --satisfy "$dc" --evidence "again" 2>&1 || true)
 assert_eq "satisfying it twice warns rather than lying about the old status" "true" \
   "$(printf '%s' "$again" | grep -q "was already 'satisfied" && echo true || echo false)"
 # A DC id with no row rewrote nothing and reported success — the shape that
 # lets a row go unrecorded silently.
 assert_fails "a DC id that has no row is an error, not a no-op" \
-  "$SCRIPT_DIR/wf-defer-criterion.sh" --satisfy DC-999 --evidence x
+  "$SCRIPT_DIR/lv-defer-criterion.sh" --satisfy DC-999 --evidence x
 # --consume keeps working, and now commits its own write for the same reason
 # the add path does (WFI-144/WFI-140).
-"$SCRIPT_DIR/wf-defer-criterion.sh" PLN-941 soak "(soak) leave it running for a week" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-defer-criterion.sh" PLN-941 soak "(soak) leave it running for a week" >/dev/null 2>&1
 dc2=$(grep -oE '^\| DC-[0-9]+' plans/deferred-criteria.md | tail -1 | tr -d '| ')
-"$SCRIPT_DIR/wf-defer-criterion.sh" --consume "$dc2" PLN-945 >/dev/null 2>&1
+"$SCRIPT_DIR/lv-defer-criterion.sh" --consume "$dc2" PLN-945 >/dev/null 2>&1
 assert_eq "a consumed row names the plan that took it on" "true" \
   "$(grep "^| $dc2 " plans/deferred-criteria.md | grep -q 'consumed by PLN-945' && echo true || echo false)"
 assert_eq "and that write is committed too" "" \
@@ -3770,35 +3770,35 @@ mkdir -p "$(dirname "$claim_950")"
 printf '%s\n%s\n' "$(date +%s)" "$other_session" > "$claim_950"
 
 assert_fails "the bare form refuses a claim held by another live session" \
-  "$SCRIPT_DIR/wf-claim.sh" PLN-950-contended
+  "$SCRIPT_DIR/lv-claim.sh" PLN-950-contended
 assert_eq "and it leaves the incumbent's PID in place" "$other_session" \
   "$(sed -n '2p' "$claim_950")"
-out=$("$SCRIPT_DIR/wf-claim.sh" PLN-950-contended 2>&1 || true)
+out=$("$SCRIPT_DIR/lv-claim.sh" PLN-950-contended 2>&1 || true)
 assert_eq "the refusal names who holds it" "true" \
   "$(printf '%s' "$out" | grep -q "PID $other_session" && echo true || echo false)"
 assert_eq "and points at the deliberate way through" "true" \
   "$(printf '%s' "$out" | grep -q -- '--steal' && echo true || echo false)"
 assert_eq "the exit code is 2 — stood down, not broken" "2" \
-  "$("$SCRIPT_DIR/wf-claim.sh" PLN-950-contended >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-claim.sh" PLN-950-contended >/dev/null 2>&1; echo $?)"
 
 assert_ok "--steal takes it on purpose" \
-  "$SCRIPT_DIR/wf-claim.sh" PLN-950-contended --steal
+  "$SCRIPT_DIR/lv-claim.sh" PLN-950-contended --steal
 assert_eq "and the claim is now this session's" "false" \
   "$([ "$(sed -n '2p' "$claim_950")" = "$other_session" ] && echo true || echo false)"
 assert_eq "the takeover is in the event log" "true" \
   "$(grep -q 'claim-steal' .claude/orchestrator/events.log 2>/dev/null && echo true || echo false)"
 assert_fails "--steal and --if-free contradict each other" \
-  "$SCRIPT_DIR/wf-claim.sh" PLN-950-contended --if-free --steal
+  "$SCRIPT_DIR/lv-claim.sh" PLN-950-contended --if-free --steal
 { kill "$other_session"; wait "$other_session"; } 2>/dev/null
-"$SCRIPT_DIR/wf-unclaim.sh" PLN-950-contended >/dev/null 2>&1
+"$SCRIPT_DIR/lv-unclaim.sh" PLN-950-contended >/dev/null 2>&1
 
 # A free artifact still claims in one call, and a session's own claim is not
 # somebody else's — the refusal must not fire against the caller itself.
 assert_ok "a free artifact claims without ceremony" \
-  "$SCRIPT_DIR/wf-claim.sh" PLN-950-contended
+  "$SCRIPT_DIR/lv-claim.sh" PLN-950-contended
 assert_ok "and re-claiming your own is a refresh, not a refusal" \
-  "$SCRIPT_DIR/wf-claim.sh" PLN-950-contended
-"$SCRIPT_DIR/wf-unclaim.sh" PLN-950-contended >/dev/null 2>&1
+  "$SCRIPT_DIR/lv-claim.sh" PLN-950-contended
+"$SCRIPT_DIR/lv-unclaim.sh" PLN-950-contended >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A resume names the folder to continue in (client-a WFI-147)"
@@ -3809,20 +3809,20 @@ section "A resume names the folder to continue in (client-a WFI-147)"
 mkdir -p plans/PLN-951-earlier-attempt
 printf '# PLN-951\n\n> **Bug:** BUG-951 — the earlier attempt\n\n## Goal\nx\n' \
   > plans/PLN-951-earlier-attempt/plan.md
-eval "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-951 2>/dev/null)"
+eval "$("$SCRIPT_DIR/lv-plan-id.sh" BUG-951 2>/dev/null)"
 assert_eq "the artifact's own folder is a resume, not a collision" "true" "$PLAN_ID_RESUME"
 assert_eq "and the caller is told WHERE to continue" "plans/PLN-951-earlier-attempt" "$PLAN_ID_DIR"
 assert_eq "the number is kept" "PLN-951" "$PLAN_ID"
 # The slug the earlier attempt chose is rarely the one this run would choose,
 # so a caller that writes to its own slug orphans the folder holding the row.
 assert_eq "PLAN_ID_DIR is empty when there is nothing to resume" "" \
-  "$(eval "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-952 2>/dev/null)"; printf '%s' "$PLAN_ID_DIR")"
+  "$(eval "$("$SCRIPT_DIR/lv-plan-id.sh" BUG-952 2>/dev/null)"; printf '%s' "$PLAN_ID_DIR")"
 rm -rf plans/PLN-951-earlier-attempt
 
 # The instruction is the other half of the fix: step 3's answer is provisional
 # and step 5 asks again, before the folder is written.
-spec_skill="$LIB_ROOT/skills/wf-spec/SKILL.md"
-assert_eq "wf-spec re-asks for the ID before writing the plan" "true" \
+spec_skill="$LIB_ROOT/skills/lv-spec/SKILL.md"
+assert_eq "lv-spec re-asks for the ID before writing the plan" "true" \
   "$(grep -q '\*\*Re-ask for the ID' "$spec_skill" && echo true || echo false)"
 assert_eq "and says to continue in \$PLAN_ID_DIR, not in its own slug" "true" \
   "$(grep -q 'Write into `\$PLAN_ID_DIR`' "$spec_skill" && echo true || echo false)"
@@ -3844,11 +3844,11 @@ assert_eq "and the move into plans/ is chained to the commit, not split across t
 # ═══════════════════════════════════════════════════════════════════════
 section "A fix cycle is not a lost state write (client-a WFI-145)"
 
-# testing → draft is a documented route: wf-test's findings path keeps the
+# testing → draft is a documented route: lv-test's findings path keeps the
 # feature branch for the fix that follows. The audit called that shape a
 # disagreement — "a state write was lost, or the work was abandoned. Check the
 # branch, then set the state deliberately" — and following that advice moves
-# the plan out of the cycle wf-test just routed it into.
+# the plan out of the cycle lv-test just routed it into.
 FIXCYCLE="$TEST_DIR/fixcycle"
 mkdir -p "$FIXCYCLE/plans/PLN-953-replanning" && (
   cd "$FIXCYCLE" && git init -qb develop . && git config user.email t@t && git config user.name t
@@ -3863,7 +3863,7 @@ mkdir -p "$FIXCYCLE/plans/PLN-953-replanning" && (
   git checkout -q develop
 ) >/dev/null 2>&1
 
-fix_audit=$(cd "$FIXCYCLE" && "$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+fix_audit=$(cd "$FIXCYCLE" && "$SCRIPT_DIR/lv-registry-audit.sh" 2>&1 || true)
 assert_eq "a draft plan with open findings is not called stale" "false" \
   "$(printf '%s' "$fix_audit" | grep -q 'STALE STATE' && echo true || echo false)"
 assert_eq "it is named for what it is" "true" \
@@ -3875,7 +3875,7 @@ assert_eq "and it does not count as a problem" "registry audit: clean" \
 # had NO findings to explain the route back. Close the findings and it is a
 # lost write again.
 ( cd "$FIXCYCLE" && printf -- '- [x] **Behavior**: fixed\n' > plans/PLN-953-replanning/findings.md )
-closed_audit=$(cd "$FIXCYCLE" && "$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+closed_audit=$(cd "$FIXCYCLE" && "$SCRIPT_DIR/lv-registry-audit.sh" 2>&1 || true)
 assert_eq "a draft plan with nothing open on it is still reported" "true" \
   "$(printf '%s' "$closed_audit" | grep -q 'STALE STATE.*PLN-953' && echo true || echo false)"
 
@@ -3889,9 +3889,9 @@ section "An unparseable plan is not a passing plan (client-a WFI-150)"
 registry_add_row PLN-954 nul-byte draft
 printf '> **schema_version:** 6\n\n#### Manual\n\n- [ ] (eyes:blocking) a jud\000gment call\n' \
   > plans/PLN-954-nul-byte/plan.md
-nul_out=$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-954 2>&1 || true)
+nul_out=$("$SCRIPT_DIR/lv-manual-lint.sh" PLN-954 2>&1 || true)
 assert_eq "a NUL byte fails the lint instead of skipping it" "2" \
-  "$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-954 >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-manual-lint.sh" PLN-954 >/dev/null 2>&1; echo $?)"
 assert_eq "and it says what is wrong with the file" "true" \
   "$(printf '%s' "$nul_out" | grep -q 'contains a NUL byte' && echo true || echo false)"
 assert_eq "it does not claim the plan is pre-v6" "false" \
@@ -3904,40 +3904,40 @@ assert_eq "and it says how to fix it" "true" \
 ( LC_ALL=C tr -d '\000' < plans/PLN-954-nul-byte/plan.md > plans/PLN-954-nul-byte/plan.clean \
   && mv plans/PLN-954-nul-byte/plan.clean plans/PLN-954-nul-byte/plan.md )
 assert_ok "the same plan lints clean once the byte is gone" \
-  "$SCRIPT_DIR/wf-manual-lint.sh" PLN-954
+  "$SCRIPT_DIR/lv-manual-lint.sh" PLN-954
 
 # A genuinely pre-v6 plan still skips — but the message no longer says "0" for
 # a file that simply has no schema line, which is what made the two look alike.
 registry_add_row PLN-955 no-schema draft
 printf '#### Manual\n\n- [ ] an untagged v5 criterion\n' > plans/PLN-955-no-schema/plan.md
-old_out=$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-955 2>&1 || true)
+old_out=$("$SCRIPT_DIR/lv-manual-lint.sh" PLN-955 2>&1 || true)
 assert_eq "a pre-v6 plan is still skipped, not failed" "0" \
-  "$("$SCRIPT_DIR/wf-manual-lint.sh" PLN-955 >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-manual-lint.sh" PLN-955 >/dev/null 2>&1; echo $?)"
 assert_eq "and it names the actual reason" "true" \
   "$(printf '%s' "$old_out" | grep -q 'no schema_version line' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A brief is not looked up as a plan (client-a WFI-160)"
 
-# wf-spawn's last-moment state re-read took the NUMERIC part of any artifact and
+# lv-spawn's last-moment state re-read took the NUMERIC part of any artifact and
 # grepped it as a plan row. BRF-081, a brand-new brief with no registry row at
 # all, resolved to PLN-081 — an unrelated plan completed the day before — so the
 # guard refused, logged "state moved to 'complete' before launch" for a
 # transition that never happened, and the brief became permanently
 # undispatchable: every sweep re-ran the same lookup and got the same answer.
 registry_add_row PLN-960 unrelated-and-done complete
-out=$("$SCRIPT_DIR/wf-spawn.sh" spec BRF-960 --dry-run 2>&1); rc=$?
+out=$("$SCRIPT_DIR/lv-spawn.sh" spec BRF-960 --dry-run 2>&1); rc=$?
 assert_eq "a brief whose number collides with a complete plan still spawns" "0" "$rc"
 assert_eq "and the refusal message is not about that plan" "false" \
   "$(printf '%s' "$out" | grep -q "PLN-960 is 'complete'" && echo true || echo false)"
 
 # The guard itself is untouched for the artifact it was actually given.
 assert_eq "a PLN in the wrong state is still refused" "2" \
-  "$("$SCRIPT_DIR/wf-spawn.sh" spec PLN-960-unrelated-and-done --dry-run >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-spawn.sh" spec PLN-960-unrelated-and-done --dry-run >/dev/null 2>&1; echo $?)"
 
 registry_add_row PLN-961 specable draft
 assert_eq "and a PLN in the right state is not" "0" \
-  "$("$SCRIPT_DIR/wf-spawn.sh" spec PLN-961-specable --dry-run >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-spawn.sh" spec PLN-961-specable --dry-run >/dev/null 2>&1; echo $?)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "The write guard covers a plan's files, not a plan's name (client-a WFI-163)"
@@ -3954,7 +3954,7 @@ printf '%s\n%s\n' "$(date +%s)" "$guard_holder" > "$claim_962"
 
 guard_write() {
   printf '{"tool_input":{"file_path":"%s"}}' "$1" \
-    | "$SCRIPT_DIR/wf-guard-write.sh" >/dev/null 2>&1
+    | "$SCRIPT_DIR/lv-guard-write.sh" >/dev/null 2>&1
   echo $?
 }
 
@@ -3992,7 +3992,7 @@ printf '# PLN-971\n\n> **Brief:** briefs/BRF-970-headless-snapshot.md\n\n## Goal
   > plans/PLN-971-the-real-resume/plan.md
 
 counter_before=$(grep -oE 'Counter: [0-9]+' plans/REGISTRY.md | head -1)
-eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-970)"
+eval "$("$SCRIPT_DIR/lv-plan-id.sh" BRF-970)"
 assert_eq "the resume is found under its reallocated number" "PLN-971" "$PLAN_ID"
 assert_eq "and it is reported as a resume" "true" "$PLAN_ID_RESUME"
 assert_eq "inherited is false — the number is not the source's" "false" "$PLAN_ID_INHERITED"
@@ -4005,7 +4005,7 @@ assert_eq "and no counter tick was burned" "$counter_before" \
 registry_add_row PLN-972 the-duplicate draft
 printf '# PLN-972\n\n> **Brief:** briefs/BRF-970-headless-snapshot.md\n\n## Goal\nx\n' \
   > plans/PLN-972-the-duplicate/plan.md
-eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-970)"
+eval "$("$SCRIPT_DIR/lv-plan-id.sh" BRF-970)"
 assert_eq "a duplicate resumes into the lowest-numbered folder" "PLN-971" "$PLAN_ID"
 assert_eq "and the duplicate is named in the collision note" "true" \
   "$(printf '%s' "$PLAN_ID_COLLISION" | grep -q 'DUPLICATE PLANS FOR BRF-970' && echo true || echo false)"
@@ -4019,7 +4019,7 @@ rm -rf plans/PLN-972-the-duplicate
 registry_add_row PLN-974 move-one complete
 printf '# PLN-974\n\n> **Brief:** briefs/BRF-974-sequenced.md\n\n## Goal\nx\n' \
   > plans/PLN-974-move-one/plan.md
-eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-974)"
+eval "$("$SCRIPT_DIR/lv-plan-id.sh" BRF-974)"
 assert_eq "a completed plan naming the brief is not a resume target" "false" "$PLAN_ID_RESUME"
 assert_eq "so a fresh number is allocated instead" "false" "$PLAN_ID_INHERITED"
 assert_eq "and nothing points the caller at the completed folder" "" "$PLAN_ID_DIR"
@@ -4031,7 +4031,7 @@ assert_contains "the collision note says which folder was passed over and why" \
 registry_add_row PLN-975 move-two ready
 printf '# PLN-975\n\n> **Brief:** briefs/BRF-975-sequenced.md\n\n## Goal\nx\n' \
   > plans/PLN-975-move-two/plan.md
-eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-975)"
+eval "$("$SCRIPT_DIR/lv-plan-id.sh" BRF-975)"
 assert_eq "a plan past draft is not a resume target either" "false" "$PLAN_ID_RESUME"
 assert_contains "and the state that disqualified it is named" "(ready)" "$PLAN_ID_COLLISION"
 
@@ -4040,25 +4040,25 @@ assert_contains "and the state that disqualified it is named" "(ready)" "$PLAN_I
 registry_add_row PLN-976 still-drafting draft
 printf '# PLN-976\n\n> **Brief:** briefs/BRF-976-sequenced.md\n\n## Goal\nx\n' \
   > plans/PLN-976-still-drafting/plan.md
-eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-976)"
+eval "$("$SCRIPT_DIR/lv-plan-id.sh" BRF-976)"
 assert_eq "a draft naming the brief is still resumed" "true" "$PLAN_ID_RESUME"
 assert_eq "in its own folder" "plans/PLN-976-still-drafting" "$PLAN_ID_DIR"
 
 # WFI-161: a reallocation leaves the session's claim on the SOURCE number, so
 # the plan it is writing is unclaimed — and the daemon dispatched a second spec
-# worker onto it the moment wf-registry-add.sh committed the draft row.
+# worker onto it the moment lv-registry-add.sh committed the draft row.
 registry_add_row PLN-973 holds-the-number complete
 printf '# PLN-973\n\n> **Bug:** BUG-956 — unrelated\n\n## Goal\nx\n' \
   > plans/PLN-973-holds-the-number/plan.md
-"$SCRIPT_DIR/wf-claim.sh" BUG-973 >/dev/null 2>&1
-eval "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-973)"
+"$SCRIPT_DIR/lv-claim.sh" BUG-973 >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/lv-plan-id.sh" BUG-973)"
 assert_eq "a taken number is still reallocated" "false" "$PLAN_ID_INHERITED"
 assert_eq "and the claim follows it to the new number" "true" \
   "$([ -f ".claude/orchestrator/claims/${PLAN_ID#PLN-}/.wf-claim" ] && echo true || echo false)"
 assert_eq "naming the same session that holds the source" "true" \
   "$([ "$(sed -n 2p ".claude/orchestrator/claims/${PLAN_ID#PLN-}/.wf-claim" 2>/dev/null)" \
       = "$(sed -n 2p .claude/orchestrator/claims/973/.wf-claim 2>/dev/null)" ] && echo true || echo false)"
-"$SCRIPT_DIR/wf-unclaim.sh" BUG-973 >/dev/null 2>&1
+"$SCRIPT_DIR/lv-unclaim.sh" BUG-973 >/dev/null 2>&1
 
 section "Standing authorization is recorded, scoped and expiring (client-a WFI-159)"
 
@@ -4075,11 +4075,11 @@ AUTONOMY_CFG_BACKUP=""
 # the step that reaches users.
 rm -f claude-workflow.yml .claude/orchestrator/events.log
 assert_ok "with no config at all, release is authorized by default" \
-  "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+  "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_ok "and so is a local deploy" \
-  "$SCRIPT_DIR/wf-autonomy.sh" deploy --quiet
+  "$SCRIPT_DIR/lv-autonomy.sh" deploy --quiet
 assert_eq "but the production push is exit 1 — it still needs a person" "1" \
-  "$("$SCRIPT_DIR/wf-autonomy.sh" production-push --quiet; echo $?)"
+  "$("$SCRIPT_DIR/lv-autonomy.sh" production-push --quiet; echo $?)"
 assert_eq "a default authorization is on the event log, and says it was the default" "true" \
   "$(grep 'autonomy-use' .claude/orchestrator/events.log \
      | grep -q 'authorized by default' && echo true || echo false)"
@@ -4092,9 +4092,9 @@ orchestrator:
       - release
 YML
 assert_eq "attended_for restores the release gate" "1" \
-  "$("$SCRIPT_DIR/wf-autonomy.sh" release --quiet; echo $?)"
+  "$("$SCRIPT_DIR/lv-autonomy.sh" release --quiet; echo $?)"
 assert_ok "and leaves deploy unattended" \
-  "$SCRIPT_DIR/wf-autonomy.sh" deploy --quiet
+  "$SCRIPT_DIR/lv-autonomy.sh" deploy --quiet
 
 # The default still has a ceiling, or a role dispatching in a loop is unbounded.
 rm -f .claude/orchestrator/events.log
@@ -4104,12 +4104,12 @@ orchestrator:
     max_unattended_per_day: 1
 YML
 assert_ok "the default is spent against max_unattended_per_day..." \
-  "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+  "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_eq "...and the one past it is refused" "1" \
-  "$("$SCRIPT_DIR/wf-autonomy.sh" release --quiet; echo $?)"
+  "$("$SCRIPT_DIR/lv-autonomy.sh" release --quiet; echo $?)"
 rm -f claude-workflow.yml .claude/orchestrator/events.log
 assert_eq "and --show says so without calling it a fault" "0" \
-  "$("$SCRIPT_DIR/wf-autonomy.sh" --show >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-autonomy.sh" --show >/dev/null 2>&1; echo $?)"
 
 # The grants below exercise standing semantics for release and deploy, so each
 # one also lists them under attended_for — otherwise the WFI-006 default would
@@ -4133,50 +4133,50 @@ YML
 
 write_grant standing "A Tester" 2026-09-16 4 "release"
 assert_ok "a coherent grant authorizes the action it names" \
-  env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+  env LV_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_fails "and refuses one it does not name" \
-  env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" deploy --quiet
+  env LV_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/lv-autonomy.sh" deploy --quiet
 assert_eq "the refusal is exit 1 — a decision, not a config fault" "1" \
-  "$(env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" deploy --quiet; echo $?)"
+  "$(env LV_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/lv-autonomy.sh" deploy --quiet; echo $?)"
 
 # "I authorize deployments" must not silently cover the production push.
 write_grant standing "A Tester" 2026-09-16 4 "deploy"
 assert_fails "granting deploy does not grant the production push" \
-  env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" production-push --quiet
+  env LV_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/lv-autonomy.sh" production-push --quiet
 
 # An authorization with no end date is a permission, not a record of a decision.
 write_grant standing "A Tester" 2026-08-15 4 "release"
 assert_fails "an expired grant authorizes nothing" \
-  env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+  env LV_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 
 # The report's own failure mode: a key nothing reads must be NAMED, not ignored.
 write_grant standing "A Tester" 2026-09-16 4 "release everything"
 assert_eq "an unread standing_for entry is exit 2, not a silent pass" "2" \
-  "$(env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" --show >/dev/null 2>&1; echo $?)"
+  "$(env LV_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/lv-autonomy.sh" --show >/dev/null 2>&1; echo $?)"
 # Captured, not piped into `grep -q`: this file runs under `pipefail`, and a
 # -q grep exits on the first match, so the writer takes SIGPIPE and the whole
 # pipeline reports 141 however good the output was.
-AUTONOMY_SHOW=$(env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" --show 2>&1 || true)
+AUTONOMY_SHOW=$(env LV_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/lv-autonomy.sh" --show 2>&1 || true)
 assert_eq "and --show names the entry nothing reads" "true" \
   "$(if [[ "$AUTONOMY_SHOW" == *"honoured by nothing"* ]]; then echo true; else echo false; fi)"
 assert_eq "a malformed grant blocks the action too — 2 is never 'proceed'" "2" \
-  "$(env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" release --quiet; echo $?)"
+  "$(env LV_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/lv-autonomy.sh" release --quiet; echo $?)"
 
 # Judgment gates have their own surfaces; two surfaces for one decision is how
 # they end up disagreeing.
 write_grant standing "A Tester" 2026-09-16 4 "spec-approval"
 assert_eq "spec-approval is never grantable here" "2" \
-  "$(env WF_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/wf-autonomy.sh" --show >/dev/null 2>&1; echo $?)"
+  "$(env LV_AUTONOMY_TODAY=2026-08-16 "$SCRIPT_DIR/lv-autonomy.sh" --show >/dev/null 2>&1; echo $?)"
 
 # WFI-159 lists merges among the blocked decisions, and that part is wrong:
-# wf-test already pushes, opens the PR and merges it unattended.
-AUTONOMY_MERGE=$("$SCRIPT_DIR/wf-autonomy.sh" merge 2>&1 || true)
+# lv-test already pushes, opens the PR and merges it unattended.
+AUTONOMY_MERGE=$("$SCRIPT_DIR/lv-autonomy.sh" merge 2>&1 || true)
 assert_eq "merge reports that it is already unattended, not that it is refused" "true" \
   "$(if [[ "$AUTONOMY_MERGE" == *"already runs unattended"* ]]; then echo true; else echo false; fi)"
 
 # A typo must not read as a deliberate refusal, or it gets worked around.
 assert_eq "an unknown action is exit 2, never exit 1" "2" \
-  "$("$SCRIPT_DIR/wf-autonomy.sh" relase --quiet; echo $?)"
+  "$("$SCRIPT_DIR/lv-autonomy.sh" relase --quiet; echo $?)"
 
 TODAY_UTC=$(date -u +%Y-%m-%d)
 # The ceiling is counted against the REAL day, so these blocks have to ask as
@@ -4189,9 +4189,9 @@ NOT_YET="$((${TODAY_UTC%%-*} + 1))-01-01"
 rm -f .claude/orchestrator/events.log
 write_grant standing "A Tester" $NOT_YET 1 "release"
 assert_ok "the first action inside the ceiling is authorized" \
-  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_fails "the one past it is not" \
-  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_eq "every question asked is on the event log, refusals included" "true" \
   "$(grep -q 'autonomy-use' .claude/orchestrator/events.log \
      && grep -q 'autonomy-refuse' .claude/orchestrator/events.log && echo true || echo false)"
@@ -4208,13 +4208,13 @@ assert_eq "and an authorization carries the grant's identity, not just 'ok'" "tr
 rm -f .claude/orchestrator/events.log
 write_grant standing "A Tester" $NOT_YET 1 "release deploy production-push"
 assert_ok "spending the release budget..." \
-  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_fails "...exhausts release" \
-  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_ok "...and leaves deploy untouched" \
-  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" deploy --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" deploy --quiet
 assert_ok "...and production-push untouched" \
-  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" production-push --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" production-push --quiet
 assert_eq "the refusal names the action whose budget is spent" "true" \
   "$(grep 'autonomy-refuse' .claude/orchestrator/events.log \
      | grep -q 'daily release ceiling 1 reached' && echo true || echo false)"
@@ -4230,13 +4230,13 @@ assert_eq "a production-push line is not counted as a release" "true" \
 rm -f .claude/orchestrator/events.log
 write_grant standing "A Tester" $NOT_YET 1 "release"
 assert_ok "--check on an authorized action exits 0" \
-  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --check --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --check --quiet
 assert_fails "--check on an unauthorized action exits 1" \
-  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" deploy --check --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" deploy --check --quiet
 assert_eq "and neither wrote anything to the event log" "false" \
   "$([ -s .claude/orchestrator/events.log ] && echo true || echo false)"
 assert_ok "so the real question still has its whole budget" \
-  env WF_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/wf-autonomy.sh" release --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 
 [ -n "$AUTONOMY_CFG_BACKUP" ] && printf '%s\n' "$AUTONOMY_CFG_BACKUP" > claude-workflow.yml
 rm -f .claude/orchestrator/events.log
@@ -4264,13 +4264,13 @@ cat > bugs/open/BUG-242-plain/bug.md <<'EOF'
 > **ID:** BUG-242
 > **Severity:** Low
 EOF
-SPECABLE=$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null || true)
+SPECABLE=$("$SCRIPT_DIR/lv-list-specable.sh" 2>/dev/null || true)
 assert_eq "the citing bug is listed under its own number" "1" \
   "$(printf '%s\n' "$SPECABLE" | grep -c '^BUG-241' | xargs)"
 assert_eq "and never under the one its title cites" "0" \
   "$(printf '%s\n' "$SPECABLE" | grep -c '^BUG-231' | xargs)"
-BUGLIST=$("$SCRIPT_DIR/wf-list-bugs.sh" 2>/dev/null || true)
-assert_eq "wf-list-bugs reads the same field" "1" \
+BUGLIST=$("$SCRIPT_DIR/lv-list-bugs.sh" 2>/dev/null || true)
+assert_eq "lv-list-bugs reads the same field" "1" \
   "$(printf '%s\n' "$BUGLIST" | grep -c '^BUG-241' | xargs)"
 
 # The folder name is the fallback, not the source — WFI-173 blamed it, and
@@ -4279,19 +4279,19 @@ mkdir -p bugs/open/BUG-243-no-id-field
 printf '# A bug filed without an ID field\n\n> **Status:** Open\n> **Severity:** Low\n' \
   > bugs/open/BUG-243-no-id-field/bug.md
 assert_eq "a bug with no ID field falls back to its folder" "1" \
-  "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | grep -c '^BUG-243' | xargs)"
+  "$("$SCRIPT_DIR/lv-list-specable.sh" 2>/dev/null | grep -c '^BUG-243' | xargs)"
 rm -rf bugs/open/BUG-241-console-encoding bugs/open/BUG-242-plain bugs/open/BUG-243-no-id-field
 
 # ═══════════════════════════════════════════════════════════════════════
 section "The specable detail column agrees with the review (client-a WFI-174)"
 
-# Four client-a drafts were listed `never reviewed` while wf-review-status.sh
+# Four client-a drafts were listed `never reviewed` while lv-review-status.sh
 # answered 'Approved with notes', STALE=false, STAMPED=true for every one of
-# them. wf-spec fans out a review agent for each plan reporting none, so four
+# them. lv-spec fans out a review agent for each plan reporting none, so four
 # current reviews were queued to run again.
 registry_add_row PLN-244 detail-column draft
 assert_eq "a draft with no review still says so" "never reviewed" \
-  "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | awk -F'\t' '$1 == "PLN-244-detail-column" {print $2}')"
+  "$("$SCRIPT_DIR/lv-list-specable.sh" 2>/dev/null | awk -F'\t' '$1 == "PLN-244-detail-column" {print $2}')"
 
 cat >> plans/PLN-244-detail-column/plan.md <<'EOF'
 
@@ -4300,7 +4300,7 @@ cat >> plans/PLN-244-detail-column/plan.md <<'EOF'
 > **Date:** 2026-08-17
 EOF
 assert_eq "a reviewed draft reports the verdict, not 'never reviewed'" "reviewed: Approved with notes" \
-  "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | awk -F'\t' '$1 == "PLN-244-detail-column" {print $2}')"
+  "$("$SCRIPT_DIR/lv-list-specable.sh" 2>/dev/null | awk -F'\t' '$1 == "PLN-244-detail-column" {print $2}')"
 
 # A verdict on a plan that has moved since is not a verdict on this plan.
 cat >> plans/PLN-244-detail-column/plan.md <<'EOF'
@@ -4309,7 +4309,7 @@ cat >> plans/PLN-244-detail-column/plan.md <<'EOF'
 2026-08-18 — scope widened from 2 documents to 10.
 EOF
 assert_eq "and a stale one is named as stale" "review stale (Approved with notes)" \
-  "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | awk -F'\t' '$1 == "PLN-244-detail-column" {print $2}')"
+  "$("$SCRIPT_DIR/lv-list-specable.sh" 2>/dev/null | awk -F'\t' '$1 == "PLN-244-detail-column" {print $2}')"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A guessed flag must not spend a number (client-a WFI-166, WFI-175)"
@@ -4317,25 +4317,25 @@ section "A guessed flag must not spend a number (client-a WFI-166, WFI-175)"
 counter_now() { grep -oE 'Counter: [0-9]+' plans/REGISTRY.md | grep -oE '[0-9]+'; }
 COUNTER_BEFORE=$(counter_now)
 
-# `wf-counter-next.sh --peek` printed "--peek-136", advanced the counter and
+# `lv-counter-next.sh --peek` printed "--peek-136", advanced the counter and
 # committed the advance — so `git status` came back clean and the burn was
 # invisible until the next real allocation returned the wrong number.
-assert_fails "an unknown flag is refused" "$SCRIPT_DIR/wf-counter-next.sh" --peekk
-assert_fails "and so is a prefix that is not an artifact type" "$SCRIPT_DIR/wf-counter-next.sh" FOO
+assert_fails "an unknown flag is refused" "$SCRIPT_DIR/lv-counter-next.sh" --peekk
+assert_fails "and so is a prefix that is not an artifact type" "$SCRIPT_DIR/lv-counter-next.sh" FOO
 assert_eq "neither one spent a number" "$COUNTER_BEFORE" "$(counter_now)"
 
 # The read-only question the mistyped flag was reaching for.
-PEEKED=$("$SCRIPT_DIR/wf-counter-next.sh" PLN --peek)
+PEEKED=$("$SCRIPT_DIR/lv-counter-next.sh" PLN --peek)
 assert_eq "--peek answers with the number a real call would take" "$(printf 'PLN-%03d' "$COUNTER_BEFORE")" "$PEEKED"
 assert_eq "and takes nothing" "$COUNTER_BEFORE" "$(counter_now)"
 assert_eq "the allocating call still allocates" "$(printf 'PLN-%03d' "$COUNTER_BEFORE")" \
-  "$("$SCRIPT_DIR/wf-counter-next.sh" PLN)"
+  "$("$SCRIPT_DIR/lv-counter-next.sh" PLN)"
 assert_eq "and only that one moved the counter" "$((COUNTER_BEFORE + 1))" "$(counter_now)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Asking twice for a plan ID gets one answer (client-a WFI-177, WFI-175)"
 
-# wf-spec is told to call wf-plan-id.sh twice, because the answer is only true
+# lv-spec is told to call lv-plan-id.sh twice, because the answer is only true
 # at the moment it is given (WFI-147). Every branch but one was a pure read.
 # The collision branch allocated on every call, so BUG-137's step 3 answered
 # PLN-144 and step 5 answered PLN-145 with the identical collision string and
@@ -4344,8 +4344,8 @@ section "Asking twice for a plan ID gets one answer (client-a WFI-177, WFI-175)"
 registry_add_row PLN-250 held-by-someone-else draft
 printf '# held\n\n> **Bug:** BUG-999 — an unrelated bug\n\n## Goal\nx\n' > plans/PLN-250-held-by-someone-else/plan.md
 COUNTER_BEFORE=$(counter_now)
-ID_CALL1=$("$SCRIPT_DIR/wf-plan-id.sh" BUG-250 | grep '^PLAN_ID=' | cut -d"'" -f2)
-ID_CALL2=$("$SCRIPT_DIR/wf-plan-id.sh" BUG-250 | grep '^PLAN_ID=' | cut -d"'" -f2)
+ID_CALL1=$("$SCRIPT_DIR/lv-plan-id.sh" BUG-250 | grep '^PLAN_ID=' | cut -d"'" -f2)
+ID_CALL2=$("$SCRIPT_DIR/lv-plan-id.sh" BUG-250 | grep '^PLAN_ID=' | cut -d"'" -f2)
 assert_eq "the second call answers what the first one did" "$ID_CALL1" "$ID_CALL2"
 assert_eq "and it cost exactly one number, not two" "$((COUNTER_BEFORE + 1))" "$(counter_now)"
 assert_eq "the reallocated number is not the inherited one" "false" \
@@ -4354,14 +4354,14 @@ assert_eq "the reallocated number is not the inherited one" "false" \
 # A diagnostic must not spend an artifact number to ask a question (WFI-175).
 COUNTER_BEFORE=$(counter_now)
 assert_eq "--peek answers the same thing" "$ID_CALL1" \
-  "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-250 --peek | grep '^PLAN_ID=' | cut -d"'" -f2)"
+  "$("$SCRIPT_DIR/lv-plan-id.sh" BUG-250 --peek | grep '^PLAN_ID=' | cut -d"'" -f2)"
 assert_eq "and takes nothing" "$COUNTER_BEFORE" "$(counter_now)"
 
 # An attempt that got as far as mkdir and no further is this artifact's own —
 # client-a was left with an empty, untracked plans/PLN-136-…/ that the next
 # run read as somebody else's number (WFI-169).
 mkdir -p "plans/$ID_CALL1-abandoned-slug"
-ID_RESUME=$("$SCRIPT_DIR/wf-plan-id.sh" BUG-250)
+ID_RESUME=$("$SCRIPT_DIR/lv-plan-id.sh" BUG-250)
 assert_eq "an empty reserved folder is resumed, not orphaned" "true" \
   "$(printf '%s' "$ID_RESUME" | grep -q "PLAN_ID_RESUME='true'" && echo true || echo false)"
 assert_eq "and the run is pointed at it" "plans/$ID_CALL1-abandoned-slug" \
@@ -4372,7 +4372,7 @@ rm -rf "plans/$ID_CALL1-abandoned-slug"
 mkdir -p "plans/$ID_CALL1-someone-else"
 printf '# other\n\n> **Bug:** BUG-998 — unrelated\n\n## Goal\nx\n' > "plans/$ID_CALL1-someone-else/plan.md"
 assert_eq "a reservation somebody else took is dropped, not honoured" "false" \
-  "$(if [ "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-250 | grep '^PLAN_ID=' | cut -d"'" -f2)" = "$ID_CALL1" ]; then echo true; else echo false; fi)"
+  "$(if [ "$("$SCRIPT_DIR/lv-plan-id.sh" BUG-250 | grep '^PLAN_ID=' | cut -d"'" -f2)" = "$ID_CALL1" ]; then echo true; else echo false; fi)"
 rm -rf "plans/$ID_CALL1-someone-else"
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -4396,7 +4396,7 @@ cat > plans/PLN-251-renumbered-away/plan.md <<'EOF'
 ## Goal
 x
 EOF
-ID_PROSE=$("$SCRIPT_DIR/wf-plan-id.sh" BUG-251 --peek)
+ID_PROSE=$("$SCRIPT_DIR/lv-plan-id.sh" BUG-251 --peek)
 assert_eq "prose naming a renumbered artifact does not claim it" "false" \
   "$(printf '%s' "$ID_PROSE" | grep '^PLAN_ID_RESUME=' | cut -d"'" -f2)"
 
@@ -4405,7 +4405,7 @@ assert_eq "prose naming a renumbered artifact does not claim it" "false" \
 # and has to find BUG-252's own plan sitting under 251.
 registry_add_row PLN-252 taken-by-a-stranger draft
 printf '# stranger\n\n> **Bug:** BUG-997 — not this one\n\n## Goal\nx\n' > plans/PLN-252-taken-by-a-stranger/plan.md
-ID_FIELD=$("$SCRIPT_DIR/wf-plan-id.sh" BUG-252 --peek)
+ID_FIELD=$("$SCRIPT_DIR/lv-plan-id.sh" BUG-252 --peek)
 assert_eq "the Bug field claims the plan across a reallocated number" "true" \
   "$(printf '%s' "$ID_FIELD" | grep '^PLAN_ID_RESUME=' | cut -d"'" -f2)"
 assert_eq "and it is the field's plan, not a fresh number" "PLN-251" \
@@ -4415,54 +4415,54 @@ assert_eq "and it is the field's plan, not a fresh number" "PLN-251" \
 section "An answered gate is not asked again (client-a WFI-180/181/182)"
 
 # PLN-135's prior-work gate was answered and closed at 11:43:42Z and re-opened
-# at 12:01:45Z with identical wording, while wf-gate-status.sh still reported
+# at 12:01:45Z with identical wording, while lv-gate-status.sh still reported
 # GATE_ANSWERED=true, GATE_STALE=false. Then a third time, a minute after a
 # close returned 0. Then a fourth, thirty minutes after the decision was
 # committed to findings.md — by which point the worker had RE-DERIVED the
 # question, offering an option the human never authorized and describing a
 # HashSet that had been a Dictionary since a merge two plans earlier.
 registry_add_row PLN-260 answered-once ready
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-260 prior-work "accept it or revert it?" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-260 "Do not revert 00d3d23, all 5 steps run" >/dev/null 2>&1
-GATE_REOPEN_OUT=$("$SCRIPT_DIR/wf-gate-open.sh" PLN-260 prior-work "accept it or revert it?" 2>&1 || true)
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-260 prior-work "accept it or revert it?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-260 prior-work "accept it or revert it?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-260 "Do not revert 00d3d23, all 5 steps run" >/dev/null 2>&1
+GATE_REOPEN_OUT=$("$SCRIPT_DIR/lv-gate-open.sh" PLN-260 prior-work "accept it or revert it?" 2>&1 || true)
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-260 prior-work "accept it or revert it?" >/dev/null 2>&1
 assert_eq "re-opening an answered revision-scoped gate is refused with 3" "3" \
-  "$("$SCRIPT_DIR/wf-gate-open.sh" PLN-260 prior-work "again?" >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-gate-open.sh" PLN-260 prior-work "again?" >/dev/null 2>&1; echo $?)"
 assert_eq "and the refusal hands back the answer of record" "true" \
   "$(if [[ "$GATE_REOPEN_OUT" == *"Do not revert 00d3d23"* ]]; then echo true; else echo false; fi)"
-assert_fails "so nothing is parked" "$SCRIPT_DIR/wf-list-gates.sh" PLN-260
+assert_fails "so nothing is parked" "$SCRIPT_DIR/lv-list-gates.sh" PLN-260
 
 # The answer is for a revision, not for the plan forever.
 printf '\n## Amendments\n2026-08-18 — scope widened to ten documents.\n' >> plans/PLN-260-answered-once/plan.md
 assert_ok "a plan that moved since re-opens normally" \
-  "$SCRIPT_DIR/wf-gate-open.sh" PLN-260 prior-work "the plan moved — accept or revert?"
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-260 "revert it" >/dev/null 2>&1
+  "$SCRIPT_DIR/lv-gate-open.sh" PLN-260 prior-work "the plan moved — accept or revert?"
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-260 "revert it" >/dev/null 2>&1
 
 # manual-test is asked once per test CYCLE by design (WFI-100). Blocking the
 # second one would stop the pipeline dead.
 registry_add_row PLN-261 cycle-scoped testing
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-261 manual-test "cycle one?" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-261 "criteria 1-8 pass" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-261 manual-test "cycle one?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-261 "criteria 1-8 pass" >/dev/null 2>&1
 assert_ok "a cycle-scoped gate still opens every cycle" \
-  "$SCRIPT_DIR/wf-gate-open.sh" PLN-261 manual-test "cycle two?"
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-261 "criteria pass again" >/dev/null 2>&1
+  "$SCRIPT_DIR/lv-gate-open.sh" PLN-261 manual-test "cycle two?"
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-261 "criteria pass again" >/dev/null 2>&1
 
 # Refusing to ask a human on the strength of a file that is not there is how a
 # real question goes unasked.
 mkdir -p plans/PLN-262-no-registry-row
 printf '# rowless\n\n## Goal\nx\n' > plans/PLN-262-no-registry-row/plan.md
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-262 spec-approval "approve?" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-262 "approved" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-262 spec-approval "approve?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-262 "approved" >/dev/null 2>&1
 assert_eq "an answer nothing could fingerprint is 'assumed', not 'revision'" "assumed" \
-  "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-262 spec-approval | grep '^GATE_ANSWERED_BASIS=' | cut -d"'" -f2)"
+  "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-262 spec-approval | grep '^GATE_ANSWERED_BASIS=' | cut -d"'" -f2)"
 assert_ok "and it never refuses on that basis" \
-  "$SCRIPT_DIR/wf-gate-open.sh" PLN-262 spec-approval "approve?"
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-262 "approved again" >/dev/null 2>&1
+  "$SCRIPT_DIR/lv-gate-open.sh" PLN-262 spec-approval "approve?"
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-262 "approved again" >/dev/null 2>&1
 
 # An operator who means it can still re-open one.
 assert_ok "--force re-opens deliberately" \
-  "$SCRIPT_DIR/wf-gate-open.sh" PLN-260 prior-work "asking again on purpose" --force
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-260 "done" >/dev/null 2>&1
+  "$SCRIPT_DIR/lv-gate-open.sh" PLN-260 prior-work "asking again on purpose" --force
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-260 "done" >/dev/null 2>&1
 
 # The other half: the worker reads plan artifacts, so the answer has to be in
 # them. Nothing wrote it there, and each dispatched worker correctly re-derived
@@ -4482,11 +4482,11 @@ assert_eq "and it is committed, not left dirty for a merge to take" "" \
 # untouched by a commit that changes it +22/-8. A reader who can replay the
 # original does not have to write it again from what they happen to see now.
 registry_add_row PLN-263 question-replay ready
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-263 prior-work "00d3d23 touches ExemptFromRule3 — accept it, or revert it?" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-263 "do not revert" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-263 prior-work "00d3d23 touches ExemptFromRule3 — accept it, or revert it?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-263 "do not revert" >/dev/null 2>&1
 assert_eq "the resolved record carries the question as asked" \
   "00d3d23 touches ExemptFromRule3 — accept it, or revert it?" \
-  "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-263 prior-work | grep '^GATE_QUESTION=' | cut -d"'" -f2)"
+  "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-263 prior-work | grep '^GATE_QUESTION=' | cut -d"'" -f2)"
 assert_eq "and findings.md records what was asked alongside the answer" "true" \
   "$(grep -q '\*\*Asked:\*\* 00d3d23 touches ExemptFromRule3' plans/PLN-263-question-replay/findings.md && echo true || echo false)"
 
@@ -4497,15 +4497,15 @@ assert_eq "and findings.md records what was asked alongside the answer" "true" \
 # another gate and a human had to delete the counter file by hand.
 mkdir -p .claude/orchestrator/attempts
 echo 3 > .claude/orchestrator/attempts/PLN-263.implement
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-263 manual-test "does it look right?" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-263 "looks right" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-263 manual-test "does it look right?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-263 "looks right" >/dev/null 2>&1
 assert_eq "closing a gate clears the plan's attempt budget" "false" \
   "$([ -f .claude/orchestrator/attempts/PLN-263.implement ] && echo true || echo false)"
 assert_eq "and says so on the event log" "true" \
   "$(grep -q 'attempts-reset' .claude/orchestrator/events.log && echo true || echo false)"
 assert_eq "another plan's budget is untouched" "true" \
   "$(echo 2 > .claude/orchestrator/attempts/PLN-264.implement
-     "$SCRIPT_DIR/wf-gate-close.sh" PLN-263 "again" >/dev/null 2>&1
+     "$SCRIPT_DIR/lv-gate-close.sh" PLN-263 "again" >/dev/null 2>&1
      [ -f .claude/orchestrator/attempts/PLN-264.implement ] && echo true || echo false)"
 rm -f .claude/orchestrator/attempts/PLN-264.implement
 
@@ -4532,7 +4532,7 @@ chmod +x retry-fixtures/flaky.sh retry-fixtures/denied.sh
 rm -f retry-fixtures/count
 
 assert_ok "a transient failure is retried, not surfaced" \
-  "$SCRIPT_DIR/wf-retry.sh" --attempts 3 --label "git push" -- ./retry-fixtures/flaky.sh
+  "$SCRIPT_DIR/lv-retry.sh" --attempts 3 --label "git push" -- ./retry-fixtures/flaky.sh
 assert_eq "and it really did take two goes" "2" "$(cat retry-fixtures/count)"
 
 # The important half. A retry loop that cannot tell a wobbly network from "you
@@ -4540,13 +4540,13 @@ assert_eq "and it really did take two goes" "2" "$(cat retry-fixtures/count)"
 # refusal three minutes later — in front of a human waiting on a stale question.
 RETRY_START=$(date +%s)
 assert_eq "a permission denial keeps its own exit status" "128" \
-  "$("$SCRIPT_DIR/wf-retry.sh" --attempts 3 --label "git push" -- ./retry-fixtures/denied.sh >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-retry.sh" --attempts 3 --label "git push" -- ./retry-fixtures/denied.sh >/dev/null 2>&1; echo $?)"
 assert_eq "and is not retried — no backoff was paid" "true" \
   "$([ $(( $(date +%s) - RETRY_START )) -lt 5 ] && echo true || echo false)"
 
 # coordinator WFI-006: an outage that outlasts the retries still is not a human's
 # question. --tempfail tells the caller "still down" (75) from "refused" (the
-# command's own status), so wf-test can leave the plan for the next sweep.
+# command's own status), so lv-test can leave the plan for the next sweep.
 cat > retry-fixtures/down.sh <<'EOF'
 #!/usr/bin/env bash
 echo "error: HTTP 503 Service Unavailable" >&2
@@ -4554,27 +4554,27 @@ exit 1
 EOF
 chmod +x retry-fixtures/down.sh
 assert_eq "--tempfail: an outage that never lifts exits 75" "75" \
-  "$("$SCRIPT_DIR/wf-retry.sh" --attempts 1 --tempfail --label "git push" -- ./retry-fixtures/down.sh >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-retry.sh" --attempts 1 --tempfail --label "git push" -- ./retry-fixtures/down.sh >/dev/null 2>&1; echo $?)"
 assert_eq "--tempfail: a refusal keeps its own status" "128" \
-  "$("$SCRIPT_DIR/wf-retry.sh" --attempts 1 --tempfail --label "git push" -- ./retry-fixtures/denied.sh >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-retry.sh" --attempts 1 --tempfail --label "git push" -- ./retry-fixtures/denied.sh >/dev/null 2>&1; echo $?)"
 assert_eq "without --tempfail the outage is the command's status" "1" \
-  "$("$SCRIPT_DIR/wf-retry.sh" --attempts 1 --label "git push" -- ./retry-fixtures/down.sh >/dev/null 2>&1; echo $?)"
-assert_ok "wf-test leaves a still-down push for the next sweep, not a gate" \
-  grep -q 'Exit 75' "$LIB_ROOT/skills/wf-test/SKILL.md"
+  "$("$SCRIPT_DIR/lv-retry.sh" --attempts 1 --label "git push" -- ./retry-fixtures/down.sh >/dev/null 2>&1; echo $?)"
+assert_ok "lv-test leaves a still-down push for the next sweep, not a gate" \
+  grep -q 'Exit 75' "$LIB_ROOT/skills/lv-test/SKILL.md"
 rm -rf retry-fixtures
 
 # The two callers that lost PLN-157's exit path.
-assert_ok "wf-merge-release retries its fetch" \
-  grep -q 'wf-retry.sh" --label "git fetch origin release"' "$SCRIPT_DIR/wf-merge-release.sh"
-assert_ok "wf-test wraps the push" \
-  grep -q 'wf-retry.sh --tempfail --label "git push"' "$LIB_ROOT/skills/wf-test/SKILL.md"
+assert_ok "lv-merge-release retries its fetch" \
+  grep -q 'lv-retry.sh" --label "git fetch origin release"' "$SCRIPT_DIR/lv-merge-release.sh"
+assert_ok "lv-test wraps the push" \
+  grep -q 'lv-retry.sh --tempfail --label "git push"' "$LIB_ROOT/skills/lv-test/SKILL.md"
 assert_ok "and the PR merge" \
-  grep -q 'wf-retry.sh --tempfail --label "gh pr merge"' "$LIB_ROOT/skills/wf-test/SKILL.md"
+  grep -q 'lv-retry.sh --tempfail --label "gh pr merge"' "$LIB_ROOT/skills/lv-test/SKILL.md"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A gate belongs to the number, not the name (client-a WFI-187)"
 
-# wf-spec opened spec-approval on the plan it had just written, producing
+# lv-spec opened spec-approval on the plan it had just written, producing
 # gates/PLN-161.gate. The dispatcher's skip check asked under the name it had
 # dispatched — BRF-161 — found no BRF-161.gate, and concluded nothing was
 # parked. It re-dispatched a spec worker onto a brief whose plan sat behind an
@@ -4583,31 +4583,31 @@ section "A gate belongs to the number, not the name (client-a WFI-187)"
 registry_add_row PLN-290 gate-under-the-plan draft
 printf '# under the plan\n\n> **ID:** PLN-290\n> **Brief:** briefs/BRF-290-thing.md\n\n## Goal\nx\n' \
   > plans/PLN-290-gate-under-the-plan/plan.md
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-290 spec-approval "8 steps — approve?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-290 spec-approval "8 steps — approve?" >/dev/null 2>&1
 
 assert_ok "a gate opened on the plan is visible under the brief" \
-  "$SCRIPT_DIR/wf-list-gates.sh" BRF-290
+  "$SCRIPT_DIR/lv-list-gates.sh" BRF-290
 assert_eq "and the row names the plan that owns it" "PLN-290" \
-  "$("$SCRIPT_DIR/wf-list-gates.sh" BRF-290 2>/dev/null | cut -f1)"
+  "$("$SCRIPT_DIR/lv-list-gates.sh" BRF-290 2>/dev/null | cut -f1)"
 assert_eq "gate-status under the brief sees it open" "true" \
-  "$("$SCRIPT_DIR/wf-gate-status.sh" BRF-290 spec-approval | grep '^GATE_OPEN=' | cut -d"'" -f2)"
+  "$("$SCRIPT_DIR/lv-gate-status.sh" BRF-290 spec-approval | grep '^GATE_OPEN=' | cut -d"'" -f2)"
 
 # One artifact, one gate file — not one per name it happens to be called by.
-"$SCRIPT_DIR/wf-gate-open.sh" BRF-290 spec-approval "8 steps — approve?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" BRF-290 spec-approval "8 steps — approve?" >/dev/null 2>&1
 assert_eq "opening under the brief does not make a second gate file" "false" \
   "$([ -f .claude/orchestrator/gates/BRF-290.gate ] && echo true || echo false)"
 
 # Closing under either name closes the one gate, and the answer is an answer
 # under both — with a fingerprint, so the WFI-180 refusal still has its evidence.
-"$SCRIPT_DIR/wf-gate-close.sh" BRF-290 "approved" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" BRF-290 "approved" >/dev/null 2>&1
 assert_fails "closing under the brief closes the plan's gate" \
-  "$SCRIPT_DIR/wf-list-gates.sh" PLN-290
+  "$SCRIPT_DIR/lv-list-gates.sh" PLN-290
 assert_eq "the answer is visible under the brief" "true" \
-  "$("$SCRIPT_DIR/wf-gate-status.sh" BRF-290 spec-approval | grep '^GATE_ANSWERED=' | cut -d"'" -f2)"
+  "$("$SCRIPT_DIR/lv-gate-status.sh" BRF-290 spec-approval | grep '^GATE_ANSWERED=' | cut -d"'" -f2)"
 assert_eq "and under the plan" "true" \
-  "$("$SCRIPT_DIR/wf-gate-status.sh" PLN-290 spec-approval | grep '^GATE_ANSWERED=' | cut -d"'" -f2)"
+  "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-290 spec-approval | grep '^GATE_ANSWERED=' | cut -d"'" -f2)"
 assert_eq "asked under the brief, it is still fingerprinted against the plan" "revision" \
-  "$("$SCRIPT_DIR/wf-gate-status.sh" BRF-290 spec-approval | grep '^GATE_ANSWERED_BASIS=' | cut -d"'" -f2)"
+  "$("$SCRIPT_DIR/lv-gate-status.sh" BRF-290 spec-approval | grep '^GATE_ANSWERED_BASIS=' | cut -d"'" -f2)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A brief that already has a plan is not specable (client-a WFI-188)"
@@ -4615,18 +4615,18 @@ section "A brief that already has a plan is not specable (client-a WFI-188)"
 # The last-moment state guard abstained for a bug or brief because "there is no
 # plan row to be stale". That stops being true the moment spec writes one:
 # BRF-161 got a fresh spec worker minutes after its plan had gone draft -> ready
-# and its spec-approval had been recorded. wf-list-specable.sh was empty, the
+# and its spec-approval had been recorded. lv-list-specable.sh was empty, the
 # review was Approved and unstale — there was no spec work left to do.
 registry_add_row PLN-291 already-specced ready
 printf '# already specced\n\n> **ID:** PLN-291\n> **Brief:** briefs/BRF-291-thing.md\n\n## Goal\nx\n' \
   > plans/PLN-291-already-specced/plan.md
 COUNTER_BEFORE=$(counter_now)
 assert_eq "a brief whose plan is past draft stands down with exit 2" "2" \
-  "$("$SCRIPT_DIR/wf-spawn.sh" spec BRF-291 --dry-run >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-spawn.sh" spec BRF-291 --dry-run >/dev/null 2>&1; echo $?)"
 # Captured, not piped into `grep -q`: this file runs under `pipefail` and a -q
 # grep exits on the first match, so the writer takes SIGPIPE and the pipeline
 # reports 141 however good the output was.
-SPAWN_REFUSAL=$("$SCRIPT_DIR/wf-spawn.sh" spec BRF-291 --dry-run 2>&1 || true)
+SPAWN_REFUSAL=$("$SCRIPT_DIR/lv-spawn.sh" spec BRF-291 --dry-run 2>&1 || true)
 assert_eq "the refusal names the plan it was already specced as" "true" \
   "$(if [[ "$SPAWN_REFUSAL" == *"already specced as PLN-291"* ]]; then echo true; else echo false; fi)"
 assert_eq "asking cost no artifact number — the lookup peeks" "$COUNTER_BEFORE" "$(counter_now)"
@@ -4657,7 +4657,7 @@ printf '# still to do\n\n> **ID:** BRF-293\n> **Status:** Decided\n> **Plan:** _
 printf '# crashed\n\n> **ID:** BRF-294\n> **Status:** Planned\n> **Plan:** _(none)_\n' \
   > plans/briefs/BRF-294-crashed-mid-spec.md
 
-SPECABLE_BRIEFS=$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null || true)
+SPECABLE_BRIEFS=$("$SCRIPT_DIR/lv-list-specable.sh" 2>/dev/null || true)
 assert_eq "a brief whose plan exists is no longer offered" "0" \
   "$(printf '%s\n' "$SPECABLE_BRIEFS" | grep -c '^BRF-291' | xargs)"
 assert_eq "one that still needs a plan is" "1" \
@@ -4672,12 +4672,12 @@ assert_eq "a Planned stamp with no plan behind it is still work" "1" \
 # dispatcher holding the claim, a human running the script by hand got empty
 # output and concluded the dispatch came from somewhere else. The planned check
 # has to answer the same either way.
-CLAIM_DIR=$(bash -c "source '$SCRIPT_DIR/wf-orch-lib.sh'; wf_claim_dir BRF-293")
+CLAIM_DIR=$(bash -c "source '$SCRIPT_DIR/lv-orch-lib.sh'; wf_claim_dir BRF-293")
 printf '%s\n%s\n' "$(date +%s)" "$$" > "$CLAIM_DIR/.wf-claim"
 assert_eq "a claimed brief is hidden, as before" "0" \
-  "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | grep -c '^BRF-293' | xargs)"
+  "$("$SCRIPT_DIR/lv-list-specable.sh" 2>/dev/null | grep -c '^BRF-293' | xargs)"
 assert_eq "and a planned one reads the same claimed or not" "0" \
-  "$("$SCRIPT_DIR/wf-list-specable.sh" 2>/dev/null | grep -c '^BRF-291' | xargs)"
+  "$("$SCRIPT_DIR/lv-list-specable.sh" 2>/dev/null | grep -c '^BRF-291' | xargs)"
 rm -f "$CLAIM_DIR/.wf-claim"
 rm -f plans/briefs/INDEX.md plans/briefs/BRF-29*.md
 
@@ -4693,21 +4693,21 @@ registry_add_row PLN-292 unrelated-same-number complete
 printf '# unrelated\n\n> **ID:** PLN-292\n> **Bug:** BUG-777 — nothing to do with BRF-292\n\n## Goal\nx\n' \
   > plans/PLN-292-unrelated-same-number/plan.md
 assert_eq "an id in a field's title does not claim the plan" "false" \
-  "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-292 --peek 2>/dev/null | grep '^PLAN_ID_RESUME=' | cut -d"'" -f2)"
+  "$("$SCRIPT_DIR/lv-plan-id.sh" BRF-292 --peek 2>/dev/null | grep '^PLAN_ID_RESUME=' | cut -d"'" -f2)"
 assert_ok "a brief with no plan of its own is still dispatchable" \
-  "$SCRIPT_DIR/wf-spawn.sh" spec BRF-292 --dry-run
+  "$SCRIPT_DIR/lv-spawn.sh" spec BRF-292 --dry-run
 
 # A plan sent back for replanning is spec work again.
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-291 ready draft >/dev/null 2>&1
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-291 ready draft >/dev/null 2>&1
 assert_ok "and one whose plan returned to draft is dispatchable again" \
-  "$SCRIPT_DIR/wf-spawn.sh" spec BRF-291 --dry-run
+  "$SCRIPT_DIR/lv-spawn.sh" spec BRF-291 --dry-run
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A consume checks which bug it is taking (client-a WFI-167)"
 
-# Commit 671983e renumbered BUG-137 -> BUG-136 while an unattended wf-spec
+# Commit 671983e renumbered BUG-137 -> BUG-136 while an unattended lv-spec
 # worker dispatched on BUG-137 was drafting from that bug's content, and a
-# different bug took the number. wf-claim.sh kept reporting the claim as held,
+# different bug took the number. lv-claim.sh kept reporting the claim as held,
 # because claims key on the number too. The consume matched by number alone and
 # triaged the unrelated new BUG-137 — a bug about image parsing — into a plan
 # about API versions. Exit 0, no warning.
@@ -4722,7 +4722,7 @@ git add -A >/dev/null 2>&1; git commit -qm "the plan is drafted from it" >/dev/n
 
 # The ordinary consume is untouched.
 assert_ok "the bug the plan was drafted from is consumed normally" \
-  "$SCRIPT_DIR/wf-bug-consume.sh" BUG-270 PLN-270-devops-api-version
+  "$SCRIPT_DIR/lv-bug-consume.sh" BUG-270 PLN-270-devops-api-version
 assert_eq "and it landed in triaged" "true" \
   "$([ -f bugs/triaged/BUG-270-devops-api-version/bug.md ] && echo true || echo false)"
 
@@ -4732,7 +4732,7 @@ printf '# on-prem renderedText uses a third src shape\n\n> **Status:** Open\n> *
   > bugs/open/BUG-270-onprem-rendered-text/bug.md
 git add -A >/dev/null 2>&1; git commit -qm "an unrelated bug takes the freed number" >/dev/null 2>&1
 assert_eq "a bug filed after the plan is refused, with exit 2" "2" \
-  "$("$SCRIPT_DIR/wf-bug-consume.sh" BUG-270 PLN-270-devops-api-version >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-bug-consume.sh" BUG-270 PLN-270-devops-api-version >/dev/null 2>&1; echo $?)"
 assert_eq "and it is left where its own planner will find it" "true" \
   "$([ -f bugs/open/BUG-270-onprem-rendered-text/bug.md ] && echo true || echo false)"
 
@@ -4742,9 +4742,9 @@ registry_add_row PLN-271 says-another-bug draft
 printf '# other\n\n> **ID:** PLN-271\n> **Bug:** BUG-999 — something else entirely\n\n## Goal\nx\n' \
   > plans/PLN-271-says-another-bug/plan.md
 assert_eq "a plan naming another bug in its Bug field refuses too" "2" \
-  "$("$SCRIPT_DIR/wf-bug-consume.sh" BUG-270 PLN-271-says-another-bug >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-bug-consume.sh" BUG-270 PLN-271-says-another-bug >/dev/null 2>&1; echo $?)"
 assert_ok "--force is there for an operator repairing one by hand" \
-  "$SCRIPT_DIR/wf-bug-consume.sh" BUG-270 PLN-271-says-another-bug --force
+  "$SCRIPT_DIR/lv-bug-consume.sh" BUG-270 PLN-271-says-another-bug --force
 rm -rf bugs/triaged/BUG-270-onprem-rendered-text
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -4752,9 +4752,9 @@ section "A replan does not promote on a stale approval (client-a WFI-178)"
 
 # PLN-110 was tagged `contract`, the project's only gating tag. A replan widened
 # Step 10 from 2 documents to 10 and added a test, then reached
-# wf-replan-target.sh --apply, which transitioned draft -> ready and committed
-# it. wf-gate-status.sh reported GATE_ANSWERED=false, GATE_STALE=true seconds
-# later. wf-registry-update.sh's guard could not catch it: it refuses
+# lv-replan-target.sh --apply, which transitioned draft -> ready and committed
+# it. lv-gate-status.sh reported GATE_ANSWERED=false, GATE_STALE=true seconds
+# later. lv-registry-update.sh's guard could not catch it: it refuses
 # draft -> ready without a review OF RECORD, and a fresh one existed.
 REPLAN_CFG_BACKUP=""
 [ -f claude-workflow.yml ] && REPLAN_CFG_BACKUP=$(cat claude-workflow.yml)
@@ -4771,18 +4771,18 @@ Refresh the drive on a schedule.
 ## Review
 > **Result:** Approved with notes
 EOF
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-280 spec-approval "approve?" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-280 "approved" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-280 spec-approval "approve?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-280 "approved" >/dev/null 2>&1
 printf '\n## Amendments\n2026-08-18 — Step 10 widened from 2 documents to 10.\n' >> plans/PLN-280-gate-tagged-replan/plan.md
 
 assert_eq "a widened gate-tagged plan is refused with exit 2" "2" \
-  "$("$SCRIPT_DIR/wf-replan-target.sh" PLN-280 --apply >/dev/null 2>&1; echo $?)"
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-280 --apply >/dev/null 2>&1; echo $?)"
 assert_eq "and it is still draft, not dispatchable" "draft" "$(registry_state PLN-280)"
 
 # Self-clearing: once the human has answered the new question it goes through.
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-280 spec-approval "wider scope — approve?" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-280 "approved at the wider scope" >/dev/null 2>&1
-assert_ok "a re-approved plan promotes normally" "$SCRIPT_DIR/wf-replan-target.sh" PLN-280 --apply
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-280 spec-approval "wider scope — approve?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-280 "approved at the wider scope" >/dev/null 2>&1
+assert_ok "a re-approved plan promotes normally" "$SCRIPT_DIR/lv-replan-target.sh" PLN-280 --apply
 assert_eq "and lands where the replan target says" "ready" "$(registry_state PLN-280)"
 
 # A finished plan does not walk backwards (client-a WFI-172).
@@ -4794,28 +4794,28 @@ assert_eq "and lands where the replan target says" "ready" "$(registry_state PLN
 # Re-running the suite on develop gave 871 total, 0 failed.
 registry_add_row PLN-282 already-shipped complete
 assert_fails "a complete plan cannot be moved back to active" \
-  "$SCRIPT_DIR/wf-registry-update.sh" PLN-282 complete active
+  "$SCRIPT_DIR/lv-registry-update.sh" PLN-282 complete active
 assert_eq "and the row did not move" "complete" "$(registry_state PLN-282)"
-assert_ok "terminal to terminal is still allowed — /wf-rollback needs it" \
-  "$SCRIPT_DIR/wf-registry-update.sh" PLN-282 complete rolled-back
+assert_ok "terminal to terminal is still allowed — /lv-rollback needs it" \
+  "$SCRIPT_DIR/lv-registry-update.sh" PLN-282 complete rolled-back
 assert_ok "and a deliberate revival has an override" \
-  env WF_ALLOW_REOPEN=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-282 rolled-back active
+  env LV_ALLOW_REOPEN=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-282 rolled-back active
 registry_add_row PLN-283 dropped-on-purpose abandoned
 assert_ok "abandoned keeps its own revival path to draft" \
-  "$SCRIPT_DIR/wf-registry-update.sh" PLN-283 abandoned draft
+  "$SCRIPT_DIR/lv-registry-update.sh" PLN-283 abandoned draft
 
 # An untagged plan is not touched by any of this.
 registry_add_row PLN-281 untagged-replan draft
 printf '\n## Review\n> **Result:** Approved\n' >> plans/PLN-281-untagged-replan/plan.md
 assert_ok "a plan carrying no gating tag replans without a gate" \
-  "$SCRIPT_DIR/wf-replan-target.sh" PLN-281 --apply
+  "$SCRIPT_DIR/lv-replan-target.sh" PLN-281 --apply
 assert_eq "and promotes" "ready" "$(registry_state PLN-281)"
 [ -n "$REPLAN_CFG_BACKUP" ] && printf '%s\n' "$REPLAN_CFG_BACKUP" > claude-workflow.yml
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A close is announced after it is committed (client-a WFI-192)"
 
-# The success line was printed BEFORE the commit. /wf-deploy step 9 piped 14
+# The success line was printed BEFORE the commit. /lv-deploy step 9 piped 14
 # closes through `head -1`; head exited after the first line, the next write
 # took SIGPIPE, and the script died between `git mv` and the commit. All 14
 # printed "BUG-NNN → closed" and none committed — and the staged renames then
@@ -4824,9 +4824,9 @@ git checkout -q develop 2>/dev/null || true
 mkdir -p bugs/triaged/BUG-950-ordering
 printf '# BUG-950 — x\n\n> **Status:** Triaged\n\n## Notes\n—\n' \
   > bugs/triaged/BUG-950-ordering/bug.md
-"$SCRIPT_DIR/wf-commit.sh" "seed BUG-950" --add bugs/triaged/BUG-950-ordering >/dev/null 2>&1
+"$SCRIPT_DIR/lv-commit.sh" "seed BUG-950" --add bugs/triaged/BUG-950-ordering >/dev/null 2>&1
 
-close_out=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-950 PLN-950-fix 2>/dev/null)
+close_out=$("$SCRIPT_DIR/lv-bug-close.sh" BUG-950 PLN-950-fix 2>/dev/null)
 assert_eq "the commit line is printed before the success line" "true" \
   "$(printf '%s\n' "$close_out" | awk '
      /^committed / { c = NR }
@@ -4840,8 +4840,8 @@ assert_eq "and nothing is left staged for the next worker" "" \
 mkdir -p bugs/triaged/BUG-951-sigpipe
 printf '# BUG-951 — x\n\n> **Status:** Triaged\n\n## Notes\n—\n' \
   > bugs/triaged/BUG-951-sigpipe/bug.md
-"$SCRIPT_DIR/wf-commit.sh" "seed BUG-951" --add bugs/triaged/BUG-951-sigpipe >/dev/null 2>&1
-first_line=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-951 PLN-951-fix 2>/dev/null | head -1)
+"$SCRIPT_DIR/lv-commit.sh" "seed BUG-951" --add bugs/triaged/BUG-951-sigpipe >/dev/null 2>&1
+first_line=$("$SCRIPT_DIR/lv-bug-close.sh" BUG-951 PLN-951-fix 2>/dev/null | head -1)
 assert_eq "a caller reading only the first line does not read 'closed'" "false" \
   "$(printf '%s' "$first_line" | grep -q '→ closed' && echo true || echo false)"
 
@@ -4849,12 +4849,12 @@ assert_eq "a caller reading only the first line does not read 'closed'" "false" 
 mkdir -p bugs/triaged/BUG-952-staged
 printf '# BUG-952 — x\n\n> **Status:** Triaged\n\n## Notes\n—\n' \
   > bugs/triaged/BUG-952-staged/bug.md
-"$SCRIPT_DIR/wf-commit.sh" "seed BUG-952" --add bugs/triaged/BUG-952-staged >/dev/null 2>&1
-nc_out=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-952 PLN-952-fix --no-commit 2>/dev/null)
+"$SCRIPT_DIR/lv-commit.sh" "seed BUG-952" --add bugs/triaged/BUG-952-staged >/dev/null 2>&1
+nc_out=$("$SCRIPT_DIR/lv-bug-close.sh" BUG-952 PLN-952-fix --no-commit 2>/dev/null)
 assert_eq "--no-commit says the close is staged, not committed" "true" \
   "$(printf '%s' "$nc_out" | grep -q 'NOT committed' && echo true || echo false)"
 # ...and a later run finishes the job rather than calling it already done.
-recover=$("$SCRIPT_DIR/wf-bug-close.sh" BUG-952 PLN-952-fix 2>&1)
+recover=$("$SCRIPT_DIR/lv-bug-close.sh" BUG-952 PLN-952-fix 2>&1)
 assert_eq "a re-run over an uncommitted close commits it" "" \
   "$(git status --porcelain -- bugs/triaged/BUG-952-staged bugs/closed/BUG-952-staged)"
 assert_eq "and says it had to" "true" \
@@ -4877,14 +4877,14 @@ git commit -qm "chore: relay BUG-284 from tb" >/dev/null 2>&1
 PW_CFG_BACKUP=""
 [ -f claude-workflow.yml ] && PW_CFG_BACKUP=$(cat claude-workflow.yml)
 assert_ok "a note outside the four built-ins is flagged by default" \
-  "$SCRIPT_DIR/wf-prior-work.sh" PLN-284
-pw_out=$("$SCRIPT_DIR/wf-prior-work.sh" PLN-284 2>/dev/null || true)
+  "$SCRIPT_DIR/lv-prior-work.sh" PLN-284
+pw_out=$("$SCRIPT_DIR/lv-prior-work.sh" PLN-284 2>/dev/null || true)
 assert_eq "and the report NAMES the file, not just a count" "true" \
   "$(printf '%s' "$pw_out" | grep -q 'drive/exchange/msg-284.md' && echo true || echo false)"
 
 printf 'priorWork:\n  ignorePaths:\n    - "drive/exchange/"\n' > claude-workflow.yml
 assert_fails "a declared note path is not prior work" \
-  "$SCRIPT_DIR/wf-prior-work.sh" PLN-284
+  "$SCRIPT_DIR/lv-prior-work.sh" PLN-284
 
 # The gate is not configurable away: real code in the same commit still fires.
 registry_add_row PLN-285 note-and-code ready
@@ -4894,14 +4894,14 @@ printf 'int main(void){return 0;}\n' > src/bug285.c
 git add -A >/dev/null 2>&1
 git commit -qm "fix(BUG-285): patch it directly on develop" >/dev/null 2>&1
 assert_ok "a commit that also touches code still reports" \
-  "$SCRIPT_DIR/wf-prior-work.sh" PLN-285
-pw2=$("$SCRIPT_DIR/wf-prior-work.sh" PLN-285 2>/dev/null || true)
+  "$SCRIPT_DIR/lv-prior-work.sh" PLN-285
+pw2=$("$SCRIPT_DIR/lv-prior-work.sh" PLN-285 2>/dev/null || true)
 assert_eq "and names only the non-ignored file" "true" \
   "$(printf '%s' "$pw2" | grep -q 'src/bug285.c' \
      && ! printf '%s' "$pw2" | grep -q 'msg-285.md' && echo true || echo false)"
 assert_eq "a built-in path can never be un-ignored by config" "true" \
   "$(printf 'priorWork:\n  ignorePaths:\n    - "src/"\n' > claude-workflow.yml
-     "$SCRIPT_DIR/wf-prior-work.sh" PLN-284 >/dev/null 2>&1 && echo true || echo false)"
+     "$SCRIPT_DIR/lv-prior-work.sh" PLN-284 >/dev/null 2>&1 && echo true || echo false)"
 [ -n "$PW_CFG_BACKUP" ] && printf '%s\n' "$PW_CFG_BACKUP" > claude-workflow.yml || rm -f claude-workflow.yml
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -4912,11 +4912,11 @@ section "The harness reinstalls into a worktree (client-a WFI-191)"
 # checkout — the documented `lib=$(cat …)` recovery came back empty and its
 # `[ -n "$lib" ] &&` guard made it a silent no-op that exited 0.
 # (2) In a worktree `.git` is a FILE, so `cp … .git/hooks/post-commit` failed
-# with "Not a directory" and install.sh died BEFORE writing wf-exec.sh.
+# with "Not a directory" and install.sh died BEFORE writing lv-exec.sh.
 git checkout -q develop 2>/dev/null || true
 printf '%s\n' "$LIB_ROOT" > .claude/workflow-source
 # A RELEASE worktree, as in the report — not feature/*. A feature worktree is
-# meant to carry wf-exec.sh alone and resolve the rest from the main checkout;
+# meant to carry lv-exec.sh alone and resolve the rest from the main checkout;
 # a release-verify worktree needs the whole harness.
 git worktree add -q -b release-wfi191 "$TEST_DIR/wt-191" develop 2>/dev/null
 # install.sh stands down without a config, which would mask the failure this
@@ -4930,9 +4930,9 @@ assert_eq "and .git there is a file, not a directory" "true" \
   "$([ -f "$TEST_DIR/wt-191/.git" ] && [ ! -d "$TEST_DIR/wt-191/.git" ] && echo true || echo false)"
 
 assert_ok "install.sh completes against a worktree" \
-  env WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$TEST_DIR/wt-191"
+  env LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$TEST_DIR/wt-191"
 assert_eq "the dispatcher was written, not skipped by an early death" "true" \
-  "$([ -x "$TEST_DIR/wt-191/scripts/wf-exec.sh" ] && echo true || echo false)"
+  "$([ -x "$TEST_DIR/wt-191/scripts/lv-exec.sh" ] && echo true || echo false)"
 assert_eq "and so was the version map it resolves through" "true" \
   "$([ -f "$TEST_DIR/wt-191/scripts/version-map.txt" ] && echo true || echo false)"
 assert_eq "the post-commit hook went to the COMMON git dir" "true" \
@@ -4941,11 +4941,11 @@ assert_eq "the post-commit hook went to the COMMON git dir" "true" \
 # The restore reads the library path out of the main worktree when its own
 # checkout does not have it.
 rm -rf "$TEST_DIR/wt-191/scripts" "$TEST_DIR/wt-191/.claude/workflow-source"
-restore_out=$(env -C "$TEST_DIR/wt-191" "$SCRIPT_DIR/wf-harness-restore.sh" 2>&1 || true)
-assert_eq "wf-harness-restore finds the library via the main worktree" "true" \
+restore_out=$(env -C "$TEST_DIR/wt-191" "$SCRIPT_DIR/lv-harness-restore.sh" 2>&1 || true)
+assert_eq "lv-harness-restore finds the library via the main worktree" "true" \
   "$(printf '%s' "$restore_out" | grep -q 'main worktree' && echo true || echo false)"
 assert_eq "and the harness is back" "true" \
-  "$([ -x "$TEST_DIR/wt-191/scripts/wf-exec.sh" ] && echo true || echo false)"
+  "$([ -x "$TEST_DIR/wt-191/scripts/lv-exec.sh" ] && echo true || echo false)"
 
 git worktree remove --force "$TEST_DIR/wt-191" >/dev/null 2>&1 || true
 git branch -q -D release-wfi191 2>/dev/null || true
@@ -4966,25 +4966,25 @@ git worktree add -q -b feature/PLN-224-empty-branch-column "$TEST_DIR/wt-224" de
 
 assert_eq "the Branch column really is empty" "—" \
   "$(grep '^| PLN-224 |' plans/REGISTRY.md | awk -F'|' '{print $6}' | xargs)"
-impl=$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null | grep 'PLN-224-empty-branch-column' || true)
+impl=$("$SCRIPT_DIR/lv-list-implementable.sh" 2>/dev/null | grep 'PLN-224-empty-branch-column' || true)
 assert_eq "a ready plan with a live worktree is not 'new'" "false" \
   "$(printf '%s' "$impl" | grep -q '^new' && echo true || echo false)"
 assert_eq "it is a resume or a fix" "true" \
   "$(printf '%s' "$impl" | grep -qE '^(resume|fix)' && echo true || echo false)"
 
 # And the drift itself gets said out loud, rather than only worked around.
-audit=$("$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+audit=$("$SCRIPT_DIR/lv-registry-audit.sh" 2>&1 || true)
 assert_eq "the audit names the plan whose column does not match its worktree" "true" \
   "$(printf '%s' "$audit" | grep -q 'BRANCH DRIFT  PLN-224' && echo true || echo false)"
 
 # A populated column still works — the convention is a fallback, not a
 # replacement. WFI-221 reported a correct column misclassified too.
-"$SCRIPT_DIR/wf-registry-update.sh" PLN-224 ready ready feature/PLN-224-empty-branch-column >/dev/null 2>&1
-impl=$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null | grep 'PLN-224-empty-branch-column' || true)
+"$SCRIPT_DIR/lv-registry-update.sh" PLN-224 ready ready feature/PLN-224-empty-branch-column >/dev/null 2>&1
+impl=$("$SCRIPT_DIR/lv-list-implementable.sh" 2>/dev/null | grep 'PLN-224-empty-branch-column' || true)
 assert_eq "a populated column classifies the same way" "true" \
   "$(printf '%s' "$impl" | grep -qE '^(resume|fix)' && echo true || echo false)"
 assert_eq "and the audit is quiet about it now" "false" \
-  "$("$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 | grep -q 'BRANCH DRIFT  PLN-224' && echo true || echo false)"
+  "$("$SCRIPT_DIR/lv-registry-audit.sh" 2>&1 | grep -q 'BRANCH DRIFT  PLN-224' && echo true || echo false)"
 
 git worktree remove --force "$TEST_DIR/wt-224" >/dev/null 2>&1 || true
 git branch -q -D feature/PLN-224-empty-branch-column 2>/dev/null || true
@@ -5002,7 +5002,7 @@ registry_add_row PLN-225 change-apply-recognizes-applied-by-content complete
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-225" >/dev/null 2>&1
 git worktree add -q -b feature/PLN-225-apply-by-content "$TEST_DIR/wt-225" develop 2>/dev/null
 
-audit=$("$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+audit=$("$SCRIPT_DIR/lv-registry-audit.sh" 2>&1 || true)
 assert_eq "a worktree on a shortened slug is still found" "true" \
   "$(printf '%s' "$audit" | grep -q 'PLN-225' && echo true || echo false)"
 assert_eq "and a terminal plan is told to drain it, not to set a column" "true" \
@@ -5010,12 +5010,12 @@ assert_eq "and a terminal plan is told to drain it, not to set a column" "true" 
 assert_eq "the remedy is a worktree removal" "true" \
   "$(printf '%s' "$audit" | grep -q 'git worktree remove' && echo true || echo false)"
 assert_eq "and it does NOT advise writing a branch into a complete row" "false" \
-  "$(printf '%s' "$audit" | grep -q 'wf-registry-update.sh PLN-225 complete complete feature/' && echo true || echo false)"
+  "$(printf '%s' "$audit" | grep -q 'lv-registry-update.sh PLN-225 complete complete feature/' && echo true || echo false)"
 
 git worktree remove --force "$TEST_DIR/wt-225" >/dev/null 2>&1 || true
 git branch -q -D feature/PLN-225-apply-by-content 2>/dev/null || true
 assert_eq "drained, the audit is quiet about it" "false" \
-  "$("$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 | grep -q 'PLN-225' && echo true || echo false)"
+  "$("$SCRIPT_DIR/lv-registry-audit.sh" 2>&1 | grep -q 'PLN-225' && echo true || echo false)"
 
 # A Branch column that is neither an em-dash nor a real ref is a bad cell
 # whatever the filesystem holds — checked with no worktree in sight, which is
@@ -5025,7 +5025,7 @@ awk -F'|' -v OFS='|' '
   trim($2) == "PLN-225" { $6 = " BUG-234-235 shipped alongside " }
   { print }
 ' plans/REGISTRY.md > plans/REGISTRY.tmp && mv plans/REGISTRY.tmp plans/REGISTRY.md
-audit=$("$SCRIPT_DIR/wf-registry-audit.sh" 2>&1 || true)
+audit=$("$SCRIPT_DIR/lv-registry-audit.sh" 2>&1 || true)
 assert_eq "prose in the Branch column is reported with no worktree present" "true" \
   "$(printf '%s' "$audit" | grep -q 'BAD BRANCH    PLN-225' && echo true || echo false)"
 assert_eq "and a terminal plan is told the em-dash is the convention" "true" \
@@ -5037,34 +5037,34 @@ section "An unattended worker may not answer its own gate (client-a WFI-227)"
 # A worker closed PLN-250's spec-approval gate on its own recognisance, writing
 # a resolution that admitted no human had approved it, and the daemon had an
 # implementer running three minutes before the human answered the same question
-# in /wf-attend. wf-gate-close.sh closed whatever it was told to close.
+# in /lv-attend. lv-gate-close.sh closed whatever it was told to close.
 cd "$TEST_DIR/main" || exit 1
 registry_add_row PLN-227 self-approval draft
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-227" >/dev/null 2>&1
 
 open_227() {
-  "$SCRIPT_DIR/wf-gate-open.sh" PLN-227 spec-approval "Approve this plan?" >/dev/null 2>&1
+  "$SCRIPT_DIR/lv-gate-open.sh" PLN-227 spec-approval "Approve this plan?" >/dev/null 2>&1
 }
 gate_227() { ls .claude/orchestrator/gates/PLN-227.gate >/dev/null 2>&1 && echo open || echo closed; }
 
 open_227
-out=$(env WF_UNATTENDED=1 "$SCRIPT_DIR/wf-gate-close.sh" PLN-227 "approved under a standing instruction" 2>&1; echo "rc=$?")
+out=$(env LV_UNATTENDED=1 "$SCRIPT_DIR/lv-gate-close.sh" PLN-227 "approved under a standing instruction" 2>&1; echo "rc=$?")
 assert_eq "an unattended close with no --basis is refused" "true" \
   "$(printf '%s' "$out" | grep -q 'rc=4' && echo true || echo false)"
 assert_eq "and the gate is still open, so the human still owes the answer" "open" "$(gate_227)"
 
-out=$(env WF_UNATTENDED=1 "$SCRIPT_DIR/wf-gate-close.sh" PLN-227 "approved" --basis "process-them-all" 2>&1; echo "rc=$?")
+out=$(env LV_UNATTENDED=1 "$SCRIPT_DIR/lv-gate-close.sh" PLN-227 "approved" --basis "process-them-all" 2>&1; echo "rc=$?")
 assert_eq "a basis outside the vocabulary is refused" "true" \
   "$(printf '%s' "$out" | grep -q 'rc=4' && echo true || echo false)"
 
 # `autonomy` is the exact move WFI-227 invented: spec-approval is on
-# wf-autonomy.sh's never-grantable list, so there is no action to ask about.
-out=$(env WF_UNATTENDED=1 "$SCRIPT_DIR/wf-gate-close.sh" PLN-227 "approved" --basis autonomy 2>&1; echo "rc=$?")
+# lv-autonomy.sh's never-grantable list, so there is no action to ask about.
+out=$(env LV_UNATTENDED=1 "$SCRIPT_DIR/lv-gate-close.sh" PLN-227 "approved" --basis autonomy 2>&1; echo "rc=$?")
 assert_eq "--basis autonomy on a never-grantable gate is refused" "true" \
   "$(printf '%s' "$out" | grep -q 'rc=4' && echo true || echo false)"
 
 # A human reference has to point at something. An invented sha does not.
-out=$(env WF_UNATTENDED=1 "$SCRIPT_DIR/wf-gate-close.sh" PLN-227 "approved by Marc" \
+out=$(env LV_UNATTENDED=1 "$SCRIPT_DIR/lv-gate-close.sh" PLN-227 "approved by Marc" \
         --basis "human:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" 2>&1; echo "rc=$?")
 assert_eq "--basis human:<sha> that resolves to nothing is refused" "true" \
   "$(printf '%s' "$out" | grep -q 'rc=4' && echo true || echo false)"
@@ -5073,7 +5073,7 @@ assert_eq "the gate survived every refusal" "open" "$(gate_227)"
 # And the legitimate back-fill path still works: a real commit as the evidence.
 real_sha=$(git rev-parse HEAD)
 assert_ok "--basis human:<real sha> closes it" \
-  env WF_UNATTENDED=1 "$SCRIPT_DIR/wf-gate-close.sh" PLN-227 "approved by Marc in $real_sha" --basis "human:$real_sha"
+  env LV_UNATTENDED=1 "$SCRIPT_DIR/lv-gate-close.sh" PLN-227 "approved by Marc in $real_sha" --basis "human:$real_sha"
 assert_eq "the gate is closed" "closed" "$(gate_227)"
 assert_eq "and the ledger records WHAT answered it, not just the prose" "true" \
   "$(grep -q "GATE_RESOLVED_BASIS='human:$real_sha'" \
@@ -5084,9 +5084,9 @@ assert_eq "and the ledger records WHAT answered it, not just the prose" "true" \
 # PLN-227 is refused now that an answer of record covers this revision.
 registry_add_row PLN-229 attended-close draft
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-229" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-229 spec-approval "Approve this plan?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-229 spec-approval "Approve this plan?" >/dev/null 2>&1
 assert_ok "an attended close needs no basis" \
-  "$SCRIPT_DIR/wf-gate-close.sh" PLN-229 "approved"
+  "$SCRIPT_DIR/lv-gate-close.sh" PLN-229 "approved"
 assert_eq "and is recorded as attended" "true" \
   "$(grep -q "GATE_RESOLVED_BASIS='human (attended)'" \
        .claude/orchestrator/gates/resolved/PLN-229.spec-approval && echo true || echo false)"
@@ -5103,9 +5103,9 @@ section "A gate question keeps its apostrophes (client-a WFI-214)"
 registry_add_row PLN-228 quoted-question draft
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-228" >/dev/null 2>&1
 
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-228 prior-work \
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-228 prior-work \
   "08c3a136 'bug(BUG-214): root cause is a stale relay' — accept it?" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-228 "accepted" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-228 "accepted" >/dev/null 2>&1
 
 assert_eq "the archived question carries no shell escaping" "false" \
   "$(grep -q "'\\\\''" plans/PLN-228-quoted-question/findings.md && echo true || echo false)"
@@ -5127,11 +5127,11 @@ piped_goal='Make the guarded path the easy one so `tool change push|apply|status
 printf '# PLN-218\n\n## Goal\n%s\n\n## Steps\n' "$piped_goal" > plans/PLN-218-piped-goal/plan.md
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-218" >/dev/null 2>&1
 
-"$SCRIPT_DIR/wf-goal-push.sh" PLN-218 "Fix the flicker (show-stopper)" "Verify: 2 findings" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-goal-push.sh" PLN-218 "Fix the flicker (show-stopper)" "Verify: 2 findings" >/dev/null 2>&1
 assert_eq "the archived row escapes its pipes, so the table stays four columns" "4" \
   "$(grep -m1 '^| 2' plans/PLN-218-piped-goal/plan.md | sed 's/\\|//g' | awk -F'|' '{print NF-2}')"
 
-out=$("$SCRIPT_DIR/wf-goal-pop.sh" PLN-218 2>&1 || true)
+out=$("$SCRIPT_DIR/lv-goal-pop.sh" PLN-218 2>&1 || true)
 assert_eq "the pop restores the whole goal, pipes and all" "$piped_goal" \
   "$(awk '/^## Goal/{g=1;next} g&&NF{print;exit}' plans/PLN-218-piped-goal/plan.md)"
 assert_eq "and says so, rather than reporting a fragment as success" "true" \
@@ -5147,7 +5147,7 @@ registry_add_row PLN-230 legacy-piped-goal draft
 } > plans/PLN-230-legacy-piped-goal/plan.md
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-230" >/dev/null 2>&1
 
-"$SCRIPT_DIR/wf-goal-pop.sh" PLN-230 >/dev/null 2>&1
+"$SCRIPT_DIR/lv-goal-pop.sh" PLN-230 >/dev/null 2>&1
 assert_eq "an unescaped legacy row pops whole too" "$piped_goal" \
   "$(awk '/^## Goal/{g=1;next} g&&NF{print;exit}' plans/PLN-230-legacy-piped-goal/plan.md)"
 
@@ -5155,7 +5155,7 @@ assert_eq "an unescaped legacy row pops whole too" "$piped_goal" \
 section "A tick lands even when progress.md has no Steps (client-a WFI-217)"
 
 # PLN-249's progress.md was written with only a `## Log`. Every fallback in
-# wf-progress-tick.sh — including the append-if-missing one WFI-111 added —
+# lv-progress-tick.sh — including the append-if-missing one WFI-111 added —
 # lives inside an awk rule that fires on `^## Steps`, so none of them ran. The
 # log line appeared, the checklist reported 0/0, and the tick landed nowhere:
 # on the one signal the orchestrator reads to tell a resume from a stall.
@@ -5163,7 +5163,7 @@ registry_add_row PLN-217 no-steps-section active
 printf '# Progress — PLN-217\n\n## Log\n' > plans/PLN-217-no-steps-section/progress.md
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-217" >/dev/null 2>&1
 
-out=$("$SCRIPT_DIR/wf-progress-tick.sh" PLN-217 1 "wire the export command" 2>&1 || true)
+out=$("$SCRIPT_DIR/lv-progress-tick.sh" PLN-217 1 "wire the export command" 2>&1 || true)
 assert_eq "the missing section is reported, not absorbed" "true" \
   "$(printf '%s' "$out" | grep -q "no '## Steps' section" && echo true || echo false)"
 assert_eq "a Steps section now exists" "true" \
@@ -5171,16 +5171,16 @@ assert_eq "a Steps section now exists" "true" \
 assert_eq "the tick is ON the checklist, not only in the log" "true" \
   "$(grep -q '^- \[x\] Step 1: wire the export command' plans/PLN-217-no-steps-section/progress.md && echo true || echo false)"
 assert_eq "and the count the orchestrator reads is no longer 0/0" "1/1" \
-  "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-217 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-217 2>/dev/null)"
 assert_eq "the log line is still written" "true" \
   "$(grep -q 'Step 1 — done' plans/PLN-217-no-steps-section/progress.md && echo true || echo false)"
 
 # A second tick goes to the same section rather than creating another.
-"$SCRIPT_DIR/wf-progress-tick.sh" PLN-217 2 "second step" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-progress-tick.sh" PLN-217 2 "second step" >/dev/null 2>&1
 assert_eq "exactly one Steps section after a second tick" "1" \
   "$(grep -c '^## Steps' plans/PLN-217-no-steps-section/progress.md | xargs)"
 assert_eq "and both steps are on it" "2/2" \
-  "$("$SCRIPT_DIR/wf-progress-count.sh" PLN-217 2>/dev/null)"
+  "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-217 2>/dev/null)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "One number, two artifacts (client-a WFI-215)"
@@ -5198,18 +5198,18 @@ printf '# BRF-215\n\nAn unrelated brief that happens to share the number.\n' \
   > plans/briefs/BRF-215-unrelated-brief.md
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-215 and BRF-215" >/dev/null 2>&1
 
-claim_out=$("$SCRIPT_DIR/wf-claim.sh" BRF-215 --if-free 2>&1 || true)
+claim_out=$("$SCRIPT_DIR/lv-claim.sh" BRF-215 --if-free 2>&1 || true)
 assert_eq "claiming a colliding number says so" "true" \
   "$(printf '%s' "$claim_out" | grep -q 'names more than one thing' && echo true || echo false)"
 
-list_out=$("$SCRIPT_DIR/wf-claim.sh" --list 2>&1 || true)
+list_out=$("$SCRIPT_DIR/lv-claim.sh" --list 2>&1 || true)
 assert_eq "--list shows what was claimed, not only what the number resolves to" "true" \
   "$(printf '%s' "$list_out" | grep -q 'BRF-215 →' && echo true || echo false)"
-"$SCRIPT_DIR/wf-unclaim.sh" BRF-215 >/dev/null 2>&1 || true
+"$SCRIPT_DIR/lv-unclaim.sh" BRF-215 >/dev/null 2>&1 || true
 
 # The root cause: a plan inheriting a number checked only for other PLANs, so
 # a live BRF or BUG holding it was invisible and the inherit went ahead.
-eval "$("$SCRIPT_DIR/wf-plan-id.sh" BUG-215 --peek 2>/dev/null)"
+eval "$("$SCRIPT_DIR/lv-plan-id.sh" BUG-215 --peek 2>/dev/null)"
 assert_eq "an inherit blocked by a brief does not take the number" "false" "$PLAN_ID_INHERITED"
 assert_eq "and the brief is named as what holds it" "true" \
   "$(printf '%s' "$PLAN_ID_COLLISION" | grep -q 'BRF-215' && echo true || echo false)"
@@ -5219,7 +5219,7 @@ assert_eq "and the brief is named as what holds it" "true" \
 printf '# BRF-216\n\nA brief whose number nothing else uses.\n' \
   > plans/briefs/BRF-216-free-number.md
 git add -A >/dev/null 2>&1 && git commit -qm "add BRF-216" >/dev/null 2>&1
-eval "$("$SCRIPT_DIR/wf-plan-id.sh" BRF-216 --peek 2>/dev/null)"
+eval "$("$SCRIPT_DIR/lv-plan-id.sh" BRF-216 --peek 2>/dev/null)"
 assert_eq "a free number is still inherited" "true" "$PLAN_ID_INHERITED"
 assert_eq "and it is the source's own" "PLN-216" "$PLAN_ID"
 
@@ -5233,8 +5233,8 @@ section "A scope too big for one call can be run in pieces (client-a WFI-228)"
 # reported counts scraped off a live progress line as a result.
 SCOPE3="$TEST_DIR/split"
 mkdir -p "$SCOPE3/scripts" "$SCOPE3/plans/PLN-228-split-scope"
-cp "$SCRIPT_DIR/wf-test-scope.sh" "$SCRIPT_DIR/wf-plan-info.sh" \
-   "$SCRIPT_DIR/wf-orch-lib.sh" "$SCOPE3/scripts/"
+cp "$SCRIPT_DIR/lv-test-scope.sh" "$SCRIPT_DIR/lv-plan-info.sh" \
+   "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$SCOPE3/scripts/"
 printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-228 | split-scope | verify | — | — | 2026-09-01 | %s | — | — |\n' \
   "${SCRIPT_FOLDER#v}" > "$SCOPE3/plans/REGISTRY.md"
 printf '## Goal\nA plan whose scope names two whole assemblies.\n\n## Test Scope\n- unit\n- vectors\n' \
@@ -5244,11 +5244,11 @@ if command -v yq >/dev/null 2>&1; then
   printf 'testFilterStyle: mtp\ntestScopes:\n  unit:\n    - Tracker.Cli.Tests\n  vectors:\n    - Tracker.Core.Tests\n' \
     > "$SCOPE3/claude-workflow.yml"
 
-  combined=$(cd "$SCOPE3" && ./scripts/wf-test-scope.sh PLN-228-split-scope --args 2>/dev/null || true)
+  combined=$(cd "$SCOPE3" && ./scripts/lv-test-scope.sh PLN-228-split-scope --args 2>/dev/null || true)
   assert_eq "--args still ORs the values into one run" "1" \
     "$(printf '%s\n' "$combined" | grep -c . | xargs)"
 
-  split=$(cd "$SCOPE3" && ./scripts/wf-test-scope.sh PLN-228-split-scope --split 2>/dev/null || true)
+  split=$(cd "$SCOPE3" && ./scripts/lv-test-scope.sh PLN-228-split-scope --split 2>/dev/null || true)
   assert_eq "--split emits one runnable line per filter value" "2" \
     "$(printf '%s\n' "$split" | grep -c . | xargs)"
   assert_eq "each line names exactly one class filter" "true" \
@@ -5263,7 +5263,7 @@ if command -v yq >/dev/null 2>&1; then
   # vstest splits the same way, one flag-plus-value per line and no MTP ignore.
   printf 'testFilterStyle: vstest\ntestScopes:\n  unit:\n    - Tracker.Cli.Tests\n  vectors:\n    - Tracker.Core.Tests\n' \
     > "$SCOPE3/claude-workflow.yml"
-  vsplit=$(cd "$SCOPE3" && ./scripts/wf-test-scope.sh PLN-228-split-scope --split 2>/dev/null || true)
+  vsplit=$(cd "$SCOPE3" && ./scripts/lv-test-scope.sh PLN-228-split-scope --split 2>/dev/null || true)
   assert_eq "vstest --split is one flag-plus-value per line" "2" \
     "$(printf '%s\n' "$vsplit" | grep -c "^--filter 'FullyQualifiedName~" | xargs)"
   assert_eq "and never carries the MTP exit-code ignore" "false" \
@@ -5271,17 +5271,17 @@ if command -v yq >/dev/null 2>&1; then
 
   # An unknown option is refused rather than silently read as --args.
   scope_rc=0
-  (cd "$SCOPE3" && ./scripts/wf-test-scope.sh PLN-228-split-scope --splitt) >/dev/null 2>&1 || scope_rc=$?
+  (cd "$SCOPE3" && ./scripts/lv-test-scope.sh PLN-228-split-scope --splitt) >/dev/null 2>&1 || scope_rc=$?
   assert_eq "a mistyped option is refused, not guessed at" "2" "$scope_rc"
 fi
 
-assert_eq "wf-verify tells a worker how to run a scope that will not fit" "true" \
-  "$(grep -q 'wf-test-scope.sh PLN-NNN-<slug> --split' "$LIB_ROOT/skills/wf-verify/SKILL.md" && echo true || echo false)"
+assert_eq "lv-verify tells a worker how to run a scope that will not fit" "true" \
+  "$(grep -q 'lv-test-scope.sh PLN-NNN-<slug> --split' "$LIB_ROOT/skills/lv-verify/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A failed E2E run does not leave release looking promotable (client-b WFI-007, coordinator WFI-002)"
 
-# /wf-release merged develop into LOCAL release, E2E failed 1/117, and the run
+# /lv-release merged develop into LOCAL release, E2E failed 1/117, and the run
 # exited without resetting it while reporting "release branch was NOT
 # advanced" — false for the local ref. 71s later the daemon counted 30 commits
 # on release..main and dispatched a deploy worker, which opened a
@@ -5289,8 +5289,8 @@ section "A failed E2E run does not leave release looking promotable (client-b WF
 REL="$TEST_DIR/relroll"
 ORIGIN="$TEST_DIR/relroll-origin"
 mkdir -p "$REL/scripts"
-cp "$SCRIPT_DIR/wf-release-rollback.sh" "$SCRIPT_DIR/wf-list-deploy.sh" \
-   "$SCRIPT_DIR/wf-list-release.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$REL/scripts/"
+cp "$SCRIPT_DIR/lv-release-rollback.sh" "$SCRIPT_DIR/lv-list-deploy.sh" \
+   "$SCRIPT_DIR/lv-list-release.sh" "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$REL/scripts/"
 (
   git init -q --bare "$ORIGIN"
   cd "$REL" && git init -qb develop . && git config user.email t@t && git config user.name t
@@ -5305,22 +5305,22 @@ cp "$SCRIPT_DIR/wf-release-rollback.sh" "$SCRIPT_DIR/wf-list-deploy.sh" \
 ) >/dev/null 2>&1
 
 assert_eq "an unpushed local release is NOT deployable" "" \
-  "$(cd "$REL" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+  "$(cd "$REL" && ./scripts/lv-list-deploy.sh 2>/dev/null)"
 
-roll=$(cd "$REL" && ./scripts/wf-release-rollback.sh 2>&1 || true)
+roll=$(cd "$REL" && ./scripts/lv-release-rollback.sh 2>&1 || true)
 assert_eq "the rollback says where the ref actually went" "true" \
   "$(printf '%s' "$roll" | grep -q 'rolled back to origin/release' && echo true || echo false)"
 assert_eq "and local release is back at origin/release" "true" \
   "$(cd "$REL" && [ "$(git rev-parse release)" = "$(git rev-parse origin/release)" ] && echo true || echo false)"
 assert_eq "a second run is a no-op, not an error" "true" \
-  "$(cd "$REL" && ./scripts/wf-release-rollback.sh 2>&1 | grep -q 'nothing to roll back' && echo true || echo false)"
+  "$(cd "$REL" && ./scripts/lv-release-rollback.sh 2>&1 | grep -q 'nothing to roll back' && echo true || echo false)"
 
 # The pushed case is the one that IS deployable — the rollback must not have
 # broken the normal path.
 (cd "$REL" && git checkout -q release && git merge -q develop --no-edit \
   && git push -q origin release && git fetch -q origin && git checkout -q develop) >/dev/null 2>&1
 assert_eq "a pushed release still dispatches a deploy" "DEPLOY" \
-  "$(cd "$REL" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+  "$(cd "$REL" && ./scripts/lv-list-deploy.sh 2>/dev/null)"
 
 # Diverged refs are not this script's failure to undo — it must refuse rather
 # than --hard away commits nobody can name. Both sides move: a commit only the
@@ -5335,18 +5335,18 @@ assert_eq "a pushed release still dispatches a deploy" "DEPLOY" \
   git fetch -q origin && git checkout -q develop
 ) >/dev/null 2>&1
 div_rc=0
-(cd "$REL" && ./scripts/wf-release-rollback.sh) >/dev/null 2>&1 || div_rc=$?
+(cd "$REL" && ./scripts/lv-release-rollback.sh) >/dev/null 2>&1 || div_rc=$?
 assert_eq "diverged refs are refused, not reset" "1" "$div_rc"
 
-assert_eq "/wf-release rolls the local merge back on failure" "true" \
-  "$(grep -q 'wf-release-rollback.sh' "$LIB_ROOT/skills/wf-release/SKILL.md" && echo true || echo false)"
+assert_eq "/lv-release rolls the local merge back on failure" "true" \
+  "$(grep -q 'lv-release-rollback.sh' "$LIB_ROOT/skills/lv-release/SKILL.md" && echo true || echo false)"
 assert_eq "and never reports 'NOT advanced' from the absence of a push" "false" \
-  "$(grep -q 'release branch was NOT advanced' "$LIB_ROOT/skills/wf-release/SKILL.md" && echo true || echo false)"
-# The comparison moved into wf-release-sync.sh, which guards BOTH directions
-# (client-a WFI-258); what must survive is that /wf-deploy stops on an
+  "$(grep -q 'release branch was NOT advanced' "$LIB_ROOT/skills/lv-release/SKILL.md" && echo true || echo false)"
+# The comparison moved into lv-release-sync.sh, which guards BOTH directions
+# (client-a WFI-258); what must survive is that /lv-deploy stops on an
 # unpushed local ref rather than promoting it.
-assert_eq "/wf-deploy refuses a release that was never pushed" "true" \
-  "$(grep -q 'wf-release-rollback.sh' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+assert_eq "/lv-deploy refuses a release that was never pushed" "true" \
+  "$(grep -q 'lv-release-rollback.sh' "$LIB_ROOT/skills/lv-deploy/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A half-finished deploy is still a deploy (client-a WFI-265)"
@@ -5360,8 +5360,8 @@ section "A half-finished deploy is still a deploy (client-a WFI-265)"
 HALF="$TEST_DIR/half-deploy"
 HALF_ORIGIN="$TEST_DIR/half-deploy-origin"
 mkdir -p "$HALF/scripts"
-cp "$SCRIPT_DIR/wf-list-deploy.sh" "$SCRIPT_DIR/wf-deploy-guard.sh" \
-   "$SCRIPT_DIR/wf-orch-lib.sh" "$HALF/scripts/"
+cp "$SCRIPT_DIR/lv-list-deploy.sh" "$SCRIPT_DIR/lv-deploy-guard.sh" \
+   "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$HALF/scripts/"
 (
   git init -q --bare "$HALF_ORIGIN"
   cd "$HALF" && git init -qb develop . && git config user.email t@t && git config user.name t
@@ -5376,28 +5376,28 @@ cp "$SCRIPT_DIR/wf-list-deploy.sh" "$SCRIPT_DIR/wf-deploy-guard.sh" \
 ) >/dev/null 2>&1
 
 assert_eq "a pushed release is deployable, as before" "DEPLOY" \
-  "$(cd "$HALF" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+  "$(cd "$HALF" && ./scripts/lv-list-deploy.sh 2>/dev/null)"
 
 # Now the dead worker: merge into local main, arm the guard, never push.
 (cd "$HALF" && git checkout -q main && git merge -q release --no-edit && git checkout -q develop) >/dev/null 2>&1
 assert_eq "the merge did put local main ahead of release" "" \
   "$(cd "$HALF" && git rev-list main..release -1 2>/dev/null)"
 assert_eq "and the promotion is still a candidate, because it never reached origin" "DEPLOY" \
-  "$(cd "$HALF" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+  "$(cd "$HALF" && ./scripts/lv-list-deploy.sh 2>/dev/null)"
 
 # The same blindness reached through the guard: everything pushed, but a marker
 # says the tip is provisional. An armed marker means unverified by definition.
 (cd "$HALF" && git push -q origin main && git fetch -q origin) >/dev/null 2>&1
 assert_eq "a fully pushed, unarmed tree is not a candidate" "" \
-  "$(cd "$HALF" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+  "$(cd "$HALF" && ./scripts/lv-list-deploy.sh 2>/dev/null)"
 # --arm only runs in the worktree checked out to main, which is where the
 # worker that arms it is standing.
-(cd "$HALF" && git checkout -q main && ./scripts/wf-deploy-guard.sh --arm && git checkout -q develop) >/dev/null 2>&1
+(cd "$HALF" && git checkout -q main && ./scripts/lv-deploy-guard.sh --arm && git checkout -q develop) >/dev/null 2>&1
 assert_eq "an armed guard makes it one again" "DEPLOY" \
-  "$(cd "$HALF" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
-(cd "$HALF" && ./scripts/wf-deploy-guard.sh --disarm) >/dev/null 2>&1
+  "$(cd "$HALF" && ./scripts/lv-list-deploy.sh 2>/dev/null)"
+(cd "$HALF" && ./scripts/lv-deploy-guard.sh --disarm) >/dev/null 2>&1
 assert_eq "and disarming settles it" "" \
-  "$(cd "$HALF" && ./scripts/wf-list-deploy.sh 2>/dev/null)"
+  "$(cd "$HALF" && ./scripts/lv-list-deploy.sh 2>/dev/null)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A suite nobody stayed for (client-a WFI-266)"
@@ -5406,9 +5406,9 @@ section "A suite nobody stayed for (client-a WFI-266)"
 # and exited. The second one's suite PASSED — 3341 of 3342, 0 failed — and
 # nothing was pushed. A green run and a never-run run became indistinguishable,
 # and local release sat 4 commits ahead of origin/release, which downstream
-# reads as "commits /wf-release did not push, therefore commits that did not
+# reads as "commits /lv-release did not push, therefore commits that did not
 # pass". Exactly wrong, and nothing could tell the two apart.
-cp "$SCRIPT_DIR/wf-list-release.sh" "$SCRIPT_DIR/wf-suite-receipts.sh" "$HALF/scripts/"
+cp "$SCRIPT_DIR/lv-list-release.sh" "$SCRIPT_DIR/lv-suite-receipts.sh" "$HALF/scripts/"
 HALF_LOGS="$HALF/.claude/orchestrator/logs"
 mkdir -p "$HALF_LOGS"
 HALF_TIP=$(cd "$HALF" && git rev-parse HEAD)
@@ -5422,23 +5422,23 @@ SUITE_ENDED=2026-09-21T08:55:15Z
 RECEIPT
 : > "$HALF_LOGS/suite-release-20260921-083248.log"
 
-recpt=$(cd "$HALF" && ./scripts/wf-suite-receipts.sh --for HEAD 2>/dev/null || true)
+recpt=$(cd "$HALF" && ./scripts/lv-suite-receipts.sh --for HEAD 2>/dev/null || true)
 assert_contains "a green run on this tip is found rather than spent again" "SUITE_RESULT=pass" "$recpt"
 assert_contains "and it says nobody ever collected the verdict" "SUITE_COLLECTED=never" "$recpt"
 assert_eq "a pass on this tip exits 0" "0" \
-  "$(cd "$HALF" && ./scripts/wf-suite-receipts.sh --for HEAD >/dev/null 2>&1; echo $?)"
+  "$(cd "$HALF" && ./scripts/lv-suite-receipts.sh --for HEAD >/dev/null 2>&1; echo $?)"
 
 # The tip is what makes a receipt admissible — a pass measures one tree.
 (cd "$HALF" && git checkout -q develop && printf 'later\n' >> app.txt && git add -A && git commit -q -m "feat: PLN-002 more work") >/dev/null 2>&1
 assert_eq "a receipt for a different tree is not a receipt for this one" "2" \
-  "$(cd "$HALF" && ./scripts/wf-suite-receipts.sh --for HEAD >/dev/null 2>&1; echo $?)"
+  "$(cd "$HALF" && ./scripts/lv-suite-receipts.sh --for HEAD >/dev/null 2>&1; echo $?)"
 
-aband=$(cd "$HALF" && ./scripts/wf-suite-receipts.sh --abandoned --min-age 0 2>/dev/null || true)
+aband=$(cd "$HALF" && ./scripts/lv-suite-receipts.sh --abandoned --min-age 0 2>/dev/null || true)
 assert_contains "an uncollected verdict is listed as abandoned" "suite-release-20260921-083248" "$aband"
 printf 'READ_AT=2026-09-21T08:56:00Z\nREAD_BY_PID=1\n' \
   > "$HALF_LOGS/suite-release-20260921-083248.log.status.read"
 assert_eq "one somebody waited for is not" "1" \
-  "$(cd "$HALF" && ./scripts/wf-suite-receipts.sh --abandoned --min-age 0 >/dev/null 2>&1; echo $?)"
+  "$(cd "$HALF" && ./scripts/lv-suite-receipts.sh --abandoned --min-age 0 >/dev/null 2>&1; echo $?)"
 
 # And the state those workers left behind is a candidate again: merged into
 # local release, never pushed. RELEASE candidacy needed develop AHEAD of
@@ -5447,15 +5447,15 @@ assert_eq "one somebody waited for is not" "1" \
 assert_eq "develop is no longer ahead of release" "" \
   "$(cd "$HALF" && git rev-list release..develop -1 2>/dev/null)"
 assert_eq "but an unpushed release is unfinished business" "RELEASE" \
-  "$(cd "$HALF" && ./scripts/wf-list-release.sh 2>/dev/null)"
+  "$(cd "$HALF" && ./scripts/lv-list-release.sh 2>/dev/null)"
 (cd "$HALF" && git push -q origin release && git fetch -q origin) >/dev/null 2>&1
 assert_eq "and a pushed one is finished" "" \
-  "$(cd "$HALF" && ./scripts/wf-list-release.sh 2>/dev/null)"
+  "$(cd "$HALF" && ./scripts/lv-list-release.sh 2>/dev/null)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A correct 'nothing to release' is not a stuck pipeline (client-c WFI-035)"
 
-# Three /wf-release runs each exited "Release is up to date with develop —
+# Three /lv-release runs each exited "Release is up to date with develop —
 # nothing to release", all three correct, and the third opened a `stuck` gate
 # asserting no forward progress. The range held one bookkeeping commit from
 # the prior deploy; the eligibility check dispatched a worker for it every
@@ -5463,65 +5463,65 @@ section "A correct 'nothing to release' is not a stuck pipeline (client-c WFI-03
 # plans/" test — the single blank line it produced matched nothing.
 NOOP="$TEST_DIR/noop-release"
 mkdir -p "$NOOP/scripts"
-cp "$SCRIPT_DIR/wf-list-release.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$NOOP/scripts/"
+cp "$SCRIPT_DIR/lv-list-release.sh" "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$NOOP/scripts/"
 (
   cd "$NOOP" && git init -qb develop . && git config user.email t@t && git config user.name t
   printf 'app\n' > app.txt && git add -A && git commit -q -m "seed"
   git branch -q release
-  # /wf-deploy's promote marker: an empty commit, subject and all.
+  # /lv-deploy's promote marker: an empty commit, subject and all.
   git commit -q --allow-empty -m "release: promote to main"
 ) >/dev/null 2>&1
 
 assert_eq "an empty-diff bookkeeping commit is not releasable work" "" \
-  "$(cd "$NOOP" && ./scripts/wf-list-release.sh 2>/dev/null)"
+  "$(cd "$NOOP" && ./scripts/lv-list-release.sh 2>/dev/null)"
 
 (cd "$NOOP" && printf '| PLN-001 | x | complete |\n' > registry.md && git add -A \
   && git commit -q -m "registry(PLN-001): complete") >/dev/null 2>&1
 assert_eq "nor is a registry transition with real file content" "" \
-  "$(cd "$NOOP" && ./scripts/wf-list-release.sh 2>/dev/null)"
+  "$(cd "$NOOP" && ./scripts/lv-list-release.sh 2>/dev/null)"
 
 (cd "$NOOP" && printf 'feature\n' >> app.txt && git add -A \
   && git commit -q -m "feat: PLN-002 real work") >/dev/null 2>&1
 assert_eq "real work still dispatches a release" "RELEASE" \
-  "$(cd "$NOOP" && ./scripts/wf-list-release.sh 2>/dev/null)"
+  "$(cd "$NOOP" && ./scripts/lv-list-release.sh 2>/dev/null)"
 
 assert_eq "the orchestrator re-checks eligibility before parking RELEASE as stuck" "true" \
-  "$(grep -q 'wf-list-\$role.sh' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+  "$(grep -q 'lv-list-\$role.sh' "$SCRIPT_DIR/lv-orchestrate.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A script's interface is readable without opening it (client-b WFI-006, WFI-008)"
 
-# `wf-commit.sh --help` took --help as the positional <message>, ran a real
+# `lv-commit.sh --help` took --help as the positional <message>, ran a real
 # no-op commit attempt and printed "nothing to commit for the given paths —
-# skipped" with exit 0. wf-bug-close.sh and wf-claim.sh answered "Unknown
+# skipped" with exit 0. lv-bug-close.sh and lv-claim.sh answered "Unknown
 # option" and exited 1 over usage text they define a few lines down. 6 of 98
 # scripts handled the flag.
 HELPD="$TEST_DIR/helpflag"
 mkdir -p "$HELPD/scripts/$SCRIPT_FOLDER" "$HELPD/.claude"
-cp "$LIB_SCRIPTS/wf-exec.sh" "$HELPD/scripts/"
+cp "$LIB_SCRIPTS/lv-exec.sh" "$HELPD/scripts/"
 cp "$LIB_SCRIPTS/version-map.txt" "$HELPD/scripts/"
 cp "$SCRIPT_DIR"/*.sh "$HELPD/scripts/$SCRIPT_FOLDER/"
 printf '%s\n' "${SCRIPT_FOLDER#v}.0" > "$HELPD/.claude/workflow-version"
 (cd "$HELPD" && git init -qb develop . && git config user.email t@t && git config user.name t \
   && git add -A && git commit -q -m seed) >/dev/null 2>&1
 
-help_out=$(cd "$HELPD" && ./scripts/wf-exec.sh wf-commit.sh --help 2>&1 || true)
+help_out=$(cd "$HELPD" && ./scripts/lv-exec.sh lv-commit.sh --help 2>&1 || true)
 assert_eq "--help prints the usage line, not a commit attempt" "true" \
-  "$(printf '%s' "$help_out" | grep -q 'wf-commit.sh <message>' && echo true || echo false)"
+  "$(printf '%s' "$help_out" | grep -q 'lv-commit.sh <message>' && echo true || echo false)"
 # The real property: --help must not run a commit. (The header text quotes the
 # "nothing to commit" line as evidence, so grepping the output for it proves
 # nothing either way.)
 assert_eq "--help creates no commit" "1" \
   "$(cd "$HELPD" && git rev-list --count HEAD | xargs)"
-assert_eq "wf-bug-close.sh --help prints its four close forms" "true" \
-  "$(cd "$HELPD" && ./scripts/wf-exec.sh wf-bug-close.sh --help 2>&1 | grep -q -- '--superseded-by' && echo true || echo false)"
-assert_eq "wf-claim.sh --help prints its options" "true" \
-  "$(cd "$HELPD" && ./scripts/wf-exec.sh wf-claim.sh --help 2>&1 | grep -q -- '--if-free' && echo true || echo false)"
+assert_eq "lv-bug-close.sh --help prints its four close forms" "true" \
+  "$(cd "$HELPD" && ./scripts/lv-exec.sh lv-bug-close.sh --help 2>&1 | grep -q -- '--superseded-by' && echo true || echo false)"
+assert_eq "lv-claim.sh --help prints its options" "true" \
+  "$(cd "$HELPD" && ./scripts/lv-exec.sh lv-claim.sh --help 2>&1 | grep -q -- '--if-free' && echo true || echo false)"
 # A script that parses --help itself still wins.
 assert_eq "a script with its own --help keeps it" "true" \
-  "$(cd "$HELPD" && ./scripts/wf-exec.sh wf-dep-notify.sh --help 2>&1 | grep -q -- '--amends' && echo true || echo false)"
+  "$(cd "$HELPD" && ./scripts/lv-exec.sh lv-dep-notify.sh --help 2>&1 | grep -q -- '--amends' && echo true || echo false)"
 # And an option the script does not know shows the manual instead of one line.
-claim_help=$(cd "$HELPD" && ./scripts/wf-exec.sh wf-claim.sh --status 2>&1 || true)
+claim_help=$(cd "$HELPD" && ./scripts/lv-exec.sh lv-claim.sh --status 2>&1 || true)
 assert_eq "an unknown option answers with the usage it defines" "true" \
   "$(printf '%s' "$claim_help" | grep -q -- '--if-free' && echo true || echo false)"
 
@@ -5534,8 +5534,8 @@ section "A bug folded into a brief is superseded, not duplicated (client-b WFI-0
 # --duplicate-of took no --note to say otherwise.
 SUP="$TEST_DIR/supersede"
 mkdir -p "$SUP/scripts" "$SUP/bugs/open/BUG-007-a-defect"
-cp "$SCRIPT_DIR/wf-bug-close.sh" "$SCRIPT_DIR/wf-bug-link.sh" "$SCRIPT_DIR/wf-commit.sh" \
-   "$SCRIPT_DIR/wf-lock.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$SUP/scripts/"
+cp "$SCRIPT_DIR/lv-bug-close.sh" "$SCRIPT_DIR/lv-bug-link.sh" "$SCRIPT_DIR/lv-commit.sh" \
+   "$SCRIPT_DIR/lv-lock.sh" "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$SUP/scripts/"
 (
   cd "$SUP" && git init -qb develop . && git config user.email t@t && git config user.name t
   printf '# A defect\n\n> **Status:** Open\n> **ID:** BUG-007\n> **Links:** _(none)_\n\n## Notes\n—\n' \
@@ -5543,7 +5543,7 @@ cp "$SCRIPT_DIR/wf-bug-close.sh" "$SCRIPT_DIR/wf-bug-link.sh" "$SCRIPT_DIR/wf-co
   git add -A && git commit -q -m "bug(BUG-007): filed"
 ) >/dev/null 2>&1
 
-(cd "$SUP" && ./scripts/wf-bug-close.sh BUG-007 --superseded-by BRF-010 \
+(cd "$SUP" && ./scripts/lv-bug-close.sh BUG-007 --superseded-by BRF-010 \
    --note "BRF-010 was written from this report") >/dev/null 2>&1
 assert_eq "the close records the real relation" "true" \
   "$(grep -q '^Superseded by: BRF-010' "$SUP/bugs/closed/BUG-007-a-defect/bug.md" && echo true || echo false)"
@@ -5552,16 +5552,16 @@ assert_eq "and --note survives into the record" "true" \
 assert_eq "the commit subject says superseded, not duplicate" "true" \
   "$(cd "$SUP" && git log -1 --format=%s | grep -q 'superseded by BRF-010' && echo true || echo false)"
 assert_eq "closing twice is still success" "true" \
-  "$(cd "$SUP" && ./scripts/wf-bug-close.sh BUG-007 --superseded-by BRF-010 2>&1 | grep -q 'already closed' && echo true || echo false)"
+  "$(cd "$SUP" && ./scripts/lv-bug-close.sh BUG-007 --superseded-by BRF-010 2>&1 | grep -q 'already closed' && echo true || echo false)"
 
-# --note used to be silently dropped for a duplicate — wf-spec passes one.
+# --note used to be silently dropped for a duplicate — lv-spec passes one.
 mkdir -p "$SUP/bugs/open/BUG-009-echo"
 (
   cd "$SUP"
   printf '# An echo\n\n> **Status:** Open\n> **ID:** BUG-009\n> **Links:** _(none)_\n\n## Notes\n—\n' \
     > bugs/open/BUG-009-echo/bug.md
   git add -A && git commit -q -m "bug(BUG-009): filed"
-  ./scripts/wf-bug-close.sh BUG-009 --duplicate-of BUG-007 --note "same identifier, already fixed"
+  ./scripts/lv-bug-close.sh BUG-009 --duplicate-of BUG-007 --note "same identifier, already fixed"
 ) >/dev/null 2>&1
 assert_eq "a duplicate close carries its --note too" "true" \
   "$(grep -q 'same identifier, already fixed' "$SUP/bugs/closed/BUG-009-echo/bug.md" && echo true || echo false)"
@@ -5569,31 +5569,31 @@ assert_eq "a duplicate close carries its --note too" "true" \
 # ═══════════════════════════════════════════════════════════════════════
 section "A correction can link the report it corrects (coordinator WFI-001)"
 
-# coordinator filed client-b BUG-008 to correct BUG-007 before triage. wf-dep-notify.sh
+# coordinator filed client-b BUG-008 to correct BUG-007 before triage. lv-dep-notify.sh
 # had no --links, and no script could amend a filed bug's Links field, so the
 # only route was hand-editing another project's bugs/open/ — the one thing a
 # coordinator is told never to do. client-e BUG-125/123/124 is still unlinked.
-(cd "$SUP" && ./scripts/wf-bug-link.sh BUG-007 "Amended by BUG-008") >/dev/null 2>&1
+(cd "$SUP" && ./scripts/lv-bug-link.sh BUG-007 "Amended by BUG-008") >/dev/null 2>&1
 assert_eq "a filed bug's Links can be amended by script" "true" \
   "$(grep -q '\*\*Links:\*\* Amended by BUG-008' "$SUP/bugs/closed/BUG-007-a-defect/bug.md" && echo true || echo false)"
-(cd "$SUP" && ./scripts/wf-bug-link.sh BUG-007 "See DC-014") >/dev/null 2>&1
+(cd "$SUP" && ./scripts/lv-bug-link.sh BUG-007 "See DC-014") >/dev/null 2>&1
 assert_eq "a second link appends rather than replacing" "true" \
   "$(grep -q '\*\*Links:\*\* Amended by BUG-008; See DC-014' "$SUP/bugs/closed/BUG-007-a-defect/bug.md" && echo true || echo false)"
 assert_eq "re-linking the same text is a no-op, not a duplicate" "1" \
   "$(grep -c 'Amended by BUG-008' "$SUP/bugs/closed/BUG-007-a-defect/bug.md" | xargs)"
 assert_eq "an unknown bug is an error, not a silent success" "1" \
-  "$( (cd "$SUP" && ./scripts/wf-bug-link.sh BUG-404 "x") >/dev/null 2>&1; echo $? )"
+  "$( (cd "$SUP" && ./scripts/lv-bug-link.sh BUG-404 "x") >/dev/null 2>&1; echo $? )"
 
-assert_eq "wf-dep-notify.sh --amends needs --to when targets are plural" "true" \
-  "$(grep -q 'amends names an artifact in one project' "$SCRIPT_DIR/wf-dep-notify.sh" && echo true || echo false)"
+assert_eq "lv-dep-notify.sh --amends needs --to when targets are plural" "true" \
+  "$(grep -q 'amends names an artifact in one project' "$SCRIPT_DIR/lv-dep-notify.sh" && echo true || echo false)"
 assert_eq "both cross-project filers pass --links through" "true" \
-  "$(grep -q 'link_args' "$SCRIPT_DIR/wf-dep-notify.sh" && grep -q 'link_args' "$SCRIPT_DIR/wf-dep-bug.sh" && echo true || echo false)"
+  "$(grep -q 'link_args' "$SCRIPT_DIR/lv-dep-notify.sh" && grep -q 'link_args' "$SCRIPT_DIR/lv-dep-bug.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A deploy no longer refuses a running daemon (coordinator WFI-003, WFI-004)"
 
 # It used to, and had to. install.sh rewrote scripts/v*/ in place while a daemon
-# swept out of it every 60s, re-reading wf-orchestrate.sh and wf-orch-lib.sh as
+# swept out of it every 60s, re-reading lv-orchestrate.sh and lv-orch-lib.sh as
 # it went. The 8.3.0 → 8.6.0 deploy ran with client-b' daemon live and
 # survived, which was luck: a sweep landing inside the write window read a
 # half-replaced script folder, and what that produces is confusing dispatch an
@@ -5618,8 +5618,8 @@ echo "$FAKE_DAEMON" > "$DEPD/client-a/.claude/orchestrator/daemon.pid"
 echo "999999" > "$DEPD/client-b/.claude/orchestrator/daemon.pid"
 
 dep_rc=0
-dep_out=$(WF_DEPLOYMENTS="$DEPD/deployments.txt" WF_SUSPEND_STATE="$DEPD/state" \
-  WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/deploy-all.sh" 2>&1) || dep_rc=$?
+dep_out=$(LV_DEPLOYMENTS="$DEPD/deployments.txt" LV_SUSPEND_STATE="$DEPD/state" \
+  LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/deploy-all.sh" 2>&1) || dep_rc=$?
 assert_eq "a live daemon no longer refuses the deploy" "0" "$dep_rc"
 assert_eq "and the deploy actually ran" "true" \
   "$(printf '%s' "$dep_out" | grep -q 'Local: 2 updated' && echo true || echo false)"
@@ -5637,8 +5637,8 @@ assert_eq "the client took the deploy through the pointer" "true" \
 # --force named the old default. Accepting it as a no-op keeps a habit and a
 # script from breaking; silently treating it as meaningful would not.
 dep_rc=0
-dep_out=$(WF_DEPLOYMENTS="$DEPD/deployments.txt" WF_SUSPEND_STATE="$DEPD/state" \
-  WF_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/deploy-all.sh" --force 2>&1) || dep_rc=$?
+dep_out=$(LV_DEPLOYMENTS="$DEPD/deployments.txt" LV_SUSPEND_STATE="$DEPD/state" \
+  LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/deploy-all.sh" --force 2>&1) || dep_rc=$?
 assert_eq "--force is accepted" "0" "$dep_rc"
 assert_eq "and says it does nothing" "true" \
   "$(printf '%s' "$dep_out" | grep -q 'force does nothing' && echo true || echo false)"
@@ -5654,8 +5654,8 @@ assert_eq "the restore reads a recorded list, not a live scan" "true" \
 assert_eq "and it verifies the restart instead of trusting nohup" "true" \
   "$(grep -q 'restart FAILED, it is NOT running' "$LIB_ROOT/deploy-all.sh" && echo true || echo false)"
 
-# A coordinator generates .claude/orchestrator/ at runtime (wf-issue.sh reaches
-# it through wf-orch-lib.sh) and the ignore rule for it was only appended on the
+# A coordinator generates .claude/orchestrator/ at runtime (lv-issue.sh reaches
+# it through lv-orch-lib.sh) and the ignore rule for it was only appended on the
 # client path. coordinator carried `?? .claude/orchestrator/` in every git status since
 # the day it first filed an issue.
 COORDIG="$TEST_DIR/coord-ignore"
@@ -5686,7 +5686,7 @@ HANGD="$TEST_DIR/deploy-detach"
 mkdir -p "$HANGD/client/.claude/orchestrator" "$HANGD/client/scripts"
 cp "$LIB_ROOT/deploy-all.sh" "$HANGD/deploy-all.sh"
 printf '#!/bin/bash\necho "  (stub install)"\n' > "$HANGD/install.sh"
-cat > "$HANGD/client/scripts/wf-exec.sh" <<'STUB'
+cat > "$HANGD/client/scripts/lv-exec.sh" <<'STUB'
 #!/bin/bash
 # stub dispatcher: only the two calls deploy-all makes of a client.
 pidfile=".claude/orchestrator/daemon.pid"
@@ -5696,7 +5696,7 @@ case "${2:-}" in
   --daemon) echo $$ > "$pidfile"; exec sleep 40 ;;
 esac
 STUB
-chmod +x "$HANGD/client/scripts/wf-exec.sh"
+chmod +x "$HANGD/client/scripts/lv-exec.sh"
 printf '%s\n' "$HANGD/client" > "$HANGD/deployments.txt"
 sleep 40 & HANG_FAKE=$!
 echo "$HANG_FAKE" > "$HANGD/client/.claude/orchestrator/daemon.pid"
@@ -5735,10 +5735,10 @@ section "A brief that cannot become a plan yet leaves the specable list (client-
 # Decided", and the still-open client-d bug, then exited having created nothing.
 BLK="$TEST_DIR/brief-block"
 mkdir -p "$BLK/scripts" "$BLK/plans/briefs"
-cp "$SCRIPT_DIR/wf-brief-block.sh" "$SCRIPT_DIR/wf-list-specable.sh" \
-   "$SCRIPT_DIR/wf-review-status.sh" "$SCRIPT_DIR/wf-plan-id.sh" \
-   "$SCRIPT_DIR/wf-counter-next.sh" "$SCRIPT_DIR/wf-commit.sh" \
-   "$SCRIPT_DIR/wf-lock.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$BLK/scripts/"
+cp "$SCRIPT_DIR/lv-brief-block.sh" "$SCRIPT_DIR/lv-list-specable.sh" \
+   "$SCRIPT_DIR/lv-review-status.sh" "$SCRIPT_DIR/lv-plan-id.sh" \
+   "$SCRIPT_DIR/lv-counter-next.sh" "$SCRIPT_DIR/lv-commit.sh" \
+   "$SCRIPT_DIR/lv-lock.sh" "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$BLK/scripts/"
 (
   cd "$BLK" && git init -qb develop . && git config user.email t@t && git config user.name t
   printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n<!-- Counter: 10 -->\n' \
@@ -5751,19 +5751,19 @@ cp "$SCRIPT_DIR/wf-brief-block.sh" "$SCRIPT_DIR/wf-list-specable.sh" \
 ) >/dev/null 2>&1
 
 assert_eq "an unblocked decided brief is offered" "true" \
-  "$(cd "$BLK" && ./scripts/wf-list-specable.sh 2>/dev/null | grep -q '^BRF-010' && echo true || echo false)"
+  "$(cd "$BLK" && ./scripts/lv-list-specable.sh 2>/dev/null | grep -q '^BRF-010' && echo true || echo false)"
 
 assert_eq "blocking it requires a reason" "1" \
-  "$( (cd "$BLK" && ./scripts/wf-brief-block.sh BRF-010) >/dev/null 2>&1; echo $? )"
+  "$( (cd "$BLK" && ./scripts/lv-brief-block.sh BRF-010) >/dev/null 2>&1; echo $? )"
 
-(cd "$BLK" && ./scripts/wf-brief-block.sh BRF-010 "tokens/dist/tools.css does not exist yet" \
+(cd "$BLK" && ./scripts/lv-brief-block.sh BRF-010 "tokens/dist/tools.css does not exist yet" \
    --on BUG-002 --repo client-d) >/dev/null 2>&1
 assert_eq "a blocked brief is no longer offered" "false" \
-  "$(cd "$BLK" && ./scripts/wf-list-specable.sh 2>/dev/null | grep -q '^BRF-010' && echo true || echo false)"
+  "$(cd "$BLK" && ./scripts/lv-list-specable.sh 2>/dev/null | grep -q '^BRF-010' && echo true || echo false)"
 # Captured first, then matched: the script exits 1 when it has nothing to
 # offer, and under `set -o pipefail` that exit sinks the whole pipeline
 # regardless of what grep found.
-blk_err=$(cd "$BLK" && ./scripts/wf-list-specable.sh 2>&1 >/dev/null || true)
+blk_err=$(cd "$BLK" && ./scripts/lv-list-specable.sh 2>&1 >/dev/null || true)
 assert_eq "and the reason is visible to a human, on stderr" "true" \
   "$(printf '%s' "$blk_err" | grep -q 'BUG-002 (in client-d)' && echo true || echo false)"
 # The reason is carried whole. `sed -E 's/[ \t]*$//'` does not mean "trim
@@ -5781,27 +5781,27 @@ assert_eq "and its Status is untouched — this is not a state change" "true" \
   "$(grep -q '^> \*\*Status:\*\* Decided' "$BLK/plans/briefs/BRF-010-receive-the-workshop.md" && echo true || echo false)"
 
 # Re-blocking rewrites the field rather than stacking a second one.
-(cd "$BLK" && ./scripts/wf-brief-block.sh BRF-010 "still waiting" --on BUG-002 --repo client-d) >/dev/null 2>&1
+(cd "$BLK" && ./scripts/lv-brief-block.sh BRF-010 "still waiting" --on BUG-002 --repo client-d) >/dev/null 2>&1
 assert_eq "re-blocking leaves exactly one Blocked field" "1" \
   "$(grep -c '\*\*Blocked:\*\*' "$BLK/plans/briefs/BRF-010-receive-the-workshop.md" | xargs)"
 
-(cd "$BLK" && ./scripts/wf-brief-block.sh BRF-010 --clear) >/dev/null 2>&1
+(cd "$BLK" && ./scripts/lv-brief-block.sh BRF-010 --clear) >/dev/null 2>&1
 assert_eq "clearing puts it straight back on the list" "true" \
-  "$(cd "$BLK" && ./scripts/wf-list-specable.sh 2>/dev/null | grep -q '^BRF-010' && echo true || echo false)"
+  "$(cd "$BLK" && ./scripts/lv-list-specable.sh 2>/dev/null | grep -q '^BRF-010' && echo true || echo false)"
 assert_eq "clearing twice is success, not an error" "0" \
-  "$( (cd "$BLK" && ./scripts/wf-brief-block.sh BRF-010 --clear) >/dev/null 2>&1; echo $? )"
+  "$( (cd "$BLK" && ./scripts/lv-brief-block.sh BRF-010 --clear) >/dev/null 2>&1; echo $? )"
 
 # The template's guidance must not read as a live blocker.
 assert_eq "template prose does not block every new brief" "false" \
   "$(grep -qE '^> \*\*Blocked:\*\*' "$LIB_ROOT/templates/plans/briefs/TEMPLATE.md" && echo true || echo false)"
-assert_eq "wf-spec knows the verb" "true" \
-  "$(grep -q 'wf-brief-block.sh' "$LIB_ROOT/skills/wf-spec/SKILL.md" && echo true || echo false)"
+assert_eq "lv-spec knows the verb" "true" \
+  "$(grep -q 'lv-brief-block.sh' "$LIB_ROOT/skills/lv-spec/SKILL.md" && echo true || echo false)"
 
 # ── The same dead end, reached from the bug side (client-d WFI-018) ───────
 #
 # "A bug leaves the list by MOVING" holds for every bug that CAN move. BUG-017's
 # answered needs-input gate said it stays open pending BRF-018 and is closed by
-# whatever that brief decides — so no plan may be created, so wf-bug-consume.sh
+# whatever that brief decides — so no plan may be created, so lv-bug-consume.sh
 # never runs, so it never leaves bugs/open/ and is re-offered on every sweep.
 mkdir -p "$BLK/bugs/open/BUG-017-wheat-size" "$BLK/bugs/triaged" "$BLK/bugs/closed"
 printf '# Wheat ear renders too small\n\n> **ID:** BUG-017\n> **Severity:** Medium\n> **Status:** Open\n\n## Symptom\nx\n' \
@@ -5809,24 +5809,24 @@ printf '# Wheat ear renders too small\n\n> **ID:** BUG-017\n> **Severity:** Medi
 (cd "$BLK" && git add -A && git commit -q -m "BUG-017") >/dev/null 2>&1
 
 # `grep -c`, not `grep -q`: under pipefail a -q match on an EARLY line closes
-# the pipe while wf-list-specable.sh is still writing its briefs section, and
+# the pipe while lv-list-specable.sh is still writing its briefs section, and
 # the producer's SIGPIPE fails the whole pipeline. Bugs are listed before
 # briefs, so every bug assertion here would read `false` on a real match.
-specable_has() { (cd "$BLK" && ./scripts/wf-list-specable.sh 2>/dev/null) | grep -c "^$1" | tr -d ' '; }
+specable_has() { (cd "$BLK" && ./scripts/lv-list-specable.sh 2>/dev/null) | grep -c "^$1" | tr -d ' '; }
 assert_eq "an open bug is offered" "1" "$(specable_has BUG-017)"
 
-(cd "$BLK" && ./scripts/wf-brief-block.sh BUG-017 "closed by whatever BRF-018 decides" --on BRF-018) >/dev/null 2>&1
+(cd "$BLK" && ./scripts/lv-brief-block.sh BUG-017 "closed by whatever BRF-018 decides" --on BRF-018) >/dev/null 2>&1
 assert_eq "a blocked bug leaves the specable list" "0" "$(specable_has BUG-017)"
 assert_eq "and the reason reaches a human on stderr" "true" \
-  "$(cd "$BLK" && ./scripts/wf-list-specable.sh 2>&1 >/dev/null | grep -q 'BUG-017 blocked — BRF-018' && echo true || echo false)"
+  "$(cd "$BLK" && ./scripts/lv-list-specable.sh 2>&1 >/dev/null | grep -q 'BUG-017 blocked — BRF-018' && echo true || echo false)"
 assert_eq "the bug did not move to say so" "true" \
   "$([ -f "$BLK/bugs/open/BUG-017-wheat-size/bug.md" ] && echo true || echo false)"
 
-(cd "$BLK" && ./scripts/wf-brief-block.sh BUG-017 --clear) >/dev/null 2>&1
+(cd "$BLK" && ./scripts/lv-brief-block.sh BUG-017 --clear) >/dev/null 2>&1
 assert_eq "clearing puts it straight back" "1" "$(specable_has BUG-017)"
 
 assert_eq "an id that is neither a brief nor a bug is refused" "1" \
-  "$( (cd "$BLK" && ./scripts/wf-brief-block.sh PLN-010 "nope") >/dev/null 2>&1; echo $? )"
+  "$( (cd "$BLK" && ./scripts/lv-brief-block.sh PLN-010 "nope") >/dev/null 2>&1; echo $? )"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A red suite is only evidence against the commits if it could have passed (client-e WFI-028)"
@@ -5839,18 +5839,18 @@ section "A red suite is only evidence against the commits if it could have passe
 # batch, which sends an operator hunting a regression that does not exist.
 PRE="$TEST_DIR/preflight"
 mkdir -p "$PRE/scripts"
-cp "$SCRIPT_DIR/wf-preflight.sh" "$SCRIPT_DIR/wf-orch-lib.sh" "$PRE/scripts/"
+cp "$SCRIPT_DIR/lv-preflight.sh" "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$PRE/scripts/"
 (cd "$PRE" && git init -qb develop . && git config user.email t@t && git config user.name t \
   && printf 'project_slug: pre\n' > claude-workflow.yml \
   && git add -A && git commit -q -m seed) >/dev/null 2>&1
 
 assert_eq "a project declaring none is not in trouble, just quiet" "0" \
-  "$( (cd "$PRE" && ./scripts/wf-preflight.sh) >/dev/null 2>&1; echo $? )"
+  "$( (cd "$PRE" && ./scripts/lv-preflight.sh) >/dev/null 2>&1; echo $? )"
 
 printf 'project_slug: pre\ne2ePrereqs:\n  - "dev issuer:false"\n  - "database:true"\n' \
   > "$PRE/claude-workflow.yml"
 pre_rc=0
-pre_out=$( (cd "$PRE" && ./scripts/wf-preflight.sh 2>/dev/null) ) || pre_rc=$?
+pre_out=$( (cd "$PRE" && ./scripts/lv-preflight.sh 2>/dev/null) ) || pre_rc=$?
 assert_eq "a prerequisite that is down fails the check" "1" "$pre_rc"
 assert_eq "and is named, with the probe that failed" "true" \
   "$(printf '%s' "$pre_out" | grep -q '^DOWN dev issuer — false' && echo true || echo false)"
@@ -5859,23 +5859,23 @@ assert_eq "one that is up is reported up, not silently assumed" "true" \
 
 printf 'project_slug: pre\ne2ePrereqs:\n  - "database:true"\n' > "$PRE/claude-workflow.yml"
 assert_eq "all up is a clean exit" "0" \
-  "$( (cd "$PRE" && ./scripts/wf-preflight.sh) >/dev/null 2>&1; echo $? )"
+  "$( (cd "$PRE" && ./scripts/lv-preflight.sh) >/dev/null 2>&1; echo $? )"
 
 # A URL check must not pass merely because something answered the socket.
 printf 'project_slug: pre\ne2ePrereqs:\n  - "issuer:http://127.0.0.1:9/nothing-here"\n' \
   > "$PRE/claude-workflow.yml"
 assert_eq "an unreachable URL is DOWN, not ok" "1" \
-  "$( (cd "$PRE" && ./scripts/wf-preflight.sh) >/dev/null 2>&1; echo $? )"
+  "$( (cd "$PRE" && ./scripts/lv-preflight.sh) >/dev/null 2>&1; echo $? )"
 
-assert_eq "/wf-release checks prerequisites before blaming the commits" "true" \
-  "$(grep -q 'wf-preflight.sh' "$LIB_ROOT/skills/wf-release/SKILL.md" && echo true || echo false)"
+assert_eq "/lv-release checks prerequisites before blaming the commits" "true" \
+  "$(grep -q 'lv-preflight.sh' "$LIB_ROOT/skills/lv-release/SKILL.md" && echo true || echo false)"
 assert_eq "and the config key is documented for a client to copy" "true" \
   "$(grep -q 'e2ePrereqs' "$LIB_ROOT/config.example.yml" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A deploy promotes what was pushed, not what this checkout happens to hold (client-a WFI-258)"
 
-# An unattended /wf-deploy merged a local `release` that was 34 commits behind
+# An unattended /lv-deploy merged a local `release` that was 34 commits behind
 # origin/release, ran the full suite green on that stale tree, pushed main, and
 # reported "15 commits promoted (PLN-273 work)". PLN-273 was registry-complete
 # and on origin/release, and not in production. Only the AHEAD direction was
@@ -5885,8 +5885,8 @@ section "A deploy promotes what was pushed, not what this checkout happens to ho
 SYNC="$TEST_DIR/relsync"
 SORIGIN="$TEST_DIR/relsync-origin"
 mkdir -p "$SYNC/scripts"
-cp "$SCRIPT_DIR/wf-release-sync.sh" "$SCRIPT_DIR/wf-release-rollback.sh" \
-   "$SCRIPT_DIR/wf-orch-lib.sh" "$SYNC/scripts/"
+cp "$SCRIPT_DIR/lv-release-sync.sh" "$SCRIPT_DIR/lv-release-rollback.sh" \
+   "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$SYNC/scripts/"
 (
   git init -q --bare "$SORIGIN"
   cd "$SYNC" && git init -qb develop . && git config user.email t@t && git config user.name t
@@ -5897,7 +5897,7 @@ cp "$SCRIPT_DIR/wf-release-sync.sh" "$SCRIPT_DIR/wf-release-rollback.sh" \
 ) >/dev/null 2>&1
 
 assert_eq "refs that agree need no repair" "0" \
-  "$( (cd "$SYNC" && ./scripts/wf-release-sync.sh) >/dev/null 2>&1; echo $? )"
+  "$( (cd "$SYNC" && ./scripts/lv-release-sync.sh) >/dev/null 2>&1; echo $? )"
 
 # The reported state: someone else pushed release; this checkout never saw it.
 (
@@ -5908,9 +5908,9 @@ assert_eq "refs that agree need no repair" "0" \
 ) >/dev/null 2>&1
 
 assert_eq "a local release behind origin is NOT promotable as it stands" "2" \
-  "$( (cd "$SYNC" && ./scripts/wf-release-sync.sh --check) >/dev/null 2>&1; echo $? )"
+  "$( (cd "$SYNC" && ./scripts/lv-release-sync.sh --check) >/dev/null 2>&1; echo $? )"
 
-sync_out=$(cd "$SYNC" && ./scripts/wf-release-sync.sh 2>&1 || true)
+sync_out=$(cd "$SYNC" && ./scripts/lv-release-sync.sh 2>&1 || true)
 assert_eq "so it is fast-forwarded, and says by how much" "true" \
   "$(printf '%s' "$sync_out" | grep -q 'fast-forwarded to origin/release' && echo true || echo false)"
 assert_eq "and the local ref now IS what was pushed" "true" \
@@ -5923,7 +5923,7 @@ assert_eq "the plan that was missed is now in the promotion range" "true" \
 (cd "$SYNC" && git checkout -q release && printf 'unpushed\n' >> app.txt \
   && git add -A && git commit -q -m "feat: never pushed" && git checkout -q develop) >/dev/null 2>&1
 assert_eq "an unpushed local release is still a stop, not a sync" "2" \
-  "$( (cd "$SYNC" && ./scripts/wf-release-sync.sh) >/dev/null 2>&1; echo $? )"
+  "$( (cd "$SYNC" && ./scripts/lv-release-sync.sh) >/dev/null 2>&1; echo $? )"
 assert_eq "and the ref was not touched" "true" \
   "$(cd "$SYNC" && [ "$(git rev-list --count origin/release..release)" = "1" ] && echo true || echo false)"
 
@@ -5934,10 +5934,10 @@ assert_eq "and the ref was not touched" "true" \
     && git push -q -f origin develop:release && git fetch -q origin
 ) >/dev/null 2>&1
 assert_eq "diverged refs are refused with their own code" "3" \
-  "$( (cd "$SYNC" && ./scripts/wf-release-sync.sh) >/dev/null 2>&1; echo $? )"
+  "$( (cd "$SYNC" && ./scripts/lv-release-sync.sh) >/dev/null 2>&1; echo $? )"
 
-assert_eq "/wf-deploy checks the ref before reading it as a validated batch" "true" \
-  "$(grep -q 'wf-release-sync.sh' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+assert_eq "/lv-deploy checks the ref before reading it as a validated batch" "true" \
+  "$(grep -q 'lv-release-sync.sh' "$LIB_ROOT/skills/lv-deploy/SKILL.md" && echo true || echo false)"
 
 # client-a WFI-261: the repair has to work where `release` actually lives —
 # its own pinned worktree (docs/release-worktrees.md), not the checkout the
@@ -5948,8 +5948,8 @@ assert_eq "/wf-deploy checks the ref before reading it as a validated batch" "tr
 PINSYNC="$TEST_DIR/relsync-pinned"
 PINORIGIN="$TEST_DIR/relsync-pinned-origin"
 mkdir -p "$PINSYNC/scripts"
-cp "$SCRIPT_DIR/wf-release-sync.sh" "$SCRIPT_DIR/wf-release-rollback.sh" \
-   "$SCRIPT_DIR/wf-orch-lib.sh" "$PINSYNC/scripts/"
+cp "$SCRIPT_DIR/lv-release-sync.sh" "$SCRIPT_DIR/lv-release-rollback.sh" \
+   "$SCRIPT_DIR/lv-orch-lib.sh" "$SCRIPT_DIR/lv-ids.sh" "$PINSYNC/scripts/"
 (
   git init -q --bare "$PINORIGIN"
   cd "$PINSYNC" && git init -qb develop . && git config user.email t@t && git config user.name t
@@ -5957,9 +5957,9 @@ cp "$SCRIPT_DIR/wf-release-sync.sh" "$SCRIPT_DIR/wf-release-rollback.sh" \
   git branch -q release && git branch -q main
   git remote add origin "$PINORIGIN" && git push -q origin develop release main
   git fetch -q origin
-  # release gets its own long-lived worktree, as /wf-release pins it.
+  # release gets its own long-lived worktree, as /lv-release pins it.
   git worktree add -q release-branches/release release
-  # Someone else's /wf-release pushes; this checkout's ref never moves.
+  # Someone else's /lv-release pushes; this checkout's ref never moves.
   git push -q origin "$(git rev-parse develop)":refs/heads/release 2>/dev/null || true
   cd release-branches/release && git checkout -q -B release "$(git -C "$PINSYNC" rev-parse origin/release)" 2>/dev/null || true
 ) >/dev/null 2>&1
@@ -5972,10 +5972,10 @@ cp "$SCRIPT_DIR/wf-release-sync.sh" "$SCRIPT_DIR/wf-release-rollback.sh" \
 ) >/dev/null 2>&1
 
 assert_eq "a pinned release worktree behind origin is detected, not missed" "2" \
-  "$( (cd "$PINSYNC" && ./scripts/wf-release-sync.sh --check) >/dev/null 2>&1; echo $? )"
-pin_out=$(cd "$PINSYNC" && ./scripts/wf-release-sync.sh 2>&1 || true)
+  "$( (cd "$PINSYNC" && ./scripts/lv-release-sync.sh --check) >/dev/null 2>&1; echo $? )"
+pin_out=$(cd "$PINSYNC" && ./scripts/lv-release-sync.sh 2>&1 || true)
 assert_eq "and the fast-forward lands in the worktree, not a refused ref update" "0" \
-  "$( (cd "$PINSYNC" && ./scripts/wf-release-sync.sh) >/dev/null 2>&1; echo $? )"
+  "$( (cd "$PINSYNC" && ./scripts/lv-release-sync.sh) >/dev/null 2>&1; echo $? )"
 assert_eq "the branch a worktree holds is now what was pushed" "true" \
   "$(cd "$PINSYNC" && [ "$(git rev-parse release)" = "$(git rev-parse origin/release)" ] && echo true || echo false)"
 assert_eq "the plan that was behind is in the promotion range" "true" \
@@ -5989,65 +5989,65 @@ assert_eq "the plan that was behind is in the promotion range" "true" \
   printf 'scratch\n' >> "$PINSYNC/release-branches/release/app.txt"
 ) >/dev/null 2>&1
 assert_eq "a dirty release worktree is refused rather than moved under someone" "1" \
-  "$( (cd "$PINSYNC" && ./scripts/wf-release-sync.sh) >/dev/null 2>&1; echo $? )"
+  "$( (cd "$PINSYNC" && ./scripts/lv-release-sync.sh) >/dev/null 2>&1; echo $? )"
 assert_eq "and the refusal left the branch where it was" "true" \
   "$(cd "$PINSYNC" && [ "$(git rev-list --count release..origin/release)" = "1" ] && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A deferred-criteria question is about a batch, and ages with it (client-a WFI-260)"
 
-# /wf-deploy step 4a is a would-ask-a-human point with no named gate, so an
+# /lv-deploy step 4a is a would-ask-a-human point with no named gate, so an
 # unattended worker invented one. An invented name is unknown to
 # wf_promote_tip_ref, so nothing recorded the commit set the answer was given
 # for: the answer could neither authorize the next dispatch (which re-ran the
 # check, got the same exit 1, and re-opened an answered gate — WFI-005's loop)
 # nor lapse when origin/release moved two minutes later and put two more plans
 # in the batch.
-( . "$SCRIPT_DIR/wf-orch-lib.sh"
+( . "$SCRIPT_DIR/lv-orch-lib.sh"
   assert_eq "the gate is scoped to the release tip, like deploy-approval" "release" \
     "$(wf_promote_tip_ref deploy-deferred-criteria)"
   assert_eq "and an unclassified gate name still scopes to nothing" "" \
     "$(wf_promote_tip_ref needs-input)"
 )
-assert_eq "wf-promote-approval.sh can be asked about it by name" "true" \
-  "$(grep -qE '^ *deferred\) *id=DEPLOY; *gate=deploy-deferred-criteria' "$SCRIPT_DIR/wf-promote-approval.sh" && echo true || echo false)"
+assert_eq "lv-promote-approval.sh can be asked about it by name" "true" \
+  "$(grep -qE '^ *deferred\) *id=DEPLOY; *gate=deploy-deferred-criteria' "$SCRIPT_DIR/lv-promote-approval.sh" && echo true || echo false)"
 assert_eq "step 4a names the gate instead of leaving the worker to invent one" "true" \
-  "$(grep -q 'wf-gate-open.sh DEPLOY deploy-deferred-criteria' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'lv-gate-open.sh DEPLOY deploy-deferred-criteria' "$LIB_ROOT/skills/lv-deploy/SKILL.md" && echo true || echo false)"
 assert_eq "and reads the answer of record before re-asking" "true" \
-  "$(grep -q 'wf-promote-approval.sh deferred' "$LIB_ROOT/skills/wf-deploy/SKILL.md" && echo true || echo false)"
-assert_eq "/wf-attend knows how to drain it" "true" \
-  "$(grep -q 'deploy-deferred-criteria' "$LIB_ROOT/skills/wf-attend/SKILL.md" && echo true || echo false)"
+  "$(grep -q 'lv-promote-approval.sh deferred' "$LIB_ROOT/skills/lv-deploy/SKILL.md" && echo true || echo false)"
+assert_eq "/lv-attend knows how to drain it" "true" \
+  "$(grep -q 'deploy-deferred-criteria' "$LIB_ROOT/skills/lv-attend/SKILL.md" && echo true || echo false)"
 # A standing `deploy` grant is policy written before these criteria existed, and
 # DC-014 was the kind that crash-loops production (WFI-011). No autonomy action
 # stands behind this gate, so --basis autonomy must be refused on it.
 assert_eq "a standing grant cannot close it unattended" "false" \
   "$(awk '/--basis autonomy, but/{found=1} /deploy-deferred-criteria\)  *auto_action/{bad=1} END{print (bad?"true":"false")}' \
-      "$SCRIPT_DIR/wf-gate-close.sh")"
+      "$SCRIPT_DIR/lv-gate-close.sh")"
 
 section "A worker's exit event outlives the build it was launched from (client-a WFI-256)"
 
-# wf-spawn.sh baked an absolute generation path into the detached worker's last
+# lv-spawn.sh baked an absolute generation path into the detached worker's last
 # command. Two deploys inside a minute retired that build while an implement
 # worker was still running, and the completed run lost its exit event to
-# ".../gen/9.4.0-.../v2.00/wf-event.sh: No such file or directory".
+# ".../gen/9.4.0-.../v2.00/lv-event.sh: No such file or directory".
 assert_eq "the pinned path is a preference, not an assumption" "true" \
-  "$(grep -q 'if \[ -x .\$event_sh. \]' "$SCRIPT_DIR/wf-spawn.sh" && echo true || echo false)"
+  "$(grep -q 'if \[ -x .\$event_sh. \]' "$SCRIPT_DIR/lv-spawn.sh" && echo true || echo false)"
 assert_eq "and the dispatcher is the fallback when it is gone" "true" \
-  "$(grep -q "event_fallback' wf-event.sh exit" "$SCRIPT_DIR/wf-spawn.sh" && echo true || echo false)"
+  "$(grep -q "event_fallback' lv-event.sh exit" "$SCRIPT_DIR/lv-spawn.sh" && echo true || echo false)"
 
 section "A daemon does not report health from a deleted harness (client-a WFI-257)"
 
 # It kept sweeping out of a retired build — bash held the open file — while
 # every spawn died rc=127, then logged "nothing dispatchable and no gates open
 # — the pipeline is empty or complete" over an active plan and an open RELEASE
-# gate, because wf-list-gates.sh was in the same deleted tree and its failure
+# gate, because lv-list-gates.sh was in the same deleted tree and its failure
 # was indistinguishable from an empty list.
 assert_eq "an unreadable gate list is never read as an empty pipeline" "true" \
-  "$(grep -q 'the gate list could not be read' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+  "$(grep -q 'the gate list could not be read' "$SCRIPT_DIR/lv-orchestrate.sh" && echo true || echo false)"
 assert_eq "the daemon re-execs onto the build that replaced its own" "true" \
-  "$(grep -q 'exec "\$live_orch"' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+  "$(grep -q 'exec "\$live_orch"' "$SCRIPT_DIR/lv-orchestrate.sh" && echo true || echo false)"
 assert_eq "and stands down rather than sweep from a tree nothing replaced" "true" \
-  "$(grep -q 'daemon_exit_rc=5' "$SCRIPT_DIR/wf-orchestrate.sh" && echo true || echo false)"
+  "$(grep -q 'daemon_exit_rc=5' "$SCRIPT_DIR/lv-orchestrate.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A transition is not an answer to the gate that gates it (client-b WFI-012)"
@@ -6055,14 +6055,14 @@ section "A transition is not an answer to the gate that gates it (client-b WFI-0
 # PLN-011 went draft -> ready at 512143e while its spec-approval gate had been
 # open and unanswered for an hour, on the strength of an unattended review
 # reaching Approved at round 3. A daemon was live, and the open gate was the
-# only thing still holding /wf-implement back from a plan no human had passed.
+# only thing still holding /lv-implement back from a plan no human had passed.
 cd "$TEST_DIR/main" || exit 1
 registry_add_row PLN-980 gated-transition draft
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-980" >/dev/null 2>&1
 
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-980 spec-approval "Widen the hero to full bleed — approve?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-980 spec-approval "Widen the hero to full bleed — approve?" >/dev/null 2>&1
 
-out=$(env WF_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-980 draft ready 2>&1; echo "rc=$?")
+out=$(env LV_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-980 draft ready 2>&1; echo "rc=$?")
 assert_eq "draft -> ready is refused while the spec-approval gate is open" "true" \
   "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
 assert_eq "and says which gate, so the fix is the gate and not the row" "true" \
@@ -6072,19 +6072,19 @@ assert_eq "and replays the question rather than re-deriving it" "true" \
 assert_eq "the row is untouched — a refusal changes nothing" "draft" "$(registry_state PLN-980)"
 
 # Answering it is the whole fix. Nothing else has to change.
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-980 "approved" --gate spec-approval >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-980 "approved" --gate spec-approval >/dev/null 2>&1
 assert_ok "once a human has answered, the same call goes through" \
-  env WF_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-980 draft ready
+  env LV_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-980 draft ready
 assert_eq "and the plan is ready" "ready" "$(registry_state PLN-980)"
 
-# The reconcile case wf-attend's own rules describe: the gate's substance was
+# The reconcile case lv-attend's own rules describe: the gate's substance was
 # settled elsewhere and the row needs moving. A human's call, and typing the
 # override is how it is recorded as one.
 registry_add_row PLN-981 gated-override draft
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-981" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-981 spec-approval "Approve?" >/dev/null 2>&1
-assert_ok "WF_ALLOW_UNGATED=1 overrides for the reconcile case" \
-  env WF_ALLOW_UNREVIEWED=1 WF_ALLOW_UNGATED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-981 draft ready
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-981 spec-approval "Approve?" >/dev/null 2>&1
+assert_ok "LV_ALLOW_UNGATED=1 overrides for the reconcile case" \
+  env LV_ALLOW_UNREVIEWED=1 LV_ALLOW_UNGATED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-981 draft ready
 assert_eq "and only then does the row move" "ready" "$(registry_state PLN-981)"
 
 # A plan with no gate at all is unaffected — this guard asks one question and
@@ -6092,7 +6092,7 @@ assert_eq "and only then does the row move" "ready" "$(registry_state PLN-981)"
 registry_add_row PLN-982 ungated-plan draft
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-982" >/dev/null 2>&1
 assert_ok "a plan that was never gated transitions normally" \
-  env WF_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-982 draft ready
+  env LV_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-982 draft ready
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A human test nobody performed does not complete (client-d WFI-009)"
@@ -6119,7 +6119,7 @@ Park a divergent report where a human can see it.
 PLAN950
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-983" >/dev/null 2>&1
 
-out=$(env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-983 testing complete 2>&1; echo "rc=$?")
+out=$(env LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-983 testing complete 2>&1; echo "rc=$?")
 assert_eq "testing -> complete is refused with an unchecked eyes:blocking criterion" "true" \
   "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
 assert_eq "and names the count, not just the rule" "true" \
@@ -6131,7 +6131,7 @@ assert_eq "the plan stays in testing" "testing" "$(registry_state PLN-983)"
 sed -i.bak 's/- \[ \] (eyes:blocking)/- [x] (eyes:blocking)/' plans/PLN-983-untested-complete/plan.md
 rm -f plans/PLN-983-untested-complete/plan.md.bak
 assert_ok "a ticked eyes:blocking criterion completes" \
-  env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-983 testing complete
+  env LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-983 testing complete
 assert_eq "and the plan is complete" "complete" "$(registry_state PLN-983)"
 
 # The second way out: the criterion stays unchecked in plan.md — which is
@@ -6144,7 +6144,7 @@ sed -i.bak 's/- \[x\] (eyes:blocking)/- [ ] (eyes:blocking)/' plans/PLN-984-reco
 rm -f plans/PLN-984-recorded-pass/plan.md.bak
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-984" >/dev/null 2>&1
 
-out=$(env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-984 testing complete 2>&1; echo "rc=$?")
+out=$(env LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-984 testing complete 2>&1; echo "rc=$?")
 assert_eq "an unchecked criterion with no record anywhere is refused" "true" \
   "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
 
@@ -6156,34 +6156,34 @@ cat > plans/PLN-984-recorded-pass/test-progress.md <<'PROG951'
 | 1 | the parked report makes it obvious what diverged | abc1234 | PASS | judged at 1280px |
 PROG951
 assert_ok "a PASS in test-progress.md settles it — any run, any build" \
-  env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-984 testing complete
+  env LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-984 testing complete
 
 # The third way out: a human was asked and replied. An answered manual-test
 # gate is the most direct evidence there is.
 registry_add_row PLN-985 gate-answered testing
 cp plans/PLN-984-recorded-pass/plan.md plans/PLN-985-gate-answered/plan.md
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-985" >/dev/null 2>&1
-out=$(env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-985 testing complete 2>&1; echo "rc=$?")
+out=$(env LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-985 testing complete 2>&1; echo "rc=$?")
 assert_eq "no gate, no record, no tick — refused" "true" \
   "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
-"$SCRIPT_DIR/wf-gate-open.sh" PLN-985 manual-test "Eyeball the parked report?" >/dev/null 2>&1
-"$SCRIPT_DIR/wf-gate-close.sh" PLN-985 "looked at it, it is obvious" --gate manual-test >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-985 manual-test "Eyeball the parked report?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-985 "looked at it, it is obvious" --gate manual-test >/dev/null 2>&1
 assert_ok "an answered manual-test gate settles it" \
-  env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-985 testing complete
+  env LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-985 testing complete
 
 # A plan with no blocking criteria at all is unaffected, which is most of them.
 registry_add_row PLN-986 no-manual testing
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-986" >/dev/null 2>&1
 assert_ok "a plan with no manual criteria completes untouched" \
-  env WF_ALLOW_UNMERGED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-986 testing complete
+  env LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-986 testing complete
 
 # And the override exists, because a criterion can be satisfied somewhere this
 # cannot see. It leaves a record: the caller had to type it.
 registry_add_row PLN-987 untested-override testing
 cp plans/PLN-984-recorded-pass/plan.md plans/PLN-987-untested-override/plan.md
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-987" >/dev/null 2>&1
-assert_ok "WF_ALLOW_UNTESTED=1 overrides" \
-  env WF_ALLOW_UNMERGED=1 WF_ALLOW_UNTESTED=1 "$SCRIPT_DIR/wf-registry-update.sh" PLN-987 testing complete
+assert_ok "LV_ALLOW_UNTESTED=1 overrides" \
+  env LV_ALLOW_UNMERGED=1 LV_ALLOW_UNTESTED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-987 testing complete
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A test id reserved by a draft is still reserved (client-d WFI-010)"
@@ -6206,7 +6206,7 @@ printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n
   echo "test('T74: the banner clears the header', () => {})"
 } > tests/brainstorm-tracking.test.ts
 
-id_next() { "$SCRIPT_DIR/wf-test-id-next.sh" "$@"; }
+id_next() { "$SCRIPT_DIR/lv-test-id-next.sh" "$@"; }
 
 eval "$(id_next)"
 assert_eq "with only landed tests, the ceiling is what tests/ holds" "74" "$TEST_ID_HIGHEST"
@@ -6246,7 +6246,7 @@ assert_eq "and says where to renumber from" "true" \
 assert_ok "a free range verifies clean" id_next --verify T83-T90
 
 # A plan verifying its own committed table is not colliding with itself.
-out=$(env WF_VERIFY_SELF=PLN-010 "$SCRIPT_DIR/wf-test-id-next.sh" --verify T75-T82 2>&1; echo "rc=$?")
+out=$(env LV_VERIFY_SELF=PLN-010 "$SCRIPT_DIR/lv-test-id-next.sh" --verify T75-T82 2>&1; echo "rc=$?")
 assert_eq "a plan does not collide with its own reservation" "true" \
   "$(printf '%s' "$out" | grep -q 'rc=0' && echo true || echo false)"
 
@@ -6271,10 +6271,10 @@ rm -rf "$TID"
 # ═══════════════════════════════════════════════════════════════════════
 section "A plan blocked on another repo can say so (client-b WFI-015)"
 
-# PLN-011 was blocked on client-d's BRF-009 / BUG-011. wf-set-deps.sh took
+# PLN-011 was blocked on client-d's BRF-009 / BUG-011. lv-set-deps.sh took
 # plan IDs only, and --gating offered `security`, which would have been a false
 # label. So the only thing keeping a live daemon off a plan sitting in `draft`
-# — a dispatchable state — was a wf-claim.sh lease, documented as stealable by
+# — a dispatchable state — was a lv-claim.sh lease, documented as stealable by
 # any session that judges it stale.
 XDEP=$(mktemp -d)
 mkdir -p "$XDEP/consumer/plans" "$XDEP/provider/plans" "$XDEP/provider/bugs/closed"
@@ -6291,8 +6291,8 @@ printf '| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n
 printf 'project_slug: consumer\ndependencies:\n  - "client-d:%s/provider"\n' "$XDEP" > claude-workflow.yml
 git add -A && git commit -qm init
 
-setdeps() { "$SCRIPT_DIR/wf-set-deps.sh" "$@"; }
-chkdeps() { "$SCRIPT_DIR/wf-check-deps.sh" "$@"; }
+setdeps() { "$SCRIPT_DIR/lv-set-deps.sh" "$@"; }
+chkdeps() { "$SCRIPT_DIR/lv-check-deps.sh" "$@"; }
 
 # A project name that matches no `dependencies:` entry is a typo, and a typo
 # that blocks forever is the bug this fixes wearing a different hat.
@@ -6359,20 +6359,20 @@ assert_eq "and the external one is still named" "true" \
   "$(printf '%s' "$err" | grep -q 'also waiting on client-d:BRF-011' && echo true || echo false)"
 
 # Every other reader gets the same answer, through the shared helper —
-# wf-plan-info.sh from any state, and the eligibility lists once the plan is
+# lv-plan-info.sh from any state, and the eligibility lists once the plan is
 # dispatchable. The point of the helper is that there is one answer.
 mkdir -p plans/PLN-011-public-landing-hero
 printf '# PLN-011\n\n## Goal\nThe public landing hero.\n' > plans/PLN-011-public-landing-hero/plan.md
-eval "$("$SCRIPT_DIR/wf-plan-info.sh" PLN-011 2>/dev/null)"
-assert_eq "wf-plan-info.sh reports the plan blocked" "true" "$PLAN_BLOCKED"
+eval "$("$SCRIPT_DIR/lv-plan-info.sh" PLN-011 2>/dev/null)"
+assert_eq "lv-plan-info.sh reports the plan blocked" "true" "$PLAN_BLOCKED"
 assert_eq "and names both the local and the external dep" "true" \
   "$(printf '%s' "$PLAN_BLOCKING" | grep -q 'client-d:BRF-011' && echo true || echo false)"
 
 setdeps PLN-011 "client-d:BRF-011" >/dev/null 2>&1
 sed -i.bak 's/| PLN-011 | public-landing-hero | draft |/| PLN-011 | public-landing-hero | ready |/' plans/REGISTRY.md
 rm -f plans/REGISTRY.md.bak
-list_out=$("$SCRIPT_DIR/wf-list-implementable.sh" 2>/dev/null || true)
-assert_eq "wf-list-implementable.sh lists it as blocked, not implementable" "true" \
+list_out=$("$SCRIPT_DIR/lv-list-implementable.sh" 2>/dev/null || true)
+assert_eq "lv-list-implementable.sh lists it as blocked, not implementable" "true" \
   "$(printf '%s' "$list_out" | grep -q '^blocked.*client-d:BRF-011' && echo true || echo false)"
 
 cd "$TEST_DIR/main" || exit 1
@@ -6405,7 +6405,7 @@ guest_entry_path: "/welcome"
 YML
 git add -A && git commit -qm init
 
-cfg() { "$SCRIPT_DIR/wf-config-get.sh" "$@"; }
+cfg() { "$SCRIPT_DIR/lv-config-get.sh" "$@"; }
 
 note=$(cfg test_account_note --text)
 assert_eq "a block scalar comes back whole" "true" \
