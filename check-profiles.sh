@@ -24,12 +24,24 @@ for _wf in $(compgen -e | grep '^WF_' || true); do
 done; unset _wf _lv
 
 LIB_ROOT="$(cd "$(dirname "$0")" && pwd)"
-DEPLOYMENTS="${LV_DEPLOYMENTS:-$LIB_ROOT/deployments.txt}"
+# The client list (LVI-013): the project-registry hook — deployments.txt in
+# this library by default, the owner's pack when one implements it.
+# LV_DEPLOYMENTS names a file to read instead, and wins over any pack: it is
+# the test suite's seam, so a test never walks the real clients.
+registry() {
+  if [ -n "${LV_DEPLOYMENTS:-}" ]; then
+    [ -f "$LV_DEPLOYMENTS" ] || return 0
+    sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$LV_DEPLOYMENTS" | grep -v '^#' | grep -v '^$' || true
+  else
+    CLAUDE_PROJECT_DIR="$LIB_ROOT" LV_LIBRARY="$LIB_ROOT" "$LIB_ROOT/scripts/v2.00/lv-hook.sh" project-registry </dev/null
+  fi
+}
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 [ -t 1 ] || { GREEN=''; YELLOW=''; RED=''; BOLD=''; DIM=''; NC=''; }
 
-[ -f "$DEPLOYMENTS" ] || { echo "check-profiles.sh: no deployments.txt" >&2; exit 1; }
+CLIENT_LIST=$(registry) || { echo "check-profiles.sh: the project-registry hook failed" >&2; exit 1; }
+[ -n "$CLIENT_LIST" ] || { echo "check-profiles.sh: no projects in the registry (deployments.txt)" >&2; exit 1; }
 
 mode="list"
 [ "${1:-}" = "--count" ] && mode="count"
@@ -77,7 +89,7 @@ while IFS= read -r client; do
   esac
 
   [ "$rc" -eq 0 ] || any_bad=1
-done < "$DEPLOYMENTS"
+done <<< "$CLIENT_LIST"
 
 if [ "$mode" = "list" ]; then
   echo

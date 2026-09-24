@@ -2,7 +2,8 @@
 #
 # deploy-all.sh [--stop-daemons] [--force]
 #
-# Installs this library into every client listed in deployments.txt.
+# Installs this library into every client the project-registry hook lists
+# (deployments.txt in this directory, unless a pack supplies the registry).
 #
 # DEPLOYING UNDER A RUNNING DAEMON IS SAFE AS OF v9.0.0
 #
@@ -42,7 +43,19 @@ for _wf in $(compgen -e | grep '^WF_' || true); do
 done; unset _wf _lv
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEPLOYMENTS_FILE="${LV_DEPLOYMENTS:-$SCRIPT_DIR/deployments.txt}"
+LIB_ROOT="$SCRIPT_DIR"
+# The client list (LVI-013): the project-registry hook — deployments.txt in
+# this library by default, the owner's pack when one implements it.
+# LV_DEPLOYMENTS names a file to read instead, and wins over any pack: it is
+# the test suite's seam, so a test never walks the real clients.
+registry() {
+  if [ -n "${LV_DEPLOYMENTS:-}" ]; then
+    [ -f "$LV_DEPLOYMENTS" ] || return 0
+    sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$LV_DEPLOYMENTS" | grep -v '^#' | grep -v '^$' || true
+  else
+    CLAUDE_PROJECT_DIR="$LIB_ROOT" LV_LIBRARY="$LIB_ROOT" "$LIB_ROOT/scripts/v2.00/lv-hook.sh" project-registry </dev/null
+  fi
+}
 VERSION_FILE="$SCRIPT_DIR/VERSION"
 
 # Colors
@@ -74,12 +87,10 @@ echo ""
 
 # Read the client list once; every pass below walks the same array.
 CLIENTS=()
-if [ -f "$DEPLOYMENTS_FILE" ]; then
-    while IFS= read -r project_path || [ -n "$project_path" ]; do
-        [[ -z "$project_path" || "$project_path" == \#* ]] && continue
-        CLIENTS+=("$project_path")
-    done < "$DEPLOYMENTS_FILE"
-fi
+CLIENT_LIST=$(registry) || { echo -e "${RED}The project-registry hook failed — deploying nowhere.${NC}" >&2; exit 1; }
+while IFS= read -r project_path; do
+    [ -n "$project_path" ] && CLIENTS+=("$project_path")
+done <<< "$CLIENT_LIST"
 
 daemon_live() {
     # daemon_live <project_path> — echo the pid and return 0 if one is running.
@@ -131,7 +142,7 @@ fi
 # ── Local deployments ────────────────────────────────────────────────────────
 
 if [ "${#CLIENTS[@]}" -eq 0 ]; then
-    echo -e "${YELLOW}No deployments.txt found (or it is empty).${NC}"
+    echo -e "${YELLOW}The project registry is empty (no deployments.txt, and no pack supplies one).${NC}"
     echo "Create it with one project path per line:"
     echo "  echo \"/path/to/your/project\" >> deployments.txt"
     echo ""

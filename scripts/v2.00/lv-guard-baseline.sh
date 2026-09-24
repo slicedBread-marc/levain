@@ -12,7 +12,7 @@
 # Until this guard, no client had a single deny rule. The only hooks were
 # lv-guard-write.sh (claimed artifacts, fails open) and lv-guard-promote.sh
 # (release/main, only while their gate is open). A worker could read the
-# secrets archive, set Fly secrets, destroy a volume or force-push, and the
+# secrets archive, set provider secrets, destroy a volume or force-push, and the
 # only thing between it and that was a human pausing the pipeline. The
 # pipeline is meant to stop for a person only when security needs one, so
 # the security goes here, into code, and the pauses can come out.
@@ -47,18 +47,20 @@
 #   permissionBaseline:
 #     allow:
 #       - provider-shell
-#     reason: "deploy smoke test needs fly ssh on staging"
-#     set_by: "Marc Blais"
+#     reason: "deploy smoke test needs a shell on staging"
+#     set_by: "A. Operator"
 #     set_on: 2026-09-23
 #
 # Rules (the ids `allow` takes):
-#   secret-read       reading secret material: .env files, private keys, the
-#                     secrets-tool archive, credential stores
-#   secrets-tool-value      `secrets-tool value`, the one command that prints a secret
-#   provider-secrets  fly secrets set/import/unset, gh secret set/delete
-#   provider-shell    fly ssh / fly console into a running app
-#   provider-destroy  destroying Fly apps, volumes, machines or storage;
-#                     deleting, archiving or re-publishing a GitHub repo
+#   secret-read       reading secret material: .env files, private keys,
+#                     credential stores, and every path the
+#                     secrets-deny-patterns hook names
+#   provider-secrets  gh secret set/delete, plus the provider-deny hook's
+#   provider-shell    the provider-deny hook's (a shell inside a running app)
+#   provider-destroy  deleting, archiving or re-publishing a GitHub repo, plus
+#                     the provider-deny hook's (apps, volumes, storage)
+#   (a hook's own)    a pack may name further ids, e.g. a secrets tool's
+#                     print-a-value command
 #   force-push        git push --force/-f/--force-with-lease/--mirror/--delete,
 #                     or a +refspec or :branch refspec
 #   history-rewrite   git filter-repo, git filter-branch
@@ -69,6 +71,15 @@
 # hostile one. A command assembled at run time (eval, base64, variables) can
 # get past a text match. Deny rules and the provider's own scoping remain the
 # deeper layers.
+#
+# THE HOOKS (LVI-013)
+#
+# Your secrets tool and hosting provider are not the library's to know. Their
+# rules come from two add-deny hooks, secrets-deny-patterns and provider-deny
+# (lv-hook.sh; the format is in hooks.default/secrets-deny-patterns), usually
+# from a private pack. They can only add rules. If either fails — a listed
+# pack that has gone, a hook that errors — the worker is refused everything,
+# because a pack that moved must not quietly take its guards with it.
 #
 # Exit 0 allow, 2 block.
 
@@ -82,6 +93,16 @@ command -v python3 >/dev/null 2>&1 || refuse "python3 is missing, so the call ca
 
 payload=$(cat 2>/dev/null) || refuse "the hook payload could not be read; refusing (fail closed)"
 [ -n "$payload" ] || refuse "the hook payload was empty; refusing (fail closed)"
+
+# The rules the owner's packs add. Handed over in the environment: they are a
+# few lines, unlike the payload.
+hook="$(dirname "$0")/lv-hook.sh"
+[ -x "$hook" ] || refuse "lv-hook.sh is missing, so the pack rules cannot be read; refusing (fail closed)"
+extra=$("$hook" secrets-deny-patterns </dev/null) \
+  || refuse "the secrets-deny-patterns hook failed; refusing (fail closed)"
+extra="$extra"$'\n'$("$hook" provider-deny </dev/null) \
+  || refuse "the provider-deny hook failed; refusing (fail closed)"
+export LV_BASELINE_EXTRA="$extra"
 
 # The check itself. The payload goes in on stdin, never through the
 # environment: a Write of a large file would overflow ARG_MAX and turn every
@@ -112,28 +133,37 @@ SECRET_PATTERNS = [
     r"(^|/)\.ssh(/|$)",
     r"(^|/)\.aws/credentials$",
     r"(^|/)\.config/gh/hosts\.yml$",
-    r"(^|/)\.fly/config\.yml$",
     r"(^|/)\.netrc$",
-    r"(^|/)dev/coordinator/secrets(/|$)",
+]
+RULES = [
+    ("provider-secrets", r"\bgh\s+secret\s+(set|delete|remove)\b", "setting or removing GitHub secrets belongs to the secrets-deploy hook, not to a worker"),
+    ("provider-destroy", r"\bgh\s+repo\s+(delete|archive|rename)\b", "deleting, archiving or renaming a repository"),
+    ("provider-destroy", r"\bgh\s+repo\s+edit\b.*--visibility\b", "changing a repository's visibility"),
+    ("provider-destroy", r"\bgh\s+api\b.*(-X|--method)\s*DELETE\b", "a DELETE through the GitHub API"),
+    ("history-rewrite", r"\bgit\s+(filter-repo|filter-branch)\b", "rewriting history"),
+    ("pipe-to-shell", r"\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|dash|python3?|perl|ruby|node)\b", "piping a download into an interpreter"),
 ]
 
-
-# The operator's own secret paths, which a published library cannot name: one
-# per line in ~/.config/levain/secret-paths (LV_SECRET_PATHS moves it), usually
-# a link into a private pack. A missing file adds nothing. A link whose target
-# is gone raises here, and the hook refuses (fail closed): a pack that moved
-# must not quietly take its guards with it.
-def local_secret_paths():
-    f = os.path.expanduser(os.environ.get("LV_SECRET_PATHS") or "~/.config/levain/secret-paths")
-    if not os.path.lexists(f):
-        return []
-    with open(f) as fh:
-        return [s.strip() for s in fh if s.strip() and not s.lstrip().startswith("#")]
-
-
-for sp in local_secret_paths():
-    rel = (sp[2:] if sp.startswith("~/") else sp.lstrip("/")).rstrip("/")
-    SECRET_PATTERNS.append(r"(^|/)" + re.escape(rel) + r"(/|$)")
+# What the secrets-deny-patterns and provider-deny hooks added (see the shell
+# above). A line this cannot use refuses: a pack's rule that silently fails to
+# load is a guard that is not there.
+for line in os.environ.get("LV_BASELINE_EXTRA", "").splitlines():
+    if not line.strip():
+        continue
+    f = line.split("\t")
+    try:
+        if f[0] == "path" and len(f) == 2 and f[1].strip():
+            sp = f[1].strip()
+            rel = (sp[2:] if sp.startswith("~/") else sp.lstrip("/")).rstrip("/")
+            SECRET_PATTERNS.append(r"(^|/)" + re.escape(rel) + r"(/|$)")
+        elif f[0] == "command" and len(f) == 4 and re.fullmatch(r"[a-z][a-z0-9-]*", f[1]):
+            re.compile(f[2])
+            RULES.append((f[1], f[2], f[3]))
+        else:
+            raise ValueError("not a path or command line")
+    except Exception as exc:
+        print(f"BLOCK\tpayload\ta pack rule could not be read ({line[:80]!r}: {exc}); refusing (fail closed)")
+        sys.exit(0)
 secret_re = [re.compile(x) for x in SECRET_PATTERNS]
 
 
@@ -190,22 +220,6 @@ for w in words:
         if part and re.fullmatch(r"\.env(\.[\w-]+)?", part) and is_secret(part):
             block("secret-read", f"the command references secret material ({part})")
 
-FLY = r"(?:fly|flyctl)"
-RULES = [
-    ("secrets-tool-value", r"\bsecrets-tool\s+value\b", "secrets-tool value prints a secret"),
-    ("provider-secrets", rf"\b{FLY}\s+secrets\s+(set|import|unset|deploy)\b", "setting or removing Fly secrets belongs to secrets-tool deploy, run from coordinator"),
-    ("provider-secrets", r"\bgh\s+secret\s+(set|delete|remove)\b", "setting or removing GitHub secrets belongs to secrets-tool deploy, run from coordinator"),
-    ("provider-shell", rf"\b{FLY}\s+(ssh|console)\b", "a shell inside a running app can read every secret it holds"),
-    ("provider-destroy", rf"\b{FLY}\s+(apps?\s+(destroy|delete)|destroy)\b", "destroying a Fly app"),
-    ("provider-destroy", rf"\b{FLY}\s+(volumes?|vol)\s+(destroy|delete|rm)\b", "destroying a Fly volume is data loss"),
-    ("provider-destroy", rf"\b{FLY}\s+(machines?|m)\s+(destroy|remove|rm)\b", "destroying a Fly machine"),
-    ("provider-destroy", rf"\b{FLY}\s+(storage|postgres|pg|redis|mysql)\s+(destroy|delete)\b", "destroying provider storage is data loss"),
-    ("provider-destroy", r"\bgh\s+repo\s+(delete|archive|rename)\b", "deleting, archiving or renaming a repository"),
-    ("provider-destroy", r"\bgh\s+repo\s+edit\b.*--visibility\b", "changing a repository's visibility"),
-    ("provider-destroy", r"\bgh\s+api\b.*(-X|--method)\s*DELETE\b", "a DELETE through the GitHub API"),
-    ("history-rewrite", r"\bgit\s+(filter-repo|filter-branch)\b", "rewriting history"),
-    ("pipe-to-shell", r"\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|dash|python3?|perl|ruby|node)\b", "piping a download into an interpreter"),
-]
 for rule, rx, why in RULES:
     if re.search(rx, flat):
         block(rule, why)

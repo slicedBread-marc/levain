@@ -120,6 +120,14 @@ solution_file: ""
 # Detect from: directory name or repo name (e.g., "app" for /Users/you/dev/app).
 project_slug: ""
 
+# Extension packs this project uses, beyond the ones in ~/.config/levain/packs
+# (or $LV_PACKS). A pack is a directory whose hooks/ implement the jobs the
+# library leaves to you — your secrets tool, hosting provider, activity log,
+# project registry. Checked before the user's packs. Leave empty to use only
+# those. See docs/extension-hooks.md.
+#   packs:
+#     - "~/dev/my-pack"
+
 # Production deploy references — shown in /lv-deploy completion message.
 # Leave blank if the project has no production deployment / CI pipeline.
 #   production_logs_url: URL to deploy logs (e.g., GitHub Actions page)

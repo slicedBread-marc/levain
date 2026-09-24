@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# kind: add-deny
+#
+# provider-deny — hosting-provider commands an unattended worker must not run:
+# setting secrets, opening a shell inside a running app, destroying apps,
+# volumes or storage. Same output format as secrets-deny-patterns (usually
+# `command` lines with rule ids provider-secrets, provider-shell and
+# provider-destroy, so a project can lift one under permissionBaseline).
+#
+# The library ships GitHub's rules built in, because the pipeline itself runs
+# on git and gh. Every other provider (Fly, Render, AWS, …) comes from a pack.
+# This default adds nothing.
+exit 0

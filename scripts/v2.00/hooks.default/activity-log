@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# kind: observe
+#
+# activity-log "<what changed and why it matters>" [--ref <commit/plan/file>]
+# — record a unit of work in the owner's activity log, if they keep one.
+# Every layer runs; a failure never breaks the caller. This default keeps no
+# log.
+exit 0

@@ -1660,8 +1660,10 @@ assert_eq "no pipeline skills — only the filing one" "lv-dep-notify" \
 # script on a coordinator's disk looks current and is one lv-exec.sh call from
 # running.
 coord_scripts=$(ls "$(live_script_dir "$COORD")" | sort | tr '\n' ' ')
+# lv-hook.sh and its defaults are in the slice: a coordinator reaches the
+# owner's packs (registry, activity log) through them too (LVI-013).
 assert_eq "scripts/ is pruned to the filing slice" \
-  "lv-dep-bug.sh lv-dep-notify.sh lv-ids.sh lv-issue.sh lv-lock.sh lv-orch-lib.sh " "$coord_scripts"
+  "hooks.default lv-dep-bug.sh lv-dep-notify.sh lv-hook.sh lv-ids.sh lv-issue.sh lv-lock.sh lv-orch-lib.sh " "$coord_scripts"
 assert_eq "lv-implement's scripts are not installed" "true" \
   "$([ -f "$(live_script_dir "$COORD")/lv-worktree-sparse.sh" ] && echo false || echo true)"
 

@@ -29,6 +29,7 @@ Usage: SETTINGS_PATH=... REHYDRATE_CMD=... GUARD_CMD=... PROMOTE_GUARD_CMD=... B
 
 import json
 import os
+import subprocess
 import sys
 
 # Each entry is one hook block appended under `hooks.<event>`. Multiple specs
@@ -67,29 +68,31 @@ BASELINE_DENY = [
     "Read(~/.ssh/**)",
     "Read(~/.aws/credentials)",
     "Read(~/.config/gh/hosts.yml)",
-    "Read(~/.fly/config.yml)",
     "Read(~/.netrc)",
-    "Read(~/dev/coordinator/secrets/**)",
 ]
 
 
-# The operator's own secret paths, from the same file lv-guard-baseline.sh
-# reads (~/.config/levain/secret-paths, or LV_SECRET_PATHS). A directory gets
-# its whole tree denied, a file itself. Missing adds nothing; a dangling link
-# stops the install, because deploying without the guards it names would be
-# a silent downgrade.
+# The owner's own secret paths, from the secrets-deny-patterns hook that
+# lv-guard-baseline.sh reads too (LVI-013; usually a private pack). install.sh
+# passes the library's lv-hook.sh as LV_HOOK_CMD and the client as
+# CLAUDE_PROJECT_DIR. A directory gets its whole tree denied, a file itself. A
+# failing hook stops the merge, because deploying without the guards it names
+# would be a silent downgrade.
 def local_secret_deny():
-    f = os.path.expanduser(os.environ.get("LV_SECRET_PATHS") or "~/.config/levain/secret-paths")
-    if not os.path.lexists(f):
+    cmd = os.environ.get("LV_HOOK_CMD")
+    if not cmd:
         return []
+    out = subprocess.run([cmd, "secrets-deny-patterns"], stdin=subprocess.DEVNULL,
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        raise SystemExit(f"secrets-deny-patterns hook failed: {out.stderr.strip()}")
     rules = []
-    with open(f) as fh:
-        for s in fh:
-            s = s.strip()
-            if not s or s.startswith("#"):
-                continue
-            s = s.rstrip("/")
-            rules.append(f"Read({s}/**)" if os.path.isdir(os.path.expanduser(s)) else f"Read({s})")
+    for line in out.stdout.splitlines():
+        f = line.split("\t")
+        if len(f) != 2 or f[0] != "path" or not f[1].strip():
+            continue
+        s = f[1].strip().rstrip("/")
+        rules.append(f"Read({s}/**)" if os.path.isdir(os.path.expanduser(s)) else f"Read({s})")
     return rules
 
 

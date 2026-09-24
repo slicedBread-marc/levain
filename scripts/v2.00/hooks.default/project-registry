@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# kind: decide
+#
+# project-registry — the projects this library is deployed to, one absolute
+# path per line. Read by deploy-all.sh, sweep-issues.sh and check-profiles.sh.
+#
+# Args: none. Stdin: none. Exit 0; no output means no projects.
+#
+# This default reads deployments.txt in the library root ($LV_LIBRARY, which
+# those scripts export), or the file named by $LV_DEPLOYMENTS. Blank lines and
+# # comments are skipped.
+f="${LV_DEPLOYMENTS:-${LV_LIBRARY:-.}/deployments.txt}"
+[ -f "$f" ] || exit 0
+sed -e 's/[[:space:]]*#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$f" | grep -v '^$' || true

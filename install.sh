@@ -350,7 +350,7 @@ if [ "$ROLE" = "coordinator" ]; then
     # PATH-adjacent disk, and the only reason to withhold it is that running it
     # here is a bad idea — the same argument install.sh already makes for
     # pruning stale scripts out of a client.
-    COORD_SCRIPTS="lv-orch-lib.sh lv-lock.sh lv-ids.sh lv-dep-notify.sh lv-dep-bug.sh lv-issue.sh"
+    COORD_SCRIPTS="lv-orch-lib.sh lv-lock.sh lv-ids.sh lv-dep-notify.sh lv-dep-bug.sh lv-issue.sh lv-hook.sh"
 
     echo "Installing scripts..."
     # Built into a staging directory nothing resolves, then published and
@@ -378,6 +378,7 @@ if [ "$ROLE" = "coordinator" ]; then
                 -e "s|{{production_url}}|$PRODUCTION_URL|g" \
                 "$version_dir/$name" > "$DEST_VDIR/$name"
         done
+        [ -d "$version_dir/hooks.default" ] && cp -R "$version_dir/hooks.default" "$DEST_VDIR/"
         chmod +x "$DEST_VDIR"/*.sh 2>/dev/null || true
         echo -e "${GREEN}  Staged $folder_name/ ($(ls "$DEST_VDIR" | wc -l | tr -d ' ') scripts)${NC}"
     done
@@ -1131,6 +1132,7 @@ elif command -v python3 >/dev/null 2>&1; then
     SETTINGS_RESULT=$(SETTINGS_PATH="$SETTINGS" REHYDRATE_CMD="$REHYDRATE_CMD" \
         GUARD_CMD="$GUARD_CMD" PROMOTE_GUARD_CMD="$PROMOTE_GUARD_CMD" \
         BASELINE_GUARD_CMD="$BASELINE_GUARD_CMD" \
+        LV_HOOK_CMD="$SCRIPT_DIR/scripts/v2.00/lv-hook.sh" CLAUDE_PROJECT_DIR="$TARGET_DIR" \
         python3 "$SCRIPT_DIR/templates/hooks/settings-merge.py") || true
     case "$SETTINGS_RESULT" in
         created)      echo -e "${GREEN}  Created .claude/settings.json with the rehydration and guard hooks${NC}" ;;
@@ -1245,6 +1247,10 @@ for version_dir in "$SCRIPT_DIR/scripts"/v*/; do
             -e "s|{{production_url}}|$PRODUCTION_URL|g" \
             "$script" > "$DEST"
     done
+    # The extension hooks' neutral defaults (lv-hook.sh). Copied, not
+    # templated: a pack reads them for their kind, and nothing in them is
+    # per-project.
+    [ -d "$version_dir/hooks.default" ] && cp -R "$version_dir/hooks.default" "$DEST_VDIR/"
     chmod +x "$DEST_VDIR"/*.sh 2>/dev/null || true
     echo -e "${GREEN}  Staged $folder_name/ ($(ls "$DEST_VDIR" | wc -l | tr -d ' ') scripts)${NC}"
 done

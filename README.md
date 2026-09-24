@@ -206,6 +206,15 @@ conventions_note: ""
 solution_file: ""
 ```
 
+## Your own tools: extension hooks
+
+The library never names your secrets tool, your hosting provider, your activity log or the list
+of projects you deploy to. It calls a hook named for the job (`secrets-deny-patterns`,
+`provider-deny`, `secrets-deploy`, `activity-log`, `project-registry`), and `lv-hook.sh` finds who
+answers it: the project's `.lv-local/hooks/`, then your packs (private directories listed in
+`~/.config/levain/packs`), then the library's neutral default. A pack can tighten the permission
+baseline but never loosen it. See [`docs/extension-hooks.md`](docs/extension-hooks.md).
+
 ## Updating
 
 Re-run the install script. It overwrites skills but skips existing templates and config.

@@ -323,27 +323,28 @@ Two layers, both installed into every client's `.claude/settings.json` by
 
 | Layer | Applies to | Refuses |
 |-|-|-|
-| `permissions.deny` | every session, attended or not | reading `~/.ssh`, cloud and CLI credential files, the secrets archive, a signing key ring |
+| `permissions.deny` | every session, attended or not | reading `~/.ssh`, cloud and CLI credential files, and every secret path your packs name |
 | `lv-guard-baseline.sh` (PreToolUse, every tool) | unattended workers only (`LV_UNATTENDED=1`) | the rules below |
 
 | Rule id | Refuses |
 |-|-|
-| `secret-read` | `.env` files (not `.example`/`.sample`/`.template`/`.dist`), private keys and certificates, credential stores, the secrets archive, by any tool |
-| `secrets-tool-value` | `secrets-tool value` |
-| `provider-secrets` | `fly secrets set/import/unset`, `gh secret set/delete`; secrets are deployed by `secrets-tool deploy` from coordinator |
-| `provider-shell` | `fly ssh` / `fly console` into a running app |
-| `provider-destroy` | destroying Fly apps, volumes, machines or storage; deleting, archiving, renaming or re-publishing a GitHub repo; `gh api` DELETE |
+| `secret-read` | `.env` files (not `.example`/`.sample`/`.template`/`.dist`), private keys and certificates, credential stores, and every path the `secrets-deny-patterns` hook names, by any tool |
+| `provider-secrets` | `gh secret set/delete`, plus your provider's secret-setting commands from the `provider-deny` hook; secrets are deployed through the `secrets-deploy` hook |
+| `provider-shell` | your provider's shell into a running app (`provider-deny` hook) |
+| `provider-destroy` | deleting, archiving, renaming or re-publishing a GitHub repo; `gh api` DELETE; plus your provider's app, volume and storage destruction (`provider-deny` hook) |
+| *(a pack's own)* | anything else a pack names, such as a secrets tool's print-a-value command |
 | `force-push` | `git push` with `--force`, `-f`, `--force-with-lease`, `--mirror`, `--delete`, `--prune`, a `+refspec` or a `:branch` |
 | `history-rewrite` | `git filter-repo`, `git filter-branch` |
 | `rm-outside` | `rm -r` on anything outside the worktree and the temp dirs, or on a path it cannot check (`$VAR`) |
 | `pipe-to-shell` | `curl`/`wget` piped into a shell or interpreter |
 
-**Your own secret stores.** The library names only generic ones. List yours, one path per line,
-in `~/.config/levain/secret-paths` (or the file `LV_SECRET_PATHS` names); a link into a private
-pack is the usual form. `secret-read` refuses workers anything under them, and the next deploy
-adds matching `Read` deny rules for every session. A missing file adds nothing; a link whose
-target is gone makes the hook refuse every worker call, so a moved pack cannot silently take its
-guards with it.
+**Your own secret stores and provider.** The library names only generic ones and GitHub. Yours
+come from two add-deny hooks, `secrets-deny-patterns` and `provider-deny`, usually implemented by
+a private pack ([extension-hooks.md](extension-hooks.md)). `secret-read` refuses workers anything
+under a path they name, the next deploy adds matching `Read` deny rules for every session, and
+their command rules refuse like the built-in ones and are lifted by the same ids. A hook can only
+add rules. A listed pack that has gone, or a hook that fails, makes the guard refuse every worker
+call, so a moved pack cannot silently take its guards with it.
 
 **Fail closed, for workers only.** A worker's guard that crashes, times out, cannot parse its
 payload or is not on disk refuses. The hook command's wrapper turns any non-zero exit into
@@ -365,8 +366,8 @@ four keys. A partial block lifts nothing, and the refusal says so:
 permissionBaseline:
   allow:
     - provider-shell
-  reason: "deploy smoke test needs fly ssh on staging"
-  set_by: "Marc Blais"
+  reason: "deploy smoke test needs a shell on staging"
+  set_by: "A. Operator"
   set_on: 2026-09-23
 ```
 
