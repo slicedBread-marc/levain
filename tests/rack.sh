@@ -52,6 +52,16 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$T/pack/hooks/project-registry"
 out=$(LV_PACKS="$T/pack" bash "$RACK" --plain </dev/null 2>&1)
 case "$out" in *"project-registry hook failed"*) ok "a failing registry is said, not drawn as an empty portfolio" ;; *) bad "a failing registry is said" "$out" ;; esac
 
+echo "── coordinators are never columns ──"
+# A registry that names every install lists coordinators too, this one included.
+mkdir -p "$T/other-coord" "$T/app"
+printf 'role: "coordinator"\n' > "$T/other-coord/levain.yml"; printf 'project_slug: app\n' > "$T/app/levain.yml"
+printf '%s\n' "$C" "$T/other-coord" "$T/app" > "$T/all.txt"
+out=$(LV_DEPLOYMENTS="$T/all.txt" LV_RACK_LIB=1 bash -c 'f=$1; set --; source "$f"; each_project' _ "$RACK" </dev/null)
+assert_eq "each_project skips every coordinator" "$out" "$T/app"
+out=$(LV_DEPLOYMENTS="$T/all.txt" bash "$RACK" --plain </dev/null 2>&1)
+case "$out" in *"board failed"*) bad "a coordinator is not drawn as a failed board" "$out" ;; *) ok "a coordinator is not drawn as a failed board" ;; esac
+
 echo "── what it is not ──"
 if grep -nE '~/dev|/Users/|\bops\b' "$RACK" >/dev/null; then bad "names no owner's paths or coordinator" "$(grep -nE '~/dev|/Users/|\bops\b' "$RACK" | head -3)"
 else ok "names no owner's paths or coordinator"; fi

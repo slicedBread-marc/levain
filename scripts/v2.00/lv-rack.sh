@@ -207,6 +207,14 @@ if [ -z "$DEPLOYMENTS" ]; then
 fi
 HAVE_JQ=false; command -v jq >/dev/null 2>&1 && HAVE_JQ=true
 
+# A coordinator runs no pipeline and has no lv-tray.sh, so it is never a
+# column. A registry lists it all the same when it names every install (the
+# one deploy-all reads does), this board's own coordinator included.
+is_coordinator() {
+  local cfg; lv_config_into cfg "$1"
+  grep -qsE '^role:[[:space:]]*"?coordinator"?[[:space:]]*$' "$cfg"
+}
+
 # A client's harness, on either side of the 14.0.0 rename. hx_resolve <dir>
 # <lv-script> sets HX_EXEC and HX_NAME: lv-exec.sh by the lv- name, or a 13.x
 # client's wf-exec.sh by the name the script had there. It fails when the
@@ -570,6 +578,7 @@ collect() {
   local project_path name
   while IFS= read -r project_path || [ -n "$project_path" ]; do
     [[ -z "$project_path" || "$project_path" == \#* ]] && continue
+    is_coordinator "$project_path" && continue
     name=$(basename "$project_path")
     names+=("$name"); paths+=("$project_path")
     apply_record "$(fetch_one "$project_path")" "append"
@@ -843,6 +852,7 @@ start_refresh_async() {
     project_path=""
     while IFS= read -r project_path || [ -n "$project_path" ]; do
       [[ -z "$project_path" || "$project_path" == \#* ]] && continue
+      is_coordinator "$project_path" && continue
       printf '%s\x1e%s\x1e%s\n' "$(basename "$project_path")" "$project_path" "$(fetch_one "$project_path")"
     done < "$DEPLOYMENTS"
   ) >"$refresh_file" 2>/dev/null &
@@ -2164,6 +2174,7 @@ each_project() {
   local p
   while IFS= read -r p || [ -n "$p" ]; do
     [[ -z "$p" || "$p" == \#* ]] && continue
+    is_coordinator "$p" && continue
     printf '%s\n' "$p"
   done < "$DEPLOYMENTS"
 }
