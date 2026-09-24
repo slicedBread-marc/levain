@@ -146,7 +146,7 @@ tier. Applying a tier to a client is a hand edit to that client's `claude-workfl
 
 ### VERSION is bumped by a hook, and you state the level
 
-`.git/hooks/pre-commit` bumps `VERSION` into every commit. It bumps a **patch** unless told otherwise:
+`githooks/pre-commit` bumps `VERSION` into every commit. git never clones hooks, so run `./githooks/install.sh` once per clone; it links the tracked hooks into `.git/hooks` and leaves a local one (the operator's denylist `pre-push`) alone. It bumps a **patch** unless told otherwise:
 
 ```bash
 LV_BUMP=minor git commit -m "feat(x): a new script, a new flag"     # 0.x.0

@@ -1,0 +1,69 @@
+#!/bin/bash
+# Bumps VERSION on every commit to this workflow repo.
+#
+#   LV_BUMP=major git commit -m "breaking(x): ..."   → x.0.0
+#   LV_BUMP=minor git commit -m "feat(x): ..."       → 0.x.0
+#   git commit -m "fix(x): ..."                      → 0.0.x  (default)
+#
+# WHY THE LEVEL IS AN ENV VAR AND NOT THE COMMIT MESSAGE
+#
+# It was read from the message, in this hook, out of .git/COMMIT_EDITMSG — and
+# for `git commit -m` git has not written that file yet, so every commit was
+# classified by the PREVIOUS one's message. A run of `fix:` commits could hide
+# a `feat:` entirely; this sweep's two feature commits both bumped as patches.
+# (A second bug sat on top of it: `^feat:` never matched a scoped `feat(x):`.)
+#
+# Moving the logic to prepare-commit-msg gets the real message and does not
+# work: git has already snapshotted the index by then, so the hook's `git add
+# VERSION` lands in the working tree and never in the commit. Verified, not
+# assumed. pre-commit is the only hook whose staging git re-reads, and it is
+# the one hook with no access to the message.
+#
+# So the level is stated explicitly. Default patch, because that is what most
+# commits are and an unstated bump should understate rather than overstate.
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+VERSION_FILE="$REPO_ROOT/VERSION"
+
+[ -f "$VERSION_FILE" ] || exit 0
+
+# Nothing staged besides a leftover VERSION from a past aborted attempt?
+# `git commit` decides whether there's "anything to commit" from the index it
+# read BEFORE invoking this hook — a change THIS hook stages afterward (via
+# `git add`, below) never makes it into that decision, even though it lands
+# on disk. So `git add deployments.txt && git commit` with deployments.txt
+# gitignored (nothing real staged) bumped and staged VERSION here, then git
+# still printed "nothing to commit, working tree clean" and exited 1 — the
+# commit never happened, but VERSION was left modified and staged for a
+# commit that doesn't exist (a client's WFI-001). Bumping is only meaningful
+# for a commit that is actually going to land, so check for real staged
+# content FIRST and skip the bump when there is none.
+if git diff --cached --quiet -- . ":(exclude)$(basename "$VERSION_FILE")" 2>/dev/null; then
+    exit 0
+fi
+
+# LV_BUMP since 14.0.0; WF_BUMP is still read, so an old habit or note works.
+BUMP="${LV_BUMP:-${WF_BUMP:-patch}}"
+
+current=$(tr -d '[:space:]' < "$VERSION_FILE")
+IFS='.' read -r major minor patch <<< "$current"
+
+case "$BUMP" in
+    major|breaking)
+        major=$((major + 1)); minor=0; patch=0 ;;
+    minor|feat)
+        minor=$((minor + 1)); patch=0 ;;
+    patch|fix|"")
+        patch=$((patch + 1)) ;;
+    none|skip)
+        exit 0 ;;
+    *)
+        echo "pre-commit: LV_BUMP='$BUMP' is not major|minor|patch|none — refusing to guess." >&2
+        exit 1 ;;
+esac
+
+new_version="$major.$minor.$patch"
+echo "$new_version" > "$VERSION_FILE"
+
+git add "$VERSION_FILE"
+echo "VERSION bumped: $current → $new_version (LV_BUMP=$BUMP)"
