@@ -1,11 +1,18 @@
 # Levain
 
-A structured development pipeline for Claude Code. Ideas become briefs, briefs become reviewed
-plans, and plans become code that is verified and then acceptance-tested. State lives in a
-registry in the repository, not in your head or in a chat.
+**From developer to CEO.**
 
-It grows with you. Run it by hand on one project, let a daemon run it while you answer only what
-needs a human, and then oversee several projects from one board.
+An open-source harness for Claude Code, for developers already running a session per task. It
+turns your windows into one pipeline per project, and your projects into one board. You still
+decide what gets built; it keeps the work moving between your decisions.
+
+Start with one project. Climb when you're ready: **manual → attended → overseer**.
+
+Ideas become briefs, briefs become reviewed plans, and plans become code that is verified and
+then acceptance-tested. State lives in a registry in the repository, not in your head or in a
+chat.
+
+Home page: [slicedbread.ca/levain](https://slicedbread.ca/levain)
 
 ## Quick start
 
@@ -33,7 +40,7 @@ during setup. There is no further promise than that.
 | Rung | You get | Start here if |
 |-|-|-|
 | **1. Manual** | The pipeline on one project. You run each skill yourself and see every step | You're new to it, or not yet sure the model suits your work |
-| **2. Daemon** | Unattended workers run the same skills. You clear only the gates, with `/lv-attend` | You've taken a few items through by hand and trust the shape |
+| **2. Attended** | A daemon moves the work between your decisions. You attend to the gates, with `/lv-attend` | You've taken a few items through by hand and trust the shape |
 | **3. Overseer** | One board for several projects, work filed between them, and a vision of what they are for | You run more than one project |
 
 Each rung works on its own, and nothing above it is needed.
@@ -77,7 +84,7 @@ T3 builder (sonnet)  /lv-implement      (verify runs by itself)
 T4 tester (haiku)    /lv-test
 ```
 
-## Rung 2: the daemon
+## Rung 2: attended
 
 ```bash
 scripts/lv-exec.sh lv-orchestrate.sh --sweep --dry-run   # preview first, always
@@ -130,7 +137,7 @@ See [`docs/coordinator.md`](docs/coordinator.md).
 
 The library never names your secrets tool, your hosting provider, your activity log or your
 list of projects. It calls a hook named for the job (`secrets-deny-patterns`, `provider-deny`,
-`secrets-deploy`, `activity-log`, `project-registry`, `overseer-vision`), and `lv-hook.sh`
+`secrets-deploy`, `activity-log`, `project-registry`, `overseer-vision`, `publish-denylist`), and `lv-hook.sh`
 finds who answers it. It looks first in the project's `.lv-local/hooks/`, then in your
 **packs** (private directories listed in `~/.config/levain/packs`), and finally in the library's
 neutral default. A pack can tighten the permission guard but never loosen it.

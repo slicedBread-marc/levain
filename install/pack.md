@@ -18,6 +18,7 @@ today. Then ask about the ones that matter:
 | `activity-log` | Do you keep a log of work across projects? |
 | `project-registry` | Where is your list of projects kept? |
 | `overseer-vision` | Does your vision skill live somewhere other than the coordinator? |
+| `publish-denylist` | Do you publish a repository that must never name a client, a private project or a home path? |
 
 Implement only what they answer. A hook left out keeps the library's neutral default.
 

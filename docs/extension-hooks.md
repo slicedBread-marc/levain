@@ -43,6 +43,7 @@ contributor never sees it.
 | `secrets-deploy` | decide | you, a skill, a deploy step | `<id> <location> [...]`: set archived secrets on a deployed app. Nothing secret may reach stdout, stderr or argv | refuses (exit 3): no secrets tool |
 | `activity-log` | observe | you, a skill | `"<what changed and why>" [--ref <commit/plan/file>]` | keeps no log |
 | `project-registry` | decide | `deploy-all.sh`, `sweep-issues.sh`, `check-profiles.sh`, `lv-rack.sh` | stdout: one absolute project path per line | `$LV_DEPLOYMENTS`, else `deployments.txt` in the library root, else a coordinator's `coordinates:` |
+| `publish-denylist` | add-deny | `check-denylist.sh` | stdout: one Perl regex per line, a name that must never reach a public copy of a repository (a client, a private project, a personal path). The list lives only in a pack | nothing |
 | `overseer-vision` | decide | `/lv-vision` | stdout: the absolute path of a `SKILL.md` meeting [vision-spec.md](vision-spec.md) | `.claude/skills/vision/SKILL.md` in the project, else exit 3 |
 
 The format of every add-deny rule is in `hooks.default/secrets-deny-patterns`. The permission

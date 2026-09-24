@@ -3,7 +3,7 @@
 # START.md, START.md to one prompt per rung under install/, and every command,
 # skill and doc those prompts name exists in the tree they ship with. An
 # install ends by pointing at the first brainstorm; a coordinator's lists its
-# three skills.
+# three skills. The README carries the home page's tagline, rung names and link (LVI-016).
 #
 # Usage: ./tests/start.sh
 
@@ -31,7 +31,14 @@ echo
 echo "1. The chain: README → START.md → install/"
 has "README's quick start is the prompt" "$(cat README.md)" "read ~/levain/START.md and set me up"
 has "README states the platform"          "$(cat README.md)" "built and tested on macOS"
-want="daemon first-brainstorm overseer pack preflight project upgrade vision"
+# LVI-016: the README matches the home page — its tagline, the rung names, one link out.
+has "README carries the tagline"            "$(cat README.md)" "From developer to CEO."
+has "README names the ladder"               "$(cat README.md)" "manual → attended → overseer"
+has "START.md names the same ladder"        "$(cat START.md)" "manual → attended → overseer"
+assert_eq "README links the home page once" "1" "$(grep -c 'https://slicedbread.ca/levain' README.md)"
+# shellcheck disable=SC2086
+assert_eq "rung 2 is 'attended', never 'the daemon'" "" "$(grep -liE 'rung 2(:|,)? the daemon|2\. daemon' $ALL)"
+want="attended first-brainstorm overseer pack preflight project upgrade vision"
 assert_eq "one prompt per step" "$want" "$(ls install | sed 's/\.md$//' | sort | tr '\n' ' ' | sed 's/ $//')"
 # shellcheck disable=SC2086
 missing=$(grep -ohE 'install/[a-z-]+\.md' $ALL | sort -u | while read -r f; do [ -f "$f" ] || echo "$f"; done)

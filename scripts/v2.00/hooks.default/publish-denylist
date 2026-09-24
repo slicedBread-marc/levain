@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# kind: add-deny
+#
+# publish-denylist — names that must never reach a public copy of a repository:
+# client names, private project names, personal paths. check-denylist.sh
+# refuses a tree, a push or an object store that carries one.
+#
+# Args: none. Stdin: none. Exit 0, or non-zero to refuse everything (fail
+# closed). Stdout: one Perl regex per line, matched case-insensitively; blank
+# lines and lines starting with # are ignored.
+#
+# The list lives in a private pack, never here: a list of names to keep out of
+# a public repository would itself publish them. This default adds nothing.
+exit 0

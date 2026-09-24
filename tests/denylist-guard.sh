@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# tests/denylist-guard.sh — check-denylist.sh keeps listed names out of the tree
-# and out of what a push would publish, and never prints the list itself.
+# tests/denylist-guard.sh — check-denylist.sh keeps listed names out of the tree,
+# out of what a push would publish and out of the object store, never prints the
+# list itself, and takes the list from the publish-denylist hook (a pack), so the
+# library never holds it (LVI-017).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 pass=0 fail=0
@@ -10,14 +12,27 @@ check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (expected $2, got $3)"; 
 
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 cd "$T" && git init -q -b main && git config user.email t@example.com && git config user.name t
-cp "$HERE/check-denylist.sh" . && printf '.denylist\n' > .gitignore
+cp "$HERE/check-denylist.sh" . && mkdir -p scripts/v2.00
+cp -R "$HERE/scripts/v2.00/lv-hook.sh" "$HERE/scripts/v2.00/hooks.default" scripts/v2.00/
 git add -A && git commit -qm "init" && base=$(git rev-parse HEAD)
 G=./check-denylist.sh
+export LV_PACKS=""                       # no pack: the neutral default adds nothing
 
 $G >/dev/null 2>&1;                      check "no list: passes"                    0 $?
 $G --require-list >/dev/null 2>&1;       check "no list + --require-list: refuses"  2 $?
 
-printf '# comment\nzebra-corp\n' > .denylist
+# The list comes from a pack's publish-denylist hook.
+P="$T.pack"; mkdir -p "$P/hooks"; trap 'rm -rf "$T" "$P"' EXIT
+printf '#!/bin/sh\nprintf "# comment\\nzebra-corp\\n"\n' > "$P/hooks/publish-denylist"; chmod +x "$P/hooks/publish-denylist"
+echo "made for Zebra-Corp" > h.txt && git add h.txt
+LV_PACKS="$P" $G --require-list >/dev/null 2>&1; check "a pack's list is used"              1 $?
+git rm -q --cached h.txt && rm h.txt
+LV_PACKS="$P" $G --require-list >/dev/null 2>&1; check "clean tree passes (pack list)"      0 $?
+LV_PACKS="$T.gone" $G >/dev/null 2>&1;   check "a listed pack that is missing refuses" 2 $?
+case "$(git ls-files)" in *zebra*|*Zebra*) bad "the library side holds no term" ;; *) ok "the library side holds no term" ;; esac
+
+export LV_DENYLIST="$T.list"             # a file instead, for the cases below
+printf '# comment\nzebra-corp\n' > "$LV_DENYLIST"
 $G --require-list >/dev/null 2>&1;       check "clean tree passes"                  0 $?
 
 echo "made for Zebra-Corp" > a.txt && git add a.txt
@@ -48,6 +63,18 @@ check "a listed name in any commit of the range fails" 1 $?
 git reset -q --hard "$base" && echo "x" > c.txt && git add c.txt && git commit -qm "clean" && tip=$(git rev-parse HEAD)
 printf 'refs/heads/main %s refs/heads/main %s\n' "$tip" "$base" | $G --pre-push >/dev/null 2>&1
 check "a clean push passes" 0 $?
+
+# --all-objects: a commit reset away is unreachable, still in the store, and
+# would travel with a push from this clone.
+git reset -q --hard "$base" && echo "y" > d.txt && git add d.txt && git commit -qm "for zebra-corp"
+git reset -q --hard "$base"
+$G >/dev/null 2>&1;                      check "tree scan misses an unreachable object" 0 $?
+out=$($G --all-objects 2>&1); rc=$?
+check "--all-objects finds it"          1 $rc
+case "$out" in *" commit"*) ok "reports object id and type" ;; *) bad "reports object id and type" ;; esac
+git reflog expire --expire=now --all && git gc -q --prune=now
+$G --all-objects >/dev/null 2>&1;        check "--all-objects passes once it is gone" 0 $?
+rm -f "$LV_DENYLIST"
 
 echo "  $pass passed, $fail failed"
 [ "$fail" = 0 ]

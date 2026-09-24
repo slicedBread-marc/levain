@@ -1,7 +1,7 @@
-# Rung 2: the daemon
+# Rung 2: attended
 
-> Part of [START.md](../START.md). The same skills, run by unattended workers. The user only
-> handles what a machine should not decide.
+> Part of [START.md](../START.md). A daemon runs the same skills between the user's decisions.
+> The user attends to what a machine should not decide, and nothing else.
 
 ## Before
 

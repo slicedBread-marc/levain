@@ -15,13 +15,13 @@
 
 ## The ladder
 
-Levain can be used at three levels. Most people should start at the bottom, and each rung works
+Levain can be used at three levels: manual → attended → overseer. Most people should start at the bottom, and each rung works
 without the ones above it.
 
 | Rung | What they get | For whom | Prompt |
 |-|-|-|-|
 | 1. Manual | The pipeline on one project: ideas become specs, specs become code, then verify and test. Every step is a skill they run themselves | Anyone new to it, and anyone not yet sure the model is right for their work | `install/project.md`, then `install/first-brainstorm.md` |
-| 2. Daemon | Unattended workers run the same skills. The user only clears what needs a human, with `/lv-attend` | Someone who has taken a few items through by hand and trusts the shape | `install/daemon.md` |
+| 2. Attended | A daemon moves the work between the user's decisions. The user attends to what needs a human, with `/lv-attend` | Someone who has taken a few items through by hand and trusts the shape | `install/attended.md` |
 | 3. Overseer | Several projects on one board, work filed between them, and a vision that says what they are for together | Someone running more than one project | `install/overseer.md`, then `install/vision.md` |
 
 These two can be done at any time, on any rung:

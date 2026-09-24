@@ -29,4 +29,4 @@ and type `/lv-brainstorm <their idea>` themselves.
 
 Once the brief exists, tell them what comes next, in 3 lines: `/lv-spec` when the brief says
 *Decided*, then `/lv-implement`, then `/lv-test`. Mention that re-running START.md later offers
-rung 2, the daemon, and that it is worth taking one or two items through by hand first.
+rung 2, attended (a daemon between their decisions), and that it is worth taking one or two items through by hand first.
