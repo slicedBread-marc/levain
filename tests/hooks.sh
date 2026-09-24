@@ -12,7 +12,10 @@
 #   6. project-registry: deploy-all/sweep-issues/check-profiles read it, and
 #      LV_DEPLOYMENTS (the test seam) wins over a pack.
 #   7. install.sh ships lv-hook.sh and hooks.default/ in the build, for a
-#      pipeline client and a coordinator.
+#      pipeline client and a coordinator; the overseer skills go only to a
+#      coordinator (LVI-014).
+#   8. overseer-vision finds the owner's vision skill; the spec's template is
+#      complete.
 #
 # Usage: ./tests/hooks.sh        Exit 0 if all pass, 1 on any failure.
 
@@ -144,6 +147,34 @@ for role in pipeline coordinator; do
   out=$(cd "$C" && CLAUDE_PROJECT_DIR="$C" LV_PACKS="$A" scripts/lv-exec.sh lv-hook.sh project-registry </dev/null 2>&1)
   assert_eq "$role: lv-exec.sh reaches a pack through it" "$out" "$C1"
 done
+P="$TEST_DIR/inst-pipeline"; K="$TEST_DIR/inst-coordinator"
+[ ! -d "$P/.claude/skills/lv-rack" ] && [ ! -d "$P/.claude/skills/lv-vision" ] \
+  && ok "pipeline: no overseer skills (/lv-rack, /lv-vision)" || bad "pipeline: no overseer skills"
+[ -f "$K/.claude/skills/lv-vision/SKILL.md" ] && [ -f "$K/.claude/skills/lv-rack/SKILL.md" ] \
+  && ok "coordinator: /lv-rack and /lv-vision" || bad "coordinator: /lv-rack and /lv-vision" "$(ls "$K/.claude/skills")"
+[ -f "$K/.claude/docs/vision-spec.md" ] && [ -f "$K/.claude/docs/extension-hooks.md" ] \
+  && ok "coordinator: the vision spec and the hooks doc they cite" || bad "coordinator: cited docs" "$(ls "$K/.claude/docs" 2>&1)"
+mkdir -p "$P/.claude/skills/lv-vision"; (cd "$REPO_ROOT" && LV_PACKS= bash install.sh "$P" >/dev/null 2>&1)
+[ ! -d "$P/.claude/skills/lv-vision" ] && ok "a stale overseer skill in a pipeline client is removed" || bad "a stale overseer skill in a pipeline client is removed"
+
+section "8. overseer-vision"
+out=$(cd "$K" && CLAUDE_PROJECT_DIR="$K" LV_PACKS= scripts/lv-exec.sh lv-hook.sh overseer-vision </dev/null 2>/dev/null); rc=$?
+assert_eq "no vision skill: exit 3" "$rc" "3"
+mkdir -p "$K/.claude/skills/vision"; echo x > "$K/.claude/skills/vision/SKILL.md"
+out=$(cd "$K" && CLAUDE_PROJECT_DIR="$K" LV_PACKS= scripts/lv-exec.sh lv-hook.sh overseer-vision </dev/null)
+assert_eq "the default finds .claude/skills/vision/SKILL.md" "$out" "$K/.claude/skills/vision/SKILL.md"
+mkhook "$A/hooks" overseer-vision 'echo /elsewhere/vision/SKILL.md'
+out=$(cd "$K" && CLAUDE_PROJECT_DIR="$K" LV_PACKS="$A" scripts/lv-exec.sh lv-hook.sh overseer-vision </dev/null)
+assert_eq "a pack's skill wins" "$out" "/elsewhere/vision/SKILL.md"
+(cd "$REPO_ROOT" && LV_PACKS= bash install.sh "$K" >/dev/null 2>&1)
+[ -f "$K/.claude/skills/vision/SKILL.md" ] && ok "a redeploy leaves the owner's vision skill alone" || bad "a redeploy leaves the owner's vision skill alone"
+spec="$REPO_ROOT/docs/vision-spec.md"
+tpl=$(sed -n '/vision-template:begin/,/vision-template:end/p' "$spec")
+case "$tpl" in *"name: vision"*"{{FAMILY}}"*) ok "the spec carries a fillable skill template" ;; *) bad "the spec carries a fillable skill template" ;; esac
+for ph in $(printf '%s' "$tpl" | grep -oE '\{\{[A-Z_]+\}\}' | sort -u); do
+  grep -q "^| \`$ph\`" "$spec" || bad "template placeholder $ph is defined in the spec's table"
+done
+ok "every template placeholder is defined in the spec's table"
 
 echo ""
 echo "Passed: $PASS   Failed: $FAIL"

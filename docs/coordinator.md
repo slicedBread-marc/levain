@@ -33,7 +33,12 @@ scripts/v*/lv-lock.sh
 scripts/v*/lv-dep-notify.sh     file into the projects it coordinates
 scripts/v*/lv-dep-bug.sh        file into a declared dependency
 scripts/v*/lv-issue.sh          report a harness fault
-.claude/skills/lv-dep-notify/   the entry point a human or agent invokes
+scripts/v*/lv-hook.sh           the extension-hook dispatcher, + hooks.default/
+scripts/v*/lv-rack.sh           the cross-project board
+.claude/skills/lv-dep-notify/   filing: the entry point a human or agent invokes
+.claude/skills/lv-rack/         the board, summarised
+.claude/skills/lv-vision/       the owner's vision skill, or the interview that writes one
+.claude/docs/                   the docs those skills cite (vision-spec.md, extension-hooks.md)
 .claude/workflow-version        the stamp
 .claude/workflow-source         where the library lives on this machine
 WORKFLOW.md                     from templates/WORKFLOW-coordinator.md
@@ -137,7 +142,26 @@ commits in the target but does **not** push, and the run exits 0 once every
 target has been attempted. Read the `SKIPPED` lines and tell the user which
 targets did not land — nothing retries them.
 
-## Tooling that walks `deployments.txt`
+## The overseer rung: board and vision
+
+A coordinator is where one person oversees several pipelines (LVI-014). Beyond filing, it gets:
+
+- **The board**, `scripts/lv-exec.sh lv-rack.sh` (`/lv-rack` for a summary): every project's
+  `lv-tray.sh --fields` as one grid. `--watch` is a live terminal board with a drill-down into
+  workers, plans and logs, daemon toggles, stop/resume of every daemon (`--stop-all`/`--resume`,
+  which `deploy-all.sh --stop-daemons` also uses), and `t` to start `/lv-attend` in the
+  highlighted project. Its projects come from the `project-registry` hook: the owner's pack, else
+  the library's `deployments.txt` (found through `.claude/workflow-source`), else this
+  coordinator's `coordinates:` list. Its own state, the suspend record and the snapshot cache,
+  lives in the coordinator's gitignored `.claude/orchestrator/`.
+- **A vision**, through `/lv-vision`. The library ships a contract, not a vision:
+  [vision-spec.md](vision-spec.md) defines the modes, the file tree, the rules and the output
+  formats. The `overseer-vision` hook names the owner's skill: a pack's, or
+  `.claude/skills/vision/SKILL.md` here. With none, `/lv-vision setup` interviews the owner and
+  writes one from the spec's template, together with a first `VISION.md`. That skill sits outside
+  the `lv-` names, so a deploy never touches it.
+
+## Tooling that walks the project registry
 
 - `sweep-issues.sh` works unchanged: a coordinator gets a `WORKFLOW-ISSUES.md`
   and reports harness faults like any client.

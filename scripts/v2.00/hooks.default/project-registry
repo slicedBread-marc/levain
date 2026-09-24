@@ -2,13 +2,33 @@
 # kind: decide
 #
 # project-registry — the projects this library is deployed to, one absolute
-# path per line. Read by deploy-all.sh, sweep-issues.sh and check-profiles.sh.
+# path per line. Read by deploy-all.sh, sweep-issues.sh, check-profiles.sh
+# and the coordinator's board, lv-rack.sh.
 #
 # Args: none. Stdin: none. Exit 0; no output means no projects.
 #
-# This default reads deployments.txt in the library root ($LV_LIBRARY, which
-# those scripts export), or the file named by $LV_DEPLOYMENTS. Blank lines and
-# # comments are skipped.
-f="${LV_DEPLOYMENTS:-${LV_LIBRARY:-.}/deployments.txt}"
-[ -f "$f" ] || exit 0
-sed -e 's/[[:space:]]*#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$f" | grep -v '^$' || true
+# This default reads, in order:
+#   1. the file $LV_DEPLOYMENTS names;
+#   2. deployments.txt in the library root ($LV_LIBRARY, which those scripts
+#      export — a coordinator's board takes it from .claude/workflow-source);
+#   3. the `coordinates:` list ("name:/path") in the project's
+#      claude-workflow.yml, so a coordinator with no registry file still has
+#      a board.
+# Blank lines and # comments are skipped.
+clean() { sed -e 's/[[:space:]]*#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$1" | grep -v '^$' || true; }
+
+f="${LV_DEPLOYMENTS:-}"
+[ -z "$f" ] && [ -n "${LV_LIBRARY:-}" ] && f="$LV_LIBRARY/deployments.txt"
+if [ -n "$f" ] && [ -f "$f" ]; then clean "$f"; exit 0; fi
+
+root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+cfg="$root/claude-workflow.yml"
+[ -f "$cfg" ] || exit 0
+awk '
+  /^coordinates:[ \t]*$/ { on = 1; next }
+  on && /^[ \t]+-[ \t]/ {
+    sub(/^[ \t]+-[ \t]+/, ""); gsub(/^["'\'']|["'\'']$/, "")
+    i = index($0, ":"); if (i) print substr($0, i + 1); next
+  }
+  on && /^[^ \t#]/ { on = 0 }
+' "$cfg"

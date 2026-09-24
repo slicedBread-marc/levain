@@ -129,6 +129,11 @@ comes from the target's counter and the request lands in its own `bugs/open/` â€
 the coordinator never derives an artifact number, and never writes into another
 project's pipeline beyond that filing.
 
+It is also the **overseer's seat**: `/lv-rack` is the board for every project at once
+(`scripts/lv-exec.sh lv-rack.sh --watch` in a terminal), and `/lv-vision` keeps what the projects
+are for together, through the owner's own vision skill. The library ships the skill's contract
+([`docs/vision-spec.md`](docs/vision-spec.md)) and an interview that writes one.
+
 See [`docs/coordinator.md`](docs/coordinator.md).
 
 ## Workflow Issues â€” the feedback loop

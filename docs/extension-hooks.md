@@ -42,7 +42,8 @@ contributor never sees it.
 | `provider-deny` | add-deny | `lv-guard-baseline.sh` | same format; your host's secret-setting, shell and destroy commands, usually under ids `provider-secrets`, `provider-shell`, `provider-destroy` | nothing (GitHub's rules are built in) |
 | `secrets-deploy` | decide | you, a skill, a deploy step | `<id> <location> [...]`: set archived secrets on a deployed app. Nothing secret may reach stdout, stderr or argv | refuses (exit 3): no secrets tool |
 | `activity-log` | observe | you, a skill | `"<what changed and why>" [--ref <commit/plan/file>]` | keeps no log |
-| `project-registry` | decide | `deploy-all.sh`, `sweep-issues.sh`, `check-profiles.sh` | stdout: one absolute project path per line | `deployments.txt` in the library root |
+| `project-registry` | decide | `deploy-all.sh`, `sweep-issues.sh`, `check-profiles.sh`, `lv-rack.sh` | stdout: one absolute project path per line | `$LV_DEPLOYMENTS`, else `deployments.txt` in the library root, else a coordinator's `coordinates:` |
+| `overseer-vision` | decide | `/lv-vision` | stdout: the absolute path of a `SKILL.md` meeting [vision-spec.md](vision-spec.md) | `.claude/skills/vision/SKILL.md` in the project, else exit 3 |
 
 The format of every add-deny rule is in `hooks.default/secrets-deny-patterns`. The permission
 baseline is described in [autonomy.md](autonomy.md#permission-baseline-what-an-unattended-worker-may-never-do). A rule-id from a

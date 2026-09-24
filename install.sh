@@ -274,6 +274,10 @@ PRODUCTION_LOGS_URL=$(get_config "production_logs_url")
 PRODUCTION_URL=$(get_config "production_url")
 ROLE=$(get_config "role")
 ROLE="${ROLE:-client}"
+# The overseer rung's skills (LVI-014): a coordinator installs these and no
+# pipeline skill; a client installs every other skill and none of these.
+COORD_SKILLS="lv-dep-notify lv-rack lv-vision"
+COORD_ONLY_SKILLS="lv-rack lv-vision"
 
 case "$ROLE" in
     client|coordinator) ;;
@@ -350,7 +354,7 @@ if [ "$ROLE" = "coordinator" ]; then
     # PATH-adjacent disk, and the only reason to withhold it is that running it
     # here is a bad idea — the same argument install.sh already makes for
     # pruning stale scripts out of a client.
-    COORD_SCRIPTS="lv-orch-lib.sh lv-lock.sh lv-ids.sh lv-dep-notify.sh lv-dep-bug.sh lv-issue.sh lv-hook.sh"
+    COORD_SCRIPTS="lv-orch-lib.sh lv-lock.sh lv-ids.sh lv-dep-notify.sh lv-dep-bug.sh lv-issue.sh lv-hook.sh lv-rack.sh"
 
     echo "Installing scripts..."
     # Built into a staging directory nothing resolves, then published and
@@ -417,18 +421,21 @@ if [ "$ROLE" = "coordinator" ]; then
         done
     done
 
-    # The one skill: how to file into the projects this one coordinates.
+    # The overseer's skills: filing into the projects this one coordinates,
+    # the cross-project board, and the vision (LVI-014).
     echo "Installing skills..."
-    COORD_SKILL_DIR="$TARGET_DIR/.claude/skills/lv-dep-notify"
-    mkdir -p "$COORD_SKILL_DIR"
-    sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
-        "$SCRIPT_DIR/skills/lv-dep-notify/SKILL.md" | render_ids | atomic_write "$COORD_SKILL_DIR/SKILL.md"
-    echo -e "${GREEN}  Installed /lv-dep-notify${NC}"
+    for name in $COORD_SKILLS; do
+        COORD_SKILL_DIR="$TARGET_DIR/.claude/skills/$name"
+        mkdir -p "$COORD_SKILL_DIR"
+        sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
+            "$SCRIPT_DIR/skills/$name/SKILL.md" | render_ids | atomic_write "$COORD_SKILL_DIR/SKILL.md"
+        echo -e "${GREEN}  Installed /$name${NC}"
+    done
 
-    # Same rule as a client, over a set of one skill: a coordinator gets only
-    # the docs /lv-dep-notify actually cites, and loses the pipeline docs a
-    # former client install left behind.
-    install_referenced_docs "$COORD_SKILL_DIR" "$TARGET_DIR/.claude/docs"
+    # Same rule as a client, over the coordinator's skills: only the docs they
+    # actually cite, and none of the pipeline docs a former client install
+    # left behind. The owner's own skills here (a vision skill) count too.
+    install_referenced_docs "$TARGET_DIR/.claude/skills" "$TARGET_DIR/.claude/docs"
 
     prune_legacy_prefix
 
@@ -437,7 +444,7 @@ if [ "$ROLE" = "coordinator" ]; then
     # does not exist here.
     for stale in "$TARGET_DIR/.claude/skills"/lv-*/; do
         [ -d "$stale" ] || continue
-        [ "$(basename "$stale")" = "lv-dep-notify" ] && continue
+        case " $COORD_SKILLS " in *" $(basename "$stale") "*) continue ;; esac
         rm -rf "$stale"
         echo -e "${YELLOW}  Removed /$(basename "$stale") — pipeline skill, not installed on a coordinator${NC}"
     done
@@ -823,6 +830,9 @@ mkdir -p "$TARGET_DIR/.claude/skills"
 for skill_dir in "$SCRIPT_DIR/skills"/*/; do
     SKILL_NAME=$(basename "$skill_dir")
     DEST_DIR="$TARGET_DIR/.claude/skills/$SKILL_NAME"
+    # The overseer rung's own skills belong to a coordinator (LVI-014); one a
+    # former coordinator install left here is removed, not refreshed.
+    case " $COORD_ONLY_SKILLS " in *" $SKILL_NAME "*) rm -rf "$DEST_DIR"; continue ;; esac
     mkdir -p "$DEST_DIR"
 
     sed -e "s|{{build_command}}|$BUILD_CMD|g" \
