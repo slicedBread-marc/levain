@@ -130,6 +130,22 @@ Before starting, confirm E2E passed on release:
      scripts/lv-exec.sh lv-gate-close.sh DEPLOY "nothing left to deploy — already up to date"
    fi
    ```
+   **Then, attended or not, clear an armed deploy guard before you unclaim:**
+   ```bash
+   scripts/lv-exec.sh lv-deploy-guard.sh --recover; echo "recover exit=$?"
+   ```
+   It finds `main`'s worktree from the marker itself, so it runs from here. Exit `1` — nothing
+   was armed, the normal case. Exit `0` — say what it printed (usually "nothing to undo" or
+   "origin/main already carries this commit"). Exit `2` — `main` needs a human: open a `stuck`
+   gate on `DEPLOY` quoting its output, then unclaim.
+
+   **This is not optional, and step 6a does not cover it** — this exit returns before step 6a
+   is reached. `lv-list-deploy.sh` offers DEPLOY for as long as the guard is armed, precisely so
+   that a worker comes and recovers it; a worker that says "nothing to deploy" and leaves the
+   marker behind is re-dispatched to say it again. A client's WFI-039: three workers in a row
+   exited here with the guard armed on a `main` that already equalled `origin/main`, attempts
+   reached 3, and a stuck gate asked a human about a deploy that had nothing wrong with it.
+
    Then unclaim (`scripts/lv-exec.sh lv-unclaim.sh DEPLOY`) and exit.
 4a. **Check for open deferred criteria on the plans being promoted:**
    ```bash
@@ -544,7 +560,7 @@ Plans never move folders, so the only potential conflict is REGISTRY.md — whic
 2. Confirm `release` exists as a ref (`git rev-parse --verify release`) — it need not be checked out anywhere
 3. Show commits on release that aren't on main
 4. If new commits exist: prompt user to confirm promotion
-5. If no new commits: inform user there is nothing to deploy, unclaim
+5. If no new commits: inform user there is nothing to deploy, run `lv-deploy-guard.sh --recover`, unclaim
 
 ## Committing work
 

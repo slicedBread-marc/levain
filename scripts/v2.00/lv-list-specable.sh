@@ -218,8 +218,12 @@ fi
 # kinds.
 brief_is_blocked() {
   local brief_md="$1" field
-  field=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Blocked:\*\*' "$brief_md" 2>/dev/null \
-          | sed -E 's/^.*\*\*Blocked:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
+  # `Blocked by:` is read too. lv-brief-block.sh writes `Blocked:`, but a brief
+  # written by hand reaches for the natural phrase — and a client's BRF-008,
+  # headed "Blocked by: ... Do not spec until it is met", was dispatched to an
+  # unattended spec worker because only the tool's spelling counted (LVI-013).
+  field=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Blocked( [Bb]y)?:\*\*' "$brief_md" 2>/dev/null \
+          | sed -E 's/^.*\*\*Blocked( [Bb]y)?:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
   # A parenthesised value is template prose, not a blocker — the same defence
   # the Plan: field needs, and for the same reason: a placeholder that reads as
   # a real value hides work instead of describing it.

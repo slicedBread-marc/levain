@@ -97,6 +97,11 @@ cd "$CLIENT" || exit 1
 "$SCRIPTS/lv-gate-open.sh" DEPLOY deploy-deferred-criteria "ship these?" >/dev/null 2>&1
 stamped=$(sed -n "s/^GATE_PROMOTE_TIP='\(.*\)'$/\1/p" "$CLIENT/.claude/orchestrator/gates/DEPLOY.gate")
 assert_eq "the gate carries the pushed tip, not the stale one" "$after" "$stamped"
+# coordinator WFI-037: "Push main  to origin?" — the question lost its sha and
+# the human approved a tip they were never shown.
+asked=$(sed -n "s/^GATE_QUESTION='\(.*\)'$/\1/p" "$CLIENT/.claude/orchestrator/gates/DEPLOY.gate")
+assert_eq "a question that names no tip is told the one it binds to" \
+  "ship these? [release at ${after:0:7}]" "$asked"
 
 # ── 2. An approval for a moved batch is refused at close ────────────────────
 echo ""

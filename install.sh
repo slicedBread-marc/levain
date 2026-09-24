@@ -1524,8 +1524,28 @@ if $INSTALL_COMMIT && git -C "$TARGET_DIR" rev-parse --verify --quiet HEAD >/dev
 
     if [ ${#DEPLOY_PATHS[@]} -gt 0 ]; then
         DEPLOY_BRANCH=$(git -C "$TARGET_DIR" branch --show-current 2>/dev/null || true)
+        # A promotion branch is not the deploy's to commit to while develop
+        # exists. Every human approval of a release or deploy is scoped to the
+        # tip of `release`/`main` it was given for; a sync commit there moves
+        # that tip, the approval lapses, and the operator is asked the same
+        # question again over a batch whose code did not change (coordinator
+        # WFI-010, WFI-037). The sync belongs on develop and reaches the
+        # promotion branches with the next real batch.
+        DEPLOY_ON_PROMOTION=false
         case "$DEPLOY_BRANCH" in
-            develop|main|master|release)
+            release) DEPLOY_ON_PROMOTION=true ;;
+            main|master)
+                git -C "$TARGET_DIR" rev-parse --verify --quiet refs/heads/develop >/dev/null 2>&1 \
+                    && DEPLOY_ON_PROMOTION=true ;;
+        esac
+        if $DEPLOY_ON_PROMOTION; then
+            echo -e "${YELLOW}  Left ${DEPLOY_PATHS[*]} uncommitted — checkout is on '$DEPLOY_BRANCH', a promotion${NC}"
+            echo -e "${YELLOW}    branch; a commit there would lapse a pending approval. Land them from develop.${NC}"
+            DEPLOY_BRANCH="(promotion)"
+        fi
+        case "$DEPLOY_BRANCH" in
+            "(promotion)") ;;
+            develop|main|master)
                 if git -C "$TARGET_DIR" commit --quiet \
                      -m "chore: sync workflow harness to v$WORKFLOW_VERSION" \
                      -- "${DEPLOY_PATHS[@]}" 2>/dev/null; then

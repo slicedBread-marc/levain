@@ -395,6 +395,14 @@ if [ "$from_state" = "testing" ] && [ "$to_state" = "complete" ] \
         # a near-miss as a near-miss.
         echo "         lv-manual-lint.sh $plan_id --open      # which criteria are open, and why" >&2
         echo "         lv-defer-criterion.sh $plan_id …      # if it cannot be tested yet" >&2
+        # WFI-025: a human who rules the plan complete OVER a FAIL has no
+        # checkbox or PASS to write — their answer is the only record, and it
+        # lives on the gate. Closing it first is safe while the claim is held
+        # (see /lv-test "Order of exit"); the race it would otherwise open
+        # needs the plan unclaimed.
+        echo "       If a human ruled it complete over a FAIL, record their answer first —" >&2
+        echo "       claim still held — then run this again:" >&2
+        echo "         lv-gate-close.sh $plan_id \"<their ruling>\" --only manual-test" >&2
         echo "       Nothing was changed. LV_ALLOW_UNTESTED=1 overrides." >&2
         exit 1
       fi

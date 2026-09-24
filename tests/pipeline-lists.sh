@@ -272,6 +272,34 @@ assert_eq "missing arguments: exit 1"                  "1" "$(rc "$SD/lv-worktre
 
 # ═════════════════════════════════════════════════════════════════════════════
 echo
+echo "8b. lv-worktree-preserve.sh — ignored work outlives its worktree (WFI-023/024)"
+printf 'brainstorm/*/*/*.png\n' > .gitignore && git add .gitignore && git commit -qm ignore
+git worktree add -q feature-branches/PLN-027-art -b feature/PLN-027-art develop 2>/dev/null
+mkdir -p feature-branches/PLN-027-art/brainstorm/avatars/v1 feature-branches/PLN-027-art/build
+echo render-a > feature-branches/PLN-027-art/brainstorm/avatars/v1/a.png
+echo render-b > feature-branches/PLN-027-art/brainstorm/avatars/v1/b.png
+echo junk > feature-branches/PLN-027-art/build/out.o
+assert_eq "no preserveIgnored: a no-op, exit 0" "0" "$(rc "$SD/lv-worktree-preserve.sh" feature-branches/PLN-027-art)"
+assert_eq "and copies nothing" "false" "$([ -e brainstorm/avatars/v1/a.png ] && echo true || echo false)"
+printf 'project_slug: "demo"\npreserveIgnored:\n  - brainstorm/\n' > levain.yml
+assert_eq "configured: exit 0" "0" "$(rc "$SD/lv-worktree-preserve.sh" feature-branches/PLN-027-art)"
+assert_eq "the ignored renders land on the develop root" "render-a render-b" \
+  "$(cat brainstorm/avatars/v1/a.png brainstorm/avatars/v1/b.png 2>/dev/null | xargs)"
+assert_eq "and nothing outside the named path" "false" "$([ -e build/out.o ] && echo true || echo false)"
+assert_eq "a second run is a no-op on identical files" "0" "$(rc "$SD/lv-worktree-preserve.sh" feature-branches/PLN-027-art)"
+echo edited-on-develop > brainstorm/avatars/v1/b.png
+assert_eq "a different file already on develop is refused: exit 2" "2" \
+  "$(rc "$SD/lv-worktree-preserve.sh" feature-branches/PLN-027-art)"
+assert_eq "and develop's copy is not overwritten" "edited-on-develop" "$(cat brainstorm/avatars/v1/b.png)"
+assert_eq "a worktree that is already gone: exit 0" "0" "$(rc "$SD/lv-worktree-preserve.sh" feature-branches/PLN-999-gone)"
+assert_eq "missing argument: exit 1" "1" "$(rc "$SD/lv-worktree-preserve.sh")"
+assert_eq "/lv-test runs it before removing the worktree" "true" \
+  "$(awk '/lv-worktree-preserve.sh/{p=NR} /git worktree remove feature-branches/{r=NR} END{print (p && r && p<r) ? "true" : "false"}' "$REPO_ROOT/skills/lv-test/SKILL.md")"
+git worktree remove --force feature-branches/PLN-027-art && git branch -qD feature/PLN-027-art
+rm -rf brainstorm && printf 'project_slug: "demo"\n' > levain.yml
+
+# ═════════════════════════════════════════════════════════════════════════════
+echo
 echo "9. The reboot reminder"
 assert_eq "no flag: the check is silent"               "" "$("$SD/lv-check-reboot-flag.sh")"
 "$SD/lv-set-reboot-flag.sh" "hooks changed — restart" >/dev/null

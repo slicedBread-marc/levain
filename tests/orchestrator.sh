@@ -2516,6 +2516,24 @@ assert_eq "production-push open: the step-12 back-merge is unaffected" "0" \
 assert_eq "production-push answered: push main allowed" "0" \
   "$(promote_guard_rc 'git push origin main')"
 
+# coordinator WFI-009: a worker opened deploy-deferred-criteria, then merged
+# release into main anyway — the merge arms named only deploy-approval, so the
+# guard waved it through. Every arm that deploy-approval blocks, this blocks.
+"$SCRIPT_DIR/lv-gate-open.sh" DEPLOY deploy-deferred-criteria "DC-014 still open — promote?" >/dev/null 2>&1
+assert_eq "deploy-deferred-criteria open: local release→main merge blocked (step 7)" "2" \
+  "$(promote_guard_rc "git merge -X theirs --no-ff release -m release-promote-to-main")"
+assert_eq "deploy-deferred-criteria open: step-7 merge in the main checkout blocked" "2" \
+  "$(promote_guard_rc "git merge -X theirs --no-ff release -m release-promote-to-main" "$PROMOTE_CWD_MAIN")"
+assert_eq "deploy-deferred-criteria open: back-merge main→develop blocked (step 12)" "2" \
+  "$(promote_guard_rc "git merge -X ours main -m sync-bring-completed-plans-back-to-develop")"
+assert_eq "deploy-deferred-criteria open: push main blocked" "2" \
+  "$(promote_guard_rc 'git push origin main')"
+assert_eq "deploy-deferred-criteria open: push release is unaffected (different gate)" "0" \
+  "$(promote_guard_rc 'git push origin release')"
+"$SCRIPT_DIR/lv-gate-close.sh" DEPLOY "read them — none is a runtime dependency" >/dev/null 2>&1
+assert_eq "deploy-deferred-criteria closed: step-7 merge allowed again" "0" \
+  "$(promote_guard_rc "git merge -X theirs --no-ff release -m release-promote-to-main")"
+
 # Fail open on anything it cannot read.
 assert_eq "malformed payload allows" "0" \
   "$(printf 'not json at all' | "$SCRIPT_DIR/lv-guard-promote.sh" >/dev/null 2>&1; echo $?)"

@@ -1431,6 +1431,24 @@ assert_eq "on a foreign branch it says so instead of committing" "true" \
 assert_eq "and leaves the change for develop to land" "true" \
   "$(cd "$DEPLOYC" && git status --porcelain | grep -q 'levain.yml' && echo true || echo false)"
 
+# Nor on a promotion branch (coordinator WFI-010): an approval is scoped to the
+# release/main tip it was given for, and a sync commit there lapses it.
+( cd "$DEPLOYC" && git checkout -q -- . && git checkout -q develop \
+    && git branch -q -f release develop && git checkout -q release ) >/dev/null 2>&1
+rel_before=$(cd "$DEPLOYC" && git rev-parse release)
+printf '\n# forced change\n' >> "$DEPLOYC/levain.yml"
+rel_out=$(bash "$LIB_ROOT/install.sh" "$DEPLOYC" 2>&1 || true)
+assert_eq "on release it commits nothing — the approved tip does not move" "$rel_before" \
+  "$(cd "$DEPLOYC" && git rev-parse release)"
+assert_eq "and says why" "true" \
+  "$(printf '%s' "$rel_out" | grep -q "would lapse a pending approval" && echo true || echo false)"
+( cd "$DEPLOYC" && git checkout -q -- . && git checkout -q -b main develop ) >/dev/null 2>&1
+main_before=$(cd "$DEPLOYC" && git rev-parse main)
+printf '\n# forced change\n' >> "$DEPLOYC/levain.yml"
+bash "$LIB_ROOT/install.sh" "$DEPLOYC" >/dev/null 2>&1 || true
+assert_eq "nor on main while develop exists" "$main_before" \
+  "$(cd "$DEPLOYC" && git rev-parse main)"
+
 # --no-commit restores the old behaviour for a caller that wants to bundle it.
 ( cd "$DEPLOYC" && git checkout -q develop && git checkout -q -- . ) >/dev/null 2>&1
 printf '\n# forced change\n' >> "$DEPLOYC/levain.yml"
@@ -5802,6 +5820,27 @@ assert_eq "clearing puts it straight back on the list" "true" \
 assert_eq "clearing twice is success, not an error" "0" \
   "$( (cd "$BLK" && ./scripts/lv-brief-block.sh BRF-010 --clear) >/dev/null 2>&1; echo $? )"
 
+# LVI-013: a hand-written `Blocked by:` — the natural phrase, and what an
+# attended brainstorm wrote — is the same field. It was read by nothing, and
+# the brief went to an unattended spec worker.
+printf '# Receive the workshop\n\n> **ID:** BRF-010\n> **Status:** Decided\n> **Blocked by:** BUG-002 in client-d. Do not spec until it is met\n\n## Problem\nx\n' \
+  > "$BLK/plans/briefs/BRF-010-receive-the-workshop.md"
+assert_eq "a hand-written 'Blocked by:' also holds the brief back" "false" \
+  "$(cd "$BLK" && ./scripts/lv-list-specable.sh 2>/dev/null | grep -q '^BRF-010' && echo true || echo false)"
+blk_err=$(cd "$BLK" && ./scripts/lv-list-specable.sh 2>&1 >/dev/null || true)
+assert_eq "and its reason reaches a human" "true" \
+  "$(printf '%s' "$blk_err" | grep -q 'Do not spec until it is met' && echo true || echo false)"
+(cd "$BLK" && ./scripts/lv-brief-block.sh BRF-010 "still waiting" --no-commit) >/dev/null 2>&1
+assert_eq "re-blocking rewrites it to the tool's spelling, not a second field" "1:0" \
+  "$(grep -c '\*\*Blocked:\*\*' "$BLK/plans/briefs/BRF-010-receive-the-workshop.md" | xargs):$(grep -c 'Blocked by' "$BLK/plans/briefs/BRF-010-receive-the-workshop.md" | xargs)"
+printf '# Receive the workshop\n\n> **ID:** BRF-010\n> **Status:** Decided\n> **Blocked by:** BUG-002\n\n## Problem\nx\n' \
+  > "$BLK/plans/briefs/BRF-010-receive-the-workshop.md"
+(cd "$BLK" && ./scripts/lv-brief-block.sh BRF-010 --clear --no-commit) >/dev/null 2>&1
+assert_eq "--clear removes a hand-written 'Blocked by:' too" "true" \
+  "$(cd "$BLK" && ./scripts/lv-list-specable.sh 2>/dev/null | grep -q '^BRF-010' && echo true || echo false)"
+assert_eq "lv-brainstorm knows the verb" "true" \
+  "$(grep -q 'lv-brief-block.sh' "$LIB_ROOT/skills/lv-brainstorm/SKILL.md" && echo true || echo false)"
+
 # The template's guidance must not read as a live blocker.
 assert_eq "template prose does not block every new brief" "false" \
   "$(grep -qE '^> \*\*Blocked:\*\*' "$LIB_ROOT/templates/plans/briefs/TEMPLATE.md" && echo true || echo false)"
@@ -6028,6 +6067,12 @@ assert_eq "and reads the answer of record before re-asking" "true" \
   "$(grep -q 'lv-promote-approval.sh deferred' "$LIB_ROOT/skills/lv-deploy/SKILL.md" && echo true || echo false)"
 assert_eq "/lv-attend knows how to drain it" "true" \
   "$(grep -q 'deploy-deferred-criteria' "$LIB_ROOT/skills/lv-attend/SKILL.md" && echo true || echo false)"
+# WFI-039: "nothing to deploy" returned before step 6a, so an armed deploy
+# guard was never recovered and lv-list-deploy.sh kept re-offering DEPLOY.
+# The --recover must sit in step 4 itself, before step 4a begins.
+assert_eq "/lv-deploy's nothing-to-deploy exit recovers an armed guard" "true" \
+  "$(awk '/^4\. \*\*If no new commits/{f=1} /^4a\. /{f=0} f' "$LIB_ROOT/skills/lv-deploy/SKILL.md" \
+      | grep -q 'lv-deploy-guard.sh --recover' && echo true || echo false)"
 # A standing `deploy` grant is policy written before these criteria existed, and
 # DC-014 was the kind that crash-loops production (WFI-011). No autonomy action
 # stands behind this gate, so --basis autonomy must be refused on it.
@@ -6181,6 +6226,24 @@ assert_eq "no gate, no record, no tick — refused" "true" \
 "$SCRIPT_DIR/lv-gate-close.sh" PLN-985 "looked at it, it is obvious" --gate manual-test >/dev/null 2>&1
 assert_ok "an answered manual-test gate settles it" \
   env LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-985 testing complete
+
+# WFI-025: a human rules the plan complete OVER a FAIL (a spike's answer). No
+# tick or PASS can be written honestly, so the refusal must name the route
+# that can: the ruling on the gate, closed first while the claim is held.
+registry_add_row PLN-988 spike-fail-accepted testing
+cp plans/PLN-984-recorded-pass/plan.md plans/PLN-988-spike-fail-accepted/plan.md
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-988" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-988 manual-test "Does the mockup read at 64px?" >/dev/null 2>&1
+out=$(env LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-988 testing complete 2>&1; echo "rc=$?")
+assert_eq "an open, unanswered gate over an unchecked blocker is refused" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
+assert_eq "and the refusal names the ruling-on-the-gate route" "true" \
+  "$(printf '%s' "$out" | grep -q 'ruled it complete over a FAIL' && echo true || echo false)"
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-988 "it does not read — that is the spike's answer; complete" --only manual-test >/dev/null 2>&1
+assert_ok "the ruling recorded on the gate lets it through" \
+  env LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-988 testing complete
+assert_eq "/lv-test documents that order, claim held" "true" \
+  "$(grep -q 'the human.s answer \*is\* the evidence' "$LIB_ROOT/skills/lv-test/SKILL.md" && echo true || echo false)"
 
 # A plan with no blocking criteria at all is unaffected, which is most of them.
 registry_add_row PLN-986 no-manual testing

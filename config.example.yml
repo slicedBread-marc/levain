@@ -55,6 +55,16 @@ test_command: ""
 # every plan exit, and an accepted cost of finding merge breaks at deploy.
 postMergeCheck: full
 
+# Paths whose untracked and git-ignored files are real work product, not build
+# output. `git worktree remove --force` deletes those with a feature worktree,
+# so /lv-test copies them to the develop root first (lv-worktree-preserve.sh).
+# A file already there with different content is refused, never overwritten.
+#
+#   preserveIgnored:
+#     - brainstorm/
+#
+# Leave it out when everything worth keeping is tracked.
+
 # External services the E2E suite needs, checked by lv-preflight.sh before
 # /lv-release runs the suite. One name, one check, joined by the FIRST ':'.
 # A check starting http:// or https:// is fetched; anything else is run as a

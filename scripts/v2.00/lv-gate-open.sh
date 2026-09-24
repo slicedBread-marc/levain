@@ -406,6 +406,24 @@ if ! wf_gate_revision_scoped "$gate_name"; then
   fi
 fi
 
+# A promotion question has to say which tip it is about — the approval is
+# scoped to that tip, and a human cannot scope an answer to a commit they were
+# not shown. coordinator WFI-037: a production-push gate asked "Push main  to
+# origin?", its sha substituted to nothing, and the operator approved blind.
+# The tip is stamped below either way; when the question does not already name
+# it, it is appended so the reader sees the same commit the answer binds to.
+promote_tip=""
+if [ -n "$(wf_promote_tip_ref "$gate_name")" ]; then
+  wf_promote_fetch "$gate_name"
+  promote_tip=$(wf_promote_tip "$gate_name" || true)
+  if [ -n "$promote_tip" ]; then
+    case "$question" in
+      *"${promote_tip:0:7}"*) ;;
+      *) question="$question [$(wf_promote_tip_ref "$gate_name") at ${promote_tip:0:7}]" ;;
+    esac
+  fi
+fi
+
 {
   wf_emit GATE_ID       "$id"
   wf_emit GATE_ARTIFACT "$artifact"
@@ -432,8 +450,7 @@ fi
   # moment something else fetches — client-a WFI-264, where that gap was four
   # hours wide and cost the human the same answer twice. See wf_promote_fetch.
   if [ -n "$(wf_promote_tip_ref "$gate_name")" ]; then
-    wf_promote_fetch "$gate_name"
-    wf_emit GATE_PROMOTE_TIP "$(wf_promote_tip "$gate_name" || true)"
+    wf_emit GATE_PROMOTE_TIP "$promote_tip"
   fi
   if [ -n "$prior_res" ]; then
     wf_emit GATE_PRIOR_QUESTION   "$prior_q"

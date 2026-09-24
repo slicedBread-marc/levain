@@ -1116,6 +1116,20 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    ```
    Anything listed is yours to wait for or kill **before** the removal. If you
    cannot account for a process, stop and report it rather than removing.
+
+   **Then carry out what git will not.** `--force` deletes untracked and
+   ignored files with the directory, and some projects keep real deliverables
+   out of git on purpose — generated renders, media, anything too large to
+   track. A project names those paths under `preserveIgnored:` in
+   `levain.yml`; this copies them to the develop root, and is a no-op when
+   nothing is named. PLN-027's 24 renders, the whole content of the gallery it
+   built, were deleted here at completion (WFI-023, WFI-024).
+   ```bash
+   scripts/lv-exec.sh lv-worktree-preserve.sh feature-branches/PLN-NNN-<slug>; echo "preserve exit=$?"
+   ```
+   Exit `0` — go on. Exit `2` — **do not remove the worktree**: the files it
+   names exist nowhere else. Report them, leave the worktree and branch in
+   place, and finish the rest of the exit; the plan is still complete.
    ```bash
    git worktree remove feature-branches/PLN-NNN-<slug> --force 2>/dev/null || true
    git branch -d "$CURRENT_BRANCH" 2>/dev/null || true
@@ -1232,6 +1246,17 @@ lv-unclaim.sh …          ← last guard down
 The reverse order is a check-then-act race, and client-a ran it: an attended session closed PLN-006's `manual-test` gate at 15:32:33Z and committed `testing → draft` five seconds later. The daemon swept at 15:32:35Z — inside that window the plan was ungated, unclaimed and still reading `testing` — and spawned an unattended tester onto a plan that was already on its way back to the planner. That worker re-ran the whole e2e scope and opened a *fresh* `manual-test` gate on a plan that had sat in `draft` with five unaddressed findings for four minutes, which then blocked the plan from reaching `/lv-spec` at all (WFI-079).
 
 While the transition is uncommitted it does not exist to any other session; while the gate or claim is up, no worker can be dispatched regardless of what the registry says. Committing first means there is never an instant where the plan is both unguarded and stale.
+
+**One case needs the gate answered before the transition: the human's answer *is* the evidence.** `testing → complete` refuses while an `eyes:blocking` criterion is unchecked, has no PASS in `test-progress.md`, and its `manual-test` gate is unanswered. When the operator rules the plan complete *over* a FAIL — a spike whose failed criterion is the answer it was run to find — none of the first two can be written honestly; the gate's answer is the only record. Then, and only then, the order is:
+
+```
+(claim still held)
+lv-gate-close.sh PLN-NNN "<the operator's ruling, in their words>" --only manual-test
+lv-registry-update.sh PLN-NNN testing complete …
+lv-unclaim.sh PLN-NNN
+```
+
+The claim is what makes this safe: the race above needs the plan unguarded, and a held claim is a guard. Do not tick the criterion or write a PASS row to get past the refusal — that records a test result nobody saw — and do not reach for `LV_ALLOW_UNTESTED=1`, which leaves no answer behind at all. Never release the claim between the two steps (WFI-025).
 
 `lv-spawn.sh` re-reads the registry immediately before it launches and stands down on a state it cannot act on, so a worker is not dispatched into a window this small. That is a backstop, not the fix — it narrows the window to milliseconds rather than closing it.
 

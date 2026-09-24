@@ -330,14 +330,18 @@ git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 #     unapproved `main` INTO develop, which the literal ref name does catch.
 case "$kind:$ref" in
   push:release)       gate_id="RELEASE"; gate_name="release-approval" ;;
-  # Either DEPLOY gate forbids the push: `deploy-approval` because the batch
-  # was never cleared, `production-push` because the push itself was asked
+  # Any DEPLOY gate forbids the push: `deploy-approval` because the batch
+  # was never cleared, `deploy-deferred-criteria` because its open criteria
+  # were never read, `production-push` because the push itself was asked
   # about and is not yet answered (coordinator WFI-008).
-  push:main)          gate_id="DEPLOY";  gate_name="deploy-approval production-push" ;;
+  push:main)          gate_id="DEPLOY";  gate_name="deploy-approval deploy-deferred-criteria production-push" ;;
   merge-into:release) gate_id="RELEASE"; gate_name="release-approval" ;;
-  merge-into:main)    gate_id="DEPLOY";  gate_name="deploy-approval" ;;
-  merge-ref:release)  gate_id="DEPLOY";  gate_name="deploy-approval" ;;
-  merge-ref:main)     gate_id="DEPLOY";  gate_name="deploy-approval" ;;
+  # The merge arms carry `deploy-deferred-criteria` too. A worker that opened
+  # it and then merged release into main anyway was never stopped, because
+  # only `deploy-approval` was named here (coordinator WFI-009).
+  merge-into:main)    gate_id="DEPLOY";  gate_name="deploy-approval deploy-deferred-criteria" ;;
+  merge-ref:release)  gate_id="DEPLOY";  gate_name="deploy-approval deploy-deferred-criteria" ;;
+  merge-ref:main)     gate_id="DEPLOY";  gate_name="deploy-approval deploy-deferred-criteria" ;;
 esac
 
 gate_file=$(wf_gate_file "$gate_id" 2>/dev/null); rc=$?

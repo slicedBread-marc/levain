@@ -8,6 +8,9 @@
 # the artifact, so the dispatcher stops sending a spec worker at work that
 # cannot be done.
 #
+# A hand-written `> **Blocked by:**` is the same field (LVI-013): blocking
+# rewrites it to `Blocked:`, and --clear removes it.
+#
 # The name says `brief` because briefs were the only case when it was written.
 # Bugs turned out to need the identical verb for the identical reason (below),
 # and the field, the reader and the semantics are the same — so it takes both
@@ -129,11 +132,11 @@ case "$artifact_kind" in
 esac
 
 if $clear; then
-  if ! grep -qE '^[ \t]*>?[ \t]*\*\*Blocked:\*\*' "$brief_md"; then
+  if ! grep -qE '^[ \t]*>?[ \t]*\*\*Blocked( [Bb]y)?:\*\*' "$brief_md"; then
     echo "$artifact_id is not blocked — nothing to clear"
     exit 0
   fi
-  awk '!/^[ \t]*>?[ \t]*\*\*Blocked:\*\*/' "$brief_md" > "$brief_md.tmp" && mv "$brief_md.tmp" "$brief_md"
+  awk '!/^[ \t]*>?[ \t]*\*\*Blocked( [Bb]y)?:\*\*/' "$brief_md" > "$brief_md.tmp" && mv "$brief_md.tmp" "$brief_md"
   msg="$kind($artifact_id): unblocked"
   result="$artifact_id unblocked — back on the specable list"
 else
@@ -148,7 +151,7 @@ else
   LV_BLOCKED="$blocked" awk '
     BEGIN { note = "> **Blocked:** " ENVIRON["LV_BLOCKED"]; replaced = 0; last_quote = 0; body = 0 }
     {
-      if (!replaced && $0 ~ /^[ \t]*>?[ \t]*\*\*Blocked:\*\*/) { lines[NR] = note; replaced = 1; next_ok = 1 }
+      if (!replaced && $0 ~ /^[ \t]*>?[ \t]*\*\*Blocked( [Bb]y)?:\*\*/) { lines[NR] = note; replaced = 1; next_ok = 1 }
       else lines[NR] = $0
       if ($0 ~ /^[ \t]*##[ \t]/) body = 1
       if (!body && $0 ~ /^[ \t]*>/) last_quote = NR
@@ -161,7 +164,7 @@ else
     }
   ' "$brief_md" > "$brief_md.tmp" && mv "$brief_md.tmp" "$brief_md"
 
-  if ! grep -qE '^[ \t]*>?[ \t]*\*\*Blocked:\*\*' "$brief_md"; then
+  if ! grep -qE '^[ \t]*>?[ \t]*\*\*Blocked( [Bb]y)?:\*\*' "$brief_md"; then
     echo "Error: could not write the Blocked field into $brief_md — nothing changed" >&2
     exit 1
   fi
