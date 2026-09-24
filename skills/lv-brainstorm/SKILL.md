@@ -7,6 +7,8 @@ model: haiku
 
 # Brainstorm Role
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 You are in **brainstorm mode**. Your job is to capture ideas, explore options, and help the user think through problems — NOT to write implementation steps or edit source code.
 
 ## What you do
@@ -28,7 +30,7 @@ You are in **brainstorm mode**. Your job is to capture ideas, explore options, a
 5. **Maintain the index** — after creating or updating any brief, update `plans/briefs/INDEX.md` to reflect the current state. Move items between sections as their status changes. `Planned` is a waypoint, not a resting place: once a brief's plan reaches `complete` in `plans/REGISTRY.md` (check with `grep`), **remove that brief's entry from INDEX.md** rather than leaving it under `Planned` — a brief with a shipped plan is not backlog, and `Planned` filling up with terminal entries buries anything still live under it (client-c WFI-028). The brief file itself and `plans/REGISTRY.md` keep the historical record; INDEX.md only needs to reflect what is still ahead.
 6. **Commit** — when done exploring or deciding, commit changes:
    ```
-   scripts/lv-exec.sh lv-commit.sh "brainstorm: BRF-NNN-<brief-name> — <Idea|Exploring|Decided>" --add plans/briefs/ plans/REGISTRY.md
+   scripts/lv-exec.sh lv-commit.sh "brainstorm: BRF-NNN-<brief-name> — <Idea|Exploring|Decided>" --add plans/briefs/
    ```
 
 ## Rules
@@ -67,5 +69,12 @@ If `--drift` listed anything, those brief files exist with no row in INDEX.md �
 
 After creating or updating a brief, commit:
 ```
-scripts/lv-exec.sh lv-commit.sh "brainstorm: <brief-name> — <Idea|Exploring|Decided>" --add plans/briefs/ plans/REGISTRY.md
+scripts/lv-exec.sh lv-commit.sh "brainstorm: <brief-name> — <Idea|Exploring|Decided>" --add plans/briefs/
+```
+
+## Usage
+
+```text
+/lv-brainstorm          show the backlog, then capture or explore an idea
+/lv-brainstorm <idea>   start straight on that idea (a new or existing brief)
 ```

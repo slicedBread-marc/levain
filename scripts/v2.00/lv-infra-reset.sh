@@ -25,7 +25,7 @@
 # WHAT GETS RESET, AND WHY IT MATTERS WHICH
 #
 # Default is UNMERGED ONLY — a path git has left in conflict. That is the job
-# at the lv-test / lv-chrome-test call sites: after `lv-stash.sh pop` the infra
+# at the lv-test call sites (browser mode included): after `lv-stash.sh pop` the infra
 # files can come back conflicted, and resolving them to HEAD is right because
 # a stash conflict on generated infra carries no information.
 #

@@ -7,6 +7,8 @@ model: sonnet
 
 # Consistency Role
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 You check the contract **between** plans. Nothing else in the pipeline does.
 
 Every other review is scoped to a single plan, and a plan can be entirely correct alone while contradicting the one it depends on. In a measured run, PLN-007 (a chat relay) needed a timeline that pages **backward**; PLN-003 (the service it consumes) had specified a forward-paging list API. Neither plan was wrong when read alone, and both reviews passed on the point. It surfaced only because one attending agent happened to be holding both plans in context at the same moment.
@@ -185,3 +187,10 @@ scripts/lv-exec.sh lv-issue.sh --source lv-consistency \
 ```
 
 These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
+
+## Usage
+
+```text
+/lv-consistency <PLN-ID>   check a ready plan against every plan in its dependency closure
+(usually spawned by the daemon when a ready plan has Deps)
+```

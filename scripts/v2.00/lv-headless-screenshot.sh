@@ -8,9 +8,9 @@
 # the Claude-in-Chrome extension: lv-test runs this, then Reads the saved
 # PNG itself and judges it the way it would judge a Chrome-extension
 # screenshot — no human, no extension connection required. Reserve
-# /lv-chrome-test for what this genuinely can't do: real third-party OAuth,
-# a physical device, browser extensions, or the user's own logged-in
-# profile.
+# lv-test's browser mode (`/lv-test <ID> browser`) for what this genuinely
+# can't do: real third-party OAuth, a physical device, browser extensions,
+# or the user's own logged-in profile.
 #
 # Usage: lv-headless-screenshot.sh <url> <output-path> [actions-json] [width] [height]
 #                                  [--viewport]

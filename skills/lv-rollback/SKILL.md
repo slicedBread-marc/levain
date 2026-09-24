@@ -7,6 +7,8 @@ model: haiku
 
 # Rollback Role
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 You are in **rollback mode**. A feature needs to be reverted. Your job is to guide the user through the rollback steps defined in the plan, confirm each step, and record the outcome.
 
 ## State context
@@ -109,13 +111,13 @@ If yes, guide them through the `/lv-bug` filing process with the rollback contex
 
 After the rollback is recorded:
 - If a bug was filed: "Run `/lv-spec` when ready to plan a fix — link it to [BUG-NNN]"
-- If no bug was filed: "Run `/lv-status` to see the current pipeline state"
+- If no bug was filed: "Run `/lv-tray` to see the current pipeline state"
 
 ## Rules
 
 - **Do NOT** execute deployment commands, git pushes, or database migrations yourself — guide the user to run them
 - **Do NOT** skip the safety assessment for irreversible migrations — always surface this explicitly
-- **Do NOT** move the plan folder. Ever. Plans are immovable (`CLAUDE.md` Design Principle 1): `plans/PLN-NNN-<slug>/` is the plan's address forever, and every script that resolves a plan builds that path literally — `lv-list-rollbacks.sh` among them. A `git mv` here permanently breaks path resolution for that plan and leaves an orphaned registry row that `lv-registry-audit.sh` reports at the top of every `/lv-status` thereafter. Rolling back changes the **state**, not the location
+- **Do NOT** move the plan folder. Ever. Plans are immovable (`CLAUDE.md` Design Principle 1): `plans/PLN-NNN-<slug>/` is the plan's address forever, and every script that resolves a plan builds that path literally — `lv-list-rollbacks.sh` among them. A `git mv` here permanently breaks path resolution for that plan and leaves an orphaned registry row that `lv-registry-audit.sh` reports at the top of every `/lv-tray` thereafter. Rolling back changes the **state**, not the location
 - Steps must be walked through in order — do not skip ahead
 - If the user aborts mid-rollback, note the partial state in `plan.md` Amendments before exiting
 
@@ -132,17 +134,15 @@ If the user stops partway through:
    ```
 5. Recommend filing a bug and getting help before continuing
 
-## Rolling back
-
-When a plan is rolled back:
-1. Assign it a `RBK-NNN` ID (next available — scan REGISTRY.md for existing rolled-back plans)
-2. Optionally record the rollback in the plan's Amendments with a note like:
-   ```
-   [date] — Rolled back as RBK-001. Reason: [reason]. Verified: [passed/partial — notes].
-   ```
-
 ## Committing work
 
 The commit is done during step 5 (Record the rollback), after the registry row is
 updated. **There is no `git mv`** — see the Rules above. The plan folder stays exactly
 where it has always been; only the REGISTRY state and the plan's `## Amendments` change.
+
+## Usage
+
+```text
+/lv-rollback            list complete and active plans, pick one, walk its ## Rollback
+                        steps interactively and record the result
+```

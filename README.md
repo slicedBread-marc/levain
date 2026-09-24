@@ -28,7 +28,7 @@ vim claude-workflow.yml
 ```
 your-project/
   .claude/skills/
-    lv-status/SKILL.md     # /lv-status — pipeline dashboard
+    lv-tray/SKILL.md       # /lv-tray — pipeline, workers, gates; /lv-tray <ID> for one item
     lv-brainstorm/SKILL.md # /lv-brainstorm — capture ideas
     lv-spec/SKILL.md       # /lv-spec — write implementation specs
     lv-implement/SKILL.md  # /lv-implement — build from specs
@@ -64,16 +64,16 @@ draft → ready → active → verify ──[agent]──→ testing → complet
 
 | Command | Model | Purpose |
 |-|-|-|
-| `/lv-status` | haiku | Read REGISTRY.md, recommend next action |
 | `/lv-brainstorm` | sonnet | Capture and explore ideas |
 | `/lv-spec` | opus | Convert decided brief → implementation spec |
 | `/lv-implement` | sonnet | Build from plan, fix findings |
 | `lv-verify` | sonnet | Autonomous verify agent (triggered by state change) |
 | `/lv-consistency` | sonnet | Check a plan against its dependency closure (automatic on `ready` + Deps) |
-| `/lv-test` | haiku | Human acceptance testing |
-| `/lv-tray` | haiku | Live orchestrator view — workers, gates, events |
+| `/lv-test` | haiku | Human acceptance testing; `browser` mode drives Chrome |
+| `/lv-tray` | haiku | Pipeline picture and next action, live workers, gates, events; `/lv-tray <ID>` for one item's history. Works with no daemon |
 | `/lv-attend` | haiku | Drain the gate queue |
 | `/lv-orchestrate` | haiku | Drive one item end to end, or manage the daemon |
+| `/lv-help` | haiku | Every skill in one line each; `/<skill> help` for one skill's usage |
 
 ## Orchestrated Workflow (one terminal)
 
@@ -179,7 +179,7 @@ the collision visible while either side is still cheap to redirect.
 ```
 T1: Intake (sonnet)                T2: Planner (opus)
 ───────────────────                ──────────────────
-/lv-status                         
+/lv-tray                           
 /lv-brainstorm → Decided brief     
                                    /lv-spec → review gate → ready
 

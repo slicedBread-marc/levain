@@ -1008,8 +1008,8 @@ assert_eq "our stash is found after the stack shifts under it" "MINE" "$(cat "$S
 
 assert_eq "lv-test no longer pops positionally" "false" \
   "$(grep -q 'git stash pop 2>/dev/null' "$LIB_ROOT/skills/lv-test/SKILL.md" && echo true || echo false)"
-assert_eq "nor does lv-chrome-test" "false" \
-  "$(grep -q 'git stash pop 2>/dev/null' "$LIB_ROOT/skills/lv-chrome-test/SKILL.md" && echo true || echo false)"
+assert_eq "lv-chrome-test is only an alias, with no flow of its own to pop in" "false" \
+  "$(grep -q 'git stash' "$LIB_ROOT/skills/lv-chrome-test/SKILL.md" && echo true || echo false)"
 assert_eq "and the restored-changes commit is guarded on LV_RESTORED" "true" \
   "$(grep -q 'LV_RESTORED:-false' "$LIB_ROOT/skills/lv-test/SKILL.md" && echo true || echo false)"
 
@@ -1346,8 +1346,8 @@ assert_eq "and it does not count as a problem" "registry audit: clean" \
 assert_eq "the next allocation skips every live ID rather than colliding" "true" \
   "$(cd "$SLUG" && grep -qE '<!-- Counter: 2[12] -->' plans/REGISTRY.md && echo true || echo false)"
 
-assert_eq "lv-status runs the audit" "true" \
-  "$(grep -q 'lv-registry-audit.sh' "$LIB_ROOT/skills/lv-status/SKILL.md" && echo true || echo false)"
+assert_eq "the tray runs the audit (lv-status merged into it)" "true" \
+  "$(grep -q 'lv-registry-audit.sh' "$LIB_ROOT/scripts/v2.00/lv-tray.sh" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Claiming is not a mode-specific rule (client-a WFI-130)"
@@ -6429,6 +6429,36 @@ assert_eq "an empty command is still empty" "" "$out"
 
 cd "$TEST_DIR/main" || exit 1
 rm -rf "$BLK"
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A brief title may hold an em dash (found applying LVI-012)"
+
+# Both brief listers cut the description at the FIRST " — ", so a row like
+# "[X — Y](file.md) — desc" printed half the title and the file name as its
+# description. Three of one client's briefs rendered that way in /lv-tray.
+DASH_DIR="$TEST_DIR/brief-dash"
+mkdir -p "$DASH_DIR/plans/briefs"
+cat > "$DASH_DIR/plans/briefs/INDEX.md" <<'IDX'
+# Briefs
+
+## Decided
+- [BRF-008: Fate — keep or shed](BRF-008-fate.md) — Option C, then hand off
+
+## Exploring
+- [BRF-009: Light mode — a toggle](BRF-009-light.md) — needs a palette
+- [BRF-010: No description](BRF-010-none.md)
+IDX
+touch "$DASH_DIR/plans/briefs/BRF-008-fate.md" "$DASH_DIR/plans/briefs/BRF-009-light.md" "$DASH_DIR/plans/briefs/BRF-010-none.md"
+dash_briefs=$(cd "$DASH_DIR" && "$SCRIPT_DIR/lv-list-briefs.sh" 2>/dev/null)
+assert_eq "lv-list-briefs keeps a dashed title whole" "BRF-008: Fate — keep or shed" \
+  "$(printf '%s\n' "$dash_briefs" | grep '^BRF-008' | cut -f1)"
+assert_eq "and its description is what follows the link" "Option C, then hand off" \
+  "$(printf '%s\n' "$dash_briefs" | grep '^BRF-008' | cut -f2)"
+dash_storms=$(cd "$DASH_DIR" && "$SCRIPT_DIR/lv-list-brainstorms.sh" 2>/dev/null)
+assert_eq "lv-list-brainstorms: description after the link" "needs a palette" \
+  "$(printf '%s\n' "$dash_storms" | grep '^BRF-009' | cut -f4)"
+assert_eq "a row with no description has an empty one, not the whole line" "" \
+  "$(printf '%s\n' "$dash_storms" | grep '^BRF-010' | cut -f4)"
 
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n'

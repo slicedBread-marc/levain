@@ -194,7 +194,7 @@ from it — was considered and rejected. It's the second-inbox pattern [the
 core idea](#the-core-idea) above already ruled out for the other direction,
 just relocated: a changelog needs a "last-seen" cursor per dependent, a
 script to diff against it, and something that actually triggers the check
-(a hook, a `/lv-status` addition), and if that trigger auto-files an unread
+(a hook, a `/lv-tray` addition), and if that trigger auto-files an unread
 entry into `bugs/open/` anyway, you've built push with an extra layer in
 front of it. Filing directly into the dependent's own `bugs/open/` — same
 mechanism as `lv-dep-bug.sh`, same guarantee that the dependent's own

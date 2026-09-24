@@ -79,8 +79,8 @@ note() {
 #
 # Every check below reads the same rows, so they are parsed ONCE into shell
 # variables rather than re-awked per check. This script now runs on every
-# /lv-status and every /lv-tray render, including --watch, so its cost is
-# paid continuously rather than on demand: the first cut spawned six
+# /lv-tray render, including --watch, so its cost is paid continuously
+# rather than on demand: the first cut spawned six
 # subprocesses per registry row and measured 1.7s on a 75-plan project, 3.8s
 # at 100. Everything below is string work in bash — no subprocess per row.
 #
@@ -179,7 +179,7 @@ if [ -n "$counter" ]; then
   # counter sitting at or below the highest live ID cannot hand out a duplicate
   # — it self-corrects on the next allocation. Saying "the next allocation
   # collides" asserted a failure the allocator provably prevents, and it said
-  # it on every /lv-status and every /lv-tray render until someone hand-edited
+  # it on every /lv-tray render until someone hand-edited
   # REGISTRY.md to silence it. Hand-editing the counter is the one way to
   # actually create the collision this line warned about (WFI-133).
   if [ -n "$highest" ] && [ "$counter" -le "$highest" ]; then
@@ -190,7 +190,7 @@ if [ -n "$counter" ]; then
 fi
 
 # Checked-out branches, read ONCE. Check 7 needs this per row, and this script
-# runs on every /lv-status and every /lv-tray --watch — a `git worktree list`
+# runs on every /lv-tray render, --watch included — a `git worktree list`
 # per row is exactly the per-row subprocess the parse above exists to avoid.
 # Path AND branch, tab-separated: a worktree that should be drained is drained
 # by path, and check 7's remedy for a `complete` plan is a `git worktree remove`

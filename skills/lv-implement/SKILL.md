@@ -7,6 +7,8 @@ model: haiku
 
 # Implementer Role
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 ## Unattended mode
 
 If `LV_UNATTENDED=1` is set in your environment, you were launched by the orchestrator and **there is no human reading your output**. A question asked here hangs the pipeline.
@@ -123,7 +125,7 @@ Omit Table 2 if no blocked items. Omit Table 3 if no processing items. Omit Tabl
 Mark a plan urgent: \`u <number>\`
 Force-take a stale claim: \`force <plan-id>\` (e.g. \`force PLN-022-lesson-deeplink-urls\`)
 
-If no actionable items (or exit code 1), output: 'No plans ready to implement. Run /lv-status to see pipeline state.'
+If no actionable items (or exit code 1), output: 'No plans ready to implement. Run /lv-tray to see pipeline state.'
 
 Final response: ONLY the formatted tables. No commentary. No paragraphs.")
 ```
@@ -499,7 +501,7 @@ DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
     Implementation complete — all steps, code review, architecture review, and tests passed.
     Plan moved to verify — the verify agent will run automated checks.
     
-    If the verify agent finds issues, the plan will return to active (check /lv-status).
+    If the verify agent finds issues, the plan will return to active (check /lv-tray).
     If clean, it moves to testing for T4 human acceptance test.
     ```
     Then run `scripts/lv-exec.sh lv-check-reboot-flag.sh` and append any output to the message above.
@@ -667,3 +669,11 @@ scripts/lv-exec.sh lv-issue.sh --source lv-implement \
 
 These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
+## Usage
+
+```text
+/lv-implement           take the first selectable plan (new, resume or fix) and build it
+/lv-implement <PLN-ID>  build that plan
+  in the menu:  u <N>            mark row N urgent (again to clear)
+                force <PLN-ID>   take a plan the menu would not offer
+```

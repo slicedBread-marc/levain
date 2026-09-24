@@ -36,6 +36,10 @@
 #   worker <pidbase> <ID>   one live worker: its log, its artifact
 #   gate <ID>        an open gate: the gate file, the artifact it sits on
 #   summary <ID>     BODY — state, priority, goal, steps, claim, attempts
+#   history <ID>     BODY — the whole record of one number: its plan, bug and
+#                    brief, goal, steps, log, findings, gates open and
+#                    answered, claim, git history, events. What
+#                    `/lv-tray <ID>` shows. Exit 1 when nothing carries it.
 #   events <ID>      BODY — that artifact's lines from events.log
 #   audit            BODY — lv-registry-audit.sh
 #
@@ -220,6 +224,130 @@ row_promotable() {
             | grep -oE "($LV_PLN_RE)-[0-9]+" | sort -u)
 }
 
+# history_body — the sections of `history <ID>`, in reading order. Reads the
+# globals that node sets: id, num, plan_id, d, bug_md, brief_md.
+history_body() {
+  # The plan, through lv-plan-info.sh — the registry row's one parser.
+  if [ -n "$plan_id" ] && info=$("$SELF_DIR/lv-plan-info.sh" "$plan_id" 2>/dev/null); then
+    eval "$info"
+    printf '%s — %s\n' "$PLAN_ID" "$PLAN_SLUG"
+    printf '  state      %s\n' "$PLAN_STATE"
+    printf '  priority   %s\n' "$PLAN_PRIORITY"
+    printf '  branch     %s\n' "${PLAN_BRANCH:-n/a}"
+    printf '  updated    %s\n' "$PLAN_UPDATED"
+    printf '  wf         %s\n' "${PLAN_WF:-—}"
+    printf '  tags       %s\n' "$PLAN_TAGS"
+    if [ "$PLAN_BLOCKED" = true ]; then
+      printf '  deps       %s  [blocked by %s]\n' "$PLAN_DEPS" "$PLAN_BLOCKING"
+      [ -n "$PLAN_DEPS_DEAD" ] && printf '             %s abandoned — never arriving\n' "$PLAN_DEPS_DEAD"
+    else
+      printf '  deps       %s\n' "$PLAN_DEPS"
+    fi
+    [ -n "$d" ] && printf '  folder     %s\n' "${d#$ROOT/}"
+    printf '\nGoal\n  %s\n' "${PLAN_GOAL:-(none written)}"
+  elif [ -n "$d" ]; then
+    printf '%s — no REGISTRY row (lv-registry-audit.sh reports it)\n' "$(basename "$d")"
+    printf '  folder     %s\n' "${d#$ROOT/}"
+    printf '\nGoal\n  %s\n' "$(wf_goal_text "$d/plan.md")"
+  fi
+
+  if [ -n "$d" ]; then
+    # The Plan header names the bug and brief it came from, which need not
+    # share its number — a plan written for an older bug does not.
+    xref=$(grep -E '^[ \t]*>?[ \t]*\*\*(Bug|Brief):\*\*' "$d/plan.md" 2>/dev/null \
+           | sed -E 's/^[ \t]*>?[ \t]*\*\*(Bug|Brief):\*\*[ \t]*/\1: /' \
+           | grep -v '_(optional' || true)
+    [ -n "$xref" ] && { printf '\nCame from\n'; printf '%s\n' "$xref" | sed 's/^/  /'; }
+
+    if [ -f "$d/progress.md" ]; then
+      printf '\nProgress — %s steps\n' "$(wf_step_counts "$d/progress.md")"
+      wf_section_body "$d/progress.md" "Steps" \
+        | sed -nE 's/^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]*/  [✓] /p; s/^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]*/  [ ] /p'
+      log=$(wf_section_body "$d/progress.md" "Log" | grep -vE '^[[:space:]]*(>|$)' || true)
+      [ -n "$log" ] && { printf '\nActivity log\n'; printf '%s\n' "$log" | sed 's/^/  /'; }
+    fi
+
+    if [ -f "$d/findings.md" ]; then
+      fl=$(wf_findings_flat "$d/findings.md" | sed -E \
+             -e 's/\*\*//g' \
+             -e 's/^- \[ \][[:space:]]*/[open]   /' \
+             -e 's/^- \[[xX]\][[:space:]]*/[closed] /')
+      if [ -n "$fl" ]; then
+        printf '\nFindings — %s open, %s closed\n' \
+          "$(printf '%s\n' "$fl" | grep -c '^\[open\]' || true)" \
+          "$(printf '%s\n' "$fl" | grep -c '^\[closed\]' || true)"
+        printf '%s\n' "$fl" | sed 's/^/  /'
+      fi
+    fi
+  fi
+
+  if [ -n "$bug_md" ] && [ -f "$bug_md" ]; then
+    bstage=$(basename "$(dirname "$(dirname "$bug_md")")")
+    printf '\nBug %s — %s  [%s]\n' "$(wf_bug_id "$bug_md" 2>/dev/null)" \
+      "$(head -1 "$bug_md" | sed 's/^#[[:space:]]*//')" "$bstage"
+    grep -E '^[ \t]*>?[ \t]*\*\*(Status|Severity|Kind|Source|Plan):\*\*' "$bug_md" 2>/dev/null \
+      | sed -E 's/^[ \t]*>?[ \t]*\*\*([A-Za-z]+):\*\*[ \t]*/  \1: /'
+    printf '  file: %s\n' "${bug_md#$ROOT/}"
+    desc=$(wf_section_body "$bug_md" "Description" | grep -v '^[[:space:]]*$' | head -3)
+    [ -n "$desc" ] && printf '%s\n' "$desc" | sed 's/^/  | /'
+  fi
+
+  if [ -n "$brief_md" ] && [ -f "$brief_md" ]; then
+    printf '\nBrief %s — %s  [%s]\n' "$(basename "$brief_md" | grep -oE "^($LV_BRF_RE)-[0-9]+")" \
+      "$(wf_brief_title "$brief_md")" "$(wf_brief_status "$brief_md")"
+    grep -E '^[ \t]*>?[ \t]*\*\*(Plan|Blocked|Parked):\*\*' "$brief_md" 2>/dev/null \
+      | sed -E 's/^[ \t]*>?[ \t]*\*\*([A-Za-z]+):\*\*[ \t]*/  \1: /'
+    printf '  file: %s\n' "${brief_md#$ROOT/}"
+    desc=$(wf_section_body "$brief_md" "Problem" | grep -v '^[[:space:]]*$' | head -3)
+    [ -n "$desc" ] && printf '%s\n' "$desc" | sed 's/^/  | /'
+  fi
+
+  # Plans that name this bug or brief in their header without sharing its
+  # number — the link /lv-spec writes when one plan absorbs an older item.
+  if [ -z "$plan_id" ] || [ "$id" != "$plan_id" ]; then
+    refs=$(grep -lE "^[ \t]*>?[ \t]*\*\*(Bug|Brief):\*\*.*${id}([^0-9]|\$)" "$ROOT"/plans/*/plan.md 2>/dev/null \
+           | while IFS= read -r f; do basename "$(dirname "$f")"; done || true)
+    [ -n "$refs" ] && { printf '\nPlans naming %s\n' "$id"; printf '%s\n' "$refs" | sed 's/^/  /'; }
+  fi
+
+  # Gates: the one open now, and every answer ever given — the ledger
+  # lv-gate-close.sh appends, which outlives the slot it overwrites.
+  grow=$("$SELF_DIR/lv-list-gates.sh" "${plan_id:-$id}" 2>/dev/null | head -1 || true)
+  ledger=""
+  for f in "$ORCH/gates/resolved/"*.log; do
+    [ -f "$f" ] || continue
+    fid=$(basename "$f" | grep -oE "^($LV_WORK_RE)-[0-9]+" || true)
+    [ -n "$fid" ] && [ "$((10#${fid##*-}))" = "$((10#$num))" ] || continue
+    ledger="$ledger$(sed 's/\t/  /g; s/^/  /' "$f")"$'\n'
+  done
+  if [ -n "$grow" ] || [ -n "$ledger" ]; then
+    printf '\nGates\n'
+    [ -n "$grow" ] && printf '%s\n' "$grow" | awk -F'\t' '{ printf "  OPEN  %s  opened %s — %s\n", $2, $3, $4 }'
+    [ -n "$ledger" ] && printf '%s' "$ledger" | sort
+  fi
+
+  claims=""
+  for c in "$ORCH/claims/$num"*; do
+    [ -e "$c" ] && claims="$claims  claim      $(basename "$c")"$'\n'
+  done
+  for a in "$ORCH/attempts/$num"*; do
+    [ -f "$a" ] && claims="$claims  attempts   $(basename "$a"): $(tr '\n' ' ' < "$a")"$'\n'
+  done
+  [ -n "$claims" ] && { printf '\nClaim\n'; printf '%s' "$claims"; }
+
+  # Git history across every name the number has had, on every branch.
+  hist=$(git -C "$ROOT" log --all -E --grep="($LV_WORK_RE)-0*${num}([^0-9]|\$)" \
+           --format='%h — %s' -n 10 2>/dev/null || true)
+  [ -n "$hist" ] && { printf '\nGit history — newest 10, all branches\n'; printf '%s\n' "$hist" | sed 's/^/  /'; }
+
+  ev=$("$0" events "${plan_id:-$id}" 2>/dev/null | grep -v '^  no events' || true)
+  [ -n "$ev" ] && { printf '\nEvents\n'; printf '%s\n' "$ev"; }
+
+  logs=$(artifact_logs "${plan_id:-$id}" | head -5)
+  [ -n "$logs" ] && { printf '\nWorker logs — newest 5\n'; printf '%s\n' "$logs" | sed "s|^$ORCH/|  |"; }
+  
+}
+
 case "$node" in
   row)
     metric="${1:-}"
@@ -347,6 +475,34 @@ case "$node" in
 
   audit)
     "$SELF_DIR/lv-registry-audit.sh" 2>&1 | sed 's/^/  /'
+    ;;
+
+  history)
+    # One number's whole record, read top to bottom. An artifact keeps its
+    # number when it changes kind — BUG-043 and BRF-041 become PLN-043 and
+    # PLN-041 — so the number, not the name asked for, is what gathers it:
+    # asking about the bug shows the plan it became, and the other way round.
+    id="${1:-}"
+    num=$(printf '%s' "$id" | grep -oE '[0-9]+' | head -1)
+    [ -n "$num" ] || { echo "lv-tray-drill: history wants an ID, got '$id'" >&2; exit 2; }
+
+    plan_id="" bug_md="" brief_md=""
+    while IFS=' ' read -r _pfx what rest; do
+      case "$what" in
+        REGISTRY) plan_id="${rest#row }" ;;
+        */bugs/*) [ -n "$bug_md" ] || bug_md="$what/bug.md" ;;
+        */plans/briefs/*) [ -n "$brief_md" ] || brief_md="$what" ;;
+      esac
+    done < <(wf_artifacts_with_number "$num")
+    d=$(plan_dir "$id")
+    if [ -z "$plan_id" ] && [ -z "$d" ] && [ -z "$bug_md" ] && [ -z "$brief_md" ]; then
+      printf '%s: not found — no REGISTRY row, plan folder, bug or brief carries that number\n' "$id"
+      exit 1
+    fi
+
+    # Sections open with a blank line; a record that starts at the bug or the
+    # brief (no plan yet) would lead with one, so leading blanks are dropped.
+    history_body | sed '/./,$!d'
     ;;
 
   *)

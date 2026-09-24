@@ -7,6 +7,8 @@ model: haiku
 
 # Claim Mode
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 You are in **claim mode**. Your job is to take, release, or report the lease on one artifact. You do not read plans, edit files, or move pipeline state.
 
 ## On startup
@@ -87,3 +89,14 @@ Confirm with the user first, naming the holder from `--list`. This writes a `cla
 Report what changed in one line — what you took or released, and who held it if you stole it. Then stop. There is no state transition to commit and no handoff to make.
 
 Run `scripts/lv-exec.sh lv-check-reboot-flag.sh` afterward and append any output to your completion message.
+
+## Usage
+
+```text
+/lv-claim               list live claims and offer the verbs below
+/lv-claim <ID>          same as: claim <ID>
+  claim <ID>            take the lease on PLN-NNN / BUG-NNN / BRF-NNN
+  release <ID>          give it back
+  steal <ID>            take one a live session is holding
+  refresh <ID>          push out the 2h expiry on one you already hold
+```

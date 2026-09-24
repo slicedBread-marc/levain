@@ -7,12 +7,12 @@
 # style, cookie attributes, console errors, meta tag presence), optionally
 # preceded by an interaction sequence (click, fill, submit, wait, refresh —
 # see actions-json below), instead of leaving it at "-" for a human or a
-# separate /lv-chrome-test invocation. client-f's WFI-008: with Chrome not
+# separate `/lv-test <ID> browser` run. client-f's WFI-008: with Chrome not
 # connected, two Chrome-Assisted criteria sat untested through a full verify
 # cycle and opened a manual-test gate a human had to drain by hand;
 # installing playwright ad hoc and evaluating the same assertions took under
 # a second. Favour this (and lv-headless-screenshot.sh for visual criteria)
-# over /lv-chrome-test wherever the criterion can be scripted at all — the
+# over lv-test's browser mode wherever the criterion can be scripted at all — the
 # extension is the fallback, not the default.
 #
 # Usage: lv-headless-eval.sh <url> <js-boolean-expression> [actions-json] [width] [height]

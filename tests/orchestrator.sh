@@ -1078,8 +1078,8 @@ assert_eq "it forbids deleting the claim file by hand" "true" \
   "$(grep -qi 'delete a `.wf-claim` file directly' "$CLAIM_SKILL" && echo true || echo false)"
 assert_eq "it warns that releasing is a trigger" "true" \
   "$(grep -qi 'flushes any spawn the orchestrator deferred' "$CLAIM_SKILL" && echo true || echo false)"
-assert_eq "install.sh lists it" "true" \
-  "$(grep -q '/lv-claim ' "$LIB_ROOT/install.sh" && echo true || echo false)"
+assert_eq "the skill index lists it (install.sh prints the index)" "true" \
+  "$(idx=$(bash "$LIB_ROOT/scripts/v2.00/lv-skills.sh" --dir "$LIB_ROOT/skills"); printf '%s\n' "$idx" | grep -q '/lv-claim ' && echo true || echo false)"
 
 section "A live owner outranks the claim TTL (client-b WFI-015)"
 
@@ -2120,7 +2120,7 @@ guard_order_ok() {
     }
   ' "$1"
 }
-for skill in lv-test lv-chrome-test lv-verify lv-implement lv-spec lv-consistency; do
+for skill in lv-test lv-verify lv-implement lv-spec lv-consistency; do
   assert_eq "$skill releases no guard above a transition in the same block" "true" \
     "$(guard_order_ok "$LIB_ROOT/skills/$skill/SKILL.md")"
 done

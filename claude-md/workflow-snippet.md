@@ -139,7 +139,7 @@ draft → ready → active → verify ──[agent]──→ testing → complet
 
 | Skill | Model | Role | Agents |
 |-|-|-|-|
-| `/lv-status` | haiku | T1 Orchestrator | none |
+| `/lv-tray` | haiku | T1 Orchestrator | none |
 | `/lv-brainstorm` | sonnet | T1 Intake | none |
 | `/lv-spec` | opus | T2 Planner | codebase exploration (haiku) |
 | `/lv-implement` | sonnet | T3 Builder | build/test verification (haiku) |
@@ -148,7 +148,7 @@ draft → ready → active → verify ──[agent]──→ testing → complet
 | `/lv-release` | haiku | Release — merge PRs, E2E | none |
 | `/lv-deploy` | haiku | Deploy — promote to main | none |
 
-### Orchestrator (`/lv-status`) — haiku
+### Orchestrator (`/lv-tray`) — haiku
 Reads REGISTRY.md, reports pipeline state, recommends next action.
 
 ### Brainstorm Role (`/lv-brainstorm`)

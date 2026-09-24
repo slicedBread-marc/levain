@@ -24,7 +24,10 @@ while IFS= read -r line; do
   # Parse brief entries: "- [Name](file.md) — Description"
   if [ -n "$current_section" ] && echo "$line" | grep -qE '^\- \['; then
     name=$(echo "$line" | sed 's/^\- \[//' | sed 's/\].*//')
-    desc=$(echo "$line" | sed 's/^[^—]*— //')
+    # The description is what follows the link. Cutting at the first em dash
+    # instead broke on any title that has one ("X — Y"), leaving half the
+    # title and the file name as the description.
+    desc=$(echo "$line" | sed -n 's/^- \[[^]]*\]([^)]*)[[:space:]]*—[[:space:]]*//p')
     if [ "$current_section" != "$last_printed_section" ]; then
       echo "# $current_section"
       last_printed_section="$current_section"

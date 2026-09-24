@@ -9,13 +9,13 @@ This is the ideal setup for running the workflow with maximum throughput. It ena
 ```
 ┌──────────────────────┬──────────────────────┐
 │  T1: Sonnet Intake   │  T2: Opus Planner    │
-│  /lv-status          │  /lv-spec            │
+│  /lv-tray          │  /lv-spec            │
 │  /lv-brainstorm      │                      │
 │  /lv-bug             │                      │
 ├──────────────────────┼──────────────────────┤
 │  T3: Opus Builder    │  T4: Sonnet Validator│
 │  /lv-implement       │  /lv-verify          │
-│                      │  /lv-debug           │
+│                      │  /lv-test           │
 │                      │  /lv-rollback        │
 └──────────────────────┴──────────────────────┘
 ```
@@ -66,18 +66,18 @@ log_summary 2026-04-02   # show all lines from a session
 **Purpose:** Feed work into the pipeline, maintain visibility, capture new ideas.
 
 - **Model:** Sonnet 4.6
-- **Skills:** `/lv-status`, `/lv-brainstorm`, `/lv-bug`
+- **Skills:** `/lv-tray`, `/lv-brainstorm`, `/lv-bug`
 - **Startup sequence:**
   ```bash
   source .logs-utils.sh
   init_session "2026-04-02-T1"  # or auto-generate
   /model sonnet
-  /loop 10m /lv-status
+  /loop 10m /lv-tray
   ```
 - **Responsibilities:**
-  - Run `/lv-status` every 10–15 minutes to check pipeline health
+  - Run `/lv-tray` every 10–15 minutes to check pipeline health
   - Run `/lv-brainstorm` to capture new ideas as briefs
-  - Run `/lv-bug` to file bugs discovered during `/lv-debug`
+  - Run `/lv-bug` to file bugs discovered during `/lv-test`
   - Ensure `plans/briefs/` has at least 3 Decided briefs ready for T2
   - Alert if bottleneck detected (T3 idle, waiting for ready plans)
 
@@ -121,7 +121,7 @@ log_summary 2026-04-02   # show all lines from a session
 **Purpose:** Test implementations, debug issues, handle rollbacks.
 
 - **Model:** Sonnet 4.6
-- **Skills:** `/lv-verify`, `/lv-debug`, `/lv-rollback`
+- **Skills:** `/lv-verify`, `/lv-test`, `/lv-rollback`
 - **Startup sequence:**
   ```bash
   source .logs-utils.sh
@@ -131,7 +131,7 @@ log_summary 2026-04-02   # show all lines from a session
   ```
 - **Responsibilities:**
   - Run `/lv-verify` on plans in `plans/verify/`
-  - Run `/lv-debug` on completed plans if manual testing needed
+  - Run `/lv-test` on completed plans if manual testing needed
   - Run `/lv-rollback` if issues found
   - Can run in parallel with T3's implementation
   - Monitor for completed plans and pull them proactively
@@ -139,7 +139,7 @@ log_summary 2026-04-02   # show all lines from a session
 ## Workflow Rhythm
 
 ### Pre-Session (5 min)
-1. **T1:** Run `/lv-status` — assess current state
+1. **T1:** Run `/lv-tray` — assess current state
    - Are there ready plans for T3?
    - Are there plans waiting in verify/ for T4?
    - How many briefs are Decided?
@@ -184,7 +184,7 @@ Don't wait for T3 to finish before T4 validates. As soon as a plan moves to `pla
 - **Reason:** Validation can happen while T3 builds the next plan
 
 ### Rule 4: T1 keeps the intake flowing
-If `/lv-status` shows < 3 Decided briefs:
+If `/lv-tray` shows < 3 Decided briefs:
 - **Action:** T1 runs `/lv-brainstorm` to create more briefs
 - **Reason:** T2 should never run out of input
 
@@ -207,14 +207,14 @@ If `/lv-status` shows < 3 Decided briefs:
 
 ### When T4 is done verifying (10–20 min per plan)
 - **If plans/verify/ is empty:** Wait or check for completed plans
-- **If plans/complete/ exists:** Run `/lv-debug` for manual verification
+- **If plans/complete/ exists:** Run `/lv-test` for manual verification
 - **If issues found:** Run `/lv-bug` to file the issue (feeds back to T1)
 
 ## Logging Examples
 
 ### Sample log output
 ```
-[14:20:00] 2026-04-02-T1 | lv-status | start | check-queue | Q: ready=1 verify=1 active=1 open=3 triaged=1
+[14:20:00] 2026-04-02-T1 | lv-tray | start | check-queue | Q: ready=1 verify=1 active=1 open=3 triaged=1
 [14:20:30] 2026-04-02-T1 | lv-brainstorm | start | BRF-001 | Q: ready=1 verify=1 active=1 open=3 triaged=1
 [14:23:15] 2026-04-02-T1 | lv-brainstorm | done | BRF-002→Decided | Q: ready=1 verify=1 active=1 open=3 triaged=1
 [14:25:00] 2026-04-02-T2 | lv-spec | start | BRF-002 | Q: ready=1 verify=1 active=1 open=3 triaged=1
@@ -244,7 +244,7 @@ log_summary 2026-04-02  # all lines from that date
 ## Example Session (90 minutes)
 
 ```
-T1 [00:00] /lv-status
+T1 [00:00] /lv-tray
   → 2 briefs Decided (BRF-001, BRF-002), 1 ready plan, 0 verifying
 
 T1 [00:00] /lv-brainstorm capture BRF-003 [5 min]
@@ -252,7 +252,7 @@ T2 [00:05] /lv-spec BRF-001 → PLN-001 ready [10 min]
 
 T3 [00:10] /lv-implement PLN-001 [T2 just moved it to ready/]
 T2 [00:15] /lv-spec BRF-002 → PLN-002 ready [10 min]
-T1 [00:15] /lv-status check (pipeline healthy, wait)
+T1 [00:15] /lv-tray check (pipeline healthy, wait)
 
 T3 [00:20] PLN-001 step 3/7
 T2 [00:20] PLN-002 ready [T2 → ready/]
@@ -271,7 +271,7 @@ T2 [00:30] Still speccing PLN-003
 T3 [00:40] Step 3/8 of PLN-002
 T2 [00:35] PLN-003 ready [→ ready/]
 T4 [00:35] Verifying PLN-001, step 3/4
-T1 [00:40] /lv-status — pipeline healthy
+T1 [00:40] /lv-tray — pipeline healthy
 
 T4 [00:45] PLN-001 complete → plans/complete/
 T3 [00:55] PLN-002 → verify/ [moves to T4]
@@ -291,13 +291,13 @@ T3 [00:55] Pulls PLN-003 from ready/ → starts /lv-implement
 - [ ] One: `log_watch` (in a 5th window) to monitor log in real-time
 
 **Terminal startup:**
-- [ ] T1: `/model sonnet` + `/loop 10m /lv-status`
+- [ ] T1: `/model sonnet` + `/loop 10m /lv-tray`
 - [ ] T2: `/model opus` (manual, runs /lv-spec)
 - [ ] T3: `/model opus` + `/loop 2m /lv-implement`
 - [ ] T4: `/model sonnet` + `/loop 3m /lv-verify`
 
 **Pipeline health check:**
-- [ ] T1: Run `/lv-status` to see current state
+- [ ] T1: Run `/lv-tray` to see current state
 - [ ] T1: Check if Decided briefs exist (> 3) for T2
 - [ ] T2: Check if ready plans exist to spec from (briefs)
 - [ ] T3: Check if ready plans exist to implement

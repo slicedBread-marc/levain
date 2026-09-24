@@ -7,6 +7,8 @@ model: haiku
 
 # Deploy Role
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 You are in **deploy mode**. Your job is to promote the validated release branch to main, mark plans complete, close bugs, and back-merge to develop. This is the final pipeline step — run only after `/lv-release` has merged PRs and E2E tests have passed on the release branch.
 
 ## State context
@@ -371,7 +373,7 @@ Before starting, confirm E2E passed on release:
     ```bash
     scripts/lv-exec.sh lv-bug-close-sweep.sh --apply
     ```
-    Still in the develop worktree from step 12 — do not run this in `release-branches/main`. Read-only without `--apply`, for a standalone check outside a deploy (`/lv-status` can point to it the same way this repo's own `check-profiles.sh` and `sweep-issues.sh` are pointed to). Any bug it closes here needs its own commit pushed with develop in step 13, so run it before that push, not after.
+    Still in the develop worktree from step 12 — do not run this in `release-branches/main`. Read-only without `--apply`, for a standalone check outside a deploy (`/lv-tray` can point to it the same way this repo's own `check-profiles.sh` and `sweep-issues.sh` are pointed to). Any bug it closes here needs its own commit pushed with develop in step 13, so run it before that push, not after.
 13. **Push develop branch**:
     ```bash
     git push origin develop
@@ -582,3 +584,10 @@ When there is a real deploy:
 - **Logs:** {{production_logs_url}}
 - **Live site:** {{production_url}} (update should be live in 2–5 minutes)
 - **Health:** Check `/health` endpoint for server status
+
+## Usage
+
+```text
+/lv-deploy              promote release to main: mark plans complete, close bugs,
+                        back-merge to develop. The step before a production push
+```

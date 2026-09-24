@@ -1,175 +1,28 @@
 ---
 name: lv-help
-description: Display the overall workflow strategy, architecture, and reference guide. Shows how the terminal setup works and explains the full pipeline.
+description: List every skill with its one-line purpose, or one skill's usage. Generated from the skills' own files, so it is never out of date.
 user_invocable: true
 model: haiku
 ---
 
-# Help & Strategy
+# Help
 
-You are in **help mode**. Your job is to display the overall workflow architecture so users understand the system, how it works, and how to use it.
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
 
-## What to show
+You print the skill index and nothing else. Do not summarise it, explain the pipeline, or add advice.
 
-Display the full strategy with ASCII diagrams and clear explanations:
+| Call | Run, then print its output verbatim |
+|-|-|
+| `/lv-help` | `scripts/lv-exec.sh lv-skills.sh` |
+| `/lv-help all` | `scripts/lv-exec.sh lv-skills.sh --full` |
+| `/lv-help <skill>` | Print the `## Usage` block of `.claude/skills/<skill>/SKILL.md` (accept the name with or without `/` and `lv-`). No such skill: say so and run the index |
 
+For how the pipeline fits together, point the user to `WORKFLOW.md` in the project root — one line, only if they asked a "how does this work" question.
+
+## Usage
+
+```text
+/lv-help                every skill, one line each, plus moved names
+/lv-help all            the same, followed by every skill's usage
+/lv-help <skill>        one skill's usage (same as /<skill> help)
 ```
-╔════════════════════════════════════════════════════════════════════════════╗
-║                    Workflow Strategy: Terminal Pipeline                    ║
-╚════════════════════════════════════════════════════════════════════════════╝
-
-T1: Intake                T2: Planner              T3: Builder              T4: Tester
-(/lv-status,              (/lv-spec)               (/lv-implement)          (/lv-test)
-/lv-brainstorm,                  │                        │                        │
-/lv-bug)                         └──→ [ready/] ←─────────┘                        │
-[Sonnet]                               │                                          │
-    ▲                                  └────→ [verify/] ←──────────────────────────┘
-    └─────────────────────────────────────────────────────────────┐
-                                                                   │
-                     (feeds new briefs & bug fixes back to intake)
-                                                                   │
-                                                      [complete/]◄─┘
-
-
-═══════════════════════════════════════════════════════════════════════════
-
-THE FLOW:
-
-1. T1 monitors pipeline with /lv-status, captures ideas with /lv-brainstorm, files bugs
-2. T1 feeds Decided briefs to T2
-3. T2 runs /lv-spec → converts briefs to plans → moves to ready/
-4. T3 runs /lv-implement → auto-picks plans from ready/
-5. T3 executes steps, writes tests, runs code/architecture review, E2E tests, moves to verify/
-6. T4 runs /lv-test → human acceptance testing against plan criteria
-7. T4 creates PR to release on pass
-8. /lv-release: merge PRs to release, run E2E tests to validate staging
-9. /lv-deploy: merge release → main, plans move to complete/, bugs closed, back-merge to develop
-10. Loop continues: intake → plan → build → test → release → deploy → production → back to intake
-
-═══════════════════════════════════════════════════════════════════════════
-
-TERMINAL ROLES:
-
-T1: Sonnet Intake
-  • /lv-status: Monitor pipeline health (queue depth, bottlenecks)
-  • /lv-brainstorm: Capture new ideas → Decided briefs
-  • /lv-bug: File bugs discovered during verification
-  • Feeds work to T2 (keeps briefs flowing)
-
-T2: Opus Planner
-  • /lv-spec: Convert briefs/bugs → implementation plans
-  • Keeps ready queue filled (2–3 plans ahead)
-  • Manual (not looped)
-  • BOTTLENECK: If idle, means T1 is starving (no briefs)
-
-T3: Sonnet Builder
-  • /lv-implement: Execute plans step-by-step
-  • Runs in loop: /loop 2m /lv-implement
-  • Auto-picks plans from ready state when available
-  • BOTTLENECK: If idle, means T2 is too slow
-
-T4: Haiku Tester
-  • /lv-test: Human acceptance testing against plan criteria
-  • Deploys to local container, walks through checklist
-  • Creates PR to release on pass
-  • /lv-rollback: Revert plans if issues found
-  • Tests in parallel with T3's next build
-
-Release (any terminal on release/main branch):
-  • /lv-release: Merge approved PRs to release, run E2E tests
-  • Validates staging before anything touches main
-  • Run when PRs targeting release are ready to merge
-
-Deploy (any terminal, after /lv-release passes):
-  • /lv-deploy: Promote release → main, mark plans complete, close bugs
-  • Back-merges main to develop, leaves main unpushed
-  • Run only after E2E tests pass on release branch
-
-═══════════════════════════════════════════════════════════════════════════
-
-CLAIMS (any terminal):
-
-  • /lv-claim: take, release, or list the lease on an artifact
-  • A claim keys on the artifact NUMBER — BRF-041 and the PLN-041 it becomes
-    are one claim — and covers plans/, bugs/, briefs/ and the feature worktree
-  • Two things honour it: the dispatcher will not launch a worker onto a
-    claimed artifact, and the PreToolUse write guard refuses edits under it
-  • Expires after 2h and when its owning process dies, so a crashed session
-    never parks an artifact forever
-  • Claim before you write. Release after the commit and the gate, never before
-
-═══════════════════════════════════════════════════════════════════════════
-
-QUEUE STATES:
-
-State is tracked in plans/REGISTRY.md (not by folder):
-  draft       → Being written or needs replanning (T2)
-  ready       → Spec approved, waiting for T3
-  active      → Being implemented or in fix cycle (T3)
-  verify      → Verify agent running automated checks (auto)
-  testing     → Passed auto checks, needs human test (T4)
-  complete    → Done
-  rolled-back → Reverted
-
-bugs/open/       → Bugs waiting for T2 to plan fixes (fed by T1)
-bugs/triaged/    → Bugs linked to plans in progress
-bugs/closed/     → Bugs fixed and verified
-
-═══════════════════════════════════════════════════════════════════════════
-
-LOGGING & METRICS:
-
-• All terminals share one SESSION_ID (e.g., 2026-04-02-1743868195)
-• Each terminal gets unique ID (T1–T4): 2026-04-02-1743868195-T1
-• Logs to .logs/workflow.log with queue state on every action
-• Format: [HH:MM:SS] SESSION_ID | SKILL | ACTION | METRIC | Q: ready=N verify=N...
-• Use /wf-metrics (TODO) to analyze logs and detect bottlenecks
-
-═══════════════════════════════════════════════════════════════════════════
-
-BOTTLENECK PREVENTION:
-
-Rule 1: T3 (Builder) should never be idle
-  → If no plans in ready/, T2 is too slow → help T2 spec faster
-
-Rule 2: T2 should keep 2–3 plans ready ahead of T3
-  → Check ready/ before T2 finishes each spec
-
-Rule 3: T4 tests in parallel
-  → While T3 builds the next feature, T4 tests the previous one
-
-Rule 4: T1 keeps the intake flowing
-  → If < 3 Decided briefs, run /lv-brainstorm more
-
-═══════════════════════════════════════════════════════════════════════════
-
-GETTING STARTED:
-
-Open a terminal per role and invoke its skill directly — there is no setup
-step and no role to declare. Each skill finds its own work by state:
-
-  T1: /loop 10m /lv-status (monitor queue) + /lv-brainstorm (feed work)
-  T2: /lv-spec BRF-001 (convert briefs to plans)
-  T3: /lv-implement (auto-picks ready plans, includes code/arch review + E2E tests)
-  T4: /lv-test (human acceptance testing in worktree)
-
-After testing:
-  /lv-release (merge PRs to release, run E2E)
-  /lv-deploy  (promote release → main, complete plans)
-
-═══════════════════════════════════════════════════════════════════════════
-```
-
-## When to show this
-
-- `/lv-help` — show full strategy (above)
-- `/lv-help status` — show queue state explanation
-- `/lv-help bottleneck` — show how to detect and fix bottlenecks
-- `/lv-help logging` — show logging format and metrics
-
-## Rules
-
-- **Keep it visual** — ASCII diagrams help
-- **Be concise** — reference, not tutorial
-- **Link to detailed docs** — point to MANUAL_SETUP.md for deep dives
-- **Always** — never refuse to show help

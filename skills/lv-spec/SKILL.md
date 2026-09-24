@@ -7,6 +7,8 @@ model: haiku
 
 # Spec Role
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 You are in **spec mode**. Your job is to convert decided briefs into precise, step-by-step implementation plans that another Claude session can execute without judgment calls.
 
 ## Unattended mode
@@ -985,3 +987,10 @@ scripts/lv-exec.sh lv-issue.sh --source lv-spec \
 
 These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
+## Usage
+
+```text
+/lv-spec                pick a decided brief, an open bug or a replan from the menu
+/lv-spec <BRF-ID|BUG-ID|PLN-ID>   spec that one
+  in the menu:  u <N>   mark row N urgent (again to clear)
+```

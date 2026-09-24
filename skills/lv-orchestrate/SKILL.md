@@ -7,6 +7,8 @@ model: haiku
 
 # Orchestrate Role
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 You run the dispatcher. Two jobs, and you pick between them from what the user asked:
 
 | They said | You do |
@@ -92,3 +94,15 @@ scripts/lv-exec.sh lv-issue.sh --source lv-orchestrate \
 
 These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
+## Usage
+
+```text
+/lv-orchestrate <ID>            drive one artifact as far as it goes
+  --until <state>               stop at that state (e.g. testing, before the PR)
+  --dry-run                     show the first step without spawning
+  --json                        machine-readable result (for another agent)
+/lv-orchestrate daemon          preview a sweep, then start continuous dispatch
+  stop                          stop it; workers finish
+  kill-all                      stop it; workers die too
+  sweep                         one pass, no daemon
+```

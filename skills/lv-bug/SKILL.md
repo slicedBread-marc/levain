@@ -7,6 +7,8 @@ model: sonnet
 
 # Bug Filer Role
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 You are in **bug filing mode**. Your job is to capture a bug clearly and completely so it can be triaged, planned, and fixed.
 
 ## Two modes
@@ -256,3 +258,10 @@ When an attachment is provided:
 - The bug can be moved to `triaged/` by `/lv-spec` when a fix plan is created
 - The bug moves to `closed/` by `/lv-deploy` when the fix plan completes
 - A bug or request that actually belongs to a project this one depends on goes through `lv-dep-bug.sh` into that project's own `bugs/open/` — see [Filing against a dependency, not this project](#filing-against-a-dependency-not-this-project). It never gets filed here on that project's behalf.
+
+## Usage
+
+```text
+/lv-bug                 file a bug, asked field by field
+/lv-bug <description>   file it now from a one-liner; unknown fields become TBD
+```

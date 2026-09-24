@@ -165,7 +165,7 @@ The workflow is designed to run across 4 terminal sessions, each with a dedicate
 
 | Terminal | Role | Primary Skills | Model |
 |-|-|-|-|
-| T1 | Intake | `/lv-status`, `/lv-brainstorm`, `/lv-bug` | Sonnet |
+| T1 | Intake | `/lv-tray`, `/lv-brainstorm`, `/lv-bug` | Sonnet |
 | T2 | Planner | `/lv-spec` | Opus |
 | T3 | Builder | `/lv-implement` | Sonnet |
 | T4 | Tester | `/lv-test` | Haiku |
@@ -250,7 +250,7 @@ Bugs move through: `bugs/open/` → `bugs/triaged/` → `bugs/closed/`
 
 ### Full Workflow
 
-1. **T1 (Intake)** runs `/lv-status` to see the pipeline (reads REGISTRY.md). Files bugs with `/lv-bug`. Brainstorms and decides briefs with `/lv-brainstorm`.
+1. **T1 (Intake)** runs `/lv-tray` to see the pipeline (reads REGISTRY.md). Files bugs with `/lv-bug`. Brainstorms and decides briefs with `/lv-brainstorm`.
 
 2. **T2 (Planner)** runs `/lv-spec` — greps REGISTRY for `draft` state. Converts briefs/bugs into plans, or reviews findings (escalated and behavior) routed from testing/verify. Review gate promotes `draft→ready`.
 

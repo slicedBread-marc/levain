@@ -55,7 +55,7 @@ mis-ordered exit blocked the plan outright.
 
 ## The two halves of the fix
 
-**Skills order their exit correctly.** Every exit path in `lv-test`, `lv-chrome-test`,
+**Skills order their exit correctly.** Every exit path in `lv-test` (browser mode included),
 `lv-verify`, `lv-implement`, `lv-spec` and `lv-consistency` commits before releasing
 anything. Where a skill previously did a bare transition followed by a separate
 `lv-commit.sh`, the two are fused into one `lv-registry-update.sh … --commit … --add …` call

@@ -7,6 +7,8 @@ model: haiku
 
 # Release Role
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 You are in **release mode**. Your job is to sync `develop` into `release`, validate staging with E2E tests, and confirm it's ready for production promotion. This skill does NOT promote to main — that's `/lv-deploy`.
 
 ## State context
@@ -403,3 +405,10 @@ This skill creates one merge commit (`develop → release`) and one push. No oth
 If you need to resume after an interruption, tell the user which step to pick up at.
 
 On completion, run `scripts/lv-exec.sh lv-check-reboot-flag.sh` and append any output to your completion message.
+
+## Usage
+
+```text
+/lv-release             merge develop into release and run E2E against it.
+                        Stops there — /lv-deploy promotes to main
+```

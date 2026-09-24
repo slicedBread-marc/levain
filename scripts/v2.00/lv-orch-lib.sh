@@ -99,7 +99,7 @@ wf_orch_dir() {
 # Every list script used to walk the table itself: `grep "^|" | tail -n +3`
 # piped into `IFS='|' read`, then three to five `$(echo "$x" | xargs)` calls to
 # trim the fields — two forks each, paid on EVERY row before the state filter
-# rejects it. On a 70-row registry that is ~0.9s per script, and /lv-status
+# rejects it. On a 70-row registry that is ~0.9s per script, and /lv-tray
 # runs eight of them. One awk pass is 0.006s.
 #
 # It also fixes the fragility that came with positional reads: `IFS='|' read -r

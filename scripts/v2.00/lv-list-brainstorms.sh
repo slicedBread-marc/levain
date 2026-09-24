@@ -147,8 +147,9 @@ if [ -f "$INDEX" ]; then
     [ -n "$id" ] || id=$(printf '%s' "$name" | grep -oE "($LV_BRF_RE)-[0-9]+" | head -1)
     [ -n "$id" ] || id="${link%.md}"
     [ -n "$id" ] || id="—"
-    desc=$(printf '%s' "$line" | sed 's/^[^—]*— //')
-    [ "$desc" = "$line" ] && desc=""
+    # What follows the link, not the first em dash — a title may hold one
+    # (same fix as lv-list-briefs.sh).
+    desc=$(printf '%s' "$line" | sed -n 's/^- \[[^]]*\]([^)]*)[[:space:]]*—[[:space:]]*//p')
 
     # In parked mode the useful second column is WHY, not the section — the
     # section is already `Parked` for every row here. The reason is on the

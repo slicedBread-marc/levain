@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# lv-tray.sh [--watch [seconds]] [--plain] [--stats] [--fields]
+# lv-tray.sh [--watch [seconds]] [--plain] [--stats] [--fields] [--plans]
 #
 # One pane showing everything in flight: running workers, queued gates, the
 # pipeline by state, and recent events. This is the replacement for holding
 # four terminals' worth of state in your head.
+#
+# None of it needs the daemon. Every number here is read from REGISTRY.md,
+# plans/, bugs/ and the gate files, which a project run entirely by hand
+# (orchestrator.enabled: false, no daemon ever started) has just the same —
+# the orchestrator's own files only add the RUNNING and RECENT sections, and
+# each of those says "nothing" rather than failing when they are absent.
 #
 # Read-only — reads REGISTRY.md, pidfiles, gate files and events.log, and runs
 # lv-registry-audit.sh. Changes nothing, costs no tokens.
@@ -30,6 +36,10 @@
 #                 carried through /lv-release, or `-` with no release
 #                 branch>, and deploy_pending=<plans on release but not
 #                 main, or `-` if this project has no release/main split>.
+#   --plans       the full view plus the plan-by-plan picture (PLANS: each
+#                 plan by what it is waiting for, bugs, done-by-tag) and one
+#                 ranked NEXT action — what /lv-tray shows. Ignored by
+#                 --stats and --fields, whose shapes are fixed.
 #
 # Exit 0 always.
 
@@ -46,6 +56,7 @@ watch_secs=10
 plain=false
 stats_only=false
 fields_mode=false
+plans_mode=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -55,7 +66,8 @@ while [ $# -gt 0 ]; do
     --plain)  plain=true; shift ;;
     --stats)  stats_only=true; shift ;;
     --fields) fields_mode=true; shift ;;
-    *) echo "Usage: $0 [--watch [seconds]] [--plain] [--stats] [--fields]" >&2; exit 1 ;;
+    --plans)  plans_mode=true; shift ;;
+    *) echo "Usage: $0 [--watch [seconds]] [--plain] [--stats] [--fields] [--plans]" >&2; exit 1 ;;
   esac
 done
 
@@ -95,6 +107,325 @@ plans_ahead() {
     END { print n + 0 }'
 }
 
+# ── --plans: the plan-by-plan picture and one ranked next action ─────────
+#
+# What /lv-status used to assemble in a model from a dozen lv-list-* calls and
+# a priority table, done once here instead: the lists are the same scripts,
+# and the ranking is code, so every reader gets the same answer to "what do I
+# do now" — and gates rank in it, which the table never had. A gate is the one
+# thing that no amount of waiting, and no other skill, moves.
+#
+# Nothing here reads the orchestrator's files except to know whether a worker
+# already holds a plan. A project run by hand gets the whole view.
+
+# plans_context — the banner lines /lv-status carried: branch, harness
+# version, and the two plan files that change what a reader should do next.
+plans_context() {
+  local branch ver
+  branch=$(git -C "$ROOT" branch --show-current 2>/dev/null || true)
+  ver=$(cat "$ROOT/.claude/workflow-version" 2>/dev/null || true)
+  printf '  branch: %s   workflow: %s\n' "${branch:-?}" "${ver:-?}"
+  [ -f "$ROOT/plans/MIGRATION-NOTES.md" ] && \
+    printf '  %spending migration actions — see plans/MIGRATION-NOTES.md%s\n' "$YEL" "$R"
+  [ -f "$ROOT/plans/auto-test-log.md" ] && \
+    printf '  auto-test log active — see plans/auto-test-log.md (feedback for spec classification)\n'
+  printf '\n'
+}
+
+# run_list <script> — one lv-list-* script's stdout, from the develop root,
+# tabs turned into 0x1f. They exit 1 when empty, which is not an error here.
+# 0x1f because tab is IFS whitespace: a run of them collapses, so an empty
+# goal column would shift every field after it.
+run_list() {
+  (cd "$ROOT" && "$SELF_DIR/$1" 2>/dev/null) | tr '\t' '\037' || true
+}
+
+# split_plan_name <ID-slug> — sets p_id and p_slug. The lists key on the
+# folder name; a reader wants the ID and the slug as two columns.
+split_plan_name() {
+  local re="^(($LV_PLN_RE)-[0-9]+)-?(.*)$"
+  if [[ $1 =~ $re ]]; then
+    p_id="${BASH_REMATCH[1]}"; p_slug="${BASH_REMATCH[3]}"
+  else
+    p_id="$1"; p_slug=""
+  fi
+}
+
+# section <title> <lines> — a sub-heading and its items, or nothing at all
+# when it has none: an empty section is noise in a view meant to be scanned.
+section() {
+  [ -n "$2" ] || return 0
+  printf '  %s%s%s\n' "$B" "$1" "$R"
+  printf '%s\n' "$2"
+  plans_shown=$((plans_shown + 1))
+}
+
+# item <urgent?> <id> <slug> <detail>
+item() {
+  local tag=""
+  local detail="${4# }"
+  [ "$1" = "urgent" ] && tag="${RED}[urgent]${R} "
+  if [ -n "$detail" ]; then
+    printf '    %s%-11s %-30s %s\n' "$tag" "$2" "$3" "$detail"
+  else
+    printf '    %s%-11s %s\n' "$tag" "$2" "$3"
+  fi
+}
+
+# gated_note <id> — " [gated: <name>]" when a gate is open on it. The draft,
+# verify and test lists do not look at gates; lv-list-implementable.sh does,
+# which is why build and fix rows never need this.
+gated_note() {
+  local g
+  g=$(printf '%s\n' "$gates" | awk -F'\t' -v id="$1" '$1 == id { print $2; exit }')
+  [ -n "$g" ] && printf ' [gated: %s]' "$g"
+  return 0
+}
+
+render_plans() {
+  local impl replan drafts verify testable briefs bugs ideas
+  impl=$(run_list lv-list-implementable.sh)
+  replan=$(run_list lv-list-replanning.sh)
+  drafts=$(run_list lv-list-drafts.sh)
+  verify=$(run_list lv-list-verify.sh)
+  testable=$(run_list lv-list-testable.sh)
+  briefs=$(run_list lv-list-briefs.sh)
+  bugs=$(run_list lv-list-bugs.sh)
+  ideas=$(run_list lv-list-brainstorms.sh)
+
+  local s_replan="" s_fix="" s_build="" s_blocked="" s_progress=""
+  local s_verify="" s_test="" s_draft="" s_plan="" s_ideas="" s_bugs=""
+  # The first of each kind, for NEXT. `*_u` is the first URGENT one: urgency
+  # decides who is named first within a level, never which level applies.
+  local n_fix="" n_fix_u="" n_fix_n=0 n_replan="" n_test="" n_test_u=""
+  local n_build="" n_build_u="" n_draft="" n_plan="" n_verify=""
+  local n_progress="" n_blocked=""
+  local type name goal prio extra f5 f6 unchecked esc detail
+  local p_id p_slug plans_shown=0
+
+  # lv-list-implementable.sh is the one list that already knows every reason
+  # a plan cannot be picked up — gate, deps, a claim — so it sorts the active
+  # and ready plans. Its `new` rows ARE "ready to build": a ready plan that is
+  # blocked or gated shows under those instead, not twice. `gated` rows are
+  # left to the GATES section above, which already names every one of them.
+  while IFS=$'\037' read -r type name goal prio extra; do
+    [ -n "$type" ] || continue
+    split_plan_name "$name"
+    case "$type" in
+      fix)
+        unchecked=$(wf_unchecked_count "$ROOT/plans/$name/findings.md")
+        s_fix="$s_fix$(item "$prio" "$p_id" "$p_slug" "$unchecked open finding(s)")"$'\n'
+        n_fix_n=$((n_fix_n + 1))
+        [ -n "$n_fix" ] || n_fix="$p_id"
+        [ "$prio" = "urgent" ] && [ -z "$n_fix_u" ] && n_fix_u="$p_id" ;;
+      resume)
+        s_fix="$s_fix$(item "$prio" "$p_id" "$p_slug" "stalled — no open findings, resume it")"$'\n'
+        n_fix_n=$((n_fix_n + 1))
+        [ -n "$n_fix" ] || n_fix="$p_id"
+        [ "$prio" = "urgent" ] && [ -z "$n_fix_u" ] && n_fix_u="$p_id" ;;
+      new)
+        s_build="$s_build$(item "$prio" "$p_id" "$p_slug" "")"$'\n'
+        [ -n "$n_build" ] || n_build="$p_id"
+        [ "$prio" = "urgent" ] && [ -z "$n_build_u" ] && n_build_u="$p_id" ;;
+      processing)
+        s_progress="$s_progress$(item "$prio" "$p_id" "$p_slug" "claimed $extra")"$'\n'
+        [ -n "$n_progress" ] || n_progress="$p_id" ;;
+      blocked)
+        s_blocked="$s_blocked$(item "$prio" "$p_id" "$p_slug" "[blocked by $extra]")"$'\n'
+        [ -n "$n_blocked" ] || n_blocked="$p_id (blocked by $extra)" ;;
+    esac
+  done <<< "$impl"
+
+  while IFS=$'\037' read -r name esc goal; do
+    [ -n "$name" ] || continue
+    split_plan_name "$name"
+    s_replan="$s_replan$(item - "$p_id" "$p_slug" "$esc escalated finding(s)$(gated_note "$p_id")")"$'\n'
+    [ -n "$n_replan" ] || n_replan="$p_id"
+  done <<< "$replan"
+
+  # A draft carrying ESCALATED findings is already listed above as replanning.
+  while IFS=$'\037' read -r name goal; do
+    [ -n "$name" ] || continue
+    split_plan_name "$name"
+    case $'\n'"$s_replan" in *$'\n'"    $p_id "*) continue ;; esac
+    s_draft="$s_draft$(item - "$p_id" "$p_slug" "$(gated_note "$p_id")")"$'\n'
+    [ -n "$n_draft" ] || n_draft="$p_id"
+  done <<< "$drafts"
+
+  while IFS=$'\037' read -r name unchecked esc goal; do
+    [ -n "$name" ] || continue
+    split_plan_name "$name"
+    detail="automated checks"
+    [ "${unchecked:-0}" -gt 0 ] 2>/dev/null && detail="$detail, $unchecked unchecked"
+    [ "${esc:-0}" -gt 0 ] 2>/dev/null && detail="$detail, $esc escalated"
+    s_verify="$s_verify$(item - "$p_id" "$p_slug" "$detail$(gated_note "$p_id")")"$'\n'
+    [ -n "$n_verify" ] || n_verify="$p_id"
+  done <<< "$verify"
+
+  # Urgent first, as the build and fix lists already are — lv-list-testable.sh
+  # keeps registry order.
+  local t_urgent="" t_normal=""
+  while IFS=$'\037' read -r name _wt _br goal prio f6; do
+    [ -n "$name" ] || continue
+    split_plan_name "$name"
+    detail="awaiting human acceptance test"
+    case "$f6" in blocked:*) detail="[blocked by ${f6#blocked:}]" ;; esac
+    detail="$detail$(gated_note "$p_id")"
+    if [ "$prio" = "urgent" ]; then
+      t_urgent="$t_urgent$(item urgent "$p_id" "$p_slug" "$detail")"$'\n'
+    else
+      t_normal="$t_normal$(item - "$p_id" "$p_slug" "$detail")"$'\n'
+    fi
+    # A blocked plan cannot be accepted yet, so it is never the next action.
+    case "$f6" in blocked:*) continue ;; esac
+    [ -n "$n_test" ] || n_test="$p_id"
+    [ "$prio" = "urgent" ] && [ -z "$n_test_u" ] && n_test_u="$p_id"
+  done <<< "$testable"
+  s_test="$t_urgent$t_normal"
+
+  # Ready to plan: briefs whose thinking concluded, and open bugs serious
+  # enough to plan now. The rest of the bugs are listed under their own head.
+  local section_name="" bname bdesc bid bslug
+  while IFS=$'\037' read -r bname bdesc; do
+    case "$bname" in '# '*) section_name="${bname#\# }"; continue ;; esac
+    [ -n "$bname" ] && [ "$section_name" = "Decided" ] || continue
+    bid="${bname%%-[!0-9]*}"; bslug="${bname#"$bid"}"
+    s_plan="$s_plan$(item - "$bid" "${bslug#-}" "Decided — ${bdesc:0:90}")"$'\n'
+    [ -n "$n_plan" ] || n_plan="$bid"
+  done <<< "$briefs"
+  local sev btitle bplan stage=""
+  while IFS=$'\037' read -r bid sev btitle bplan; do
+    case "$bid" in '# '*) stage="${bid#\# }"; continue ;; esac
+    [ -n "$bid" ] || continue
+    detail="[$stage]"
+    case "$bplan" in *[0-9]*) detail="→ $(printf '%s' "$bplan" | grep -oE "($LV_PLN_RE)-[0-9]+" | head -1) $detail" ;; esac
+    s_bugs="$s_bugs$(item - "$bid" "(${sev:-?})" "${btitle:0:90} $detail")"$'\n'
+    if [ "$stage" = "open" ]; then
+      case "$sev" in Critical*|High*)
+        s_plan="$s_plan$(item - "$bid" "" "$sev bug — ${btitle:0:90}")"$'\n'
+        [ -n "$n_plan" ] || n_plan="$bid" ;;
+      esac
+    fi
+  done <<< "$bugs"
+
+  local iid istatus iname idesc
+  while IFS=$'\037' read -r iid istatus iname idesc; do
+    [ -n "$iid" ] || continue
+    idesc="${idesc:-$iname}"
+    s_ideas="$s_ideas$(item - "$iid" "$istatus" "${idesc:0:90}")"$'\n'
+  done <<< "$ideas"
+
+  # Done, counted per tag. A plan carrying two tags counts under both — the
+  # question this answers is "how much of each kind of work has shipped".
+  local s_done=""
+  if [ -f "$REGISTRY" ]; then
+    s_done=$(wf_registry_rows "$REGISTRY" | awk -F'\037' '
+      $3 == "complete" {
+        n = split($8, t, ",")
+        k = 0
+        for (i = 1; i <= n; i++) {
+          gsub(/^[ \t]+|[ \t]+$/, "", t[i])
+          if (t[i] != "" && t[i] != "—" && t[i] != "-") { c[t[i]]++; k++ }
+        }
+        if (k == 0) c["uncategorized"]++
+      }
+      END { for (x in c) printf "%d\t%s\n", c[x], x }' \
+      | sort -t"$(printf '\t')" -k1,1nr -k2,2 \
+      | awk -F'\t' '{ printf "    %-24s %d plan(s)\n", $2, $1 }')
+  fi
+
+  printf '\n%s\n' "${B}PLANS${R}"
+  section "needs replanning (/lv-spec)" "${s_replan%$'\n'}"
+  section "ready to fix (/lv-implement)" "${s_fix%$'\n'}"
+  section "ready to build (/lv-implement)" "${s_build%$'\n'}"
+  section "blocked" "${s_blocked%$'\n'}"
+  section "in progress — claimed by a session" "${s_progress%$'\n'}"
+  section "verifying" "${s_verify%$'\n'}"
+  section "ready to test (/lv-test)" "${s_test%$'\n'}"
+  section "drafts (/lv-spec)" "${s_draft%$'\n'}"
+  section "ready to plan (/lv-spec)" "${s_plan%$'\n'}"
+  section "ideas — $brainstorms incomplete brainstorm(s) (/lv-brainstorm)" "${s_ideas%$'\n'}"
+  section "bugs" "${s_bugs%$'\n'}"
+  section "done, by tag" "$s_done"
+  [ "$plans_shown" -gt 0 ] || printf '  %snothing in the pipeline%s\n' "$DIM" "$R"
+  printf '\n'
+
+  # ── NEXT: one action, the first level that applies ─────────────────
+  # The order is the point. A lower level is never chosen because a higher
+  # one "seems minor": fixing a built plan is cheaper than building a new
+  # one, and a plan a human could accept today outranks one nobody has built.
+  local next="" why="" first=""
+  if [ "$gates_n" -gt 0 ]; then
+    first=$(printf '%s\n' "$gates" | head -1 | awk -F'\t' '{ print $1 " (" $2 ")" }')
+    next="Run /lv-attend — $gates_n gate(s) waiting; start with $first."
+    why="a gate only moves when a human answers it, and it holds up everything behind it"
+    [ "$gates_stuck" -gt 0 ] && \
+      why="$why. $gates_stuck stuck: those hit their attempt budget and need a human look, not another retry"
+  elif [ "$daemon_raw" = "running" ] && \
+       [ $((running_n + st_draft + st_ready + st_active + st_verify + st_testing)) -gt 0 ]; then
+    next="Nothing needs you — the daemon is driving ($running_n worker(s) running). Check back."
+    why="no gate is open, and every other state is the daemon's to move"
+  elif [ -n "$n_fix" ]; then
+    first="${n_fix_u:-$n_fix}"
+    next="Run /lv-implement to fix $first ($n_fix_n plan(s) with open findings or stalled)."
+    why="built work with findings is the cheapest to finish"
+  elif [ -n "$n_replan" ]; then
+    next="Run /lv-spec to address the escalated findings in $n_replan."
+    why="escalated findings sent it back to draft; nothing else moves it"
+  elif [ -n "$n_test" ]; then
+    first="${n_test_u:-$n_test}"
+    next="Run /lv-test for human acceptance testing of $first."
+    why="it is built and verified, and only a human can accept it"
+  elif [ -n "$n_build" ]; then
+    first="${n_build_u:-$n_build}"
+    next="Run /lv-implement to start $first."
+    why="it is ready, unblocked and unclaimed"
+  elif [ -n "$n_draft" ]; then
+    next="Review $n_draft in /lv-spec to move it to ready."
+    why="a plan only leaves draft through a spec run"
+  elif [ -n "$n_plan" ]; then
+    next="Run /lv-spec to plan $n_plan."
+    why="a decided brief or a serious open bug is waiting for a plan"
+  elif [ -n "$n_verify" ]; then
+    case "$running_roles" in
+      *" verify:$n_verify-"*|*" verify:$n_verify "*)
+        next="Wait — a verify worker is running on $n_verify." ;;
+      *) next="Run /lv-verify on $n_verify." ;;
+    esac
+    why="it is built, and verify is the only step between it and a human test"
+  elif [ -n "$n_progress" ]; then
+    next="Wait — $n_progress is claimed by another session."
+    why="everything else is done or waiting on it"
+  elif [ -n "$n_blocked" ]; then
+    next="Unblock $n_blocked — every remaining plan waits on a dependency."
+    why="nothing is buildable until its deps complete"
+  elif [ "$brainstorms" -gt 0 ] 2>/dev/null; then
+    next="Run /lv-brainstorm to decide or park $brainstorms unfinished idea(s)."
+    why="the pipeline is empty, but the backlog is unfinished thinking, not nothing"
+  else
+    next="Run /lv-brainstorm or /lv-bug to feed the pipeline."
+    why="nothing is pending"
+  fi
+  local urgent=""
+  if { [ -n "$n_fix_u" ] && [ "$first" = "$n_fix_u" ]; } || \
+     { [ -n "$n_test_u" ] && [ "$first" = "$n_test_u" ]; } || \
+     { [ -n "$n_build_u" ] && [ "$first" = "$n_build_u" ]; }; then
+    urgent="${RED}[URGENT]${R} "
+  fi
+
+  printf '%s\n' "${B}NEXT${R}"
+  printf '  %s%s\n' "$urgent" "$next"
+  printf '  %swhy: %s%s\n' "$DIM" "$why" "$R"
+  # Starting the daemon is an alternative to working the list by hand, never
+  # the recommendation: a project with the orchestrator off runs this way on
+  # purpose. Said only where the daemon is switched on and not running.
+  if [ "$daemon_raw" = "stale" ]; then
+    printf '  %sthe daemon pidfile is stale — it died; restart it with lv-orchestrate.sh --daemon%s\n' "$YEL" "$R"
+  elif [ "$daemon_raw" = "off" ] && [ "$enabled" = "true" ] && [ -n "$n_fix$n_build$n_draft$n_verify" ]; then
+    printf '  %sor let the daemon do it: scripts/lv-exec.sh lv-orchestrate.sh --daemon%s\n' "$DIM" "$R"
+  fi
+}
+
 render() {
   local now; now=$(date +%s)
 
@@ -118,7 +449,7 @@ render() {
   local budget_used; budget_used=$(cat "$ORCH/spawns-$(date +%Y%m%d%H)" 2>/dev/null || echo 0)
   local budget_max;  budget_max=$(wf_cfg orchestrator.max_spawns_per_hour 20)
 
-  local running_n=0 pf pid base role artifact age
+  local running_n=0 pf pid base role artifact age running_roles=""
   local -a running_lines=()
   for pf in "$ORCH/logs"/*.pid; do
     [ -f "$pf" ] || continue
@@ -147,6 +478,7 @@ render() {
     running_lines+=("$(printf '  %s%-11s%s %-34s %s  %spid %s%s' \
       "$CYN" "$role" "$R" "$artifact" "$(wf_human_age "$age")" "$DIM" "$pid" "$R")")
     running_n=$((running_n + 1))
+    running_roles="$running_roles $role:$artifact "
   done
 
   local gates; gates=$("$SELF_DIR/lv-list-gates.sh" 2>/dev/null || true)
@@ -297,6 +629,7 @@ render() {
   printf '%s\n' "${B}WORKFLOW BOARD${R}  ${DIM}$(date '+%Y-%m-%d %H:%M:%S')${R}"
   printf '  daemon: %s   enabled: %s   spawns this hour: %s/%s\n\n' \
     "$daemon_state" "$enabled" "$budget_used" "$budget_max"
+  $plans_mode && ! $stats_only && plans_context
 
   if $stats_only; then
     # ── Rollup ────────────────────────────────────────────────────────
@@ -420,6 +753,8 @@ render() {
   else
     printf '  %sno events yet%s\n' "$DIM" "$R"
   fi
+
+  $plans_mode && render_plans
 }
 
 # draw_frame — repaint only the lines that changed since the last frame.

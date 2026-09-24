@@ -38,7 +38,7 @@ found=0
 # The registry, read ONCE. Everything below that used to re-grep it per row or
 # per dependency reads these instead: on a 70-plan project the old shape cost a
 # full file scan per plan plus one per declared dep, on a script that runs on
-# every /lv-status, every board render and every daemon tick.
+# every /lv-tray render and every daemon tick.
 rows=$(wf_registry_rows "$REGISTRY")
 # Dep states come from wf_state_of, which builds the same "<id>=<state>" map
 # once per process and memoizes it — plus the PLN-alias fallback the local copy

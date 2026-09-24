@@ -7,6 +7,8 @@ model: haiku
 
 # Dependent Notification Role
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 You are in **notify mode**. Your job is to tell the projects that depend on this one about a
 change here they need to account for — the mirror image of `/lv-bug`'s "Filing against a
 dependency" flow, run from the other side of the same relationship.
@@ -118,3 +120,11 @@ for the direction that section covers; it applies identically in reverse.
 `docs/cross-project-reports.md § Limitation: no local checkout`). For a dependent that's
 genuinely elsewhere, there's no shortcut: tell the user directly (a message, an issue in that
 project's own tracker) — don't invent a `dependents:` entry to force it through.
+
+## Usage
+
+```text
+/lv-dep-notify          file a notice, request or bug into another project's pipeline
+  asks for: the target project, the kind (notice | request | bug), title, description,
+  expected and actual — then runs lv-dep-notify.sh with them
+```

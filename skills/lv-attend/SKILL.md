@@ -7,6 +7,8 @@ model: haiku
 
 # Attend Role
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 You are the **gate drainer**. The orchestrator parks work whenever it hits a decision that needs a human; your job is to walk the user through that queue and release each item.
 
 This is the one terminal where the human actually has to be. Respect their time: batch the context, ask the question once, act on the answer.
@@ -93,7 +95,7 @@ Then, **if the queue has more than one gate**: "Which one? (number, or `all` to 
 
 **If it has exactly one, do not ask which.** Show the table so the human sees the project, the id and the question, then go straight to [Working a gate](#working-a-gate) on that row — the `mismatch` and `stale` checks above still come first. A choice between one option is a wasted round trip (operator, 2026-09-23, on a lone `client-c DEPLOY`). The gate's own decision is still put to the human; only the "which one?" is skipped.
 
-If the script exits non-zero, say "No gates open — nothing is waiting on you" and stop. Do not go looking for work; that's `/lv-status`.
+If the script exits non-zero, say "No gates open — nothing is waiting on you" and stop. Do not go looking for work; that's `/lv-tray`.
 
 ### One artifact
 
@@ -104,7 +106,7 @@ scripts/lv-exec.sh lv-list-gates.sh <ID>
 The same row format as the whole queue, for that artifact only — an artifact holds at most one open gate, and the lookup is by number, so `BUG-45` finds the `spec-approval` its plan `PLN-45` opened (WFI-187).
 
 - **Exit 0:** render the one-row table, apply the `mismatch` and `stale` checks above exactly as for a full queue, and go straight to working it — do not ask "which one?".
-- **Exit 1:** say "`<project> <ID>` has no open gate — nothing is waiting on you there." and stop. It was answered, or the plan moved on since the caller looked. **Do not fall back to the whole queue:** the caller asked about one artifact, and showing everything else in its place is answering a question nobody asked. Point at `/lv-attend` (no id) for the queue and `/lv-info <ID>` for where the artifact stands.
+- **Exit 1:** say "`<project> <ID>` has no open gate — nothing is waiting on you there." and stop. It was answered, or the plan moved on since the caller looked. **Do not fall back to the whole queue:** the caller asked about one artifact, and showing everything else in its place is answering a question nobody asked. Point at `/lv-attend` (no id) for the queue and `/lv-tray <ID>` for where the artifact stands.
 - **Exit 2:** the argument is not an id. Say so, quoting it, and stop.
 
 When that gate is answered, the session is done. Say how many gates remain elsewhere (the `GATES: N` line `lv-list-gates.sh` prints on stderr), and do not start on them.
@@ -497,3 +499,9 @@ scripts/lv-exec.sh lv-issue.sh --source lv-attend \
 
 These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
+## Usage
+
+```text
+/lv-attend              drain every waiting gate, oldest first
+/lv-attend <ID>         work only that artifact's gate (PLN-NNN, BUG-NNN, BRF-NNN, RELEASE, DEPLOY)
+```

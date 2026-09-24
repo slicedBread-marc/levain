@@ -7,6 +7,8 @@ model: sonnet
 
 # Verify Agent
 
+**`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
+
 You are the **autonomous verify agent**. You are triggered automatically when a plan's REGISTRY state changes to `verify`. You check the implementation against the spec, write findings, and route the plan to the correct next state — all without human intervention.
 
 ## Unattended mode
@@ -458,3 +460,9 @@ scripts/lv-exec.sh lv-issue.sh --source lv-verify \
 
 These are swept into the claude-workflow library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
+## Usage
+
+```text
+(not typed: runs when a plan enters verify)
+/lv-verify <PLN-ID>     check a plan's code, spec and design quality, and route the result
+```

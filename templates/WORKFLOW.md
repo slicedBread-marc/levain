@@ -288,8 +288,7 @@ Run these from a Claude session in this repo.
 
 | Skill | Purpose |
 |-|-|
-| `/lv-status` | Plan-by-plan pipeline picture |
-| `/lv-tray` | Live orchestrator view |
+| `/lv-tray` | Pipeline picture, next action, live workers and gates; `/lv-tray <ID>` for one item |
 | `/lv-attend` | Drain the gate queue |
 | `/lv-orchestrate` | Drive one item, or manage the daemon |
 | `/lv-bug` | File a bug |
@@ -297,9 +296,9 @@ Run these from a Claude session in this repo.
 | `/lv-spec` | Turn a brief or bug into a plan |
 | `/lv-consistency` | Check a plan against its dependency closure (automatic when it declares `Deps`) |
 | `/lv-implement` | Build a ready plan |
-| `/lv-test` | Human acceptance test |
+| `/lv-test` | Human acceptance test (`browser` mode drives Chrome) |
 | `/lv-release`, `/lv-deploy` | Promote to staging, then production |
-| `/lv-help` | Full strategy |
+| `/lv-help` | Every skill, one line each. Any skill answers `help` with its usage |
 
 ---
 
