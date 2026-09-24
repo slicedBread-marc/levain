@@ -17,7 +17,7 @@ Home page: [slicedbread.ca/levain](https://slicedbread.ca/levain)
 ## Quick start
 
 ```bash
-git clone <this repository> ~/levain
+git clone https://github.com/slicedBread-marc/levain.git ~/levain
 cd ~/your-project
 claude
 ```

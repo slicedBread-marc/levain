@@ -35,6 +35,7 @@ has "README states the platform"          "$(cat README.md)" "built and tested o
 has "README carries the tagline"            "$(cat README.md)" "From developer to CEO."
 has "README names the ladder"               "$(cat README.md)" "manual → attended → overseer"
 has "START.md names the same ladder"        "$(cat START.md)" "manual → attended → overseer"
+has "README clones the public repository"  "$(cat README.md)" "git clone https://github.com/slicedBread-marc/levain.git ~/levain"
 assert_eq "README links the home page once" "1" "$(grep -c 'https://slicedbread.ca/levain' README.md)"
 # shellcheck disable=SC2086
 assert_eq "rung 2 is 'attended', never 'the daemon'" "" "$(grep -liE 'rung 2(:|,)? the daemon|2\. daemon' $ALL)"
