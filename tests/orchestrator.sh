@@ -2101,12 +2101,19 @@ section "Skills release their guards after the transition, not before (WFI-079)"
 # one unit. Blocks that release a guard without transitioning anything (the
 # stale-claim clearing in the entry menus) carry no ordering to get wrong and
 # are not the subject here.
+#
+# One exception, and it is lv-test's (WFI-025): a ruling over a FAIL is the
+# gate's answer, so the gate closes BEFORE the transition — while the claim is
+# still held, which is what keeps the plan guarded. A block that opens with
+# `(claim still held)` may close its gate first; its unclaim is still checked.
 guard_order_ok() {
   awk '
-    /^ *```/ { in_block = !in_block; if (in_block) seen_commit = 0; next }
+    /^ *```/ { in_block = !in_block; if (in_block) { seen_commit = 0; held = 0 }; next }
     !in_block { next }
+    /\(claim still held\)/ { held = 1 }
     /lv-registry-update\.sh|lv-commit\.sh/ { seen_commit = 1 }
     /lv-unclaim\.sh|lv-gate-close\.sh/ {
+      if (held && $0 ~ /lv-gate-close\.sh/) next
       if (!seen_commit && has_transition_later(NR)) bad = 1
     }
     END { print (bad ? "false" : "true") }
