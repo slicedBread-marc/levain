@@ -339,6 +339,21 @@ eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "a PASS recorded against an older build settles nothing" "true" "$GATE"
 assert_eq "and nothing is subtracted" "0" "$MANUAL_RESOLVED_RECORD"
 
+# A client's LVI-006: a later commit that renders nothing (a release merge of
+# storage code) re-asked a PASSed print criterion, and the worker's gate
+# question invented a CSS change. A PASS on an earlier build carries when no
+# renderingSurfaces path changed since; one that did change still re-asks.
+sed -i.bak "s/0000000/$ui_sha/g" plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+( cd feature-branches/PLN-007-ui && mkdir -p src/App/Storage && echo s > src/App/Storage/Replica.cs && git add -A && git commit -qm storage )
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "a PASS carries over a commit that touches no rendering surface" "false" "$GATE"
+assert_eq "all four carried" "4" "$MANUAL_CARRIED"
+assert_contains "and the reason names the build it came from" "carried from build $ui_sha" "$GATE_REASON"
+( cd feature-branches/PLN-007-ui && echo z >> src/App/wwwroot/app.js && git add -A && git commit -qm "ui again" )
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "a commit that touches a rendering surface re-asks" "true" "$GATE"
+assert_eq "and carries nothing" "0" "$MANUAL_CARRIED"
+
 rm -f plans/PLN-007-ui/test-progress.md
 
 git worktree remove --force feature-branches/PLN-007-ui

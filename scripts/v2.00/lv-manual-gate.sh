@@ -38,7 +38,9 @@
 #   SURFACE_HIT='<matching path or empty>'
 #   plus every MANUAL_* count from lv-manual-lint.sh --counts, including
 #   MANUAL_RESOLVED_RECORD — criteria left unchecked in plan.md that
-#   test-progress.md already recorded PASS against this very build
+#   test-progress.md already recorded PASS against this very build, or against
+#   an earlier one when no renderingSurfaces path changed in between
+#   MANUAL_CARRIED — how many of those came from an earlier build
 #
 # --explain adds a human-readable summary on stderr.
 
@@ -113,9 +115,6 @@ if [ -f "$progress_md" ] && [ -n "$build_sha" ]; then
   fi
 fi
 
-# ── Criterion counts (single parser, shared with the lint) ────────────────
-eval "$("$(dirname "$0")/lv-manual-lint.sh" "$plan_id" --counts ${resolved_args[@]+"${resolved_args[@]}"})"
-
 # ── Config ────────────────────────────────────────────────────────────────
 # Defaults are pre-P-003 behavior on purpose: a client whose config predates
 # this block keeps gating exactly as it did, and only starts surface-gating
@@ -123,12 +122,6 @@ eval "$("$(dirname "$0")/lv-manual-lint.sh" "$plan_id" --counts ${resolved_args[
 cfg_require_surface=$(wf_cfg manualTestGate.requireRenderingSurface false)
 cfg_min_eyes=$(wf_cfg manualTestGate.minEyesCriteria 1)
 cfg_block_cosmetic=$(wf_cfg manualTestGate.blockOnCosmetic true)
-
-# ── How many open criteria actually count toward gating ───────────────────
-open_count="$MANUAL_OPEN_BLOCKING"
-if [ "$cfg_block_cosmetic" = "true" ]; then
-  open_count=$(( MANUAL_OPEN_BLOCKING + MANUAL_OPEN_COSMETIC ))
-fi
 
 # ── Does the diff touch a rendering surface? ──────────────────────────────
 # Translate globs to anchored regexes: `/**/` (or a leading `**/`) spans zero
@@ -204,6 +197,63 @@ if [ -n "$surfaces" ]; then
   fi
 fi
 
+# ── A PASS on an earlier build, when nothing it could see has changed ──────
+#
+# A PASS counts above only against the build standing here now, so any new
+# commit — a release merge touching nothing visual included — re-asks every
+# eyes criterion. A client's LVI-006: a release merge brought in storage code
+# only, the B&W print criterion lost its PASS, and the gate question the
+# worker wrote claimed the build "changed rendering surfaces (preppy-print.css)"
+# when git diff touched no CSS at all. The human was re-asked on a false premise.
+#
+# So an older PASS carries when the diff from its build to this one touches no
+# renderingSurfaces path. Only with surfaces configured (none = unknowable) and
+# only for a build git can still resolve here; everything else stays unsettled.
+carried=0
+carried_from=""
+if [ -n "$surfaces" ] && [ -n "$build_sha" ] && [ -f "$progress_md" ]; then
+  while IFS=$'\t' read -r crit cell; do
+    [ -n "$crit" ] || continue
+    old=""
+    for cand in $(printf '%s' "$cell" | grep -oE '[0-9a-fA-F]{7,40}' || true); do
+      full=$(git -C "$worktree" rev-parse --verify --quiet "$cand^{commit}" 2>/dev/null || true)
+      [ -n "$full" ] && { old="$full"; break; }
+    done
+    [ -n "$old" ] && [ "$old" != "$build_sha" ] || continue
+    between=$(git -C "$worktree" diff --name-only "$old" "$build_sha" 2>/dev/null) || continue
+    moved=""
+    while IFS= read -r pattern; do
+      [ -n "$pattern" ] || continue
+      moved=$(printf '%s\n' "$between" | grep -E "$(glob_to_regex "$pattern")" | head -1 || true)
+      [ -n "$moved" ] && break
+    done <<< "$surfaces"
+    [ -z "$moved" ] || continue
+    if [ -z "$resolved_file" ]; then
+      resolved_file=$(mktemp "${TMPDIR:-/tmp}/lv-manual-gate.XXXXXX")
+      trap 'rm -f "$resolved_file"' EXIT
+      resolved_args=(--resolved "$resolved_file")
+    fi
+    grep -qxF -- "$crit" "$resolved_file" 2>/dev/null && continue
+    printf '%s\n' "$crit" >> "$resolved_file"
+    carried=$((carried + 1))
+    carried_from="${old:0:7}"
+  done < <(awk -F'|' '
+    function trim(x) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", x); return x }
+    NF < 6 { next }
+    { c = trim($3); b = trim($4); r = toupper(trim($5))
+      if (r == "PASS" && c != "" && tolower(c) != "criterion") print c "\t" b }
+  ' "$progress_md")
+fi
+
+# ── Criterion counts (single parser, shared with the lint) ────────────────
+eval "$("$(dirname "$0")/lv-manual-lint.sh" "$plan_id" --counts ${resolved_args[@]+"${resolved_args[@]}"})"
+
+# ── How many open criteria actually count toward gating ───────────────────
+open_count="$MANUAL_OPEN_BLOCKING"
+if [ "$cfg_block_cosmetic" = "true" ]; then
+  open_count=$(( MANUAL_OPEN_BLOCKING + MANUAL_OPEN_COSMETIC ))
+fi
+
 # ── Decide ────────────────────────────────────────────────────────────────
 gate=true
 reason=""
@@ -270,7 +320,11 @@ fi
 # on this build" is the fact that makes a `false` credible and a `true` worth
 # a second look.
 if [ "${MANUAL_RESOLVED_RECORD:-0}" -gt 0 ]; then
-  reason="$reason; ${MANUAL_RESOLVED_RECORD} already PASS on this build in test-progress.md"
+  if [ "$carried" -gt 0 ]; then
+    reason="$reason; ${MANUAL_RESOLVED_RECORD} already PASS in test-progress.md ($carried carried from build $carried_from — no renderingSurfaces path changed since)"
+  else
+    reason="$reason; ${MANUAL_RESOLVED_RECORD} already PASS on this build in test-progress.md"
+  fi
 fi
 
 wf_emit GATE         "$gate"
@@ -281,6 +335,7 @@ wf_emit MANUAL_OPEN_BLOCKING "$MANUAL_OPEN_BLOCKING"
 wf_emit MANUAL_OPEN_COSMETIC "$MANUAL_OPEN_COSMETIC"
 wf_emit MANUAL_OPEN_UNTAGGED "${MANUAL_OPEN_UNTAGGED:-0}"
 wf_emit MANUAL_RESOLVED_RECORD "${MANUAL_RESOLVED_RECORD:-0}"
+wf_emit MANUAL_CARRIED       "$carried"
 wf_emit MANUAL_EXTERNAL      "$MANUAL_EXTERNAL"
 wf_emit MANUAL_SOAK          "$MANUAL_SOAK"
 wf_emit MANUAL_SCHEMA        "$MANUAL_SCHEMA"
