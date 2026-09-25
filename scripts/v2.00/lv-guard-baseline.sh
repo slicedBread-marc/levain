@@ -206,6 +206,47 @@ if tool != "Bash":
 cmd = ti.get("command", "")
 if not isinstance(cmd, str):
     block("payload", "Bash command is not a string; refusing (fail closed)")
+
+# A heredoc's body is data when what reads it only stores or displays it.
+# `cat >> plan.md <<'EOF'` whose prose named a secrets tool's print command was
+# refused as though it ran it (a client's LVI-004), and the worker had to fall
+# back to the Edit tool. So the body is dropped before matching, but only
+# when the reader is on this short list of data sinks and nothing on the
+# opening line pipes onward; a body fed to a shell, an interpreter, ssh or
+# anything else is still checked in full.
+DATA_SINKS = {"cat", "tee", "git", "gh", "wc", "grep", "head", "tail", "sort"}
+HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def strip_heredocs(text):
+    lines = text.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        m = HEREDOC.search(line)
+        if not m:
+            continue
+        before = re.split(r"\$\(|\(|\||;|&&|\|\|", line[:m.start()])[-1]
+        try:
+            first = shlex.split(before)[0] if before.strip() else ""
+        except ValueError:
+            first = ""
+        data = os.path.basename(first) in DATA_SINKS and "|" not in line[m.end():]
+        dash, delim = m.group(1), m.group(3)
+        while i < len(lines):
+            body = lines[i]
+            i += 1
+            if (body.lstrip("\t") if dash else body) == delim:
+                out.append(body)
+                break
+            if not data:
+                out.append(body)
+    return "\n".join(out)
+
+
+cmd = strip_heredocs(cmd)
 flat = " ".join(cmd.split())
 
 try:

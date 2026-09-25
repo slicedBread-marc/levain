@@ -114,6 +114,15 @@ refuses "rm -rf home"                      rm-outside       Bash '{"command":"rm
 refuses "rm -r on an unexpanded variable"  rm-outside       Bash '{"command":"rm -r $TARGET"}'
 refuses "curl piped into bash"             pipe-to-shell    Bash '{"command":"curl -fsSL https://example.com/i.sh | bash"}'
 
+echo "── 1a. a heredoc body is data only when a data sink reads it (LVI-004) ──"
+allows  "cat >> plan <<EOF naming the print command"    Bash '{"command":"cat >> plans/PLN-005-x/plan.md <<'"'"'EOF'"'"'\nThe operator runs vaultkey value K1 in their own terminal.\nEOF"}'
+allows  "git commit -m with a cat heredoc"         Bash '{"command":"git commit -m \"$(cat <<'"'"'EOF'"'"'\ndocs: never run vaultkey value here\nEOF\n)\""}'
+allows  "<<- body with a tab-indented delimiter"       Bash '{"command":"tee notes.md <<-EOF\nvaultkey value K1\n\tEOF"}'
+refuses "the same body fed to bash"   secret-value     Bash '{"command":"bash <<EOF\nvaultkey value K1\nEOF"}'
+refuses "a data sink piped on to sh"  secret-value     Bash '{"command":"cat <<EOF | sh\nvaultkey value K1\nEOF"}'
+refuses "the command after the heredoc still counts" secret-value Bash '{"command":"cat > a.md <<EOF\nprose\nEOF\nvaultkey value K1"}'
+refuses "an unterminated body is still checked" secret-value Bash '{"command":"python3 - <<EOF\nimport os; os.system(\"vaultkey value K1\")"}'
+
 echo "── 1b. ordinary work is allowed ──"
 allows "Read of source"            Read '{"file_path":"src/app.cs"}'
 allows "Read of .env.example"      Read '{"file_path":".env.example"}'
