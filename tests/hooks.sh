@@ -16,6 +16,11 @@
 #      coordinator (LVI-014).
 #   8. overseer-vision finds the owner's vision skill; the spec's template is
 #      complete.
+#   9. The /lv-vision bootstrap, end to end on a scratch coordinator: fill the
+#      template with sample answers, write it where step 3 says, and the result
+#      is a skill — no placeholder left, frontmatter that parses, found by the
+#      default hook, and the spec it tells Claude to read is installed
+#      (LVI-020: this path shipped at 14.8.2 without ever having run).
 #
 # Usage: ./tests/hooks.sh        Exit 0 if all pass, 1 on any failure.
 
@@ -195,6 +200,57 @@ for ph in $(printf '%s' "$tpl" | grep -oE '\{\{[A-Z_]+\}\}' | sort -u); do
   grep -q "^| \`$ph\`" "$spec" || bad "template placeholder $ph is defined in the spec's table"
 done
 ok "every template placeholder is defined in the spec's table"
+
+section "9. the /lv-vision bootstrap"
+# The interview is Claude's and is not under test; its product is. The sample
+# answers are the spec's own Example column, so a placeholder added to the
+# table without an example fails here rather than in an owner's interview.
+fill_template() {   # fill_template <spec> <out> [<PLACEHOLDER=value> ...] — overrides win
+  python3 - "$@" <<'FILL'
+import re, sys
+spec, out, overrides = sys.argv[1], sys.argv[2], dict(a.split("=", 1) for a in sys.argv[3:])
+text = open(spec).read()
+answers = {}
+for m in re.finditer(r"^\| `\{\{([A-Z_]+)\}\}` \|[^|]*\| (.*?) \|$", text, re.M):
+    answers[m.group(1)] = m.group(2).strip().strip('"').replace("`", "")
+answers.update(overrides)
+tpl = re.search(r"<!-- vision-template:begin -->\n(.*?)<!-- vision-template:end -->", text, re.S).group(1)
+open(out, "w").write(re.sub(r"\{\{([A-Z_]+)\}\}", lambda m: answers.get(m.group(1), m.group(0)), tpl))
+FILL
+}
+frontmatter() {     # frontmatter <SKILL.md> — the parsed name, or exit 1
+  python3 - "$1" <<'FM'
+import sys, yaml
+t = open(sys.argv[1]).read()
+if not t.startswith("---\n"): sys.exit(1)
+d = yaml.safe_load(t.split("---\n", 2)[1])
+if not isinstance(d, dict) or not isinstance(d.get("description"), str) or not d["description"]: sys.exit(1)
+print(d.get("name", ""))
+FM
+}
+rm -rf "$A/hooks/overseer-vision" "$K/.claude/skills/vision"
+V="$K/.claude/skills/vision/SKILL.md"; mkdir -p "$(dirname "$V")"
+fill_template "$K/.claude/docs/vision-spec.md" "$V"
+left=$(grep -oE '\{\{[A-Z_]+\}\}' "$V" | sort -u | tr '\n' ' ')
+assert_eq "the filled skill has no placeholder left" "$left" ""
+grep -q "the Acme family of apps" "$V" && ok "and carries the answers" || bad "and carries the answers" "$(head -5 "$V")"
+assert_eq "its frontmatter parses, as name: vision" "$(frontmatter "$V")" "vision"
+out=$(cd "$K" && CLAUDE_PROJECT_DIR="$K" LV_PACKS= scripts/lv-exec.sh lv-hook.sh overseer-vision </dev/null 2>&1)
+assert_eq "the default hook (no pack) prints the generated skill" "$out" "$V"
+cites=$(grep -oE '\.claude/docs/[a-z-]+\.md' "$V" | sort -u)
+[ -n "$cites" ] || bad "the skill tells Claude which spec to read"
+for d in $cites; do
+  [ -f "$K/$d" ] && ok "$d, which the skill says to read, is installed" || bad "$d, which the skill says to read, is installed"
+done
+cp "$V" "$TEST_DIR/v.keep"
+(cd "$REPO_ROOT" && LV_PACKS= bash install.sh "$K" >/dev/null 2>&1)
+cmp -s "$V" "$TEST_DIR/v.keep" && [ -f "$K/.claude/docs/vision-spec.md" ] \
+  && ok "a redeploy keeps the generated skill and the spec it reads" || bad "a redeploy keeps the generated skill and the spec it reads"
+# The check above is only worth something if it can fail: an answer that is
+# not valid in a plain YAML scalar is exactly what an interview produces.
+fill_template "$K/.claude/docs/vision-spec.md" "$TEST_DIR/bad.md" "FAMILY=Acme: the apps"
+frontmatter "$TEST_DIR/bad.md" >/dev/null 2>&1 && bad "an answer that breaks the frontmatter is caught" \
+  || ok "an answer that breaks the frontmatter is caught"
 
 echo ""
 echo "Passed: $PASS   Failed: $FAIL"

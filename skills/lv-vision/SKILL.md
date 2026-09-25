@@ -40,10 +40,14 @@ Refuse if step 1 finds a skill: a second one would compete with it. Otherwise:
 3. **Write the skill:** copy the spec's template (between `vision-template:begin` and `:end`) into
    `.claude/skills/vision/SKILL.md`, every placeholder filled. It sits outside the `lv-` names, so
    no deploy overwrites it.
+   The `description:` line is a plain YAML value: if an answer filled into it contains `: ` or
+   ` #`, or would start it with a quote, reword it there (the body can keep it as given).
+   Otherwise the frontmatter does not parse and the skill never loads.
 4. **Write the first vision** with the skill's `draft` procedure: the root, `BACKLOG.md`, and a
    session note recording this interview. Every claim about a project's current state cites a
    source; the rest is marked aspiration.
-5. **Check:** `scripts/lv-exec.sh lv-hook.sh overseer-vision` now prints the new file.
+5. **Check:** `scripts/lv-exec.sh lv-hook.sh overseer-vision` now prints the new file, and
+   `grep -c '{{' .claude/skills/vision/SKILL.md` prints `0`.
 6. Commit the skill and the vision together, and tell the owner: `/vision` and `/lv-vision` both
    reach it, and `/vision next` answers "what should I work on?".
 
