@@ -35,6 +35,8 @@ case "$1 ${2:-}" in
   "row gates")        printf 'PLN-042 spec-approval\tlist\tgate PLN-042\n' ;;
   "gate PLN-042")     printf 'gate file\tnone\t-\n' ;;
   "row ideas")        printf 'nothing gated\tnone\t-\n' ;;
+  "row release")      printf 'PLN-003 merged to develop\tlist\tartifact PLN-003\n' ;;
+  "row deploy")       printf 'PLN-007 on release\tlist\tartifact PLN-007\n' ;;
   *) echo "stub: no such node $*" >&2; exit 2 ;;
 esac
 STUB
@@ -94,6 +96,36 @@ seed
 LV_ATTEND_CMD="$FIX/does-not-exist"
 printf 't \x1b' | drill_browse 0 "gates" "row gates" > "$FIX/missing.txt" 2>&1
 says "a missing claude is reported" "$FIX/missing.txt" "not found on PATH"
+
+# 5. coordinator LVI-021: a release or deploy level is about the promotion, not the
+# plans it lists. t attended the highlighted plan (PLN-003), and then /lv-attend
+# RELEASE — neither of which runs the release. t starts the promotion skill.
+seed; LV_ATTEND_CMD="$FIX/fake-claude"
+printf 't \x1b' | drill_browse 0 "release" "row release" > "$FIX/rel.txt" 2>&1
+says "t in the release drill starts the release skill" "$ATTEND_LOG" "$CLIENT|/wf-release"
+if grep -q "|/[lw][vf]-attend\|PLN-003" "$ATTEND_LOG"; then bad "and not /lv-attend or the highlighted plan"
+else ok "and not /lv-attend or the highlighted plan"; fi
+says "the release level advertises t /lv-release" "$FIX/rel.txt" "t /lv-release"
+
+seed
+mkdir -p "$CLIENT/.claude/skills/lv-deploy"
+printf 't \x1b' | drill_browse 0 "deploy" "row deploy" > /dev/null 2>&1
+says "t in the deploy drill starts /lv-deploy"  "$ATTEND_LOG" "$CLIENT|/lv-deploy"
+rm -rf "$CLIENT/.claude"
+
+# 6. Anywhere else t still attends, and says so.
+seed
+printf 't \x1b' | drill_browse 0 "gates" "row gates" > "$FIX/t-gates.txt" 2>&1
+says "t off a promotion still attends" "$ATTEND_LOG" "/wf-attend"
+says "and advertises t attend"          "$FIX/t-gates.txt" "t attend"
+
+# 7. On the rows level, the highlighted release/deploy row is the promotion.
+seed
+ROW_IDX=$(printf '%s\n' "${ROW_LABELS[@]}" | grep -nx release | cut -d: -f1)
+: > "$FIX/keys"; for _ in $(seq 2 "$ROW_IDX"); do printf '\x1b[B' >> "$FIX/keys"; done
+printf 't \x1b' >> "$FIX/keys"
+drill_browse 0 "rows" "@rows" < "$FIX/keys" > /dev/null 2>&1
+says "t on the rows level's release row starts the release skill" "$ATTEND_LOG" "|/wf-release"
 
 [ "$fails" -eq 0 ] && { echo "all passed"; exit 0; }
 echo "$fails failed"; exit 1

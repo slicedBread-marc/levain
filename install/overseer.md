@@ -50,7 +50,8 @@ scripts/lv-exec.sh lv-rack.sh --plain --all
 
 Show the output. For the live board, ask them to run `scripts/lv-exec.sh lv-rack.sh --watch` in a
 terminal. Arrows move between cells and `Enter` opens one. Inside it, `t` starts `/lv-attend` in
-that project on the highlighted item. The footer lists the other keys.
+that project on the highlighted item. On the release or deploy row, `t` starts `/lv-release` or
+`/lv-deploy` in that project. The footer lists the other keys.
 
 Say once that the coordinator's authority stops at filing: work is filed into a project with
 `/lv-dep-notify`, and everything after that belongs to that project's own session.

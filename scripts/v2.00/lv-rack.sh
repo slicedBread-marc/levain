@@ -14,7 +14,8 @@
 # Projects are sorted by recent activity — the latest of a git commit or an
 # orchestrator event — before rendering, most active first, so a project
 # that's gone quiet sinks on its own instead of needing manual pruning from
-# the registry. Only the top MAX_COLS are drawn by default; --all shows
+# the registry. Only as many as fit the terminal's width (MAX_COLS) are
+# drawn by default; --all shows
 # every deployed client. Either way the interactive project picker
 # (menu_loop — reached via 'm' in --watch, or automatically after a plain
 # run) always lists every project regardless of the cap, so a quiet one is
@@ -104,7 +105,11 @@
 # that project on `/lv-attend <ID>`, where <ID> is the plan, bug or brief the
 # highlighted line points at (else the one the level is about). The board
 # steps aside while the session runs and comes back where it was when it
-# exits. No id in sight means `/lv-attend` on the whole queue. This is the
+# exits. No id in sight means `/lv-attend` on the whole queue. On the release
+# or deploy row (or its drill), `t` starts `/lv-release` or `/lv-deploy`
+# instead — those skills answer their own RELEASE/DEPLOY gate, so a plan id
+# from the list would attend the wrong thing; the project menu offers both
+# too. This is the
 # first step toward answering the pipeline from a UI; scoping the session to that one plan is the library's side (WFI-007).
 # WF_ATTEND_CMD replaces `claude` so the tests never start a real session.
 #
@@ -240,6 +245,9 @@ watch_mode=false
 watch_secs=60
 plain=false
 show_all=false
+# How many project columns fit across the terminal — recomputed by
+# compute_shown from the current width, so a wide terminal shows more of the
+# portfolio and a resize is picked up on the next refresh.
 MAX_COLS=4
 
 usage() { sed -n '2,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
@@ -539,6 +547,19 @@ sort_projects_by_activity() {
   f_ts=("${o_ts[@]}")
 }
 
+# fit_cols — MAX_COLS from the terminal width: the 11-column row label, then
+# as many cells as fit at the width render_text will give them (the longest
+# project name, at least 10, plus a space). The attn cell can widen a column
+# past that, which is why one cell of slack is left over.
+fit_cols() {
+  local w cw=10 n
+  w=$(term_cols)
+  for n in ${names[@]+"${names[@]}"}; do [ "${#n}" -gt "$cw" ] && cw="${#n}"; done
+  cw=$((cw + 1))
+  MAX_COLS=$(( (w - 11 - cw) / cw ))
+  [ "$MAX_COLS" -lt 1 ] && MAX_COLS=1
+}
+
 # compute_shown — recomputes win_end/shown_n from win_start: everyone
 # under --all (window pinned at the start), else a MAX_COLS-wide window
 # starting at win_start. Clamps win_start itself in case the roster
@@ -548,6 +569,7 @@ sort_projects_by_activity() {
 # where the window sits.
 compute_shown() {
   local total_n="${#names[@]}"
+  fit_cols
   if $show_all; then
     win_start=0
     shown_n="$total_n"
@@ -1060,7 +1082,18 @@ render_text() {
     printf '\n'
   }
 
-  row "daemon" f_daemon
+  # The daemon's state reads as what it is doing, not as "running" — that
+  # word sat right beside the `running` row label and read as a count of it.
+  # f_daemon keeps the raw value (off/running/stale) the toggle logic tests.
+  local -a f_daemon_disp=()
+  for ((i = win_start; i < win_end; i++)); do
+    case "${f_daemon[$i]}" in
+      running) if [ "${f_running[$i]:-0}" -gt 0 ] 2>/dev/null; then
+                 f_daemon_disp[$i]="cooking"; else f_daemon_disp[$i]="idle"; fi ;;
+      *)       f_daemon_disp[$i]="${f_daemon[$i]}" ;;
+    esac
+  done
+  row "daemon" f_daemon_disp
   row "running" f_running
 
   # GATES gets its own logic: stuck count in red, otherwise dim/plain.
@@ -1755,7 +1788,7 @@ drill_browse() {
 
     local n="${#d_disp[@]}" sel="${st_sel[$depth]}"
     [ "$n" -gt 0 ] && [ "$sel" -ge "$n" ] && sel=$((n - 1))
-    local redraw=true key age_sig="" new_sig=""
+    local redraw=true key age_sig="" new_sig="" stage=""
 
     while true; do
       if $redraw; then
@@ -1809,7 +1842,10 @@ drill_browse() {
           done
           [ "$n" -gt "$h" ] && printf '\n  %s%s of %s%s\n' "$DIM" "$((sel + 1))" "$n" "$R"
         fi
-        printf '\n%s↑/↓ move, enter open, esc back, r refresh, t attend, d daemon, a actions, q board%s\n' "$DIM" "$R"
+        stage=$(level_stage "$argv")
+        $is_rows && [ -z "$stage" ] && [ "$n" -gt 0 ] && stage=$(level_stage "${d_targ[$sel]:-}")
+        printf '\n%s↑/↓ move, enter open, esc back, r refresh, t %s, d daemon, a actions, q board%s\n' \
+          "$DIM" "$([ -n "$stage" ] && echo "/lv-$stage" || echo attend)" "$R"
         redraw=false
         age_sig=$(age_bucket "$level_ts")
       fi
@@ -1890,7 +1926,15 @@ drill_browse() {
         t|T)
           st_sel[$depth]="$sel"
           node_job_cancel
-          attend_session "$dpath" "$(attend_id "${d_targ[$sel]:-}" "$argv" "${st_argv[*]}")"
+          # A release or deploy level is ABOUT the promotion, not the plans it
+          # lists, so `t` runs the promotion skill itself: /lv-release or
+          # /lv-deploy answers its own RELEASE/DEPLOY gate, where /lv-attend
+          # only answers one already open (coordinator LVI-021).
+          if [ -n "$stage" ]; then
+            skill_session "$dpath" "lv-$stage"
+          else
+            attend_session "$dpath" "$(attend_id "${d_targ[$sel]:-}" "$argv" "${st_argv[*]}")"
+          fi
           # Answering a gate moves the plan, so what this level lists is stale.
           $is_rows || rm -f "$(node_cache_file "$dpath" "$argv")" 2>/dev/null
           break ;;
@@ -1942,6 +1986,11 @@ pm_action() {
     # afterwards, not just this one's.
     6) suspend_all; refresh_all_fields ;;
     7) resume_suspended; refresh_all_fields ;;
+    # Start a promotion by hand (coordinator LVI-021). The skill claims RELEASE or
+    # DEPLOY first, so a daemon already running it makes the session stand
+    # down rather than race it. Both move plans, so the numbers are stale.
+    8) skill_session "${paths[$i]}" lv-release; refresh_one "$i" ;;
+    9) skill_session "${paths[$i]}" lv-deploy;  refresh_one "$i" ;;
   esac
 }
 
@@ -1958,6 +2007,7 @@ project_menu() {
     "tail recent events" "list gated plans"
     "open rows, items and logs"
     "stop ALL daemons (whole portfolio)" "resume the daemons that were stopped"
+    "start /lv-release" "start /lv-deploy"
   )
   local n_actions="${#actions[@]}"
   while true; do
@@ -1979,9 +2029,9 @@ project_menu() {
     local a
     for a in "${!actions[@]}"; do
       if [ "$a" -eq "$sub" ]; then
-        printf '  %s> %d) %s%s\n' "$REV" "$((a + 1))" "${actions[$a]}" "$R"
+        printf '  %s> %d) %s%s\n' "$REV" "$(( (a + 1) % 10 ))" "${actions[$a]}" "$R"
       else
-        printf '    %d) %s\n' "$((a + 1))" "${actions[$a]}"
+        printf '    %d) %s\n' "$(( (a + 1) % 10 ))" "${actions[$a]}"
       fi
     done
     printf '  b) back\n\n  arrows + enter, a digit, or b   %s(d daemon, s stop all, R resume — same keys as the board)%s\n' \
@@ -1998,13 +2048,15 @@ project_menu() {
         # action that must NOT be followed by a "press any key" prompt on
         # top of the menu it already redrew.
         pm_action "$i" "$sub"
-        [ "$sub" -eq 5 ] && continue
+        # 5, 8 and 9 hand the screen to something that ends on its own prompt.
+        case "$sub" in 5|8|9) continue ;; esac
         printf '\n  (press any key to continue) '; read_key key ;;
-      [1-9])
-        local pick=$((key - 1))
+      [0-9])
+        # 0 is the tenth action, the way a keyboard's digit row reads.
+        local pick=$(( key == 0 ? 9 : key - 1 ))
         [ "$pick" -lt "$n_actions" ] || continue
         pm_action "$i" "$pick"
-        [ "$pick" -eq 5 ] && continue
+        case "$pick" in 5|8|9) continue ;; esac
         printf '\n  (press any key to continue) '; read_key key ;;
       b|B|$'\x1b') return ;;
       # The board's own action letters, on the numbered actions that already do
@@ -2037,27 +2089,40 @@ project_menu() {
 #
 # Returns 0 when it handled the key — the caller should assume the screen is
 # gone and repaint — and 1 when the key is not one of these.
+# level_stage <argv> — `release` or `deploy` when a drill argv is that grid
+# row, empty otherwise. The two rows are the promotions, and the keys that act
+# on a promotion (t) need to know they are on one.
+level_stage() {
+  case "${1:-}" in
+    "row release") echo release ;;
+    "row deploy")  echo deploy ;;
+  esac
+}
+
 # attend_id <text...> — the first plan, bug or brief id in the text, if any.
 attend_id() {
   printf '%s\n' "$*" | grep -oE "($LV_WORK_RE)-[0-9]+" | head -1
 }
 
-# attend_session <path> [<ID>] — hand the terminal to an interactive Claude
-# session in that project on /lv-attend (/lv-attend on a 13.x client), and
-# take it back when it exits.
-attend_session() {
-  local path="$1" id="${2:-}" k
-  local cmd="${LV_ATTEND_CMD:-${WF_ATTEND_CMD:-claude}}" skill=lv-attend
+# skill_session <path> <lv-skill> [<arg>] — hand the terminal to an
+# interactive Claude session in that project on /<lv-skill> (its wf- name on a
+# 13.x client), and take it back when it exits.
+skill_session() {
+  local path="$1" skill="$2" arg="${3:-}" k
+  local cmd="${LV_ATTEND_CMD:-${WF_ATTEND_CMD:-claude}}"
   printf '\033[?25h\033[2J\033[H'
-  printf '%sattending%s %s%s\n\n' "$B" "$R" "$(basename "$path")" "${id:+ — $id}"
+  printf '%s/%s%s %s%s\n\n' "$B" "$skill" "$R" "$(basename "$path")" "${arg:+ — $arg}"
   if ! command -v "$cmd" >/dev/null 2>&1; then
     printf '  %s%s not found on PATH%s\n' "$DIM" "$cmd" "$R"
   else
-    [ -d "$path/.claude/skills/lv-attend" ] || skill=wf-attend
-    ( cd "$path" && "$cmd" "/$skill${id:+ $id}" ) || true
+    [ -d "$path/.claude/skills/$skill" ] || skill="wf-${skill#lv-}"
+    ( cd "$path" && "$cmd" "/$skill${arg:+ $arg}" ) || true
   fi
   printf '\n  (press any key to return to the board) '; read_key k
 }
+
+# attend_session <path> [<ID>] — skill_session on /lv-attend.
+attend_session() { skill_session "$1" lv-attend "${2:-}"; }
 
 board_action_key() {
   local key="$1" path="${2:-}" i="" k

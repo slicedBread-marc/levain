@@ -29,7 +29,8 @@ pack, else the library's `deployments.txt`, else this coordinator's `coordinates
 **`daemons`:** run `scripts/lv-exec.sh lv-rack.sh --list-daemons` and list them.
 
 **The live board is a terminal program.** Its drill-down, daemon toggles (`d`), stop/resume of
-every daemon (`s`/`R`) and attend (`t`) need a real terminal, so point the owner at
+every daemon (`s`/`R`) and attend (`t` — on the release or deploy row it starts `/lv-release` or
+`/lv-deploy` instead) need a real terminal, so point the owner at
 `! scripts/lv-exec.sh lv-rack.sh --watch` rather than running it here. `--stop-all` and
 `--resume` change what every project is doing unattended: run them only when asked.
 

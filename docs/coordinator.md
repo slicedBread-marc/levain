@@ -152,7 +152,8 @@ A coordinator is where one person oversees several pipelines (LVI-014). Beyond f
   `lv-tray.sh --fields` as one grid. `--watch` is a live terminal board with a drill-down into
   workers, plans and logs, daemon toggles, stop/resume of every daemon (`--stop-all`/`--resume`,
   which `deploy-all.sh --stop-daemons` also uses), and `t` to start `/lv-attend` in the
-  highlighted project. Its projects come from the `project-registry` hook: the owner's pack, else
+  highlighted project. On the release or deploy row, `t`
+  starts `/lv-release`/`/lv-deploy` there instead. Its projects come from the `project-registry` hook: the owner's pack, else
   the library's `deployments.txt` (found through `.claude/workflow-source`), else this
   coordinator's `coordinates:` list. Its own state, the suspend record and the snapshot cache,
   lives in the coordinator's gitignored `.claude/orchestrator/`.
