@@ -4776,6 +4776,24 @@ assert_ok "--force is there for an operator repairing one by hand" \
   "$SCRIPT_DIR/lv-bug-consume.sh" BUG-270 PLN-271-says-another-bug --force
 rm -rf bugs/triaged/BUG-270-onprem-rendered-text
 
+# A client's LVI-003: a bug asking to change an existing draft plan had no
+# verb — the filed-after check refuses every amendment by construction.
+mkdir -p bugs/open/BUG-272-key-placement
+printf '# key placement\n\n> **Status:** Open\n> **ID:** BUG-272\n> **Plan:** _(none)_\n' \
+  > bugs/open/BUG-272-key-placement/bug.md
+git add -A >/dev/null 2>&1; git commit -qm "BUG-272, filed after PLN-271" >/dev/null 2>&1
+assert_eq "--amends refuses until plan.md names the bug" "2" \
+  "$("$SCRIPT_DIR/lv-bug-consume.sh" BUG-272 PLN-271-says-another-bug --amends >/dev/null 2>&1; echo $?)"
+assert_eq "and moves nothing" "true" \
+  "$([ -f bugs/open/BUG-272-key-placement/bug.md ] && echo true || echo false)"
+printf '\n## Amendments\n\n### A-1 (BUG-272): keys move to the vault\n' >> plans/PLN-271-says-another-bug/plan.md
+assert_ok "--amends consumes a later bug once the amendment names it" \
+  "$SCRIPT_DIR/lv-bug-consume.sh" BUG-272 PLN-271-says-another-bug --amends
+assert_eq "and links it to the amended plan" "true" \
+  "$(grep -q '^> \*\*Plan:\*\* PLN-271-says-another-bug$' bugs/triaged/BUG-272-key-placement/bug.md && echo true || echo false)"
+assert_eq "the commit says it is an amendment" "true" \
+  "$(git log -1 --format=%s | grep -q 'amendment to PLN-271' && echo true || echo false)"
+
 # ═══════════════════════════════════════════════════════════════════════
 section "A replan does not promote on a stale approval (client-a WFI-178)"
 

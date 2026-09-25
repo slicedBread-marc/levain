@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
-# lv-bug-consume.sh <bug-id> <plan-id> [--no-commit] [--force]
+# lv-bug-consume.sh <bug-id> <plan-id> [--no-commit] [--force] [--amends]
 # Moves a bug from open → triaged and links it to a plan.
 # Updates bug.md Status to Triaged and sets Plan field.
+#
+#   --amends   the bug is consumed as an AMENDMENT to a plan that already
+#              exists, not as the source of a new one (a client's LVI-003: a
+#              bug asking to change two draft plans had no verb, because check
+#              2 below refuses every bug filed after its plan — which is every
+#              amendment). The source checks are replaced by one that fits:
+#              plan.md must already carry the amendment, i.e. name this bug
+#              outside its own `**Bug:**` field. Exit 2 if it does not.
 #
 # THE NUMBER IS NOT THE IDENTITY, AND FOR ONE RUN IT WAS NOT EVEN STABLE
 #
@@ -64,18 +72,20 @@ bug_id=""
 plan_id=""
 do_commit=true
 force=false
+amends=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-commit) do_commit=false; shift ;;
     --force)     force=true; shift ;;
+    --amends)    amends=true; shift ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *)  if [ -z "$bug_id" ]; then bug_id="$1"; else plan_id="$1"; fi; shift ;;
   esac
 done
 
 if [ -z "$bug_id" ] || [ -z "$plan_id" ]; then
-  echo "Usage: $0 <bug-id> <plan-id> [--no-commit] [--force]" >&2
+  echo "Usage: $0 <bug-id> <plan-id> [--no-commit] [--force] [--amends]" >&2
   exit 1
 fi
 
@@ -132,7 +142,18 @@ refuse() {
   exit 2
 }
 
-if ! $force; then
+if $amends && ! $force; then
+  # An amendment names the bug it answers; a plan that does not has not been
+  # amended yet, and consuming first would leave a triaged bug nothing fixes.
+  if [ ! -f "$plan_dir/plan.md" ]; then
+    echo "Error: --amends needs an existing plan; $plan_dir/plan.md does not exist." >&2; exit 2
+  fi
+  if ! grep -vE '^[ \t]*>?[ \t]*\*\*Bug:\*\*' "$plan_dir/plan.md" | grep -qE "(^|[^0-9A-Za-z-])$bug_id([^0-9]|$)"; then
+    echo "Error: $plan_dir/plan.md does not name $bug_id — write the amendment (naming $bug_id) first." >&2
+    echo "  Nothing was moved." >&2
+    exit 2
+  fi
+elif ! $force; then
   # 1. The plan says which bug it is for.
   if [ -f "$plan_dir/plan.md" ]; then
     declared=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Bug:\*\*' "$plan_dir/plan.md" 2>/dev/null \
@@ -235,7 +256,8 @@ echo "$bug_id → triaged (linked to $plan_id)"
 # which is how a bug once appeared in bugs/open/ AND bugs/triaged/ at the same
 # HEAD (WFI-066).
 if $do_commit; then
-  if ! "$SELF_DIR/lv-commit.sh" "bug($bug_id): triaged — consumed by $plan_id" \
+  if $amends; then how="amendment to $plan_id"; else how="consumed by $plan_id"; fi
+  if ! "$SELF_DIR/lv-commit.sh" "bug($bug_id): triaged — $how" \
         --add "bugs/open/$bug_slug" "bugs/triaged/$bug_slug"; then
     echo "lv-bug-consume: the move is staged but could not be committed — commit it before another worker does" >&2
   fi

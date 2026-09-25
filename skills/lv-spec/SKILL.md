@@ -230,6 +230,12 @@ If the user picks a bug BUG-NNN:
    `skills/lv-bug/SKILL.md` ("Closing a bug that duplicates something already
    filed"): **[GATE]** `needs-input`, because deciding two artifacts are the same
    issue is the user's call, not yours, outside this one mechanically-checkable case.
+2b. **Is it a change to a plan that already exists?** When the bug asks to change what an existing plan in `draft` or `ready` specifies — its steps, tests, criteria, a design decision — rather than for new work, it is an **amendment to that plan**, not a new plan. Do not create PLN-NNN; a second plan specifying the same surface is the contradiction the consistency pass exists to catch. Instead:
+   1. Claim the target plan (`lv-claim.sh PLN-MMM-<slug>`) as well as the bug. Target already `active` or beyond: stop here and write a new plan with `Deps` on it — a built plan changes by a new plan, not by editing its spec.
+   2. Append the amendment to the target's `## Amendments`, headed with the bug's ID (`### A-N (BUG-NNN): <what changes>`). Never rewrite Steps, Tests or Design Decisions in place. A bug spanning two plans gets an amendment in each, each naming it.
+   3. `scripts/lv-exec.sh lv-bug-consume.sh BUG-NNN PLN-MMM-<slug> --amends` — into the plan that carries most of the change. `--amends` refuses (exit 2) until `plan.md` names the bug, so it runs after step 2, never before.
+   4. Continue at [Replanning](#replanning) step 6 on each amended plan: the review gate on the plan as amended, the scope check, and 6d — an open or answered spec-approval gate was given for the unamended text, so the amendment goes back to it.
+   Unsure whether it is a change or new work? That is the `needs-input` question, naming the candidate plan — not a reason to park on "no verb fits" (a client's LVI-003).
 3. **Inherit the plan ID** — BUG-NNN becomes PLN-NNN via `lv-plan-id.sh` (see [ID Inheritance](#id-inheritance))
 4. **Use it as context** — the bug's description, steps, and expected behavior become the plan's Goal and acceptance criteria
 5. **Choose a feature name** — a short kebab-case slug describing the fix (e.g. `login-crash`, `webhook-timeout`)
@@ -965,6 +971,7 @@ When the plan being created is a fix for a tracked bug:
    defend against (WFI-112, WFI-106).
 
    **Exit 2 means the number no longer names the bug you specced.** The script refuses when the plan's own `> **Bug:**` field names a different bug, or when the bug was filed after the plan folder was written — the signature of a renumber that happened underneath you. client-a's WFI-167: commit 671983e renumbered BUG-137 → BUG-136 mid-run, a different bug took the number, and the consume triaged that unrelated bug — one about image parsing — into a plan about API versions, exit 0 and no warning. `lv-claim.sh` reported the claim as held throughout, because claims key on the number too. **Do not `--force` past it.** Read the bug the number names now, and if it is not the one you drafted from, open a **[GATE]** `needs-input` naming both.
+   **An amendment consumes with `--amends`** ([Plan from bug](#plan-from-bug) step 2b): the bug was filed after the plan by definition, so the filed-after check is replaced by one that plan.md names the bug. It does not write the `**Bug:**` field — that names the bug a plan was drafted from, and step 2 below is for new plans only.
 2. **Link back in `plan.md`** — add to the Goal section: `> **Bug:** BUG-NNN — <title>`. Write it as a header field on its own line: `lv-plan-id.sh` reads these fields to recognise a resumed plan, and it reads nothing else (WFI-168).
 
 ## Rules
