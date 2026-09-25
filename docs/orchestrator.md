@@ -489,8 +489,11 @@ rather than spawned only to refuse itself. `--check` and not the recording form
 because the daily ceiling counts `autonomy-use` lines: a recording probe would
 spend the budget the worker it clears the way for then needs.
 
-Ships **off**: absent config is `mode: attended`, which is the pre-v6.18
-behaviour exactly. The vocabulary is closed, `--show` names any `standing_for`
+Absent config is `mode: attended`, which since coordinator WFI-006 stops only
+`production-push`: `release` and `deploy` run unattended by default, up to
+`max_unattended_per_day`, unless the project lists them under `attended_for`.
+So enabling the orchestrator on a project with no autonomy block does dispatch
+promotions — list them under `attended_for` to keep them for a human. The vocabulary is closed, `--show` names any `standing_for`
 entry that nothing reads, and every grant must carry an author, a date and an
 expiry. Judgment gates are untouched — `spec-approval` has `specApproval.mode`
 and `manual-test` has `manualTestGate`, and neither is reachable from here.

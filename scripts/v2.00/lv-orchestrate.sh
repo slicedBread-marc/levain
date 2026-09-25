@@ -450,9 +450,13 @@ dispatch() {
 
   # Don't dispatch a promotion nothing can authorize.
   #
-  # `release` and `deploy` are the only roles whose worker consults a standing
-  # grant before doing its job. When that grant doesn't cover the action — the
-  # default `mode: attended`, an expired grant, a spent daily ceiling — the
+  # `release` and `deploy` are the only roles whose worker consults
+  # lv-autonomy.sh before doing its job. Both run unattended by default since
+  # coordinator WFI-006 — absent config and `mode: attended` included, so this
+  # pre-flight passes on a project with no autonomy block at all (a client's
+  # LVI-001 read the old comment as the reverse). When autonomy does refuse —
+  # the action listed under `attended_for`, a spent daily ceiling, a malformed
+  # grant — the
   # worker's whole run is: refuse, open an approval gate, unclaim, exit. The
   # dispatcher can know that in advance, and spawning anyway is not free:
   #
