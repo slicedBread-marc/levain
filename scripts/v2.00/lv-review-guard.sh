@@ -41,6 +41,16 @@
 # Output (eval-friendly, on both modes):
 #   REVIEW_GUARD=clean|touched|unrecorded
 #   REVIEW_GUARD_TOUCHED='plan.md findings.md'   files whose hash moved
+#   REVIEW_GUARD_DIRTY_AT_RECORD=true|false      (--record) a watched file had
+#                                                uncommitted edits — commit them
+#                                                first (see CONCURRENT below)
+#   REVIEW_GUARD_CONCURRENT=true|false           (--check) HEAD's reflog moved
+#                                                during the round: a stash, reset
+#                                                or merge by another worker on
+#                                                this shared checkout, which can
+#                                                move an uncommitted plan.md by
+#                                                itself (a client's LVI-005 — the
+#                                                reviewer was blamed for it)
 #   REVIEW_GUARD_REVERTABLE=true|false           every touched file was clean in
 #                                                git at --record, so
 #                                                `git checkout --` restores what
@@ -103,10 +113,23 @@ STATE_DIR="$(wf_orch_dir)/review-guard"
 mkdir -p "$STATE_DIR"
 STATE="$STATE_DIR/$plan_id"
 
+# reflog_since <epoch> → HEAD reflog entries written at or after it, one per
+# line. The reflog's own time (%gd under --date=unix), not the commit's: a
+# stash's `reset: moving to HEAD` points at an old commit.
+reflog_since() {
+  (cd "$ROOT" && git reflog --date=unix --format='%gd %gs' HEAD 2>/dev/null) \
+    | awk -v t="$1" '{ ts = $1; gsub(/[^0-9]/, "", ts); if (ts + 0 >= t + 0) print }'
+}
+
 if [ "$mode" = "--record" ]; then
+  dirty_any=false
+  for name in $WATCHED; do
+    [ "$(dirty_of "$PLAN_DIR/$name")" = true ] && dirty_any=true
+  done
   {
     wf_emit GUARD_PLAN "$plan_id"
     wf_emit GUARD_AT   "$(wf_now)"
+    wf_emit GUARD_EPOCH "$(date +%s)"
     for name in $WATCHED; do
       key=$(printf '%s' "$name" | tr '.a-z' '_A-Z')
       wf_emit "GUARD_HASH_$key"  "$(hash_of "$PLAN_DIR/$name")"
@@ -116,7 +139,12 @@ if [ "$mode" = "--record" ]; then
   wf_emit REVIEW_GUARD clean
   wf_emit REVIEW_GUARD_TOUCHED ""
   wf_emit REVIEW_GUARD_REVERTABLE true
+  wf_emit REVIEW_GUARD_DIRTY_AT_RECORD "$dirty_any"
   echo "$plan_id: review guard armed on $WATCHED" >&2
+  if $dirty_any; then
+    echo "$plan_id: WARNING — the plan has uncommitted edits. Commit them before the review: on a shared" >&2
+    echo "  checkout a concurrent stash or merge can move them mid-round (LVI-005)." >&2
+  fi
   exit 0
 fi
 
@@ -146,9 +174,27 @@ if [ -z "$touched" ]; then
   exit 0
 fi
 
+since=$(wf_gate_field "$STATE" GUARD_EPOCH)
+concurrent=false
+moves=""
+[ -n "$since" ] && moves=$(reflog_since "$since")
+[ -n "$moves" ] && concurrent=true
+
 wf_emit REVIEW_GUARD touched
 wf_emit REVIEW_GUARD_TOUCHED "$touched"
 wf_emit REVIEW_GUARD_REVERTABLE "$revertable"
+wf_emit REVIEW_GUARD_CONCURRENT "$concurrent"
+if $concurrent; then
+  {
+    echo "$plan_id: $touched changed during the review, AND HEAD moved in this checkout meanwhile —"
+    printf '%s\n' "$moves" | sed 's/^/    /'
+    echo "  A stash, reset or merge by another worker can move uncommitted plan text by itself, so"
+    echo "  this may not be the reviewer's write. Compare with the committed revision"
+    echo "  (git diff HEAD -- plans/${plan_id}-${slug}/) before blaming the agent; if what the reviewer"
+    echo "  read cannot be known, run the round again. Commit the revision before --record next time."
+  } >&2
+  exit 3
+fi
 {
   echo "$plan_id: the review agent WROTE to the plan it was reviewing — $touched"
   echo "  A review is a second opinion, not an edit. Whatever it wrote is now"

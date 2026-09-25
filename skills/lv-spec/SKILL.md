@@ -544,9 +544,15 @@ Bad agent tasks (do these yourself):
 
 One template, used by the attended exit, the unattended exit and the replan gate alike. Spawn it exactly as written — the read-only agent type and the REPORT-ONLY framing are the fix for a defect, not house style.
 
+**Commit the text under review before arming the guard** — the first draft and every between-rounds revision alike:
+
 ```bash
+scripts/lv-exec.sh lv-commit.sh "spec(PLN-NNN-<slug>): revision for review round N" \
+  --add plans/PLN-NNN-<slug>/plan.md plans/PLN-NNN-<slug>/findings.md
 scripts/lv-exec.sh lv-review-guard.sh PLN-NNN --record
 ```
+
+An uncommitted revision sits on the shared develop checkout for the whole round, and any concurrent `git stash` or merge there moves it: a client's LVI-005 had a tester's merge stash lv-spec's round-2 revision away while the reviewer read, so the round reviewed unknowable text and the guard blamed the reviewer for the churn (same class as WFI-164). Committed, the text is fixed and a revert is always safe. `--record` warns (`REVIEW_GUARD_DIRTY_AT_RECORD=true`) when you skipped this.
 
 ```
 Agent(model: sonnet, subagent_type: "Explore", prompt: "REPORT ONLY. You are reviewing a
@@ -580,7 +586,9 @@ eval "$(scripts/lv-exec.sh lv-review-guard.sh PLN-NNN --check)"
 
 If `Explore` is not an available agent type in this session, spawn the default agent with the same prompt and say so in the `## Review` entry — the guard below is then the only thing standing between a reviewer and the pen, so read its output rather than assuming.
 
-`REVIEW_GUARD=touched` means the agent wrote to the plan despite all of the above. Follow the script's instructions — discard its writes, record the verdict from its **response**, and file it with `lv-issue.sh`. Do not reconcile the two by hand and carry on; they have been observed to disagree.
+`REVIEW_GUARD=touched` with `REVIEW_GUARD_CONCURRENT=true` means a git operation in this checkout (a stash, reset or merge by another worker) moved HEAD during the round: the change may not be the reviewer's at all. Compare the file with the committed revision (`git diff HEAD -- plans/PLN-NNN-<slug>/`) before blaming the agent, and if the text the reviewer read cannot be known, run the round again rather than recording its verdict.
+
+`REVIEW_GUARD=touched` otherwise means the agent wrote to the plan despite all of the above. Follow the script's instructions — discard its writes, record the verdict from its **response**, and file it with `lv-issue.sh`. Do not reconcile the two by hand and carry on; they have been observed to disagree.
 
 **Why it is shaped this way.** The review is a second opinion, and its value is entirely in being *second* — something other than the session holding the pen looked at the plan, and the session then decides what to record. Give the reviewer the pen and both halves collapse into one, silently, because a verdict in `plan.md` looks identical whoever wrote it.
 

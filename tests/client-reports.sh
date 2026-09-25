@@ -3014,6 +3014,27 @@ assert_eq "the write is still caught" "touched" "$REVIEW_GUARD"
 assert_eq "but a revert is not offered" "false" "$REVIEW_GUARD_REVERTABLE"
 git checkout -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
 
+# A client's LVI-005: lv-spec's uncommitted round-2 revision was stashed away by
+# a concurrent merge on the shared checkout while the reviewer read, and the
+# guard blamed the reviewer. --record now warns on uncommitted text, and
+# --check says when HEAD moved during the round.
+printf '\n## Amendments\nA-1 — revision not yet committed\n' >> plans/PLN-931-pen-holder/plan.md
+eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --record 2>/dev/null)"
+assert_eq "--record flags uncommitted plan text" "true" "$REVIEW_GUARD_DIRTY_AT_RECORD"
+git stash -q >/dev/null 2>&1        # the concurrent worker's merge, stashing around itself
+git stash pop -q >/dev/null 2>&1 || true
+printf 'x\n' >> plans/PLN-931-pen-holder/plan.md
+eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --check 2>/dev/null)"
+assert_eq "a HEAD move during the round is reported" "true" "$REVIEW_GUARD_CONCURRENT"
+git checkout -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
+sleep 1                             # the reflog is second-resolution
+eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --record 2>/dev/null)"
+assert_eq "committed text records clean" "false" "$REVIEW_GUARD_DIRTY_AT_RECORD"
+printf 'x\n' >> plans/PLN-931-pen-holder/plan.md
+eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --check 2>/dev/null)"
+assert_eq "and a quiet round is not blamed on anyone else" "false" "$REVIEW_GUARD_CONCURRENT"
+git checkout -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
+
 # A guard that was never armed is not evidence of anything, and failing the
 # review over it would be worse than the miss.
 registry_add_row PLN-932 never-armed draft
