@@ -162,6 +162,11 @@ production_url: ""
 #   local_deploy_command: start and rebuild          — e.g. "docker compose up --build -d"
 #   local_stop_command:   stop the environment       — e.g. "docker compose stop"
 # Leave all three blank to skip local env management.
+# A project with no docker/docker-compose.yml is tested natively: lv-docker-up.sh
+# runs local_deploy_command (else local_start_command) in the background with
+# FEATURE_PORT and PORT exported, so the command must listen on that port and
+# serve /health — e.g. "dotnet run --project src/App --urls http://localhost:$FEATURE_PORT".
+# localStartWait (seconds, default 120) bounds how long it may take to answer.
 local_start_command: ""
 local_deploy_command: ""
 local_stop_command: ""

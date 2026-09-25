@@ -254,7 +254,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
 **Why this is an assertion and not a reminder.** A verification command run from the develop root reads develop's tree, where the branch's work has not merged, and it fails *correctly* — which is indistinguishable from the feature being broken. client-a's WFI-094 wrote up exactly that as a behavior finding claiming a fix "was not implemented", and bounced a fully-built, verify-clean plan back through spec. Two shapes to watch, both from the same root cause:
 
 - **Relative paths.** `grep X src/…` from the develop root greps develop. Any path a criterion names is relative to the worktree.
-- **The container.** `docker compose -f docker/docker-compose.yml up --build` resolves `build.context: ..` against the compose file, so from the develop root it builds *develop's* source — while `lv-plan-port.sh` hands out the same port either way. The URL looks right and the build is wrong, with nothing in the output to tell them apart. Always bring the container up with `lv-docker-up.sh` from the worktree, and if a criterion fails on served content, confirm the served build matches the branch tip (`git rev-parse HEAD`, then curl the page and compare against the worktree's own file) **before** writing a behavior finding.
+- **The container** (when the project has a compose file). `docker compose -f docker/docker-compose.yml up --build` resolves `build.context: ..` against the compose file, so from the develop root it builds *develop's* source — while `lv-plan-port.sh` hands out the same port either way. The URL looks right and the build is wrong, with nothing in the output to tell them apart. Always bring the container up with `lv-docker-up.sh` from the worktree, and if a criterion fails on served content, confirm the served build matches the branch tip (`git rev-parse HEAD`, then curl the page and compare against the worktree's own file) **before** writing a behavior finding.
 
 1. **Read the plan** — from develop worktree: `../../plans/PLN-NNN-<slug>/plan.md`
    - Read Goal and Verification Checklist sections
@@ -266,6 +266,8 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    eval "$(../../scripts/lv-exec.sh lv-docker-up.sh)" && BUILD=$(git log -1 --format='%ad (%h)' --date=format:'%b %d %H:%M')
    ```
    This sets FEATURE_PORT, COMPOSE_PROJECT_NAME, TEST_ACCOUNT, and BUILD.
+
+   **A project with no `docker/docker-compose.yml` is not a Docker failure.** `lv-docker-up.sh` then runs the project's own `local_deploy_command` (else `local_start_command`) from `levain.yml` natively on `$FEATURE_PORT`, and sets `APP_LOG`; `lv-docker-down.sh` stops it the same way. Its exit 3 means the project declared no usable start command, and exit 1 prints the app's own log. Either is a `needs-input` question about **that command** — quote it and the log tail — never a remedy of "set up Docker" for a project that does not use it (a client's LVI-002).
    Also read `guest_entry_path` from `levain.yml` (root of repo). If set, store it as `GUEST_ENTRY_PATH`.
 
    **`$TEST_ACCOUNT` is the sign-in line** — display it verbatim with the URL in every state below. A fresh container has no account unless `test_account_command` made one.

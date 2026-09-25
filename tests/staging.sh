@@ -307,6 +307,51 @@ else
   git checkout -q develop
 fi
 
+# ═════════════════════════════════════════════════════════════════════════════
+echo
+echo "7. lv-docker-up.sh with no compose file (LVI-002)"
+# A client with no Docker declared `local_start_command: dotnet run ...`; the
+# tester ran compose anyway, failed, and offered "set up Docker" as the remedy.
+n=""; for c in 47 53 59 61 67 71 73 79 83 89; do
+  python3 -c "import socket,sys; s=socket.socket(); s.bind(('127.0.0.1',8100+$c))" 2>/dev/null && { n=$c; break; }
+done
+if [ -z "$n" ]; then
+  echo "  - skipped: no free feature port in 8147-8189"
+else
+  N="$TEST_DIR/native" && mkdir -p "$N/www" && cd "$N" || exit 1
+  git init -q -b develop . && git config user.email t@t && git config user.name T
+  echo ok > www/health
+  printf 'project_slug: "demo"\nlocal_start_command: "cd www && exec python3 -m http.server $FEATURE_PORT --bind 127.0.0.1"\n' > levain.yml
+  git add -A && git commit -qm init && git checkout -q -b "feature/PLN-$(printf '%03d' "$n")-native"
+  : > "$DOCKER_LOG"
+  stage lv-docker-up.sh
+  assert_eq "starts the declared command and exits 0"  "0" "$RC"
+  assert_eq "on the plan's own port"                    "$((8100 + n))" "${FEATURE_PORT:-}"
+  assert_eq "answers /health"                           "0" \
+    "$(curl -fsS "http://127.0.0.1:$((8100 + n))/health" >/dev/null 2>&1; echo $?)"
+  has "emits APP_LOG"                                   "${APP_LOG:-}" "lv-app-demo-pln0"
+  assert_eq "never calls compose"                       "false" \
+    "$(grep -q 'compose' "$DOCKER_LOG" && echo true || echo false)"
+  "$SD/lv-docker-down.sh" >/dev/null 2>&1; sleep 0.3
+  assert_eq "lv-docker-down.sh stops it"                "false" \
+    "$(curl -fsS "http://127.0.0.1:$((8100 + n))/health" >/dev/null 2>&1 && echo true || echo false)"
+
+  printf 'project_slug: "demo"\nlocal_start_command: "echo boom-from-app; exit 1"\n' > levain.yml
+  stage lv-docker-up.sh
+  assert_eq "a command that dies exits 1"               "1" "$RC"
+  has "and shows its log"                               "$(cat "$TEST_DIR/stage.err")" "boom-from-app"
+
+  printf 'project_slug: "demo"\nlocal_start_command: "docker compose -f docker/docker-compose.yml up -d"\n' > levain.yml
+  stage lv-docker-up.sh
+  assert_eq "a compose command with no compose file exits 3" "3" "$RC"
+
+  printf 'project_slug: "demo"\n' > levain.yml
+  stage lv-docker-up.sh
+  assert_eq "no compose file and no command exits 3"     "3" "$RC"
+  has "and names the key"                               "$(cat "$TEST_DIR/stage.err")" "local_start_command"
+  git checkout -q develop
+fi
+
 echo
 echo "================"
 echo "Passed: $PASS   Failed: $FAIL"

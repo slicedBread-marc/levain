@@ -2,6 +2,11 @@
 # lv-docker-up.sh [plan-folder-name] [--tunnel]
 # Starts a Docker container for a feature branch plan.
 # If no plan folder given, derives from current branch name.
+#
+# A project with no docker/docker-compose.yml runs natively instead: its
+# local_deploy_command (else local_start_command) from levain.yml, in the
+# background, with FEATURE_PORT and PORT exported — the command must listen on
+# that port. Stopped by lv-docker-down.sh. See "No Docker" below.
 # Sets up port, project name, builds, waits for health, and provisions the
 # test account the acceptance criteria will need.
 #
@@ -10,7 +15,8 @@
 #
 # Output: FEATURE_PORT, COMPOSE_PROJECT_NAME, TEST_ACCOUNT, PUBLIC_URL
 #         (eval-friendly)
-# Exit 0 on healthy, 1 on timeout.
+# Exit 0 on healthy, 1 on timeout or a failed start, 3 no compose file and no
+# local start command to use instead.
 
 set -euo pipefail
 
@@ -51,6 +57,58 @@ else
   FEATURE_ALLOWED_HOSTS=""
 fi
 
+# ── No Docker ─────────────────────────────────────────────────────────────
+#
+# This used to assume docker/docker-compose.yml unconditionally. A client with
+# no Docker at all — levain.yml's local_start_command a plain `dotnet run` —
+# had its unattended tester fail the compose step, skip every browser
+# criterion, and open a manual-test gate whose remedy was "set up Docker"
+# (a client's LVI-002). The command the project already declared for local
+# runs is the one to use. It is eval'd in the worktree, in its own process
+# group (so `dotnet run`'s child app dies with it), logging to APP_LOG.
+native_pidfile="${TMPDIR:-/tmp}/lv-app-$COMPOSE_PROJECT_NAME.pid"
+if [ ! -f docker/docker-compose.yml ]; then
+  start_cmd=$(wf_cfg local_deploy_command "")
+  [ -n "$start_cmd" ] || start_cmd=$(wf_cfg local_start_command "")
+  case "$start_cmd" in
+    "")
+      echo "lv-docker-up: no docker/docker-compose.yml and no local_start_command in levain.yml — nothing to start." >&2
+      echo "      Set local_start_command to what runs the app on \$FEATURE_PORT, e.g." >&2
+      echo "      \"dotnet run --project src/App --urls http://localhost:\$FEATURE_PORT\"" >&2
+      exit 3 ;;
+    *docker\ compose*|*docker-compose*)
+      echo "lv-docker-up: levain.yml's start command runs compose, but this tree has no docker/docker-compose.yml." >&2
+      echo "      Either the branch predates the compose file, or the command is wrong for this project." >&2
+      exit 3 ;;
+  esac
+  # A restart (after an edit) replaces the previous run, never stacks on it.
+  "$SCRIPT_DIR/lv-docker-down.sh" "$plan_folder" --native-only >/dev/null 2>&1 || true
+  app_log="${TMPDIR:-/tmp}/lv-app-$COMPOSE_PROJECT_NAME.log"
+  : > "$app_log"
+  echo "lv-docker-up: no compose file — starting natively: $start_cmd" >&2
+  FEATURE_PORT=$FEATURE_PORT PORT=$FEATURE_PORT FEATURE_ALLOWED_HOSTS=$FEATURE_ALLOWED_HOSTS \
+    nohup perl -e 'setpgrp(0, 0); exec "bash", "-c", $ARGV[0]' "$start_cmd" >>"$app_log" 2>&1 </dev/null &
+  echo $! > "$native_pidfile"
+  wf_emit APP_LOG "$app_log"
+
+  # A native start may compile first, so it gets longer than a container.
+  wait_s=$(wf_cfg localStartWait 120)
+  healthy=false
+  for _ in $(seq 1 "$wait_s"); do
+    if curl -s "http://localhost:$FEATURE_PORT/health" >/dev/null 2>&1; then healthy=true; break; fi
+    kill -0 "$(cat "$native_pidfile")" 2>/dev/null || break
+    sleep 1
+  done
+  if ! $healthy; then
+    echo "lv-docker-up: the app did not answer http://localhost:$FEATURE_PORT/health — last lines of $app_log:" >&2
+    tail -20 "$app_log" | sed 's/^/      /' >&2
+    echo "      The command must listen on \$FEATURE_PORT (exported, and as PORT) and serve /health." >&2
+    "$SCRIPT_DIR/lv-docker-down.sh" "$plan_folder" --native-only >/dev/null 2>&1 || true
+    exit 1
+  fi
+  echo "✓ App is ready at http://localhost:$FEATURE_PORT" >&2
+fi
+
 # Start the container (stderr so eval callers only get KEY=VALUE on stdout)
 #
 # ── Self-healing on 'no space left on device' ──────────────────────────────
@@ -68,7 +126,7 @@ fi
 # the default keeps a client that has never set it self-healing from day one.
 max_attempts=$(wf_cfg dockerRetry.maxAttempts 2)
 attempt=1
-while :; do
+while [ -f docker/docker-compose.yml ]; do
   if compose_out=$(FEATURE_PORT=$FEATURE_PORT FEATURE_ALLOWED_HOSTS=$FEATURE_ALLOWED_HOSTS docker compose \
        -f docker/docker-compose.yml \
        -p "$COMPOSE_PROJECT_NAME" \
@@ -92,8 +150,8 @@ while :; do
   esac
 done
 
-# Wait for health
-"$SCRIPT_DIR/lv-wait-healthy.sh" >&2
+# Wait for health (the native path waited already)
+[ -f docker/docker-compose.yml ] && "$SCRIPT_DIR/lv-wait-healthy.sh" >&2
 
 # ── Test account ──────────────────────────────────────────────────────────
 #
@@ -177,7 +235,7 @@ if $want_tunnel; then
   # host filtering by hand (client-f's WFI-010). This is a static check, not
   # proof the app enforces host filtering at all (it may not, e.g. non-.NET
   # stacks), so it warns rather than blocking the tunnel.
-  if ! grep -q 'FEATURE_ALLOWED_HOSTS' docker/docker-compose.yml 2>/dev/null; then
+  if [ -f docker/docker-compose.yml ] && ! grep -q 'FEATURE_ALLOWED_HOSTS' docker/docker-compose.yml; then
     echo "lv-docker-up: docker/docker-compose.yml has no FEATURE_ALLOWED_HOSTS passthrough — if the app enforces host" >&2
     echo "      filtering (e.g. ASP.NET's AllowedHosts), the tunnel origin will 400 on every request. Add e.g." >&2
     echo "      'environment: - AllowedHosts=\${FEATURE_ALLOWED_HOSTS:-}' to docker/docker-compose.yml to opt in (WFI-007)." >&2
