@@ -55,6 +55,11 @@ shift
 # answers the walk with itself — at which point `.claude/workflow-version` is
 # sparse-excluded there, the effective version reads as unstamped, and every
 # call routes to the v1.x baseline folder that no longer exists on disk.
+#
+# No environment variable overrides this, and LV_COORD_DIR in particular must
+# not. lv-rack.sh sets it and then cds into each client to run that client's
+# lv-exec.sh, so honouring it would send every client call to the coordinator's
+# harness (LVI-022). A caller outside the project cds into it first.
 find_project_root() {
   local main
   main=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')

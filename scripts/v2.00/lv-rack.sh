@@ -179,8 +179,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lv-ids.sh"
 # The coordinator this board belongs to: its state (the suspend record, the
 # snapshot cache) lives in that project's gitignored .claude/orchestrator/.
-# Run through its scripts/lv-exec.sh, which starts in the project; LV_COORD_DIR
-# names it explicitly (a shim elsewhere on PATH does).
+# Run through its scripts/lv-exec.sh from inside the project, which is how
+# lv-exec.sh finds it. LV_COORD_DIR tells THIS script which project is the
+# coordinator. It does not tell lv-exec.sh anything: the board runs every
+# client's lv-exec.sh with LV_COORD_DIR still set, so the dispatcher must
+# ignore it (LVI-022). A shim elsewhere on PATH therefore cds into the
+# coordinator before it execs lv-exec.sh, and sets LV_COORD_DIR as well.
 COORD_DIR="${LV_COORD_DIR:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}}"
 # LV_DEPLOYMENTS / LV_SUSPEND_STATE are a test seam, unset in normal use (the
 # WF_ names from before 14.0.0 are still read).

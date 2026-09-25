@@ -66,6 +66,26 @@ echo "── what it is not ──"
 if grep -nE '~/dev|/Users/|\bops\b' "$RACK" >/dev/null; then bad "names no owner's paths or coordinator" "$(grep -nE '~/dev|/Users/|\bops\b' "$RACK" | head -3)"
 else ok "names no owner's paths or coordinator"; fi
 
+echo "── LV_COORD_DIR never moves a client's dispatch (LVI-022) ──"
+# The board cds into each client and calls that client's lv-exec.sh with
+# LV_COORD_DIR still in its environment. If the dispatcher honoured it, every
+# one of those calls would run the coordinator's harness against the client.
+# So a shim elsewhere on PATH has to cd into the coordinator itself.
+mkproj() {   # mkproj <dir> — a project whose lv-where.sh prints its own name
+  mkdir -p "$1/scripts/v2.00"
+  cp "$REPO_ROOT/scripts/lv-exec.sh" "$1/scripts/"
+  printf '0.00 v2.00\n' > "$1/scripts/version-map.txt"
+  printf '#!/usr/bin/env bash\necho %s\n' "$(basename "$1")" > "$1/scripts/v2.00/lv-where.sh"
+  chmod +x "$1/scripts/lv-exec.sh" "$1/scripts/v2.00/lv-where.sh"
+}
+mkproj "$T/xc/coord"; mkproj "$T/xc/client"; mkdir -p "$T/xc/elsewhere"
+out=$(cd "$T/xc/client" && LV_COORD_DIR="$T/xc/coord" scripts/lv-exec.sh lv-where.sh 2>&1)
+assert_eq "a client's call from the board resolves the client, LV_COORD_DIR set" "$out" "client"
+out=$(cd "$T/xc/elsewhere" && LV_COORD_DIR="$T/xc/coord" "$T/xc/coord/scripts/lv-exec.sh" lv-where.sh 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "outside any project, LV_COORD_DIR alone does not locate one" || bad "outside any project, LV_COORD_DIR alone does not locate one" "rc=$rc $out"
+grep -q 'LV_COORD_DIR names it explicitly' "$RACK" && bad "lv-rack.sh no longer claims lv-exec.sh honours LV_COORD_DIR" \
+  || ok "lv-rack.sh no longer claims lv-exec.sh honours LV_COORD_DIR"
+
 echo ""
 echo "Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
