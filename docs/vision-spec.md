@@ -32,7 +32,8 @@ Placeholders are written `{{LIKE_THIS}}`:
 | Call | Mode | Role |
 |-|-|-|
 | `/vision` | status | Reporter: summarise the vision, recent drift, recommend one mode |
-| `/vision next` | next | Dispatcher: "what should I work on?" from the backlog plus `{{BOARD}}` |
+| `/vision checkin` | checkin | Chief of staff: sweep every project since the last check-in, grade the goals set then, agree the next ones |
+| `/vision next` | next | Dispatcher: "what should I work on?", top-down from the priorities, the backlog and `{{BOARD}}` |
 | `/vision explore [theme]` | explore | Facilitator: draw the vision out of `{{OWNER}}`; hold opinions back |
 | `/vision challenge [idea\|section]` | challenge | Challenging strategist: stress-test; a "both" to a real trade-off is unresolved |
 | `/vision draft [section]` | draft | Proposing architect: write an opinionated revision, ask for reactions |
@@ -48,6 +49,8 @@ A session stays in its mode's role, and says so when it switches.
 | `{{TREE}}apps/<project>.md` | One project's vision in depth |
 | `{{TREE}}topics/<topic>.md` | A cross-cutting theme in depth |
 | `{{TREE}}sessions/YYYY-MM-DD-<topic>.md` | One note per session, always written |
+| `{{TREE}}PRIORITIES.md` | The ranked answer to "what next": priorities, the projects under each (or Parked), the latest check-in's goals by link, then the live board. Only `{{OWNER}}` re-ranks |
+| `{{TREE}}checkins/YYYY-MM-DD.md` | One note per check-in: what changed across the projects, the last goals graded, the next goals. **The latest one is the baseline** for the next check-in |
 | `{{TREE}}BACKLOG.md` | Ranked vision work to pick up: every path suggested and not taken, with its mode and theme |
 
 **The tree grows.** When a passage in the root passes about 15 lines, its detail moves to a page
@@ -58,6 +61,18 @@ session: …`, and ends with its own changelog.
 **The backlog.** Whenever a session suggests something to explore, challenge, draft or file, it
 goes into the backlog in the same turn. At close: remove what was finished, add what was opened,
 re-rank. An item waiting on an event goes under *Triggered* with its trigger.
+
+**The priority tree.** `{{TREE}}PRIORITIES.md` is read from the top, big picture to fine detail:
+
+1. **Priorities** — a few ranked outcomes, each tied to the north star.
+2. **Projects** — every project in `{{PROJECT_MAP}}` has one place: under a priority, or under
+   **Parked** with why and when to unpark it. A supporting project (shared assets, the
+   coordinator itself) takes the rank of whatever its work is for.
+3. **Goals** — the checkable goals in the latest check-in note, linked, not copied.
+4. **The board** — live from `{{BOARD}}`, never stored. A board item takes its project's rank.
+
+So something stuck in a parked or low project stays stuck on purpose: `next` reports it in one
+*Left alone* line and never recommends it.
 
 ## Rules
 
@@ -77,7 +92,9 @@ re-rank. An item waiting on an event goes under *Triggered* with its trigger.
    "experiment" or "retire". One without a role is a finding.
 7. **Respect standing facts** in `{{PROJECT_MAP}}`; a vision that contradicts one says so and
    triggers rule 4.
-8. **Never a secret value**, and no path into a secrets store.
+8. **Ranking belongs to `{{OWNER}}`.** Propose a change to `{{TREE}}PRIORITIES.md` with its
+   evidence, and apply it only once `{{OWNER}}` agrees. `next` never re-ranks.
+9. **Never a secret value**, and no path into a secrets store.
 
 ## Inquiry (explore, challenge)
 
@@ -89,10 +106,53 @@ In challenge, ask of every claim what would have to be true, what it costs and w
 ## Procedures
 
 - **status:** read the inputs and `{{BOARD}}`; output the north star in a line, when last revised,
-  open threads, a count of drift signals, and one recommended mode. Writes only backlog rows.
-- **next:** read the backlog and `{{BOARD}}`, check *Triggered* items against `{{LOG}}`. Output in
-  ≤12 lines: what waits on `{{OWNER}}` (gates, needs-input, blocked), the top 3 backlog items with
-  the command to start each, fired triggers, and one pick. Writes only backlog corrections.
+  open threads, a count of drift signals, the last check-in's date and how many of its goals are
+  still open, and one recommended mode — `checkin` when there has been none or the last is more
+  than two weeks old. Writes only backlog rows.
+- **next:** `{{OWNER}}` comes back, maybe in plain words ("what are we doing next?"). Answer
+  top-down from `{{TREE}}PRIORITIES.md`.
+  1. Read the priorities, the latest check-in's goals, the backlog (ranked, Drift, Triggered) and
+     `{{BOARD}}`; check *Triggered* items against `{{LOG}}`.
+  2. Give every board item its project's rank. Waiting counts: gates, needs-input, blocked,
+     deploys, work `ready` with no worker. Stuck in a ranked project means act now; stuck in a
+     parked or unranked one means it can stay.
+  3. Output in ≤15 lines: **Priorities** (top two or three, each with its open goal), **Move now**
+     (stuck or waiting items in ranked projects, highest first, each with project, id, state and
+     what would unstick it), **Vision work** (one or two backlog items serving a ranked priority,
+     with their `/vision <mode> <theme>`), **Left alone** (one line counting stuck items in parked
+     or low projects), and **one pick** with why it beats the next one down. A board item that
+     suggests the ranking is wrong is not re-ranked silently: say so and propose the change.
+  4. Write only backlog corrections: a fired trigger moves into the ranked list, a row the board
+     shows done is removed. Never re-rank.
+- **checkin:** `{{OWNER}}` checks in irregularly, maybe weeks apart, and wants what happened
+  across all the projects since last time and what to aim at next. A review and a goal-setting
+  conversation, not an audit (that is `drift`).
+  1. **Baseline:** the latest `{{TREE}}checkins/*.md`; its commit time
+     (`git log -1 --format=%cI -- <note>`) is the baseline. None yet: use the vision's first
+     commit, and say so. Read its **Goals**; step 3 grades them.
+  2. **Sweep** every project in `{{PROJECT_MAP}}` with a local path, harnessed or not (retired
+     ones only if they have commits). Per project since the baseline: `git log --all --no-merges
+     --since=<baseline>` (so unlogged work still shows), its `{{LOG}}` rows, its `{{BOARD}}` row
+     and what waits on `{{OWNER}}`. Across the family: changes to `{{WORK}}`, `{{DECISIONS}}` and
+     `{{PROJECT_MAP}}`. With more than three active projects, give each to a subagent in one
+     parallel batch, briefed: "Final response under 1500 characters: shipped, in flight, stalled,
+     surprises, each with a ref. Outcomes, not process." An idle project is one line, not a
+     subagent.
+  3. **Report** before any question: last goals graded (*done*, *partly*, *slipped*, *dropped*,
+     each with evidence); per project, most active first, one to three lines with refs;
+     surprises (unpredicted work, new risks, fired triggers); what waits on `{{OWNER}}`; and only
+     what is obvious against the vision — anything bigger is a backlog row for `drift`.
+  4. **Re-rank, then set goals**, in the inquiry style: what mattered, what the period ahead looks
+     like, what `{{OWNER}}` will not get to. Walk `{{TREE}}PRIORITIES.md` top-down — does each
+     priority hold its rank, should anything be parked or unparked — and apply what `{{OWNER}}`
+     decides (rule 8). Then pin **three to five goals** in a multiple-choice round, proposed from
+     the sweep, the board and the top of the backlog, most under the top priorities. A goal names
+     the priority it serves, its project, and an outcome someone can check next time ("X has an
+     external monitor"), never an activity ("work on monitoring"). A slipped goal carries over
+     only if `{{OWNER}}` re-commits to it.
+  5. **Close** with the check-in note instead of a session note; update the backlog (remove what
+     the sweep shows done, move fired triggers in, add what surfaced). Change `{{ROOT}}` only when
+     `{{OWNER}}` moved a horizon or a project's role (rule 2).
 - **explore / challenge / draft:** run the inquiry or proposal, apply what survives to the tree,
   write the session note. Challenge ends in a verdict per claim: holds, revise (applied), open.
 - **drift:** compare the vision with `{{LOG}}` (about 60 days), `{{WORK}}`, `{{DECISIONS}}` and
@@ -101,7 +161,8 @@ In challenge, ask of every claim what would have to be true, what it costs and w
 
 ## Inputs
 
-Always: `{{ROOT}}`, the latest 2–3 session notes, `{{TREE}}BACKLOG.md`, pages the theme touches,
+Always: `{{ROOT}}`, the latest 2–3 session notes, `{{TREE}}BACKLOG.md`, `{{TREE}}PRIORITIES.md`
+(it ranks projects, and so board items), the latest check-in note, pages the theme touches,
 `{{PROJECT_MAP}}`. When needed: `{{DECISIONS}}`, `{{WORK}}`, `{{LOG}}`, a project's own
 `CLAUDE.md` or README to check a claim.
 
@@ -139,6 +200,58 @@ Always: `{{ROOT}}`, the latest 2–3 session notes, `{{TREE}}BACKLOG.md`, pages 
 - YYYY-MM-DD — <what changed> (<session note>)
 ```
 
+## Output format: priorities
+
+```markdown
+# Priorities
+
+> Revised YYYY-MM-DD · last session: <note>
+> The ranked answer to "what next". `/vision next` reads it top-down; each check-in revisits it.
+> Only <owner> re-ranks.
+
+## Ranked
+| # | Priority | Projects | Horizon | Why here |
+|-|-|-|-|-|
+
+**Supporting:** <projects that take the rank of what their work is for>
+
+## Parked
+| Project | Why parked | Unpark when |
+|-|-|-|
+
+## Changelog
+- YYYY-MM-DD — <what moved> (<note>)
+```
+
+## Output format: check-in note
+
+```markdown
+# Check-in — YYYY-MM-DD
+
+- Baseline: <previous check-in note, or "vision first commit"> · <baseline timestamp>
+- Projects swept: <n active> of <n total>
+
+## Last goals, graded
+| Goal | Grade | Evidence |
+|-|-|-|
+
+## What changed
+### <project>
+<One to three lines: shipped, in flight, stalled, each with a ref.>
+
+## Surprises & risks
+## Conversation
+<What the owner said about priorities and the period ahead, close to verbatim.>
+
+## Goals until next check-in
+| # | Priority | Project | Goal (a checkable outcome) | Why now |
+|-|-|-|-|-|
+
+## Actions taken
+```
+
+The **Goals** table is what the next check-in grades; keep its wording checkable.
+
 ## Output format: session note
 
 ```markdown
@@ -155,9 +268,10 @@ Always: `{{ROOT}}`, the latest 2–3 session notes, `{{TREE}}BACKLOG.md`, pages 
 
 ## Closing a session
 
-1. Write the session note (always).
+1. Write the session note (always) — a check-in writes its check-in note instead.
 2. Update the backlog.
-3. Commit the changed vision files and the note together: `vision: <mode> — <topic>`.
+3. Commit the changed vision files (priorities included) and the note together:
+   `vision: <mode> — <topic>` (a check-in: `vision: checkin — <n> goals set, <n> of <n> met`).
 4. If `{{LOG}}` has a writer, record the consequence once, after the commit — the
    `activity-log` hook does this where one is configured
    (`scripts/lv-exec.sh lv-hook.sh activity-log "<consequence>" --ref <sha>`).
@@ -171,7 +285,7 @@ Always: `{{ROOT}}`, the latest 2–3 session notes, `{{TREE}}BACKLOG.md`, pages 
 <!-- vision-template:begin -->
 ---
 name: vision
-description: Keeper of the vision for {{FAMILY}} — what the projects are for together, each one's job, where they head and what they will never become. Modes status, next, explore, challenge, draft, drift.
+description: Keeper of the vision for {{FAMILY}} — what the projects are for together, each one's job, where they head and what they will never become. Modes status, checkin, next, explore, challenge, draft, drift.
 ---
 
 # Vision

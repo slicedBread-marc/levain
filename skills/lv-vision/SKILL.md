@@ -43,13 +43,15 @@ Refuse if step 1 finds a skill: a second one would compete with it. Otherwise:
    The `description:` line is a plain YAML value: if an answer filled into it contains `: ` or
    ` #`, or would start it with a quote, reword it there (the body can keep it as given).
    Otherwise the frontmatter does not parse and the skill never loads.
-4. **Write the first vision** with the skill's `draft` procedure: the root, `BACKLOG.md`, and a
-   session note recording this interview. Every claim about a project's current state cites a
+4. **Write the first vision** with the skill's `draft` procedure: the root, `PRIORITIES.md`
+   (ranked by the owner, every project under a priority or Parked — never ranked for them),
+   `BACKLOG.md`, and a session note recording this interview. Every claim about a project's current state cites a
    source; the rest is marked aspiration.
 5. **Check:** `scripts/lv-exec.sh lv-hook.sh overseer-vision` now prints the new file, and
    `grep -c '{{' .claude/skills/vision/SKILL.md` prints `0`.
 6. Commit the skill and the vision together, and tell the owner: `/vision` and `/lv-vision` both
-   reach it, and `/vision next` answers "what should I work on?".
+   reach it, `/vision next` answers "what should I work on?", and `/vision checkin` reviews
+   what changed since last time and sets the next goals.
 
 A skill kept elsewhere (a private pack shared across machines) is wired the other way: the pack's
 `hooks/overseer-vision` prints its path. See `.claude/docs/extension-hooks.md`.
@@ -58,7 +60,7 @@ A skill kept elsewhere (a private pack shared across machines) is wired the othe
 
 ```text
 /lv-vision                 run the owner's vision skill (its status mode)
-/lv-vision <mode> [arg]    run one of its modes: next, explore, challenge, draft, drift
+/lv-vision <mode> [arg]    run one of its modes: checkin, next, explore, challenge, draft, drift
 /lv-vision setup           no vision skill yet: interview the owner and write one
 /lv-vision help            this block
 ```
