@@ -108,5 +108,32 @@ check "--outbound with a pack: the pack's names apply too"     1 $?
 $G --text "$T.nope" >/dev/null 2>&1;            check "--text on a missing file: usage (2)"         2 $?
 unset LV_DEPLOYMENTS
 
+# githooks/commit-msg (LVI-016): the same check at commit time, so a name is
+# caught by the session that wrote it rather than by a push hours later.
+H="$HERE/githooks/commit-msg"
+git reset -q --hard "$base" && mkdir -p githooks && cp "$H" githooks/
+export LV_DENYLIST="$T.list"; printf 'zebra-corp\n' > "$LV_DENYLIST"
+m="$T.msg"
+printf 'fix: a clean message\n# zebra-corp in git'"'"'s template is not the message\n' > "$m"
+githooks/commit-msg "$m" >/dev/null 2>&1;       check "commit-msg: clean message passes (comments ignored)" 0 $?
+printf 'fix: ported from zebra-corp\n' > "$m"
+out=$(githooks/commit-msg "$m" 2>&1); rc=$?
+check "commit-msg: a listed name in the message refuses" 1 $rc
+case "$out" in *ebra*) bad "commit-msg: never prints the matched text" ;; *) ok "commit-msg: never prints the matched text" ;; esac
+printf 'fix: clean\n' > "$m"
+echo "zebra-corp" > e.txt && git add e.txt
+out=$(githooks/commit-msg "$m" 2>&1); rc=$?
+check "commit-msg: a listed name in a staged added line refuses" 1 $rc
+case "$out" in *e.txt*) ok "commit-msg: names the file" ;; *) bad "commit-msg: names the file ($out)" ;; esac
+git rm -q --cached e.txt && rm e.txt
+echo "fine" > e.txt && git add e.txt
+githooks/commit-msg "$m" >/dev/null 2>&1;       check "commit-msg: clean staged lines pass" 0 $?
+git rm -q --cached e.txt && rm e.txt
+unset LV_DENYLIST
+githooks/commit-msg "$m" >/dev/null 2>&1;       check "commit-msg: no list passes (a user with no pack)" 0 $?
+LV_PACKS="$T.gone" githooks/commit-msg "$m" >/dev/null 2>&1
+check "commit-msg: a listed pack that is missing refuses" 1 $?
+rm -rf githooks
+
 echo "  $pass passed, $fail failed"
 [ "$fail" = 0 ]

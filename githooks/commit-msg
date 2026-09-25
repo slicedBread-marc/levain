@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# githooks/commit-msg — refuse a commit whose message or added lines carry a
+# denylisted name, while the session that wrote it can still reword it.
+#
+# The operator's pre-push hook runs check-denylist.sh too, but a push can come
+# hours after the commit, from another session: LVI-016's push of eight commits
+# was refused over one message naming a private project by path, and the only
+# fix left was rewording another session's commit, a history rewrite. This hook
+# moves the same check to the moment the text is written.
+#
+# commit-msg, not pre-commit: it is the one hook that sees both the message
+# ($1) and the final index. No list (a user with no pack) passes, like
+# check-denylist.sh without --require-list; a listed pack that is missing
+# refuses, as it would at push. Like the script, it prints where, never what.
+set -uo pipefail
+root=$(git rev-parse --show-toplevel) || exit 0
+G="$root/check-denylist.sh"
+[ -x "$G" ] || exit 0
+
+# Comment lines are git's template, not the message. Strip them the way git
+# will (core.commentChar, default #) so the help text never matches.
+cc=$(git config --get core.commentChar 2>/dev/null || true); cc=${cc:-#}
+[ "$cc" = auto ] && cc='#'
+msg=$(awk -v c="$cc" 'index($0, c) != 1' "$1")
+
+out=$(printf '%s\n' "$msg" | "$G" --text - 2>&1); rc=$?
+if [ "$rc" = 1 ]; then
+  echo "commit-msg: the commit message names something on the publish denylist:" >&2
+  printf '%s\n' "$out" | grep '^  line' >&2
+  echo "commit-msg: reword it (say 'the coordinator', 'a client', never a private name or path)." >&2
+  exit 1
+elif [ "$rc" != 0 ]; then
+  printf '%s\n' "$out" >&2; exit 1
+fi
+
+# Added lines, per staged file, so the refusal names the file.
+fail=0
+while IFS= read -r -d '' f; do
+  added=$(git diff --cached --no-color -U0 -- "$f" | grep -E '^\+' | grep -vE '^\+\+\+ ' | cut -c2-)
+  [ -n "$added" ] || continue
+  printf '%s\n' "$added" | "$G" --text - >/dev/null 2>&1; r=$?
+  if [ "$r" = 1 ]; then
+    [ "$fail" = 0 ] && echo "commit-msg: staged lines name something on the publish denylist:" >&2
+    echo "  $f" >&2; fail=1
+  elif [ "$r" != 0 ]; then
+    echo "commit-msg: check-denylist.sh failed ($r) on $f — refusing" >&2; exit 1
+  fi
+done < <(git diff --cached --name-only -z --diff-filter=AM)
+exit "$fail"

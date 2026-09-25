@@ -168,7 +168,7 @@ tier. Applying a tier to a client is a hand edit to that client's `levain.yml`
 
 ### VERSION is bumped by a hook, and you state the level
 
-`githooks/pre-commit` bumps `VERSION` into every commit. git never clones hooks, so run `./githooks/install.sh` once per clone; it links the tracked hooks into `.git/hooks` and leaves a local one (the operator's `pre-push`, which runs `check-denylist.sh --require-list --pre-push` against the list their pack's `publish-denylist` hook supplies) alone. It bumps a **patch** unless told otherwise:
+`githooks/pre-commit` bumps `VERSION` into every commit. git never clones hooks, so run `./githooks/install.sh` once per clone; it links the tracked hooks into `.git/hooks` and leaves a local one (the operator's `pre-push`, which runs `check-denylist.sh --require-list --pre-push` against the list their pack's `publish-denylist` hook supplies) alone. `githooks/commit-msg` runs the same denylist over the message and the staged added lines, so a private name is refused while the session that wrote it can still reword it, not at a push hours later (LVI-016). **Name private projects by role in commit messages** — "the coordinator", "a client" — never by folder or path. `pre-commit` bumps a **patch** unless told otherwise:
 
 ```bash
 LV_BUMP=minor git commit -m "feat(x): a new script, a new flag"     # 0.x.0
