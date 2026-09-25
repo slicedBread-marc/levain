@@ -47,6 +47,7 @@ That is the whole job. **The auto-stop is detached — do not sleep, wait, poll,
 | 1 | `docker compose up` failed | [AUTO] | Nothing is staged. Show compose's output verbatim and stop. Do not retry |
 | 2 | Started, health probe silent | [AUTO] | The stack **is** running and still auto-stops. Report the URL, say health did not answer, and show the `logs --tail 50` line the script printed. Not a pass — say so plainly |
 | 3 | No compose file | [AUTO] | This project has no staging stack, or it lives elsewhere. Report the path tried and name `staging.composeFile` |
+| 4 | Compose file does not publish the staging port | [AUTO] | Nothing was started. Show the script's message verbatim. The fix is in the project's compose file (map the port from `${FEATURE_PORT}`) or its `staging.port`. Do not edit either one yourself, and do not retry on another port |
 
 ## Stop
 

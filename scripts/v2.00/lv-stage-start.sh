@@ -7,7 +7,7 @@
 # Output (eval-friendly): STAGE_PORT, STAGE_URL, STAGE_PROJECT, STAGE_TREE,
 #                         STAGE_DEADLINE, STAGE_ALREADY
 # Exit 0 up and healthy (or already up), 1 compose failed, 2 no health within
-# the wait, 3 no compose file.
+# the wait, 3 no compose file, 4 the compose file does not publish the port.
 #
 # ── Why this does not count down in the foreground ────────────────────────
 #
@@ -101,9 +101,28 @@ if [ "$running" != "0" ]; then
   exit 0
 fi
 
+# ── The compose file has to publish the port we are about to probe ───────
+#
+# This script used to pass the port only as STAGE_PORT, and every client's
+# compose file maps ${FEATURE_PORT:-<default>}:8080 — the contract
+# lv-docker-up.sh and lv-plan-port.sh set. So the stack came up healthy on the
+# compose default, the probe below hit the staging port, waited 30s, exited 2,
+# and STAGE_URL named a port nothing answered (a client's LVI-014). Compose gets
+# both names now, and the resolved config is checked before `up`: a file that
+# reads neither is refused here, with the reason, instead of being diagnosed
+# from a health timeout.
+export STAGE_PORT="$port" FEATURE_PORT="$port"
+resolved=$(docker compose -f "$compose_file" -p "$project" config 2>/dev/null || true)
+if ! printf '%s\n' "$resolved" | grep -qE "^[[:space:]]*published:[[:space:]]*\"?$port\"?[[:space:]]*$"; then
+  echo "lv-stage-start: $compose_file does not publish port $port — nothing started." >&2
+  echo "      Map the app's port from \${FEATURE_PORT} (or \${STAGE_PORT}), e.g. \"\${FEATURE_PORT:-8080}:8080\"," >&2
+  echo "      or set staging.port in levain.yml to the port it does publish." >&2
+  exit 4
+fi
+
 echo "lv-stage-start: staging $staged_branch from $tree on port $port as $project" >&2
 
-if ! STAGE_PORT="$port" docker compose -f "$compose_file" -p "$project" up --build -d >&2; then
+if ! docker compose -f "$compose_file" -p "$project" up --build -d >&2; then
   echo "lv-stage-start: compose failed — nothing is staged" >&2
   exit 1
 fi

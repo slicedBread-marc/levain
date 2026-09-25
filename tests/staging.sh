@@ -46,19 +46,24 @@ mkdir -p "$TEST_DIR/bin" "$TEST_DIR/docker-state"
 export DOCKER_LOG="$TEST_DIR/docker.log" DOCKER_STATE="$TEST_DIR/docker-state"
 cat > "$TEST_DIR/bin/docker" <<'STUB'
 #!/usr/bin/env bash
-echo "STAGE_PORT=${STAGE_PORT:-} docker $*" >> "$DOCKER_LOG"
+echo "STAGE_PORT=${STAGE_PORT:-} FEATURE_PORT=${FEATURE_PORT:-} docker $*" >> "$DOCKER_LOG"
 [ "${1:-}" = compose ] || exit 0          # `docker ps -a ...`: nothing extra
 shift
-project=""
+project="" file=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    -f) shift 2 ;;
+    -f) file="$2"; shift 2 ;;
     -p) project="$2"; shift 2 ;;
     *) break ;;
   esac
 done
 cmd="${1:-}"
 case "$cmd" in
+  config)   # the one line of `config` lv-stage-start.sh reads: what is published
+    if   grep -q 'STAGE_PORT'   "$file"; then echo "        published: \"${STAGE_PORT:-}\""
+    elif grep -q 'FEATURE_PORT' "$file"; then echo "        published: \"${FEATURE_PORT:-}\""
+    else sed -n 's/.*"\([0-9][0-9]*\):[0-9][0-9]*".*/        published: "\1"/p' "$file"
+    fi ;;
   ls)
     printf '['; sep=""
     for f in "$DOCKER_STATE"/*.up; do
@@ -87,11 +92,14 @@ serve_health() {   # serve_health <port>: answers GET /health with 200
   echo "could not start the health server" >&2; return 1
 }
 
+# A compose file the way every client writes one: the port from FEATURE_PORT.
+compose_file() { printf 'services:\n  app:\n    ports:\n      - "${FEATURE_PORT:-8080}:8080"\n'; }
+
 new_project() {   # new_project <dir> [slug]: a git repo with a compose file
   mkdir -p "$1/docker" && cd "$1" || exit 1
   git init -q -b develop . && git config user.email t@t && git config user.name T
   printf 'project_slug: "%s"\n' "${2:-demo}" > levain.yml
-  echo "services: {}" > docker/docker-compose.yml
+  compose_file > docker/docker-compose.yml
   git add -A && git commit -qm init   # so `develop` exists to switch back to
 }
 
@@ -116,7 +124,22 @@ rm -f docker/docker-compose.yml
 stage lv-stage-start.sh
 assert_eq "no compose file exits 3"                  "3" "$RC"
 has "and names the config key"                        "$(cat "$TEST_DIR/stage.err")" "staging.composeFile"
-echo "services: {}" > docker/docker-compose.yml
+compose_file > docker/docker-compose.yml
+
+# A client's LVI-014: the port used to reach compose only as STAGE_PORT, which no
+# client's compose file reads, so the stack came up on the compose default
+# while the probe waited on the staging port.
+printf 'services:\n  app:\n    ports:\n      - "8082:8080"\n' > docker/docker-compose.yml
+: > "$DOCKER_LOG"
+stage lv-stage-start.sh --port "$(free_port)"
+assert_eq "a compose file that ignores the port exits 4" "4" "$RC"
+has "and names both variables it may read"           "$(cat "$TEST_DIR/stage.err")" 'FEATURE_PORT.*STAGE_PORT'
+assert_eq "and nothing is started"                   "false" \
+  "$(grep -q ' up ' "$DOCKER_LOG" && echo true || echo false)"
+printf 'services:\n  app:\n    ports:\n      - "${STAGE_PORT:-8081}:8080"\n' > docker/docker-compose.yml
+DOCKER_FAIL_UP=1 stage lv-stage-start.sh --port "$(free_port)"
+assert_eq "a compose file on STAGE_PORT still passes the check" "1" "$RC"
+compose_file > docker/docker-compose.yml
 
 : > "$DOCKER_LOG"
 DOCKER_FAIL_UP=1 stage lv-stage-start.sh --port "$(free_port)"
@@ -134,7 +157,8 @@ assert_eq "the compose project is <slug>-staging"    "demo-staging" "$STAGE_PROJ
 assert_eq "STAGE_ALREADY=false on a fresh start"     "false" "$STAGE_ALREADY"
 assert_eq "no release worktree: stages the current tree" "." "$STAGE_TREE"
 has "compose up ran with --build -d under that project" "$(cat "$DOCKER_LOG")" "compose -f docker/docker-compose.yml -p demo-staging up --build -d"
-has "and STAGE_PORT reached compose"                 "$(cat "$DOCKER_LOG")" "^STAGE_PORT=$PORT docker compose .* up"
+has "and STAGE_PORT reached compose"                 "$(cat "$DOCKER_LOG")" "^STAGE_PORT=$PORT .*docker compose .* up"
+has "and so did FEATURE_PORT, the name compose files read" "$(cat "$DOCKER_LOG")" "FEATURE_PORT=$PORT docker compose .* up"
 assert_eq "the deadline is written"                  "$STAGE_DEADLINE" "$(cat "$STATE/demo-staging.deadline" 2>/dev/null)"
 has "and is an ISO UTC time"                         "$STAGE_DEADLINE" '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$'
 WATCHDOG=$(cat "$STATE/demo-staging.watchdog" 2>/dev/null)
@@ -192,7 +216,7 @@ sleep 0.2
 assert_eq "and clears its own deadline"              "false" \
   "$([ -f "$STATE/demo-staging.deadline" ] && echo true || echo false)"
 
-mkdir -p release-branches/release/docker && echo "services: {}" > release-branches/release/docker/docker-compose.yml
+mkdir -p release-branches/release/docker && compose_file > release-branches/release/docker/docker-compose.yml
 LV_STAGE_HEALTH_SECONDS=2 stage lv-stage-start.sh --port "$PORT" --minutes 5
 assert_eq "the pinned release worktree is staged when present" "release-branches/release" "$STAGE_TREE"
 stage lv-stage-stop.sh
