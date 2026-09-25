@@ -166,7 +166,9 @@ follows [`install/issues.md`](install/issues.md):
 3. **Resolve** the entry with a note, and install the fix into your projects.
 4. **Send it upstream**, if you choose: an issue or a pull request on
    [github.com/slicedBread-marc/levain](https://github.com/slicedBread-marc/levain), so the next
-   version fixes it for everyone.
+   version fixes it for everyone. Claude looks for an existing report first, and checks the draft
+   against your paths and project names (`check-denylist.sh --outbound`) before it goes out.
+   [`CONTRIBUTING.md`](CONTRIBUTING.md) has the details.
 
 ## Configuration
 

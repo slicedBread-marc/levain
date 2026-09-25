@@ -75,6 +75,38 @@ case "$out" in *" commit"*) ok "reports object id and type" ;; *) bad "reports o
 git reflog expire --expire=now --all && git gc -q --prune=now
 $G --all-objects >/dev/null 2>&1;        check "--all-objects passes once it is gone" 0 $?
 rm -f "$LV_DENYLIST"
+unset LV_DENYLIST
+
+# --text / --outbound (LVI-019): what a USER runs before an issue or a PR goes
+# public. No pack, no list file: the names are derived from this machine.
+R="$T.reg"; mkdir -p "$R/acme-billing" "$R/app"; trap 'rm -rf "$T" "$P" "$R"' EXIT
+printf 'project_slug: "zeta-shop"\n' > "$R/acme-billing/levain.yml"
+printf '%s\n%s\n' "$R/acme-billing" "$R/app" > "$R/list"
+export LV_DEPLOYMENTS="$R/list"
+body="$T.body"
+printf 'lv-stage probes the wrong port\n' > "$body"
+$G --outbound --text "$body" >/dev/null 2>&1;   check "--outbound: a clean issue passes"            0 $?
+$G --text "$body" >/dev/null 2>&1;              check "--text with no list: passes"                 0 $?
+printf 'ok\nseen in acme-billing today\n' > "$body"
+out=$($G --outbound --text "$body" 2>&1); rc=$?
+check "--outbound: a registered project's folder name fails" 1 $rc
+case "$out" in *"line 2"*) ok "reports the line" ;; *) bad "reports the line ($out)" ;; esac
+case "$out" in *acme*) bad "never prints the matched text" ;; *) ok "never prints the matched text" ;; esac
+printf 'the zeta-shop compose file\n' | $G --outbound --text - >/dev/null 2>&1
+check "--outbound: its project_slug fails, from stdin"         1 $?
+printf 'log at %s/dev/x.log\n' "$HOME" | $G --outbound --text - >/dev/null 2>&1
+check "--outbound: \$HOME fails"                               1 $?
+printf 'git apply failed\n' | $G --outbound --text - >/dev/null 2>&1
+check "--outbound: a short project name (app) is not denied"   0 $?
+me=$(id -un)
+printf 'from %s\n' "$me" | $G --outbound --text - >/dev/null 2>&1; rc=$?
+check "--outbound: the login name fails"                       "$([ "${#me}" -ge 3 ] && echo 1 || echo 0)" "$rc"
+printf 'x\n' | LV_PACKS="$P" $G --outbound --text - >/dev/null 2>&1
+check "--outbound with a pack: still passes clean text"        0 $?
+printf 'for zebra-corp\n' | LV_PACKS="$P" $G --outbound --text - >/dev/null 2>&1
+check "--outbound with a pack: the pack's names apply too"     1 $?
+$G --text "$T.nope" >/dev/null 2>&1;            check "--text on a missing file: usage (2)"         2 $?
+unset LV_DEPLOYMENTS
 
 echo "  $pass passed, $fail failed"
 [ "$fail" = 0 ]

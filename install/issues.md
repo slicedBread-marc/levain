@@ -61,17 +61,48 @@ the record of what was already reported:
 Levain lives at `https://github.com/slicedBread-marc/levain`. A fault fixed only on their machine
 stays broken for everyone else, and upstream may later fix it differently and clash with theirs.
 Offer to send each Levain fault upstream. **Nothing goes out without their yes**, because a
-public issue or pull request is published the moment it is made:
+public issue or pull request is published the moment it is made. [`CONTRIBUTING.md`](../CONTRIBUTING.md)
+says what upstream needs in each.
 
-- **An issue**, always possible: what they expected, what happened, and the Levain version
-  (`$LIB/VERSION`). Leave out their project's names, paths and anything private; the entry in
-  `WORKFLOW-ISSUES.md` may hold all three, so rewrite it rather than paste it.
-- **A pull request**, when they have a fix with its test. Fork the repository, cherry-pick the
-  commit onto a branch from upstream's `main`, and open the pull request against `main`. Check
-  the diff for the same private details first.
+1. **Look for it first.** Search with the script or skill's name and two or three words from
+   what went wrong:
+   `gh issue list -R slicedBread-marc/levain --state all --search "lv-stage port"`.
+   - An **open** issue describes the same fault: add to it instead of filing a second one. Put
+     their Levain version and anything new in a comment (steps 2 and 3 apply to the comment too),
+     and send it with `gh issue comment <N> -R slicedBread-marc/levain --body-file <file>`.
+   - A **closed** one fixed it in a version later than theirs (`$LIB/VERSION`): it is already
+     fixed. Offer `install/upgrade.md` instead of filing.
+   - Nothing that matches: go on.
+2. **Write it to a file**, never straight into a command line:
+   - **An issue** says what they expected, what happened, which script or skill did it, and the
+     Levain version. Rewrite it from the `WORKFLOW-ISSUES.md` entry rather than paste it, because
+     the entry may hold their project's names, paths and private details.
+   - **A pull request** is for a fix that has a test. Fork the repository, cherry-pick the
+     commit onto a branch from upstream's `main`, and write a description the way
+     `.github/pull_request_template.md` asks.
+3. **Check it** before anything is sent. Run it from `$LIB`, where the check finds their
+   project registry:
+   ```bash
+   cd "$LIB" && ./check-denylist.sh --outbound --text <file>                   # issue or comment
+   git -C "$LIB" format-patch --stdout origin/main..<branch> \
+     | (cd "$LIB" && ./check-denylist.sh --outbound --text -)                  # pull request
+   ```
+   `--outbound` denies their home path, their login name and every project in their registry,
+   by folder name and `project_slug`, plus whatever their pack's `publish-denylist` hook lists.
 
-With the `gh` CLI signed in, `gh issue create -R slicedBread-marc/levain` and `gh pr create`
-do both. Without it, give them the text and the web address to paste it into.
+   | Exit | Meaning | Do |
+   |-|-|-|
+   | 0 | Clean | Go on to step 4 |
+   | 1 | It lists line numbers that name something of theirs | Rewrite those lines and check again. Do not get around the match by splitting or misspelling the name; that publishes the name anyway. If a flagged line uses an ordinary word that happens to be a project's name, show them the line and let them decide. That is their call, not yours |
+   | 2 | The check could not run | Say why, and send nothing until it runs |
+
+4. **Send it**: `gh issue create -R slicedBread-marc/levain --title "<script>: <what went wrong>"
+   --body-file <file>`, or `gh pr create --body-file <file>` for a pull request. Without `gh`,
+   give them the checked text and the web address to paste it into.
+
+A pull request is not merged as it stands. The public history is rebuilt from a private copy, so
+upstream applies it there as a patch, keeping the author, and closes the pull request with the
+version that carries it. Tell them this, so a closed pull request does not read as a rejection.
 
 ## Report
 

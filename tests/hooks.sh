@@ -132,6 +132,26 @@ out=$(cd "$REPO_ROOT" && LV_PACKS="$B" bash check-profiles.sh 2>&1); rc=$?
 out=$(cd "$REPO_ROOT" && LV_PACKS="$B" bash deploy-all.sh 2>&1); rc=$?
 case "$rc|$out" in 1*"deploying nowhere"*) ok "and stops deploy-all before it touches anything" ;; *) bad "deploy-all on a failing registry" "rc=$rc $out" ;; esac
 
+# --upstream lists what strangers sent, without a registry (LVI-019). gh is a
+# stub that answers from files, so no network and no real repository.
+GHB="$TEST_DIR/ghbin"; mkdir -p "$GHB"
+cat > "$GHB/gh" <<'GH'
+#!/usr/bin/env bash
+echo "$*" >> "$GH_LOG"
+case "$1" in issue) cat "$GH_ISSUES" ;; pr) cat "$GH_PRS" ;; esac
+GH
+chmod +x "$GHB/gh"
+export GH_LOG="$TEST_DIR/gh.log" GH_ISSUES="$TEST_DIR/gh.issues" GH_PRS="$TEST_DIR/gh.prs"
+: > "$GH_ISSUES"; : > "$GH_PRS"
+out=$(cd "$REPO_ROOT" && PATH="$GHB:$PATH" LV_PACKS="$B" bash sweep-issues.sh --upstream 2>&1); rc=$?
+assert_eq "--upstream, nothing open: exit 1, even with a failing registry" "$rc" "1"
+echo '  #7  lv-stage probes the wrong port  — someone, updated 2026-09-24' > "$GH_ISSUES"
+echo '  #9  fix the probe  — someone, updated 2026-09-24' > "$GH_PRS"
+out=$(cd "$REPO_ROOT" && PATH="$GHB:$PATH" LV_UPSTREAM_REPO=o/r bash sweep-issues.sh --upstream 2>&1); rc=$?
+assert_eq "--upstream, work open: exit 0" "$rc" "0"
+case "$out" in *"#7"*"#9"*"2 open on o/r"*"upstream-intake.md"*) ok "--upstream lists both, and names the intake routine" ;; *) bad "--upstream output" "$out" ;; esac
+grep -q -- "-R o/r --state open" "$GH_LOG" && ok "--upstream asks the repo LV_UPSTREAM_REPO names" || bad "--upstream repo" "$(cat "$GH_LOG")"
+
 section "7. install ships the dispatcher"
 for role in pipeline coordinator; do
   C="$TEST_DIR/inst-$role"; mkdir -p "$C"; git -C "$C" init -q

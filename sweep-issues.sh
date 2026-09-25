@@ -10,6 +10,9 @@
 #   ./sweep-issues.sh --all        include already-resolved entries
 #   ./sweep-issues.sh --count      one "<client>: <n>" line per project
 #   ./sweep-issues.sh --resolve LVI-003 --client app "fixed in v2.6.0"
+#   ./sweep-issues.sh --upstream   open issues and PRs on the public repo
+#                                  (gh; LV_UPSTREAM_REPO overrides it). Taking
+#                                  one in: docs/upstream-intake.md
 #
 # Exit 0 if any open issues were found, 1 if every client is clean — so
 # `./sweep-issues.sh >/dev/null && echo "work to do"` reads correctly.
@@ -39,6 +42,36 @@ registry() {
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 [ -t 1 ] || { GREEN=''; YELLOW=''; BOLD=''; DIM=''; NC=''; }
+
+# ── --upstream: what strangers sent (LVI-019) ─────────────────────────────
+#
+# The clients' WORKFLOW-ISSUES.md files are only this operator's reports. Users
+# of the public copy report on GitHub, and nothing listed those, so a public
+# issue or PR sat unseen until somebody went looking. It needs no registry,
+# so it is answered before the registry is read. Listing only: taking one in
+# is a human's read first (docs/upstream-intake.md), never a script's.
+if [ "${1:-}" = "--upstream" ]; then
+  repo="${LV_UPSTREAM_REPO:-slicedBread-marc/levain}"
+  command -v gh >/dev/null 2>&1 || { echo "sweep-issues.sh: --upstream needs the gh CLI" >&2; exit 2; }
+  fmt='.[] | "  #\(.number)  \(.title)  — \(.author.login), updated \(.updatedAt[0:10])"'
+  issues=$(gh issue list -R "$repo" --state open --limit 100 --json number,title,author,updatedAt --jq "$fmt" 2>&1) \
+    || { echo "sweep-issues.sh: gh could not list $repo's issues: $issues" >&2; exit 2; }
+  prs=$(gh pr list -R "$repo" --state open --limit 100 --json number,title,author,updatedAt --jq "$fmt" 2>&1) \
+    || { echo "sweep-issues.sh: gh could not list $repo's pull requests: $prs" >&2; exit 2; }
+  n=0
+  if [ -n "$issues" ]; then
+    printf "${BOLD}══ %s — issues${NC}\n%s\n\n" "$repo" "$issues"; n=$((n + $(printf '%s\n' "$issues" | wc -l)))
+  fi
+  if [ -n "$prs" ]; then
+    printf "${BOLD}══ %s — pull requests${NC}\n%s\n\n" "$repo" "$prs"; n=$((n + $(printf '%s\n' "$prs" | wc -l)))
+  fi
+  if [ "$n" -eq 0 ]; then
+    printf "${GREEN}Nothing open on %s.${NC}\n" "$repo"; exit 1
+  fi
+  printf "${YELLOW}%d open on %s.${NC} Read each before anything else, then take it in by\n" "$n" "$repo"
+  echo "  docs/upstream-intake.md — never apply one unread."
+  exit 0
+fi
 
 CLIENT_LIST=$(registry) || { echo "sweep-issues.sh: the project-registry hook failed" >&2; exit 1; }
 [ -n "$CLIENT_LIST" ] || { echo "sweep-issues.sh: no projects in the registry (deployments.txt)" >&2; exit 1; }

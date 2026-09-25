@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: How contributions are taken in
+    url: https://github.com/slicedBread-marc/levain/blob/main/CONTRIBUTING.md
+    about: What to include, what to leave out, and why a pull request is closed rather than merged
