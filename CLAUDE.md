@@ -118,11 +118,22 @@ Clients report harness problems as they hit them — a `lv-*` script erroring un
 ./sweep-issues.sh --count      # one line per client
 ```
 
-Fix the cause **here**, in the library — never in the client, where the next deploy overwrites it. Then:
+Fix the cause **here**, in the library — never in the client, where the next deploy overwrites it.
+
+**Commit each fix the moment its tests pass, before starting the next issue.** Do not ask
+first. The operator has standing authorization for this and does not want to be asked. One
+commit per issue (or per group of duplicate issues), with the issue IDs in the subject and
+`LV_BUMP` stated. Stage only that fix's files, and only its hunks when a file carries two fixes.
+A sweep never ends with fixed work left uncommitted in the tree. A session that dies
+mid-sweep otherwise leaves work that the next session has to diagnose from scratch (14.11.0's
+LVI-014/019/020 sat uncommitted under an unrelated commit). **Commit, never push**: publishing
+stays the operator's call.
+
+After each commit, run one `oplog` entry with that SHA. When the sweep's fixes are all committed:
 
 ```bash
-./deploy-all.sh
-./sweep-issues.sh --resolve LVI-NNN --client <name> "fixed in vX.Y.Z"
+./deploy-all.sh                         # skip it while someone else holds the lock
+./sweep-issues.sh --resolve LVI-NNN --client <name> "fixed in vX.Y.Z (<sha>)"
 ```
 
 Resolved entries stay in the client's file as the record of what was already reported. `sweep-issues.sh` exits 0 when there is work and 1 when every client is clean.
