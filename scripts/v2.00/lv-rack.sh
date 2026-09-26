@@ -1490,8 +1490,29 @@ read_key() {
 # library, deployed to clients, and appears here with no change to this file
 # — the same division of labour as --fields and the grid itself.
 
-term_rows() { tput lines 2>/dev/null || echo 30; }
-term_cols() { tput cols  2>/dev/null || echo 100; }
+# The terminal's size, read from the terminal itself. Every caller runs these
+# inside $(...), where stdout is a pipe; `tput cols 2>/dev/null` there has no
+# tty on stdout or stderr and answers terminfo's default, 80x24, whatever the
+# window really is — which held the board to three or four columns on any
+# screen. `stty size` asks the tty directly: /dev/tty first, then stdin or
+# stderr when either is one. LV_RACK_COLS / LV_RACK_ROWS override, for tests.
+term_size() {
+  local s=""
+  s=$(stty size </dev/tty 2>/dev/null) || s=""
+  [ -z "$s" ] && [ -t 0 ] && s=$(stty size 2>/dev/null)
+  [ -z "$s" ] && [ -t 2 ] && s=$(stty size <&2 2>/dev/null)
+  case "$s" in [1-9]*' '[1-9]*) printf '%s' "$s" ;; *) return 1 ;; esac
+}
+term_rows() {
+  [ -n "${LV_RACK_ROWS:-}" ] && { echo "$LV_RACK_ROWS"; return; }
+  local s; s=$(term_size) && { echo "${s% *}"; return; }
+  tput lines 2>/dev/null || echo 30
+}
+term_cols() {
+  [ -n "${LV_RACK_COLS:-}" ] && { echo "$LV_RACK_COLS"; return; }
+  local s; s=$(term_size) && { echo "${s#* }"; return; }
+  tput cols 2>/dev/null || echo 100
+}
 
 # view_file <heading> <path> <followable> [project_path]
 #

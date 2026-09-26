@@ -86,6 +86,34 @@ out=$(cd "$T/xc/elsewhere" && LV_COORD_DIR="$T/xc/coord" "$T/xc/coord/scripts/lv
 grep -q 'LV_COORD_DIR names it explicitly' "$RACK" && bad "lv-rack.sh no longer claims lv-exec.sh honours LV_COORD_DIR" \
   || ok "lv-rack.sh no longer claims lv-exec.sh honours LV_COORD_DIR"
 
+echo "── columns fill the terminal's width ──"
+# fit_cols reads the width through $(term_cols); it once got terminfo's 80
+# there on any window, which held the board to three or four columns.
+cols_at() {
+  env "$@" LV_RACK_LIB=1 bash -c 'f=$1; set --; source "$f"; names=(project-alpha1 beta gamma); fit_cols; echo "$MAX_COLS"' _ "$RACK" </dev/null
+}
+assert_eq "80 columns fit 3 fifteen-wide cells" "$(cols_at LV_RACK_COLS=80)" "3"
+assert_eq "200 columns fit 11" "$(cols_at LV_RACK_COLS=200)" "11"
+if command -v python3 >/dev/null 2>&1; then
+  # A real pty, 200 wide, with term_cols captured by $() as every caller does.
+  w=$(python3 - "$RACK" <<'PY' 2>/dev/null
+import pty, os, struct, fcntl, termios, subprocess, sys
+m, s = pty.openpty()
+fcntl.ioctl(s, termios.TIOCSWINSZ, struct.pack('HHHH', 50, 200, 0, 0))
+p = subprocess.Popen(['bash', '-c', 'f=$1; set --; source "$f"; w=$(term_cols); h=$(term_rows); echo "W=$w H=$h"', '_', sys.argv[1]],
+                     stdin=s, stdout=s, stderr=s, close_fds=True, env=dict(os.environ, LV_RACK_LIB='1'))
+os.close(s); out = b''
+while True:
+    try: d = os.read(m, 65536)
+    except OSError: break
+    if not d: break
+    out += d
+p.wait(); print(out.decode(errors='replace').strip().splitlines()[-1])
+PY
+)
+  assert_eq "under \$(), term_cols/term_rows read the real terminal, not terminfo's 80x24" "$w" "W=200 H=50"
+fi
+
 echo ""
 echo "Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
