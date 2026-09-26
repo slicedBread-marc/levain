@@ -354,6 +354,45 @@ eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "a commit that touches a rendering surface re-asks" "true" "$GATE"
 assert_eq "and carries nothing" "0" "$MANUAL_CARRIED"
 
+# A client's LVI-040: an unattended tester left every Chrome-Assisted criterion
+# unrun and gated on the one Manual criterion — the question never named the
+# rest. The gate accounts for Chrome-Assisted criteria itself now.
+ui_sha=$(git -C feature-branches/PLN-007-ui rev-parse --short HEAD)
+sed -i.bak "s/([0-9a-f]\{7\})/($ui_sha)/g" plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+cp plans/PLN-007-ui/plan.md plans/PLN-007-ui/plan.md.orig
+cat >> plans/PLN-007-ui/plan.md << 'P'
+
+#### Chrome-Assisted
+- [ ] /collage — the photo grid renders every uploaded image
+- [ ] /collage — dragging a photo reorders the grid
+- [x] /collage — prints on A4 — deferred as DC-001
+P
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "unrun Chrome-Assisted criteria gate even with every Manual one PASS" "true" "$GATE"
+assert_eq "both unchecked ones are unrecorded" "2" "$CHROME_UNRECORDED"
+assert_eq "and the record is called incomplete" "true" "$PROGRESS_INCOMPLETE"
+assert_contains "the reason names them" "dragging a photo reorders the grid" "$GATE_REASON"
+
+cat >> plans/PLN-007-ui/test-progress.md << PROGRESS
+| 5 | /collage — the photo grid renders every uploaded image | Aug 01 09:15 ($ui_sha) | PASS | headless eval |
+| 6 | /collage — dragging a photo reorders the grid | — | — | headless: drag-and-drop needs a pointer device |
+PROGRESS
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "one run, one untested with a reason: nothing unrecorded" "0" "$CHROME_UNRECORDED"
+assert_eq "so the record is complete" "false" "$PROGRESS_INCOMPLETE"
+assert_eq "but the untested one still reaches a human" "true" "$GATE"
+assert_contains "named, as untested" "untested (reason in test-progress.md): /collage — dragging" "$GATE_REASON"
+
+sed -i.bak '/dragging a photo/s/| — | — | headless.*|$/| Aug 01 09:15 ('"$ui_sha"') | PASS | |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "every Chrome-Assisted criterion run and every Manual one PASS: no human" "false" "$GATE"
+assert_eq "and nothing Chrome-Assisted is open" "0 0" "$CHROME_UNRECORDED $CHROME_UNTESTED"
+
+rm -f plans/PLN-007-ui/test-progress.md
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_contains "no test-progress.md at all is said out loud" "test-progress.md does not exist" "$GATE_REASON"
+mv plans/PLN-007-ui/plan.md.orig plans/PLN-007-ui/plan.md
+
 rm -f plans/PLN-007-ui/test-progress.md
 
 git worktree remove --force feature-branches/PLN-007-ui

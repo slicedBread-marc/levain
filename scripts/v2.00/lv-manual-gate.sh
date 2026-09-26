@@ -41,6 +41,12 @@
 #   test-progress.md already recorded PASS against this very build, or against
 #   an earlier one when no renderingSurfaces path changed in between
 #   MANUAL_CARRIED — how many of those came from an earlier build
+#   CHROME_OPEN — unchecked `#### Chrome-Assisted` criteria
+#   CHROME_UNRECORDED — how many of those test-progress.md holds no result
+#     or reason for (never run, or the record was never written)
+#   CHROME_UNTESTED — how many it records as not run, with a reason
+#   PROGRESS_INCOMPLETE='true|false' — CHROME_UNRECORDED > 0
+#   PROGRESS_MISSING='<criteria, "; "-joined>' — the unrecorded ones
 #
 # --explain adds a human-readable summary on stderr.
 
@@ -248,6 +254,62 @@ fi
 # ── Criterion counts (single parser, shared with the lint) ────────────────
 eval "$("$(dirname "$0")/lv-manual-lint.sh" "$plan_id" --counts ${resolved_args[@]+"${resolved_args[@]}"})"
 
+# ── Chrome-Assisted criteria: were they run at all? ───────────────────────
+#
+# Everything above counts `#### Manual` criteria, so a gate built only from it
+# is silent about Chrome-Assisted work nobody did. A client's LVI-040 (the
+# WFI-022 shape again): an unattended tester left all 6 Chrome-Assisted
+# criteria of a plan untested, reported writing a test-progress.md that never
+# existed, and opened a gate saying "1 eyes:blocking criterion requires human
+# verification". The human answering it had no way to know about the other 6.
+#
+# So account for them here, where the question is decided: an unchecked
+# (i.e. not deferred) Chrome-Assisted criterion is settled by a PASS or FAIL
+# row in test-progress.md, and is untested-with-a-reason when its row has
+# Notes. Anything else — no row, no file, a bare `—` — is unrecorded. Matched
+# with the same normalization and 24-character containment rule as the lint.
+chrome_out=$(awk -F'|' -v progress="$progress_md" '
+  function norm(s,   t) {
+    t = tolower(s)
+    gsub(/[`*_]/, "", t)
+    sub(/^[[:space:]]*\([^)]*\)[[:space:]]*/, "", t)
+    gsub(/[[:space:]]+/, " ", t)
+    sub(/^ /, "", t); sub(/ $/, "", t)
+    sub(/[.,;:]+$/, "", t)
+    return t
+  }
+  function trim(x) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", x); return x }
+  function lookup(nt,   k) {
+    if (nt in RES) return nt
+    for (k in RES)
+      if (length(nt) >= 24 && length(k) >= 24 && (index(k, nt) > 0 || index(nt, k) > 0)) return k
+    return ""
+  }
+  BEGIN {
+    while ((getline row < progress) > 0) {
+      n = split(row, f, "|")
+      if (n < 6) continue
+      c = norm(trim(f[3])); if (c == "" || c == "criterion") continue
+      RES[c] = toupper(trim(f[5])); NOTE[c] = trim(f[6])
+    }
+  }
+  /^####[[:space:]]*Chrome-Assisted/ { in_c = 1; next }
+  /^(#|##|###|####)[[:space:]]/ { in_c = 0 }
+  !in_c { next }
+  /^[[:space:]]*-[[:space:]]*\[ \]/ {
+    text = $0; sub(/^[[:space:]]*-[[:space:]]*\[ \][[:space:]]*/, "", text)
+    k = lookup(norm(text))
+    if (k != "" && (RES[k] == "PASS" || RES[k] == "FAIL")) print "S\t" text
+    else if (k != "" && NOTE[k] != "") print "R\t" text
+    else print "U\t" text
+  }
+' "$ROOT/plans/$plan_name/plan.md" 2>/dev/null || true)
+chrome_open=$(printf '%s\n' "$chrome_out" | grep -c '^[SRU]	' || true)
+chrome_untested=$(printf '%s\n' "$chrome_out" | grep -c '^R	' || true)
+chrome_unrecorded=$(printf '%s\n' "$chrome_out" | grep -c '^U	' || true)
+chrome_missing=$(printf '%s\n' "$chrome_out" | sed -n 's/^U	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
+chrome_reasoned=$(printf '%s\n' "$chrome_out" | sed -n 's/^R	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
+
 # ── How many open criteria actually count toward gating ───────────────────
 open_count="$MANUAL_OPEN_BLOCKING"
 if [ "$cfg_block_cosmetic" = "true" ]; then
@@ -315,6 +377,23 @@ else
   [ -z "$surfaces" ] && reason="$reason; no renderingSurfaces configured, so every plan can gate"
 fi
 
+# Chrome-Assisted work left undone reaches the human, named — whatever the
+# Manual counts decided. An unrecorded one is the tester's own unfinished work
+# (lv-test goes back and runs it before asking); one with a recorded reason is
+# genuinely the human's. Either way the gate question has to say so (LVI-040).
+if [ "$chrome_unrecorded" -gt 0 ]; then
+  gate=true
+  if [ -f "$progress_md" ]; then
+    reason="$chrome_unrecorded Chrome-Assisted criteria have no result in test-progress.md: $chrome_missing; $reason"
+  else
+    reason="$chrome_unrecorded Chrome-Assisted criteria have no result — test-progress.md does not exist: $chrome_missing; $reason"
+  fi
+fi
+if [ "$chrome_untested" -gt 0 ]; then
+  gate=true
+  reason="$chrome_untested Chrome-Assisted criteria untested (reason in test-progress.md): $chrome_reasoned; $reason"
+fi
+
 # Say it in the reason, not only in the counts. Whoever reads this line is
 # deciding whether to believe the verdict, and "3 of them were already passed
 # on this build" is the fact that makes a `false` credible and a `true` worth
@@ -339,6 +418,11 @@ wf_emit MANUAL_CARRIED       "$carried"
 wf_emit MANUAL_EXTERNAL      "$MANUAL_EXTERNAL"
 wf_emit MANUAL_SOAK          "$MANUAL_SOAK"
 wf_emit MANUAL_SCHEMA        "$MANUAL_SCHEMA"
+wf_emit CHROME_OPEN          "$chrome_open"
+wf_emit CHROME_UNRECORDED    "$chrome_unrecorded"
+wf_emit CHROME_UNTESTED      "$chrome_untested"
+wf_emit PROGRESS_INCOMPLETE  "$([ "$chrome_unrecorded" -gt 0 ] && echo true || echo false)"
+wf_emit PROGRESS_MISSING     "$chrome_missing"
 
 if $explain; then
   {
@@ -349,5 +433,6 @@ if $explain; then
     echo "  untagged open: ${MANUAL_OPEN_UNTAGGED:-0} (if >0 the surface rule does not apply)"
     echo "  settled by test-progress.md: ${MANUAL_RESOLVED_RECORD:-0} on build ${build_sha:0:7}${build_sha:+ }${resolved_file:+(record read)}${resolved_file:-(no record read)}"
     echo "  surface: requireRenderingSurface=$cfg_require_surface hit=${surface_hit:-none}"
+    echo "  chrome-assisted open: $chrome_open (unrecorded: $chrome_unrecorded, untested with reason: $chrome_untested)"
   } >&2
 fi
