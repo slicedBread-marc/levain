@@ -1116,10 +1116,13 @@ render_text() {
   row() {
     local label="$1" arrname="$2"
     row_label "$label"
-    local i val
-    eval "local -a vals=(\"\${${arrname}[@]}\")"
+    local i val ref
     for ((i = win_start; i < win_end; i++)); do
-      val="${vals[$i]}"
+      # By absolute index, never through a copy: "${arr[@]}" drops indices,
+      # so a row filled only at the window's positions (f_daemon_disp) came
+      # back renumbered from 0 — another project's value, or an unbound-
+      # variable abort once the window had scrolled right (LVI-029).
+      ref="${arrname}[$i]"; val="${!ref:-}"
       # An unreachable project stays dim at any age — there is no number
       # there to be fresh or stale about. Everything else is tinted by when
       # its column was collected.
