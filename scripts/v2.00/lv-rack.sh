@@ -1498,7 +1498,7 @@ read_key() {
 # stderr when either is one. LV_RACK_COLS / LV_RACK_ROWS override, for tests.
 term_size() {
   local s=""
-  s=$(stty size </dev/tty 2>/dev/null) || s=""
+  s=$(stty size 2>/dev/null </dev/tty) || s=""
   [ -z "$s" ] && [ -t 0 ] && s=$(stty size 2>/dev/null)
   [ -z "$s" ] && [ -t 2 ] && s=$(stty size <&2 2>/dev/null)
   case "$s" in [1-9]*' '[1-9]*) printf '%s' "$s" ;; *) return 1 ;; esac
