@@ -4815,6 +4815,20 @@ assert_eq "and links it to the amended plan" "true" \
 assert_eq "the commit says it is an amendment" "true" \
   "$(git log -1 --format=%s | grep -q 'amendment to PLN-271' && echo true || echo false)"
 
+# A client's LVI-007: the check piped grep -v into grep -q under pipefail. On a
+# large plan grep -q exits at the first match, grep -v dies of SIGPIPE, and the
+# pipeline read as "does not name the bug" — so only an early mention failed.
+registry_add_row PLN-274 big-plan draft
+mkdir -p plans/PLN-274-big-plan bugs/open/BUG-275-early-mention
+{ printf '# big\n\n> **ID:** PLN-274\n\n## Amendments\n\n### A-1 (BUG-275): early\n\n'
+  for _ in $(seq 1 4000); do printf 'filler line padding the plan past a pipe buffer\n'; done
+} > plans/PLN-274-big-plan/plan.md
+printf '# early\n\n> **Status:** Open\n> **ID:** BUG-275\n> **Plan:** _(none)_\n' \
+  > bugs/open/BUG-275-early-mention/bug.md
+git add -A >/dev/null 2>&1; git commit -qm "BUG-275 + a large PLN-274" >/dev/null 2>&1
+assert_ok "--amends finds an early mention in a plan larger than a pipe buffer" \
+  "$SCRIPT_DIR/lv-bug-consume.sh" BUG-275 PLN-274-big-plan --amends
+
 # ═══════════════════════════════════════════════════════════════════════
 section "A replan does not promote on a stale approval (client-a WFI-178)"
 

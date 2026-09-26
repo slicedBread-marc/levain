@@ -148,7 +148,9 @@ if $amends && ! $force; then
   if [ ! -f "$plan_dir/plan.md" ]; then
     echo "Error: --amends needs an existing plan; $plan_dir/plan.md does not exist." >&2; exit 2
   fi
-  if ! grep -vE '^[ \t]*>?[ \t]*\*\*Bug:\*\*' "$plan_dir/plan.md" | grep -qE "(^|[^0-9A-Za-z-])$bug_id([^0-9]|$)"; then
+  # Not grep -q: it exits at the first match, and under pipefail the SIGPIPE
+  # it leaves grep -v on a large plan reads as "not named" (LVI-007).
+  if ! grep -vE '^[ \t]*>?[ \t]*\*\*Bug:\*\*' "$plan_dir/plan.md" | grep -E "(^|[^0-9A-Za-z-])$bug_id([^0-9]|$)" >/dev/null; then
     echo "Error: $plan_dir/plan.md does not name $bug_id — write the amendment (naming $bug_id) first." >&2
     echo "  Nothing was moved." >&2
     exit 2
