@@ -16,6 +16,17 @@
 #             to local main's tip: the approval covers exactly the commit the
 #             push would send (coordinator WFI-008).
 #
+#             Also authorized, when nothing above is: an approve of
+#             `deploy-deferred-criteria` or `deploy-approval` opened with
+#             --covers-push, while main contains that approval's release tip
+#             and main's code (plans/ and bugs/ aside — the deploy's own
+#             bookkeeping) is exactly that tip's, and main fast-forwards
+#             origin/main. The human approved shipping that code, and was told
+#             in the question that approving pushes it. A later batch changes
+#             main's code and lapses it; a rejected production-push for this
+#             tip still wins. A client's LVI-041: every deploy asked promote
+#             and push as two gates, and re-asked both each time a ref moved.
+#
 # WHY THIS EXISTS
 #
 # `lv-autonomy.sh` answers a different question: has this project written down a
@@ -86,10 +97,46 @@ if [ -f "$gate_file" ] && [ "$(wf_gate_field "$gate_file" GATE_NAME)" = "$gate" 
   exit 1
 fi
 
+# ── push: an approved promotion that said it covered the push ─────────────
+covered_push() {
+  local root main origin_main g rec tip rej_rec
+  root="$(wf_develop_root)"
+  main=$(wf_promote_tip production-push || true)
+  [ -n "$main" ] || return 1
+  rej_rec=$(wf_gate_resolved_file DEPLOY production-push || true)
+  if [ -n "$rej_rec" ] && [ -f "$rej_rec" ] \
+     && [ "$(wf_gate_field "$rej_rec" GATE_PROMOTE_TIP)" = "$main" ] \
+     && [ "$(wf_gate_field "$rej_rec" GATE_DECISION)" != "approve" ]; then
+    return 1
+  fi
+  origin_main=$(git -C "$root" rev-parse --verify -q refs/remotes/origin/main 2>/dev/null || true)
+  if [ -n "$origin_main" ]; then
+    git -C "$root" merge-base --is-ancestor "$origin_main" "$main" 2>/dev/null || return 1
+  fi
+  for g in deploy-deferred-criteria deploy-approval; do
+    rec=$(wf_gate_resolved_file DEPLOY "$g" || true)
+    [ -n "$rec" ] && [ -f "$rec" ] || continue
+    [ "$(wf_gate_field "$rec" GATE_DECISION)" = "approve" ] || continue
+    [ "$(wf_gate_field "$rec" GATE_COVERS_PUSH)" = "true" ] || continue
+    tip=$(wf_gate_field "$rec" GATE_PROMOTE_TIP)
+    [ -n "$tip" ] || continue
+    git -C "$root" merge-base --is-ancestor "$tip" "$main" 2>/dev/null || continue
+    git -C "$root" diff --quiet "$tip" "$main" -- . ':(exclude)plans' ':(exclude)bugs' 2>/dev/null || continue
+    say "DEPLOY: '$g' approved$(r=$(wf_gate_field "$rec" GATE_RESOLVED); [ -n "$r" ] && printf ' at %s' "$r") for release ${tip:0:9} with --covers-push,"
+    say "  and main ${main:0:9} carries exactly that code — push authorized."
+    return 0
+  done
+  return 1
+}
+deny() {
+  if [ "$action" = push ] && covered_push; then exit 0; fi
+  exit "$1"
+}
+
 record=$(wf_gate_resolved_file "$id" "$gate" || true)
 if [ -z "$record" ] || [ ! -f "$record" ]; then
   say "$id: no '$gate' answer of record — not authorized."
-  exit 1
+  deny 1
 fi
 
 decision=$(wf_gate_field "$record" GATE_DECISION)
@@ -109,7 +156,7 @@ if [ "$decision" != "approve" ]; then
     say "  resolution: ${resolution:-—}"
     say "  A resolution is prose; the authorization is --decision approve on the close."
   fi
-  exit 1
+  deny 1
 fi
 
 if [ -z "$approved_tip" ]; then
@@ -118,19 +165,19 @@ if [ -z "$approved_tip" ]; then
   # on the strength of an approval given for some other one.
   say "$id: '$gate' was approved${resolved_at:+ at $resolved_at}, but the record names no commit set."
   say "  Nothing can say whether that approval covers what is staged now — not authorized."
-  exit 1
+  deny 1
 fi
 
 now_tip=$(wf_promote_tip "$gate" || true)
 if [ -z "$now_tip" ]; then
   say "$id: cannot resolve the current $(wf_promote_tip_ref "$gate") tip — not authorized."
-  exit 1
+  deny 1
 fi
 
 if [ "$now_tip" != "$approved_tip" ]; then
   say "$id: '$gate' was approved${resolved_at:+ at $resolved_at} for $(wf_promote_tip_ref "$gate") at ${approved_tip:0:9},"
   say "  which is now at ${now_tip:0:9}. The batch has changed since the answer — ask again."
-  exit 2
+  deny 2
 fi
 
 say "$id: '$gate' approved${resolved_at:+ at $resolved_at} by ${resolved_basis:-—} for $(wf_promote_tip_ref "$gate") ${approved_tip:0:9} — authorized."

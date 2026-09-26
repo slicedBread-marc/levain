@@ -176,6 +176,7 @@ basis=""
 resolves=""
 plan_body_fp_at_open=""
 promote_tip=""
+covers_push=""
 decision=""
 batch_moved_ok=false
 
@@ -265,6 +266,7 @@ if [ -f "$gate_file" ]; then
   # recorded below. Read here with the rest, because the gate file is gone by
   # the time the record is written.
   promote_tip=$(wf_gate_field "$gate_file" GATE_PROMOTE_TIP)
+  covers_push=$(wf_gate_field "$gate_file" GATE_COVERS_PUSH)
 else
   gate_name="$forced_gate"
 fi
@@ -544,6 +546,9 @@ record=$(
   fi
   if [ -n "$promote_tip" ]; then
     wf_emit GATE_PROMOTE_TIP "$promote_tip"
+  fi
+  if [ "${covers_push:-}" = "true" ]; then
+    wf_emit GATE_COVERS_PUSH true
   fi
   wf_emit GATE_PLAN_FP      "$plan_fp"
   wf_emit GATE_PLAN_BODY_FP "$plan_body_fp"

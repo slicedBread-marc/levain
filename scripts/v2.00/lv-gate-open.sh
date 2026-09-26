@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # lv-gate-open.sh <artifact-id> <gate-name> <question> [--context <path>] [--skill <name>]
 #                 [--requestion] [--force] [--unclaim | --hold-claim]
+#                 [--covers-push]
+#
+# --covers-push For `deploy-approval` / `deploy-deferred-criteria` on DEPLOY
+#               only: the question also asks to push the promotion it approves,
+#               and says so in its own text. lv-promote-approval.sh push then
+#               accepts that answer for `main` while main's code is exactly the
+#               approved release tip — one question per deploy instead of two
+#               (a client's LVI-041: 8 gates answered for 3 batches).
 #
 # --unclaim     Release this artifact's claim once the gate is up. THE DEFAULT
 #               for a plan-scoped gate; see "Claim disposition" below.
@@ -126,6 +134,7 @@ skill=""
 force=false
 requestion=false
 claim_disposition=default
+covers_push=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --context)    context="${2:?--context requires a path}"; shift 2 ;;
@@ -134,6 +143,7 @@ while [ $# -gt 0 ]; do
     --requestion) requestion=true; shift ;;
     --unclaim) claim_disposition=release; shift ;;
     --hold-claim) claim_disposition=hold; shift ;;
+    --covers-push) covers_push=true; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -406,6 +416,17 @@ if ! wf_gate_revision_scoped "$gate_name"; then
   fi
 fi
 
+if $covers_push; then
+  case "$id:$gate_name" in
+    DEPLOY:deploy-approval|DEPLOY:deploy-deferred-criteria) ;;
+    *) echo "Error: --covers-push applies to DEPLOY's deploy-approval or deploy-deferred-criteria, not $id $gate_name" >&2
+       exit 1 ;;
+  esac
+  # Said in the question itself: an approval can only authorize what the
+  # person answering was shown it would authorize.
+  question="$question — approving also pushes the promoted main to origin (production-push), provided main's code is exactly this release tip"
+fi
+
 # A promotion question has to say which tip it is about — the approval is
 # scoped to that tip, and a human cannot scope an answer to a commit they were
 # not shown. coordinator WFI-037: a production-push gate asked "Push main  to
@@ -451,6 +472,9 @@ fi
   # hours wide and cost the human the same answer twice. See wf_promote_fetch.
   if [ -n "$(wf_promote_tip_ref "$gate_name")" ]; then
     wf_emit GATE_PROMOTE_TIP "$promote_tip"
+  fi
+  if $covers_push; then
+    wf_emit GATE_COVERS_PUSH true
   fi
   if [ -n "$prior_res" ]; then
     wf_emit GATE_PRIOR_QUESTION   "$prior_q"

@@ -263,6 +263,59 @@ git -C "$TEST_DIR/wt-main" push -q origin main
 git -C "$CLIENT" fetch -q origin
 assert_eq "pushed → nothing left to deploy" "" "$("$SCRIPTS/lv-list-deploy.sh" 2>/dev/null)"
 
+# ── 7. one question per deploy: --covers-push (a client's LVI-041) ────────
+echo ""
+echo "7. a promotion approval that covers the push (LVI-041)"
+new_client
+push_to release "feature A"
+git -C "$CLIENT" fetch -q origin
+rel_tip=$(git -C "$CLIENT" rev-parse origin/release)
+cd "$CLIENT" || exit 1
+
+"$SCRIPTS/lv-gate-open.sh" DEPLOY production-push "push?" --covers-push >/dev/null 2>&1; rc=$?
+assert_eq "--covers-push is refused on any gate but the two promotion gates" "1" "$rc"
+
+"$SCRIPTS/lv-gate-open.sh" DEPLOY deploy-deferred-criteria "DC-001 open — promote?" --covers-push >/dev/null 2>&1
+case "$(cat "$CLIENT/.claude/orchestrator/gates/DEPLOY.gate")" in
+  *"approving also pushes"*) ok "the question says the answer covers the push" ;;
+  *) bad "the question says the answer covers the push" ;;
+esac
+"$SCRIPTS/lv-gate-close.sh" DEPLOY "ship it" --decision approve >/dev/null 2>&1
+
+git -C "$CLIENT" worktree add -q "$TEST_DIR/wt-main" main
+git -C "$TEST_DIR/wt-main" config user.email t@t
+git -C "$TEST_DIR/wt-main" config user.name t
+git -C "$TEST_DIR/wt-main" merge -q --no-ff "$rel_tip" -m "release: promote to main"
+"$SCRIPTS/lv-promote-approval.sh" push --quiet; rc=$?
+assert_eq "the promoted main, pushed on the promotion's approval" "0" "$rc"
+
+echo "| PLN-001 | a | complete |" >> "$TEST_DIR/wt-main/plans/REGISTRY.md"
+git -C "$TEST_DIR/wt-main" commit -qam "deploy: mark plans complete"
+"$SCRIPTS/lv-promote-approval.sh" push --quiet; rc=$?
+assert_eq "the deploy's own plans/ bookkeeping does not lapse it" "0" "$rc"
+
+echo hotfix >> "$TEST_DIR/wt-main/app.txt"
+git -C "$TEST_DIR/wt-main" add -A; git -C "$TEST_DIR/wt-main" commit -qm "code the human never saw"
+"$SCRIPTS/lv-promote-approval.sh" push --quiet; rc=$?
+assert_eq "code beyond the approved tip → not covered" "1" "$rc"
+git -C "$TEST_DIR/wt-main" reset -q --hard HEAD~1
+
+"$SCRIPTS/lv-gate-open.sh" DEPLOY production-push "push main?" >/dev/null 2>&1
+"$SCRIPTS/lv-gate-close.sh" DEPLOY "not tonight" --decision reject >/dev/null 2>&1
+"$SCRIPTS/lv-promote-approval.sh" push --quiet; rc=$?
+assert_eq "a rejected push for this very tip still wins" "1" "$rc"
+
+new_client
+push_to release "feature B"
+git -C "$CLIENT" fetch -q origin
+cd "$CLIENT" || exit 1
+"$SCRIPTS/lv-gate-open.sh" DEPLOY deploy-deferred-criteria "DC-002 open — promote?" >/dev/null 2>&1
+"$SCRIPTS/lv-gate-close.sh" DEPLOY "ship it" --decision approve >/dev/null 2>&1
+git -C "$CLIENT" worktree add -q "$TEST_DIR/wt-main" main
+git -C "$TEST_DIR/wt-main" merge -q --no-ff origin/release -m "release: promote to main"
+"$SCRIPTS/lv-promote-approval.sh" push --quiet; rc=$?
+assert_eq "without --covers-push the push is still its own question" "1" "$rc"
+
 echo ""
 echo "=================="
 echo "$PASS passed, $FAIL failed"

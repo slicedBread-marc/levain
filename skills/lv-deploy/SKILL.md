@@ -174,10 +174,16 @@ Before starting, confirm E2E passed on release:
    `lv-gate-close.sh` enforces the same thing from the other side — `--basis autonomy` is refused
    on this gate name, because no autonomy action stands behind it.
    ```bash
+   COVERS=; scripts/lv-exec.sh lv-autonomy.sh production-push --quiet || COVERS=--covers-push
    scripts/lv-exec.sh lv-gate-open.sh DEPLOY deploy-deferred-criteria \
-     "<the check's output> — <commit list from step 3>" --skill lv-deploy
+     "<the check's output> — <commit list from step 3>" --skill lv-deploy $COVERS
    scripts/lv-exec.sh lv-unclaim.sh DEPLOY
    ```
+   **`--covers-push` makes this the deploy's only question** when the push has no standing
+   grant: the script appends to the question that approving also pushes, and step 14's
+   `lv-promote-approval.sh push` accepts the answer while `main`'s code is exactly this release
+   tip. Without it every deploy asked twice — promote, then push — and a client's operator
+   answered 8 gates for 3 batches (LVI-041). Always pass it on those terms; never widen it by hand.
    **Do not invent a gate name here, and do not fold this into `deploy-approval`.** The name is
    what gives the answer its scoping: `wf_promote_tip_ref` maps `deploy-deferred-criteria` to the
    `release` tip, so a gate opened for one batch stops authorizing a different one. A worker that
@@ -469,7 +475,8 @@ Set when `LV_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   | `1` or `2` | No grant, or malformed | Open the gate below (exit 2: include the script's stderr verbatim — a malformed grant is a broken file, not a refusal), then unclaim and exit 0 — **STOP. Do not merge, push, or run step 6 or anything after it.** |
 
   ```bash
-  scripts/lv-exec.sh lv-gate-open.sh DEPLOY deploy-approval "<commit list from step 3>" --skill lv-deploy
+  COVERS=; scripts/lv-exec.sh lv-autonomy.sh production-push --quiet || COVERS=--covers-push
+  scripts/lv-exec.sh lv-gate-open.sh DEPLOY deploy-approval "<commit list from step 3>" --skill lv-deploy $COVERS
   scripts/lv-exec.sh lv-unclaim.sh DEPLOY
   ```
   `lv-gate-open.sh` exiting 3 means `deploy-approval` already has an answer of record — act on it
@@ -485,11 +492,22 @@ Set when `LV_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   This authorizes promoting `release` to `main` **locally only**. It never authorizes step 14's
   push to the production remote — that is a second, separate question.
 
-- **Already promoted, only the push left — check right after claiming, before step 2.** If `release` has nothing `main` lacks
-  (`git rev-list main..release` is empty), the guard is not armed, and `main` is ahead of
-  `origin/main`, an earlier run finished steps 6–13 and stopped at step 14. Skip straight to step
-  14 below — do not re-run the promotion, the suite, or the bookkeeping, and do not ask the step-5
-  questions about a batch that is already merged.
+- **A push waiting on `main` goes first — check right after claiming, before step 2.** If
+  `main` is ahead of `origin/main` and the guard is not armed, an earlier run finished steps 6–13
+  and stopped at step 14. Ask step 14's two questions (below) **before looking at `release`**:
+  - Either answers `0` → push `main` now, as step 14 says. Then, if `git rev-list main..release`
+    is empty, finish; otherwise continue at step 2 with the next batch.
+  - Neither answers `0`, and `release` has nothing `main` lacks → open the `production-push` gate
+    as step 14 says, and finish.
+  - Neither answers `0`, and `release` has moved on → **promote nothing.** Open (or leave open)
+    the `production-push` gate for the `main` that exists, unclaim, and exit 0. A promotion on
+    top of it moves `main`, which voids the question in front of the human.
+
+  Do not re-run the promotion, the suite, or the bookkeeping for a batch already merged. A client's
+  LVI-042: a human approved pushing `main` ec0b40b at 14:10:07Z; the next dispatch saw a new plan
+  on `release`, went to step 4a instead, promoted it, and ec0b40b was never pushed — the approval
+  was discarded and a new `production-push` gate opened for the combined tip five minutes later.
+  An approved push drains before anything new is promoted.
 
 - **Step 14, unattended — the push.** Ask, in this order, and stop at the first `0`:
   ```bash
@@ -497,8 +515,10 @@ Set when `LV_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   scripts/lv-exec.sh lv-autonomy.sh production-push   # a standing grant
   ```
   Either `0` → `git push origin main` from `release-branches/main`, and say in the completion
-  message which one authorized it (quote the script's line). `lv-promote-approval.sh push` exit
-  `2` means `main` moved since the answer — treat it as no answer.
+  message which one authorized it (quote the script's line). `lv-promote-approval.sh push` also
+  answers `0` for a step-4a/step-5 approval opened with `--covers-push` whose release tip is
+  exactly `main`'s code — that is the one-question deploy, and its line says so. Exit `2` means
+  `main` moved since the answer — treat it as no answer.
 
   Neither → **open the push gate**, then unclaim and finish normally:
   ```bash

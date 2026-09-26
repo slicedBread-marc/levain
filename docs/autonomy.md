@@ -68,6 +68,13 @@ orchestrator:
   it at `/lv-attend` (`--decision approve`) lets the next dispatch push exactly that commit
   (coordinator WFI-008). Before that gate existed, the finished deploy was re-dispatched until it
   parked as `stuck`.
+- When the deploy has to ask a promotion question anyway (`deploy-deferred-criteria`, or
+  `deploy-approval` under `attended_for`), and `production-push` has no grant, it asks it with
+  `--covers-push`: the question says approving also pushes, and `lv-promote-approval.sh push`
+  accepts that answer while `main` contains the approved release tip, fast-forwards
+  `origin/main`, and differs from it only under `plans/` and `bugs/`. One answer per deploy,
+  not two, and it lapses the moment `main` carries code the human did not approve (a client's
+  LVI-041). A pending approved push is drained before any new promotion (LVI-042).
 
 ## What may be granted
 
