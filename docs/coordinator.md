@@ -153,9 +153,13 @@ A coordinator is where one person oversees several pipelines (LVI-014). Beyond f
   workers, plans and logs, daemon toggles, stop/resume of every daemon (`--stop-all`/`--resume`,
   which `deploy-all.sh --stop-daemons` also uses), and `t` to start `/lv-attend` in the
   highlighted project. On the release or deploy row, `t`
-  starts `/lv-release`/`/lv-deploy` there instead. Its projects come from the `project-registry` hook: the owner's pack, else
+  starts `/lv-release`/`/lv-deploy` there instead. `z` (or `--sleep`/`--wake`/`--dormant`) marks
+  a project dormant: no column and no scan, unless its daemon is live, and `--include-dormant`
+  still shows it. The `harness` row compares each client's installed version with the library's, and `U`
+  runs the library's `deploy-all.sh`, refusing on a held `LIBRARY-LOCK.md`, a dirty library or
+  a red suite. Its projects come from the `project-registry` hook: the owner's pack, else
   the library's `deployments.txt` (found through `.claude/workflow-source`), else this
-  coordinator's `coordinates:` list. Its own state, the suspend record and the snapshot cache,
+  coordinator's `coordinates:` list. Its own state, the suspend record, the dormant set and the snapshot cache,
   lives in the coordinator's gitignored `.claude/orchestrator/`.
 - **A vision**, through `/lv-vision`. The library ships a contract, not a vision:
   [vision-spec.md](vision-spec.md) defines the modes, the file tree, the rules and the output

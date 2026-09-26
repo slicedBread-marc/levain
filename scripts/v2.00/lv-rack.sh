@@ -3,10 +3,13 @@
 # The overseer rung (LVI-014): run it from a coordinator, through its
 # scripts/lv-exec.sh, or /lv-rack.
 #
-#   lv-rack.sh [--watch [seconds]] [--plain] [--all]
+#   lv-rack.sh [--watch [seconds]] [--plain] [--all] [--include-dormant]
 #   lv-rack.sh --stop-all        stop every live daemon, remembering which
 #   lv-rack.sh --resume          start again exactly the ones --stop-all stopped
 #   lv-rack.sh --list-daemons    print live daemons; exit 3 if there are any
+#   lv-rack.sh --dormant         list every project, on or dormant
+#   lv-rack.sh --sleep <name>    make a project dormant: no column, no scan
+#   lv-rack.sh --wake <name>     put a dormant project back on the board
 #
 # --watch repaints only the rows that changed, not the whole screen — no
 # flicker.
@@ -169,6 +172,40 @@
 # daemons were running across the portfolio" is a coordinator fact — so it lives in its
 # gitignored .claude/orchestrator/. Client logs still go to the client, the
 # same as toggle_daemon already does.
+#
+# ── Dormant projects (LVI-027) ──────────────────────────────────────────
+#
+# A parked or retiring project still cost a full lv-tray.sh --fields on every
+# refresh and still took a column, because every registered project was
+# scanned. `z` under --watch (or `z` in the picker) opens a list of every
+# project with an on/off toggle; --sleep/--wake/--dormant do the same from a
+# script. A dormant project is neither scanned nor drawn.
+#
+# A project with a live daemon is always on, whatever its toggle, and cannot
+# be put to sleep while it runs: hiding a pipeline that is dispatching work is
+# how a stuck gate goes unseen for a week. --include-dormant is the snapshot
+# that shows everything; --all keeps meaning "every column that is scanned",
+# so `--plain --all` (what /lv-rack summarises) leaves parked projects out.
+# The daemon checks — --list-daemons,
+# --stop-all, --resume — never honour the hide: they read the pidfiles of
+# every registered project, since a stray daemon in a hidden project is the
+# one a deploy most needs to find.
+#
+# The dormant set is the coordinator's own state, beside the suspend record:
+# one project path per line in .claude/orchestrator/dormant.
+#
+# ── Updating the portfolio from the board (LVI-026) ─────────────────────
+#
+# The `harness` row is each client's .claude/workflow-version against the
+# library's VERSION (the library found through the coordinator's
+# .claude/workflow-source), yellow when they differ. `U` runs the library's
+# deploy-all.sh from the board and refreshes afterwards. It refuses, and says
+# why, when LIBRARY-LOCK.md is held (another session is mid-edit, and deploy
+# would publish its half-edit to every client), when the library's tracked
+# tree is dirty (a deploy ships what is on disk, not what is committed), and
+# when the library's own suite is red. A green suite is the approval: no
+# prompt follows it. The suite is the one CONTRIBUTING.md names, every
+# tests/*.sh; LV_RACK_SUITE replaces it (tests, or a faster local gate).
 
 set -uo pipefail
 
@@ -192,6 +229,11 @@ COORD_DIR="${LV_COORD_DIR:-${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel
 # real clients, which is exactly the thing you want proven before you trust it.
 DEPLOYMENTS="${LV_DEPLOYMENTS:-${WF_DEPLOYMENTS:-}}"
 SUSPEND_STATE="${LV_SUSPEND_STATE:-${WF_SUSPEND_STATE:-$COORD_DIR/.claude/orchestrator/daemons-suspended}}"
+DORMANT_STATE="${LV_DORMANT_STATE:-$COORD_DIR/.claude/orchestrator/dormant}"
+# The library this coordinator deploys from: the harness row's reference
+# version, and the deploy-all.sh behind `U`. LV_LIBRARY_DIR is the test seam.
+LIB_DIR="${LV_LIBRARY_DIR:-}"
+[ -z "$LIB_DIR" ] && [ -f "$COORD_DIR/.claude/workflow-source" ] && LIB_DIR=$(head -1 "$COORD_DIR/.claude/workflow-source")
 
 # The snapshot cache — see "Snapshots" below. The coordinator's own state, like
 # the suspend record: "what the portfolio last looked like" is a coordinator
@@ -245,16 +287,18 @@ hx() { local s="$1"; shift; hx_resolve . "$s" || return 127; "$HX_EXEC" "$HX_NAM
 has_harness() { hx_resolve "$1" lv-exec.sh; }
 
 mode=""
+mode_arg=""
 watch_mode=false
 watch_secs=60
 plain=false
 show_all=false
+include_dormant=false
 # How many project columns fit across the terminal — recomputed by
 # compute_shown from the current width, so a wide terminal shows more of the
 # portfolio and a resize is picked up on the next refresh.
 MAX_COLS=4
 
-usage() { sed -n '2,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
+usage() { sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -263,9 +307,14 @@ while [ $# -gt 0 ]; do
              shift ;;
     --plain) plain=true; shift ;;
     --all) show_all=true; shift ;;
+    --include-dormant) include_dormant=true; shift ;;
     --stop-all) mode="stop-all"; shift ;;
     --resume) mode="resume"; shift ;;
     --list-daemons) mode="list-daemons"; shift ;;
+    --dormant) mode="dormant"; shift ;;
+    --sleep|--wake)
+      [ -n "${2:-}" ] || { echo "lv-rack: $1 needs a project name" >&2; usage 1; }
+      mode="${1#--}"; mode_arg="$2"; shift 2 ;;
     -h|--help) usage 0 ;;
     *) echo "lv-rack: unknown argument '$1'" >&2; usage 1 ;;
   esac
@@ -600,15 +649,13 @@ compute_shown() {
 }
 
 collect() {
-  [ -f "$DEPLOYMENTS" ] || return 0
   local project_path name
-  while IFS= read -r project_path || [ -n "$project_path" ]; do
-    [[ -z "$project_path" || "$project_path" == \#* ]] && continue
-    is_coordinator "$project_path" && continue
+  while IFS= read -r project_path; do
+    [ -n "$project_path" ] || continue
     name=$(basename "$project_path")
     names+=("$name"); paths+=("$project_path")
     apply_record "$(fetch_one "$project_path")" "append"
-  done < "$DEPLOYMENTS"
+  done <<< "$(scan_projects)"
   sort_projects_by_activity
 }
 
@@ -874,13 +921,11 @@ start_refresh_async() {
   $refreshing && return
   refresh_file=$(mktemp "${TMPDIR:-/tmp}/lv-rack.XXXXXX")
   (
-    [ -f "$DEPLOYMENTS" ] || exit 0
     project_path=""
-    while IFS= read -r project_path || [ -n "$project_path" ]; do
-      [[ -z "$project_path" || "$project_path" == \#* ]] && continue
-      is_coordinator "$project_path" && continue
+    while IFS= read -r project_path; do
+      [ -n "$project_path" ] || continue
       printf '%s\x1e%s\x1e%s\n' "$(basename "$project_path")" "$project_path" "$(fetch_one "$project_path")"
-    done < "$DEPLOYMENTS"
+    done <<< "$(scan_projects)"
   ) >"$refresh_file" 2>/dev/null &
   refresh_pid=$!
   refreshing=true
@@ -1212,6 +1257,22 @@ render_text() {
   done
   printf '\n'
 
+  # HARNESS: the client's installed version against the library's (LVI-026).
+  # Read off the stamp here rather than fetched, so it is current on every
+  # frame without waiting on a refresh. Yellow when it differs — `U` deploys. Not in
+  # ROW_LABELS: there is nothing behind it for lv-tray-drill.sh to open.
+  local lib_v="" hv=""
+  [ -n "$LIB_DIR" ] && read_stamp lib_v "$LIB_DIR/VERSION"
+  row_label "harness"
+  for ((i = win_start; i < win_end; i++)); do
+    read_stamp hv "${paths[$i]}/.claude/workflow-version"
+    if [ -z "$hv" ]; then cell "$cw" "-" "$DIM"
+    elif [ -n "$lib_v" ] && [ "$hv" != "$lib_v" ]; then cell "$cw" "$hv" "$YEL"
+    else cell "$cw" "$hv" "$DIM"; fi
+  done
+  printf '\n'
+  [ -n "$lib_v" ] && printf '%-11s%slibrary %s%s\n' "" "$DIM" "$lib_v" "$R"
+
   # ── Legend for anything not "ok" ─────────────────────────────────────
   local any_bad=false
   for ((i = win_start; i < win_end; i++)); do
@@ -1227,6 +1288,80 @@ render_text() {
       esac
     done
   fi
+}
+
+# read_stamp <var> <file> — the file's first line into <var>, empty when it
+# is missing. Sets a variable rather than printing: render_text reads one
+# client stamp per column per frame, and $(...) would fork for each.
+read_stamp() {
+  local __v=""
+  [ -f "$2" ] && IFS= read -r __v < "$2"
+  printf -v "$1" '%s' "$__v"
+}
+# library_version — the library's VERSION, or nothing when the coordinator
+# names no library.
+library_version() {
+  local v=""
+  [ -n "$LIB_DIR" ] && read_stamp v "$LIB_DIR/VERSION"
+  printf '%s' "$v"
+}
+
+# deploy_library — `U`: run the library's deploy-all.sh, after the checks that
+# make an unattended deploy safe to start from a board. Exit 0 deployed, 3
+# refused (the reason is printed), otherwise deploy-all.sh's own exit.
+deploy_library() {
+  local rc
+  if [ -z "$LIB_DIR" ] || [ ! -x "$LIB_DIR/deploy-all.sh" ]; then
+    printf '  %sno library to deploy from — .claude/workflow-source names none with a deploy-all.sh%s\n' "$YEL" "$R"
+    return 3
+  fi
+  printf '%sUPDATE THE PORTFOLIO%s  %s%s → version %s%s\n\n' "$B" "$R" "$DIM" "$LIB_DIR" "$(library_version)" "$R"
+  # The lock first: a session holding it is mid-edit, and this would publish
+  # that half-edit into every client. Any holder refuses, stale included —
+  # a stale lock names work that may be half-applied, which is the operator's
+  # call (lock.sh --steal), not the board's.
+  if [ -x "$LIB_DIR/lock.sh" ]; then
+    (cd "$LIB_DIR" && ./lock.sh status >/dev/null 2>&1); rc=$?
+    if [ "$rc" -ne 0 ]; then
+      printf '  %srefused — LIBRARY-LOCK.md is held:%s\n' "$RED" "$R"
+      (cd "$LIB_DIR" && ./lock.sh status 2>&1) | sed 's/^/    /'
+      return 3
+    fi
+  fi
+  # A deploy ships what is on disk, not what is committed.
+  if [ -n "$(git -C "$LIB_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    printf '  %srefused — the library has uncommitted changes:%s\n' "$RED" "$R"
+    git -C "$LIB_DIR" status --short --untracked-files=no 2>/dev/null | sed 's/^/    /'
+    return 3
+  fi
+  printf '  running the library suite...\n'
+  if ! run_library_suite; then
+    printf '  %srefused — the suite is red; nothing was deployed%s\n' "$RED" "$R"
+    return 3
+  fi
+  printf '  suite green — deploying\n\n'
+  (cd "$LIB_DIR" && ./deploy-all.sh) 2>&1 | sed 's/^/  /'
+  rc=${PIPESTATUS[0]}
+  if [ "$rc" -eq 0 ]; then printf '\n  %sdeployed %s%s\n' "$GRN" "$(library_version)" "$R"
+  else printf '\n  %sdeploy-all.sh exited %s%s\n' "$RED" "$rc" "$R"; fi
+  return "$rc"
+}
+
+# run_library_suite — every tests/*.sh in the library, naming each failure.
+# LV_RACK_SUITE, when set, is run instead (a command line, from the library).
+run_library_suite() {
+  if [ -n "${LV_RACK_SUITE:-}" ]; then
+    (cd "$LIB_DIR" && bash -c "$LV_RACK_SUITE") >/dev/null 2>&1
+    return
+  fi
+  local t red=0
+  for t in "$LIB_DIR"/tests/*.sh; do
+    [ -f "$t" ] || continue
+    if ! (cd "$LIB_DIR" && bash "$t") >/dev/null 2>&1; then
+      printf '    %sFAILED %s%s\n' "$RED" "${t#$LIB_DIR/}" "$R"; red=1
+    fi
+  done
+  return "$red"
 }
 
 # render — collect + print, for the two call sites that need both and
@@ -2185,8 +2320,8 @@ board_action_key() {
 menu_loop() {
   local choice i
   while true; do
-    printf '\n%sselect a project%s (1-%d), %sr%s refresh, %ss%s stop all daemons, %sR%s resume, %sq%s quit:\n' \
-      "$B" "$R" "${#names[@]}" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
+    printf '\n%sselect a project%s (1-%d), %sr%s refresh, %ss%s stop all daemons, %sR%s resume, %sz%s on/dormant, %sU%s deploy library, %sq%s quit:\n' \
+      "$B" "$R" "${#names[@]}" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
     for i in "${!names[@]}"; do
       printf '  %d) %s\n' "$((i + 1))" "${names[$i]}"
     done
@@ -2198,6 +2333,9 @@ menu_loop() {
       s) suspend_all; printf '\n  (press enter to continue) '; IFS= read -r _
          printf '\033[2J\033[H'; render ;;
       R) resume_suspended; printf '\n  (press enter to continue) '; IFS= read -r _
+         printf '\033[2J\033[H'; render ;;
+      z) dormant_screen; printf '\033[2J\033[H'; render ;;
+      U) printf '\033[2J\033[H'; deploy_library; printf '\n  (press enter to continue) '; IFS= read -r _
          printf '\033[2J\033[H'; render ;;
       *)
         if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#names[@]}" ]; then
@@ -2267,6 +2405,107 @@ each_project() {
     is_coordinator "$p" && continue
     printf '%s\n' "$p"
   done < "$DEPLOYMENTS"
+}
+
+# scan_projects — the projects the grid collects: each_project minus the
+# dormant ones, except a dormant project whose daemon is live (always on) and
+# everything under --include-dormant. collect() and the background refresh both read this,
+# so the hide is one rule, not two loops that can drift.
+scan_projects() {
+  local p
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if ! $include_dormant && is_dormant "$p" && ! daemon_alive "$p"; then continue; fi
+    printf '%s\n' "$p"
+  done <<< "$(each_project)"
+}
+
+# is_dormant <project_path> — is it in the coordinator's dormant set?
+is_dormant() { [ -f "$DORMANT_STATE" ] && grep -qxF -- "$1" "$DORMANT_STATE"; }
+
+# resolve_project <name|path> — the registry path it names, by exact path or
+# by basename. Fails (and prints nothing) for anything not in the registry,
+# so --sleep cannot record a typo that then silently matches nothing.
+resolve_project() {
+  local want="$1" p
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if [ "$p" = "$want" ] || [ "$(basename "$p")" = "$want" ]; then printf '%s\n' "$p"; return 0; fi
+  done <<< "$(each_project)"
+  return 1
+}
+
+# set_dormant <project_path> <on|off> — put a project to sleep or wake it.
+# Sleeping is refused (exit 3) while its daemon is live: a running pipeline is
+# always on. Written through a temp-and-rename, like the suspend record.
+set_dormant() {
+  local p="$1" want="$2" tmp
+  if [ "$want" = on ] && daemon_alive "$p"; then
+    printf '  %s: daemon running — always on; stop it first\n' "$(basename "$p")"
+    return 3
+  fi
+  mkdir -p "$(dirname "$DORMANT_STATE")" 2>/dev/null || true
+  tmp=$(mktemp "${TMPDIR:-/tmp}/lv-rack-dormant.XXXXXX") || return 1
+  [ -f "$DORMANT_STATE" ] && grep -vxF -- "$p" "$DORMANT_STATE" > "$tmp"
+  [ "$want" = on ] && printf '%s\n' "$p" >> "$tmp"
+  if [ -s "$tmp" ]; then sort -u "$tmp" > "$DORMANT_STATE"; else rm -f "$DORMANT_STATE"; fi
+  rm -f "$tmp"
+  if [ "$want" = on ]; then printf '  %s: dormant\n' "$(basename "$p")"
+  else printf '  %s: on\n' "$(basename "$p")"; fi
+}
+
+# dormant_state <project_path> — what the toggle list shows for it: `always on`
+# (daemon live), `dormant`, or `on`.
+dormant_state() {
+  if daemon_alive "$1"; then echo "always on"
+  elif is_dormant "$1"; then echo "dormant"
+  else echo "on"; fi
+}
+
+# list_dormant — every registered project and its state, for --dormant.
+list_dormant() {
+  local p
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    printf '%-24s %s\n' "$(basename "$p")" "$(dormant_state "$p")"
+  done <<< "$(each_project)"
+}
+
+# dormant_screen — the list behind `z`: every registered project, Up/Down to
+# move, Space or Enter to toggle, q or Esc to leave. Returns 0 when something
+# changed, so the caller knows the grid's column set is now wrong.
+dormant_screen() {
+  local -a ps=(); local p key sel=0 changed=1 msg="" k st c
+  while IFS= read -r p; do [ -n "$p" ] && ps+=("$p"); done <<< "$(each_project)"
+  if [ "${#ps[@]}" -eq 0 ]; then
+    printf '\033[2J\033[H  %sthe project registry is empty%s\n' "$DIM" "$R"
+    printf '\n  (press any key to continue) '; read_key key
+    return 1
+  fi
+  while true; do
+    printf '\033[2J\033[H%sPROJECTS ON THE BOARD%s  %s↑↓ move · space toggle · q back%s\n\n' "$B" "$R" "$DIM" "$R"
+    for k in "${!ps[@]}"; do
+      st=$(dormant_state "${ps[$k]}")
+      case "$st" in on) c="$GRN" ;; dormant) c="$DIM" ;; *) c="$YEL" ;; esac
+      if [ "$k" -eq "$sel" ]; then printf '  %s> %-24s%s %s%s%s\n' "$REV" "$(basename "${ps[$k]}")" "$R" "$c" "$st" "$R"
+      else printf '    %-24s %s%s%s\n' "$(basename "${ps[$k]}")" "$c" "$st" "$R"; fi
+    done
+    [ -n "$msg" ] && printf '\n%s\n' "$msg"
+    msg=""
+    read_key key
+    $key_eof && break
+    case "$key" in
+      $'\x1b[A'|k) sel=$(( (sel - 1 + ${#ps[@]}) % ${#ps[@]} )) ;;
+      $'\x1b[B'|j) sel=$(( (sel + 1) % ${#ps[@]} )) ;;
+      ' '|''|$'\n')
+        p="${ps[$sel]}"
+        if is_dormant "$p"; then msg=$(set_dormant "$p" off); else msg=$(set_dormant "$p" on); fi
+        # set_dormant's refusal is an answer, not a change.
+        [ "$(dormant_state "$p")" = "always on" ] || changed=0 ;;
+      q|Q|$'\x1b') break ;;
+    esac
+  done
+  return "$changed"
 }
 
 # daemon_alive <project_path> — is that client's orchestrator daemon live?
@@ -2419,6 +2658,11 @@ case "$mode" in
   stop-all)     suspend_all; exit $? ;;
   resume)       resume_suspended; exit $? ;;
   list-daemons) list_daemons; exit $? ;;
+  dormant)      list_dormant; exit 0 ;;
+  sleep|wake)
+    target=$(resolve_project "$mode_arg") || { echo "lv-rack: '$mode_arg' is not in the project registry" >&2; exit 1; }
+    if [ "$mode" = sleep ]; then set_dormant "$target" on; else set_dormant "$target" off; fi
+    exit $? ;;
 esac
 
 if $watch_mode; then
@@ -2564,6 +2808,21 @@ if $watch_mode; then
         # reachable from both of those and not from the board they are opened
         # from, which is backwards: every level speaks the same keys.
         board_action_key "$key" "${paths[$sel_idx]}"
+        resume_board
+        age_sig=$(age_signature)
+        ;;
+      z|Z)                              # which projects are on the board (LVI-027)
+        printf '\033[?25h'
+        # A change alters which columns exist, so refresh at once rather than
+        # at the next interval; the old columns stay until it lands.
+        dormant_screen && next_refresh_at=0
+        resume_board
+        age_sig=$(age_signature)
+        ;;
+      U)                                # deploy the library to every client (LVI-026)
+        printf '\033[?25h\033[2J\033[H'
+        deploy_library
+        printf '\n  (press any key to continue) '; read_key key
         resume_board
         age_sig=$(age_signature)
         ;;
