@@ -47,6 +47,11 @@
 #   CHROME_UNTESTED — how many it records as not run, with a reason
 #   PROGRESS_INCOMPLETE='true|false' — CHROME_UNRECORDED > 0
 #   PROGRESS_MISSING='<criteria, "; "-joined>' — the unrecorded ones
+#   LANE='express|normal|none' — lv-lane.sh's verdict. Under `express`, open
+#     `#### Manual` eyes criteria do not gate: /lv-test moves them to the plan's
+#     post-ship checklist with `lv-lane.sh answer <PLN> manual-test` (LVI-025).
+#     Chrome-Assisted work left unrun or unrecorded still gates — the lane
+#     answers the human's question, never the tester's unfinished work.
 #
 # --explain adds a human-readable summary on stderr.
 
@@ -316,11 +321,21 @@ if [ "$cfg_block_cosmetic" = "true" ]; then
   open_count=$(( MANUAL_OPEN_BLOCKING + MANUAL_OPEN_COSMETIC ))
 fi
 
+# ── The express lane ──────────────────────────────────────────────────────
+LANE=none; LANE_REASONS=""
+eval "$("$(dirname "$0")/lv-lane.sh" status "$plan_id" 2>/dev/null || true)"
+
 # ── Decide ────────────────────────────────────────────────────────────────
 gate=true
 reason=""
 
-if [ "$open_count" -lt "$cfg_min_eyes" ]; then
+if [ "$LANE" = express ] && { [ "$open_count" -gt 0 ] || [ "${MANUAL_OPEN_UNTAGGED:-0}" -gt 0 ]; }; then
+  # A human declared this plan safe to ship unseen, and lv-lane.sh has just
+  # re-checked the written plan and agrees. Its eyes criteria still matter —
+  # they move to a post-ship checklist, they are not dropped.
+  gate=false
+  reason="express lane: $MANUAL_OPEN_BLOCKING open eyes:blocking criteria go to the post-ship checklist (lv-lane.sh answer $plan_id manual-test); cosmetic ones never block completion"
+elif [ "$open_count" -lt "$cfg_min_eyes" ]; then
   gate=false
   reason="$open_count unresolved eyes criteria, below minEyesCriteria=$cfg_min_eyes"
 elif [ "$cfg_require_surface" = "true" ] && [ -n "$surfaces" ] && ! $diff_known; then
@@ -423,6 +438,7 @@ wf_emit CHROME_UNRECORDED    "$chrome_unrecorded"
 wf_emit CHROME_UNTESTED      "$chrome_untested"
 wf_emit PROGRESS_INCOMPLETE  "$([ "$chrome_unrecorded" -gt 0 ] && echo true || echo false)"
 wf_emit PROGRESS_MISSING     "$chrome_missing"
+wf_emit LANE                 "$LANE"
 
 if $explain; then
   {
@@ -434,5 +450,6 @@ if $explain; then
     echo "  settled by test-progress.md: ${MANUAL_RESOLVED_RECORD:-0} on build ${build_sha:0:7}${build_sha:+ }${resolved_file:+(record read)}${resolved_file:-(no record read)}"
     echo "  surface: requireRenderingSurface=$cfg_require_surface hit=${surface_hit:-none}"
     echo "  chrome-assisted open: $chrome_open (unrecorded: $chrome_unrecorded, untested with reason: $chrome_untested)"
+    echo "  lane: $LANE${LANE_REASONS:+ — $LANE_REASONS}"
   } >&2
 fi

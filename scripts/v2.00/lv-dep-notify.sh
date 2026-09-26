@@ -68,6 +68,11 @@
 #   --links        <text>   free text for the new report's Links: field —
 #                            a ticket, a decision record, a related artifact
 #                            in the target project
+#   --lane express          declare the express lane on each filed report
+#                            (lv-lane.sh): no human gate in the target, if its
+#                            written plan passes the eligibility check there.
+#                            Refused under LV_UNATTENDED=1. Recorded as declared
+#                            by this operator "via <this project's slug>".
 #   --amends <BUG-id>       this report CORRECTS one already filed in the
 #                            target. Sets Links on both sides in the target's
 #                            own repo: the new one says "Amends <ID>", the
@@ -137,12 +142,14 @@ actual=""
 notes=""
 links=""
 amends=""
+lane="normal"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --to)          to_name="${2:?--to requires a value}"; shift 2 ;;
     --links)       links="${2:?--links requires a value}"; shift 2 ;;
     --amends)      amends="${2:?--amends requires a bug ID}"; shift 2 ;;
+    --lane)        lane="${2:?--lane requires a value}"; shift 2 ;;
     --kind)        kind="${2:?--kind requires a value}"; shift 2 ;;
     --severity)    severity="${2:?--severity requires a value}"; shift 2 ;;
     --description) description="${2:?--description requires a value}"; shift 2 ;;
@@ -172,6 +179,15 @@ case "$kind" in
   notice|request|bug) ;;
   *) echo "Error: --kind must be 'notice', 'request' or 'bug' (got '$kind')" >&2; exit 1 ;;
 esac
+
+case "$lane" in
+  normal|express) ;;
+  *) echo "Error: --lane must be 'express' or 'normal' (got '$lane')" >&2; exit 1 ;;
+esac
+if [ "$lane" = express ] && [ "${LV_UNATTENDED:-}" = "1" ]; then
+  echo "Error: --lane express is a human's statement, and this is an unattended worker (LV_UNATTENDED=1). Nothing was filed." >&2
+  exit 1
+fi
 
 # ── Resolve targets from THIS project's own config ─────────────────────────
 caller_root="$(wf_develop_root)"
@@ -237,6 +253,8 @@ esac
 # word-splits, which turns a multi-word link into several arguments.
 link_args=()
 [ -n "$links" ] && link_args=(--links "$links")
+lane_args=()
+[ "$lane" = express ] && lane_args=(--lane express --lane-by "$(git config user.name 2>/dev/null || whoami) via $caller_slug")
 
 notified=0
 skipped=0
@@ -278,6 +296,7 @@ for i in "${!target_names[@]}"; do
       --expected "${expected:-TBD}" \
       --actual "${actual:-TBD}" \
       "${link_args[@]+"${link_args[@]}"}" \
+      "${lane_args[@]+"${lane_args[@]}"}" \
       --notes "${kind_note}${notes:+$'\n\n'}${notes}"); then
     echo "SKIPPED $name filing-failed"
     echo "lv-dep-notify: filing in $name failed — see output above" >&2

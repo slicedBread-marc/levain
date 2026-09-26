@@ -76,7 +76,8 @@ standing in the target's pipeline beyond the moment the report lands.
      --actual "<what breaks, or changes, if they don't update>" \
      --notes "<deploy reference, migration guide, timeline>" \
      [--links "<ticket, decision record, related artifact over there>"] \
-     [--amends <BUG-id>]
+     [--amends <BUG-id>] \
+     [--lane express]
    ```
    Omit `--to` to broadcast to every declared dependent; pass it to reach just one. Omitted
    fields land as `TBD` — never invent them.
@@ -89,6 +90,12 @@ standing in the target's pipeline beyond the moment the report lands.
    ID>`. It needs `--to` whenever more than one target is configured — the ID belongs to one
    project's counter, and the same number means something different in each. If the back-link
    fails, the script says so loudly: relay that, because a one-sided link is worse than none.
+
+   **`--lane express` only when the user asked for it.** It declares, in each target, that the
+   work runs to production with no human gate if the target's written plan passes the eligibility
+   check there, and is recorded as declared by the operator "via" this project. The target's
+   filing prints a pre-check warning when the request text already suggests a downgrade — relay
+   it. Refused under `LV_UNATTENDED=1`: a worker never declares work safe to ship unseen (LVI-025).
 
    **Severity is urgency to act, not how bad the change is in the abstract.** `Critical`/`High`
    for something that breaks a dependent's integration now or on its next deploy; `Low` for a

@@ -250,7 +250,17 @@ if $apply; then
         printf '%s\n' "$gating" | grep -qx "$t" && { hit="$t"; break; }
       done
     fi
+    # The express lane answers this approval when a human accepted the gating
+    # tag with `lv-lane.sh check --accept-warnings` and the AMENDED plan still
+    # passes — status re-checks the text as it now reads, so a replan that
+    # widened scope past the limits is refused here like any other (LVI-025).
+    LANE=none
     if [ -n "$hit" ]; then
+      eval "$("$SELF_DIR/lv-lane.sh" status "$plan_id" 2>/dev/null || true)"
+    fi
+    if [ -n "$hit" ] && [ "$LANE" = express ]; then
+      echo "$plan_id carries the gating tag '$hit'; the express lane answers its spec-approval (accepted: ${LANE_ACCEPTED:-—})." >&2
+    elif [ -n "$hit" ]; then
       eval "$("$SELF_DIR/lv-gate-status.sh" "$plan_id" spec-approval 2>/dev/null || true)"
       if [ "${GATE_ANSWERED:-false}" != "true" ] || [ "${GATE_STALE:-false}" = "true" ]; then
         why="unanswered"

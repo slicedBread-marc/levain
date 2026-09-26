@@ -13,6 +13,11 @@
 #   --slug      <kebab-case>               (default: derived from the title)
 #   --description / --steps / --expected / --actual / --links / --notes  <text>
 #   --no-commit                            leave it staged for the caller
+#   --lane      express|normal             (default: normal) declare the express lane —
+#                                           no human gate, if the written plan passes
+#                                           lv-lane.sh's eligibility check. A human's
+#                                           statement: refused under LV_UNATTENDED=1
+#   --lane-by   <who>                      who declared it (default: git user.name)
 #
 # Output is an eval contract:
 #   BUG_ID='BUG-041'
@@ -56,6 +61,8 @@ actual=""
 links=""
 notes=""
 do_commit=true
+lane="normal"
+lane_by=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -71,6 +78,8 @@ while [ $# -gt 0 ]; do
     --links)       links="${2:?--links requires a value}"; shift 2 ;;
     --notes)       notes="${2:?--notes requires a value}"; shift 2 ;;
     --no-commit)   do_commit=false; shift ;;
+    --lane)        lane="${2:?--lane requires a value}"; shift 2 ;;
+    --lane-by)     lane_by="${2:?--lane-by requires a name}"; shift 2 ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *)  if [ -z "$title" ]; then title="$1"; else
           echo "Error: unexpected argument '$1' — the title is one argument, quote it" >&2; exit 1
@@ -92,6 +101,20 @@ case "$kind" in
   bug|request|notice) ;;
   *) echo "Error: --kind must be 'bug', 'request' or 'notice' (got '$kind')" >&2; exit 1 ;;
 esac
+
+case "$lane" in
+  normal|express) ;;
+  *) echo "Error: --lane must be 'express' or 'normal' (got '$lane')" >&2; exit 1 ;;
+esac
+
+# Checked before a number is allocated: a refused declaration must not leave a
+# bug behind that the filer believes is in the express lane (LVI-025).
+if [ "$lane" = express ] && [ "${LV_UNATTENDED:-}" = "1" ]; then
+  echo "Error: --lane express is a human's statement, and this is an unattended worker (LV_UNATTENDED=1)." >&2
+  echo "       A worker never declares its own work safe to ship unseen. Nothing was filed." >&2
+  exit 1
+fi
+[ -n "$lane_by" ] || lane_by=$(git config user.name 2>/dev/null || whoami)
 
 # Derive the slug from the title when none was given: lowercase, non-alphanumerics
 # to single hyphens, trimmed, capped at 6 words so the folder name stays readable.
@@ -132,6 +155,7 @@ mkdir -p "$bug_dir"
   printf '> **Source:** %s\n' "$source_who"
   printf '> **Plan:** _(none — link added by /lv-spec when a fix plan is created)_\n'
   printf '> **Links:** %s\n' "${links:-_(none)_}"
+  [ "$lane" = express ] && printf '> **Lane:** express (declared by %s, %s)\n' "$lane_by" "$(date -u +%Y-%m-%d)"
   printf '\n## Description\n%s\n' "${description:-TBD}"
   printf '\n## Steps to Reproduce\n%s\n' "${steps:-TBD}"
   printf '\n## Expected\n%s\n' "${expected:-TBD}"
@@ -140,6 +164,13 @@ mkdir -p "$bug_dir"
 } > "$bug_dir/bug.md"
 
 echo "$bug_id filed → $bug_dir" >&2
+
+# The events.log line is what lv-lane.sh corroborates the header field with: a
+# Lane field typed into a bug by anything else does not count.
+if [ "$lane" = express ]; then
+  wf_event lane-declare "$bug_id" "express declared by $lane_by"
+  "$SELF_DIR/lv-lane.sh" precheck "$bug_id" || true
+fi
 
 if $do_commit; then
   # >&2: stdout is the eval contract above, and lv-commit.sh reports what it

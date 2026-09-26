@@ -96,8 +96,8 @@ the machine is fixed with `git reset`; a pushed one is already running for users
 | Name | Reason | Use instead |
 |-|-|-|
 | `merge` | **Already unattended.** `/lv-test`'s exit path runs `git push -u`, `gh pr create` and `gh pr merge --merge` with no human, and routes a failure back to the builder itself. A `merge` key would change nothing. | — |
-| `spec-approval` | Has a surface, with rounds and tag escapes | `specApproval.mode: verdict` |
-| `manual-test` | Has a surface, keyed on the rendering surface the diff touches | `manualTestGate` |
+| `spec-approval` | Has a surface, with rounds and tag escapes | `specApproval.mode: verdict`; for one plan, [the express lane](#the-express-lane-one-plan-no-human-gate) |
+| `manual-test` | Has a surface, keyed on the rendering surface the diff touches | `manualTestGate`; for one plan, [the express lane](#the-express-lane-one-plan-no-human-gate) |
 | `force-push`, `history-rewrite`, `claim-steal` | Not promotions. WFI-159's own framing: someone authorizing merges and deployments almost certainly does not mean these. | — |
 
 WFI-159 lists merges among the blocked decisions. That part of the report is wrong, and
@@ -317,6 +317,96 @@ those is what made the same gate quote "205 commits" for a batch of 353.
 
 ---
 
+## The express lane: one plan, no human gate
+
+Everything above is project-wide. The express lane is the one authorization scoped to a
+**single piece of work**: a human says, when filing a bug or brief, that it is small and safe
+enough to run to production with nobody looking, and a script checks that the written plan agrees
+(a client's LVI-025 — a small family-app bug stopped at spec approval on a `security` tag, would
+have stopped at an `eyes:blocking` criterion, and again at `production-push`).
+
+It is **not a grantable name** — there is no `express` in `standing_for`, and `--list` says so.
+It is a per-plan grant, and it is two halves owned by different parties:
+
+| Half | Who | How |
+|-|-|-|
+| Declared | A human, at inception | `lv-bug-new.sh --lane express`, `lv-dep-notify.sh --lane express`, or `lv-lane.sh declare BRF-NNN` for a brief. Writes `> **Lane:** express (declared by <who>, <date>)` and a `lane-declare` line in `events.log`. **Refused under `LV_UNATTENDED=1`.** The plan inherits it from its `Bug:`/`Brief:` header |
+| Checked | `lv-lane.sh`, mechanically, twice | `precheck` on the request text at filing, warning only. `check` on the written plan at spec, before any gate would open — and again by every consumer, so a plan amended after its check is judged as it now reads |
+
+A declaration counts only when `events.log` corroborates it: a `Lane:` field that no
+`lane-declare` wrote downgrades, and says why. The field is text in a tracked file; the event is
+what the human's filing left behind.
+
+### What the check refuses
+
+Configurable under `lane.express` in `levain.yml`; the defaults are the ones below.
+
+```yaml
+lane:
+  express:
+    maxSteps: 5          # `### Step` headings under `## Steps`
+    maxFiles: 15         # distinct paths on the steps' `**Files:**` lines
+    buildPaths: []       # extra globs that count as build/deploy surface
+    contractPaths: []    # globs that are a contract another repo consumes
+```
+
+| Disqualifier | Read from |
+|-|-|
+| More than `maxSteps` steps, or more than `maxFiles` files — or neither countable | `## Steps` |
+| Build or deploy surface: Dockerfiles, compose files, `.github/workflows/`, project and solution files, `fly.toml`, entrypoints (`Program.cs`, `Startup.cs`, `*entrypoint*`) | paths and text |
+| Auth or route policy: `[Authorize]`, `RequireAuthorization`, CSP, route policies, OIDC, CORS, cookies | paths and text |
+| Secrets, credentials, `.env`, keys | paths and text |
+| Schema or data migrations, persistent-data paths | paths and text |
+| A new third-party dependency, or a dependency manifest touched | paths and text |
+| The `security` tag, or any `specApproval.gateTags` tag | the registry's Tags |
+| A contract shared between repos | text, and `contractPaths` |
+| `(external)` or `(soak)` criteria — they stop the deploy at `deploy-deferred-criteria`, which the lane never answers | `#### Manual` |
+
+Text is read from `## Goal`, `## Steps` and `## Design Decisions` only. A text match is a
+heuristic and **errs toward downgrading**: "holds no secret" matches `secret`. A false positive
+costs one human gate; a false negative ships unseen.
+
+`projectProfile.tier` is **not** an input. A live app whose profile still reads `pre-launch` is
+precisely the case a risk check must not trust.
+
+### A pass, and a fail
+
+**Pass** — for this plan only, each answer logged as an `autonomy-use` line starting `express:`:
+
+| Gate | Answered by | Effect |
+|-|-|-|
+| `spec-approval` (gate tags included, once accepted) | `lv-lane.sh answer PLN spec-approval`, `/lv-spec` step 6 | `draft → ready`, no gate |
+| `manual-test` | `lv-manual-gate.sh` reports `GATE=false`, `LANE=express`; `lv-lane.sh answer PLN manual-test` | open eyes criteria ticked and listed under `## Post-ship checklist` for a human after it ships |
+| `production-push` | `lv-autonomy.sh production-push`, via `lv-lane.sh push-covered` | one push per plan, when every code commit in `origin/main..main` names a `complete`, lane-cleared plan and no merge resolves code of its own |
+
+**Fail** — the plan downgrades to the normal lane. The reasons go into `plan.md`'s `## Lane`
+section, on the board (`/lv-tray`, "express lane"), and into any `spec-approval` question the
+plan then opens, which is how they reach the rack. A human may force it:
+
+```bash
+scripts/lv-exec.sh lv-lane.sh check PLN-NNN --accept-warnings   # refused under LV_UNATTENDED=1
+```
+
+That records the exact warnings accepted, keyed per path and term. A warning that appears later —
+a replan that adds a Dockerfile — is not covered, and downgrades again.
+
+### Never bypassed
+
+The lane answers the three gates above and nothing else. These stand whatever it says:
+
+- a worker's `needs-input` question, `scope-reduction`, `goal-missing`, `stuck`;
+- the permission baseline below;
+- failing tests, a verify finding, a FAIL at test — those route to the builder as always;
+- the cross-plan consistency pass;
+- `deploy-deferred-criteria`;
+- `max_unattended_per_day`: an express push counts as a `production-push authorized` line
+  against it, like any other unattended action.
+
+The lane's own bookkeeping — the header field, `## Lane`, `## Post-ship checklist` — is
+excluded from the review fingerprint, so a lane check never makes a review verdict stale.
+
+---
+
 ## Permission baseline: what an unattended worker may never do
 
 Standing grants decide when the pipeline may act **without asking**. The baseline decides
@@ -402,7 +492,8 @@ each provider's own credential scoping are the deeper layers.
   contains that class mechanically; not launching the worker removes the occasion for it.
   The skip is latched, so a sweep says *why* once rather than once a minute forever.
 - **It does not answer judgment gates.** `spec-approval`, `manual-test`, `needs-input`,
-  `scope-reduction`, `stuck` are untouched and still exit 20.
+  `scope-reduction`, `stuck` are untouched and still exit 20. The express lane (below) answers
+  the first two for a single plan a human declared, and nothing else.
 - **It grants nothing retroactively.** A grant written today does not legitimise a
   promotion that already happened.
 

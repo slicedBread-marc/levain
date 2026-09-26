@@ -174,11 +174,15 @@ Before starting, confirm E2E passed on release:
    `lv-gate-close.sh` enforces the same thing from the other side — `--basis autonomy` is refused
    on this gate name, because no autonomy action stands behind it.
    ```bash
-   COVERS=; scripts/lv-exec.sh lv-autonomy.sh production-push --quiet || COVERS=--covers-push
+   COVERS=; scripts/lv-exec.sh lv-autonomy.sh production-push --check --quiet || COVERS=--covers-push
    scripts/lv-exec.sh lv-gate-open.sh DEPLOY deploy-deferred-criteria \
      "<the check's output> — <commit list from step 3>" --skill lv-deploy $COVERS
    scripts/lv-exec.sh lv-unclaim.sh DEPLOY
    ```
+   `--check` because this is a probe, not the push: the recording form counts against the
+   daily `production-push` ceiling and would spend an express-lane plan's one push on a question
+   (LVI-025).
+
    **`--covers-push` makes this the deploy's only question** when the push has no standing
    grant: the script appends to the question that approving also pushes, and step 14's
    `lv-promote-approval.sh push` accepts the answer while `main`'s code is exactly this release
@@ -416,8 +420,11 @@ Before starting, confirm E2E passed on release:
     ```bash
     scripts/lv-exec.sh lv-autonomy.sh production-push
     ```
-    Exit `0` — run `git push origin main` and say, in the completion message, that a standing
-    grant did it and which one. Anything else — print the manual instruction above and stop.
+    Exit `0` — run `git push origin main` and say, in the completion message, what authorized it
+    — quote the script's line: a standing grant, or **the express lane**, which answers `0` when
+    every code commit in `origin/main..main` belongs to a `complete` plan whose lane still holds,
+    once per plan (`lv-lane.sh push-covered`, LVI-025). Anything else — print the manual
+    instruction above and stop.
     Attended runs never call this: a human who is present is asked, not looked up.
 
     **Unattended, with no grant, the push is asked for at a gate** — see
@@ -475,7 +482,7 @@ Set when `LV_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   | `1` or `2` | No grant, or malformed | Open the gate below (exit 2: include the script's stderr verbatim — a malformed grant is a broken file, not a refusal), then unclaim and exit 0 — **STOP. Do not merge, push, or run step 6 or anything after it.** |
 
   ```bash
-  COVERS=; scripts/lv-exec.sh lv-autonomy.sh production-push --quiet || COVERS=--covers-push
+  COVERS=; scripts/lv-exec.sh lv-autonomy.sh production-push --check --quiet || COVERS=--covers-push
   scripts/lv-exec.sh lv-gate-open.sh DEPLOY deploy-approval "<commit list from step 3>" --skill lv-deploy $COVERS
   scripts/lv-exec.sh lv-unclaim.sh DEPLOY
   ```
@@ -512,7 +519,7 @@ Set when `LV_UNATTENDED=1` — the daemon dispatched this run against the fixed 
 - **Step 14, unattended — the push.** Ask, in this order, and stop at the first `0`:
   ```bash
   scripts/lv-exec.sh lv-promote-approval.sh push      # a human approved THIS main tip at the gate
-  scripts/lv-exec.sh lv-autonomy.sh production-push   # a standing grant
+  scripts/lv-exec.sh lv-autonomy.sh production-push   # a standing grant, or the express lane
   ```
   Either `0` → `git push origin main` from `release-branches/main`, and say in the completion
   message which one authorized it (quote the script's line). `lv-promote-approval.sh push` also

@@ -463,6 +463,24 @@ specApproval:
   gateTags:
     - security
 
+# ── Express lane ────────────────────────────────────────────────────────────
+# Per artifact, not per project: a human files a bug or brief with
+# `--lane express` (or `lv-lane.sh declare BRF-NNN`), and if the written plan
+# passes the eligibility check its spec-approval, manual test and one
+# production push are answered with no human. A plan that fails is downgraded
+# to the normal lane with the reasons written into it. See docs/autonomy.md.
+#
+# The limits below are the defaults; uncomment to change them. Build/deploy
+# surface, auth, secrets, migrations, new dependencies, the `security` tag and
+# every gateTags tag always disqualify.
+#
+# lane:
+#   express:
+#     maxSteps: 5
+#     maxFiles: 15
+#     buildPaths: []       # extra globs counted as build/deploy surface
+#     contractPaths: []    # globs another repo consumes as a contract
+
 # ── Prior work ──────────────────────────────────────────────────────────────
 # Before a builder starts, lv-prior-work.sh looks for a commit already on
 # develop that names this plan (or the bug it consumes) and touches something

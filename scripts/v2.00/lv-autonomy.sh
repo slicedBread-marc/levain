@@ -64,6 +64,15 @@
 #   history-rewrite   and deployments" almost certainly does not mean these.
 #   claim-steal       taking a live claim is a judgment about another session.
 #
+# The express lane (lv-lane.sh, LVI-025) is the one other thing this answers
+# `production-push` on, and it is not a grantable name: it is a per-PLAN grant,
+# declared by a human on one bug or brief and checked mechanically against the
+# written plan. When no standing grant covers the push, `lv-lane.sh
+# push-covered` is asked whether every code commit in origin/main..main belongs
+# to a plan the lane cleared. Yes is authorized once per plan, logged as
+# "production-push authorized by the express lane", and counted against
+# max_unattended_per_day with the other unattended actions.
+#
 # A grant is scoped, dated, attributed and EXPIRING. All four are required
 # while `mode: standing`, and a missing one is exit 2, not a default. An
 # authorization with no end date is a permission; this is not a permissions
@@ -164,6 +173,11 @@ Grantable actions (orchestrator.autonomy.standing_for):
   release           promote develop -> release and run the E2E suite
   deploy            promote release -> main, locally
   production-push   push main to the production remote
+
+Per plan, not grantable here — the express lane (lv-lane.sh):
+  a human declares it on one bug or brief; if the written plan passes the
+  eligibility check, that plan's spec-approval, manual-test and one
+  production-push are answered without a human
 
 Already unattended — granting it would change nothing:
   merge             /lv-test's exit path already pushes, opens the PR and merges it
@@ -284,15 +298,40 @@ if in_list "$action" "$DEFAULT_UNATTENDED" && ! in_list "$action" "$cfg_attended
   by_default=true
 fi
 
+# ── The express lane: a per-plan production push (LVI-025) ─────────────────
+#
+# Asked only when the standing grant would refuse, so a project with a grant
+# sees no change. The lane's own ceiling is max_unattended_per_day, shared with
+# the unattended defaults, counted on the same "production-push authorized"
+# prefix — a loop spending lane pushes stops where any other unattended loop
+# does.
+lane_push() {
+  local plans
+  [ "$action" = production-push ] || return 1
+  plans=$("$(dirname "$0")/lv-lane.sh" push-covered --quiet 2>/dev/null) || return 1
+  [ -n "$plans" ] || return 1
+  lane_plans="$plans"
+  return 0
+}
+lane_plans=""
+by_lane=false
+
 if ! $by_default; then
-  [ "$cfg_mode" = "standing" ] || \
-    refuse "autonomy is 'attended' — $action needs a human. Park a gate and stop." "mode is attended"
-
-  in_list "$action" "$cfg_for" || \
-    refuse "the standing grant covers '${cfg_for% }' — not $action. Park a gate and stop." "not in standing_for"
-
-  [ "$cfg_exp" \< "$today" ] && \
-    refuse "the standing grant expired on $cfg_exp (today is $today). Ask for a fresh one." "grant expired $cfg_exp"
+  standing_refusal=""
+  if [ "$cfg_mode" != "standing" ]; then
+    standing_refusal="autonomy is 'attended' — $action needs a human. Park a gate and stop."$'\t'"mode is attended"
+  elif ! in_list "$action" "$cfg_for"; then
+    standing_refusal="the standing grant covers '${cfg_for% }' — not $action. Park a gate and stop."$'\t'"not in standing_for"
+  elif [ "$cfg_exp" \< "$today" ]; then
+    standing_refusal="the standing grant expired on $cfg_exp (today is $today). Ask for a fresh one."$'\t'"grant expired $cfg_exp"
+  fi
+  if [ -n "$standing_refusal" ]; then
+    if lane_push; then
+      by_lane=true
+    else
+      refuse "${standing_refusal%%$'\t'*}" "${standing_refusal#*$'\t'}"
+    fi
+  fi
 fi
 
 # ── Ceiling ────────────────────────────────────────────────────────────────
@@ -334,6 +373,20 @@ if [ -f "$log" ]; then
     END { print n + 0 }' "$log" 2>/dev/null || true)
   used=${used:-0}
 fi
+if $by_lane; then
+  if [ "$used" -ge "$cfg_max_unattended" ]; then
+    refuse "the unattended ceiling of $cfg_max_unattended $action(s)/day is spent ($used used today) — the express lane does not lift it. Park a gate and stop." \
+           "daily $action ceiling $cfg_max_unattended reached (express lane)"
+  fi
+  if $record; then
+    "$(dirname "$0")/lv-lane.sh" push-covered --spend --quiet >/dev/null 2>&1 || true
+    wf_event autonomy-use "${artifact:-$(printf '%s' "$lane_plans" | tr ' ' ',')}" \
+      "$action authorized by the express lane for $lane_plans (one push per plan) — $((used + 1))/$cfg_max_unattended $action today"
+  fi
+  say "$action authorized — the express lane covers every code commit in origin/main..main ($lane_plans); one push per plan ($((used + 1))/$cfg_max_unattended $action today)."
+  exit 0
+fi
+
 if $by_default; then
   if [ "$used" -ge "$cfg_max_unattended" ]; then
     refuse "the unattended ceiling of $cfg_max_unattended $action(s)/day is spent ($used used today). Park a gate and stop." \

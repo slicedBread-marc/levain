@@ -229,6 +229,7 @@ The orchestrator parks work rather than guessing. These never run unattended:
 | `spec-approval` | A spec may be *written* by a machine; approving what gets built is a human call. Under `specApproval.mode: verdict` this is replaced by the review's verdict, except for plans tagged in `gateTags` |
 | `spec-stuck` | `verdict` mode only — the review blocked the plan for `maxReviewRounds` rounds running |
 | `manual-test` | Criteria that need human eyes, **and** a diff that renders something to a human. A plan that renders nothing never stops here |
+| *(express lane)* | Not a gate — the one exception to this table. A human who files a bug or brief with `--lane express` declares it small and safe; if `lv-lane.sh` finds the written plan still is, its `spec-approval`, `manual-test` and one `production-push` are answered with no human. A plan that fails the check is downgraded, with the reasons in its `## Lane` section, and every gate above applies. See `docs/autonomy.md` in the library |
 | `consistency-migration` | A plan contradicts an already-built dependency — that is a migration, not an amendment |
 | `goal-missing` | The goal is quoted in PRs and by the tester — it is not invented |
 | `migration` | Pending workflow-upgrade actions |

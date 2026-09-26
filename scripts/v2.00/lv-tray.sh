@@ -334,7 +334,29 @@ render_plans() {
       | awk -F'\t' '{ printf "    %-24s %d plan(s)\n", $2, $1 }')
   fi
 
+  # The express lane (LVI-025): every live plan whose `## Lane` section says
+  # what lv-lane.sh last decided, so a downgrade is on the board with its
+  # reason instead of only inside plan.md.
+  local s_lane="" l_row l_id l_slug l_md l_verdict l_first l_n
+  if [ -f "$REGISTRY" ]; then
+    while IFS=$'\037' read -r l_id l_slug l_state _; do
+      case "$l_state" in complete|abandoned) continue ;; esac
+      l_md="$ROOT/plans/${l_id}-${l_slug}/plan.md"
+      [ -f "$l_md" ] && grep -q '^## Lane' "$l_md" 2>/dev/null || continue
+      l_verdict=$(awk '/^## Lane/{i=1;next} /^## /{i=0} i && /\*\*Checked:\*\*/{print; exit}' "$l_md")
+      if printf '%s' "$l_verdict" | grep -q 'downgraded'; then
+        l_n=$(awk '/^## Lane/{i=1;next} /^## /{i=0} i && /^> - /{n++} END{print n+0}' "$l_md")
+        l_first=$(awk '/^## Lane/{i=1;next} /^## /{i=0} i && /^> - /{sub(/^> - /,""); print; exit}' "$l_md" | cut -c1-70)
+        l_row="downgraded — $l_n reason(s): $l_first"
+      else
+        l_row="express — no human gate"
+      fi
+      s_lane+="$(item normal "$l_id" "$l_slug" "$l_row")"$'\n'
+    done < <(wf_registry_rows "$REGISTRY")
+  fi
+
   printf '\n%s\n' "${B}PLANS${R}"
+  section "express lane (lv-lane.sh check <ID>)" "${s_lane%$'\n'}"
   section "needs replanning (/lv-spec)" "${s_replan%$'\n'}"
   section "ready to fix (/lv-implement)" "${s_fix%$'\n'}"
   section "ready to build (/lv-implement)" "${s_build%$'\n'}"

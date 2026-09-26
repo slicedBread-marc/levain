@@ -44,7 +44,7 @@ Rules, in force for the whole session:
 | 4b | Goal confirmation | [AUTO] | Accept your own draft if it is concrete and specific. If you cannot write a concrete goal from the source artifact, [GATE] `goal-missing` |
 | 4c | Tag assignment | [AUTO] | Assign from `lv-list-tags.sh` based on slug, goal, and touched paths |
 | 7c | Auto-test promotion (y/n) | [AUTO] | **Yes** — promote, the same as attended since WFI-006 |
-| Review gate | Plan approval | **[GATE]** or [AUTO] | Depends on `specApproval.mode` — see below |
+| Review gate | Plan approval | **[GATE]** or [AUTO] | Depends on `specApproval.mode`, and on the express lane (`lv-lane.sh`, [Exit — unattended](#exit--unattended) step 6) — see below |
 | 6a (replan) | An amendment narrows the Goal | **[GATE]** | `scope-reduction` — always, whatever the verdict and whatever the mode |
 
 ### The review gate
@@ -700,6 +700,7 @@ Columns, for reading the table: `ID | Slug | State | Priority | Branch | Updated
 | `mode: verdict`, no gating tag | `draft → ready` — no gate, no human | fix, re-review, up to `maxReviewRounds` |
 | carries a `specApproval.gateTags` tag | **[GATE]** `spec-approval`, with the review attached | same fix loop |
 | `mode: gate` | **[GATE]** `spec-approval`, with the review attached | same fix loop |
+| either of the two above, and `lv-lane.sh answer PLN-NNN spec-approval` exits `0` | `draft → ready` — the express lane answered it (step 6) | same fix loop |
 
 ```
 draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-approval] (state stays draft)
@@ -770,7 +771,21 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
 
    `--basis` is **required** under `LV_UNATTENDED=1` and the script checks it: `human:<ref>` must resolve to a real commit or a real file. That is the mechanical form of the rule above — a back-fill is a record of a decision someone else made, so it has to point at where they made it. Without a reference the close is refused with exit 4 and the gate stays open, which is the correct outcome: you have found no evidence, so this is a gate. **Never invent a standing authorization to get past it.** A conversational instruction — "process them all", "go ahead" — is not a grant; `spec-approval` is on `lv-autonomy.sh`'s never-grantable list, and a worker approving its own spec is client-a's WFI-227.
 
-   **Needs a gate** (`SPEC_MODE` is `gate`, or the plan carries a tag in `GATE_TAGS`) — commit the reviewed plan, leave the state at `draft`, park, and exit. The gate question carries the verdict, because the human is now deciding on a *reviewed* plan and should not have to open the file to learn that:
+   **Then the express lane — before deciding whether this plan needs a gate.** A human may have declared, on the bug or brief this plan came from, that it runs with no human gate at all (LVI-025). Whether it may is decided by a script, not by you, against the plan as you just wrote it:
+   ```bash
+   scripts/lv-exec.sh lv-lane.sh answer PLN-NNN spec-approval   # when the rule below says "needs a gate"
+   scripts/lv-exec.sh lv-lane.sh check PLN-NNN                  # otherwise
+   ```
+   | Exit | Meaning | What you do |
+   |-|-|-|
+   | `0` | Express holds. `answer` has logged the approval as `express` in `events.log` | Take the **Otherwise** transition below — no gate. Say in the commit message `approved by the express lane` |
+   | `1` | Declared, but downgraded. The reasons are now in `plan.md`'s `## Lane` section, committed | Route exactly as below. If you open `spec-approval`, end the question with `Express lane downgraded: <N> reason(s), see ## Lane` — that line is how the downgrade reaches the board and the rack |
+   | `3` | No lane declared | Route exactly as below |
+   | `2` | Usage or a missing plan | Route exactly as below; a lane that cannot be read is the normal lane |
+
+   **Never write a `> **Lane:**` field, a `## Lane` section or an accepted warning yourself.** The script reads a declaration only when `events.log` holds the `lane-declare` line a human's filing wrote, and refuses `declare` and `--accept-warnings` under `LV_UNATTENDED=1` — a worker that could declare its own work safe to ship unseen would have removed every gate this harness has. A downgrade is not yours to argue with either: it is the designed fail-safe, and a false positive costs one human gate.
+
+   **Needs a gate** (`SPEC_MODE` is `gate`, or the plan carries a tag in `GATE_TAGS`, and `lv-lane.sh answer` did not exit 0) — commit the reviewed plan, leave the state at `draft`, park, and exit. The gate question carries the verdict, because the human is now deciding on a *reviewed* plan and should not have to open the file to learn that:
    ```bash
    scripts/lv-exec.sh lv-commit.sh "spec(PLN-NNN-<slug>): reviewed — Approved with notes, awaiting approval" --add plans/PLN-NNN-<slug>/ plans/REGISTRY.md
    scripts/lv-exec.sh lv-gate-open.sh PLN-NNN spec-approval \
@@ -890,7 +905,7 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
     GATE_TAGS=$(scripts/lv-exec.sh lv-list-tags.sh --gating)
     eval "$(scripts/lv-exec.sh lv-gate-status.sh PLN-NNN spec-approval)"
     ```
-    If the plan carries a tag in `GATE_TAGS` **and** `GATE_ANSWERED` is not `true`, or `GATE_STALE=true`, **[GATE]** `spec-approval` with the *amendment* in the question, leave the state at `draft`, and exit. Same rule as the new-plan exit: an approval is given to a document, and the document changed.
+    If the plan carries a tag in `GATE_TAGS` **and** `GATE_ANSWERED` is not `true`, or `GATE_STALE=true`, first ask `scripts/lv-exec.sh lv-lane.sh answer PLN-NNN spec-approval`: exit `0` means the express lane still holds for the plan *as amended* (it re-reads the text), and you continue to step 7. Otherwise **[GATE]** `spec-approval` with the *amendment* in the question, leave the state at `draft`, and exit. Same rule as the new-plan exit: an approval is given to a document, and the document changed.
 
     client-a's PLN-110 (WFI-178) was tagged `contract`, the project's only gating tag. A replan widened Step 10 from 2 documents to 10 and added a test; the plan reached `ready` and was dispatchable on an approval that `lv-gate-status.sh` reported stale seconds later. `lv-registry-update.sh`'s guard could not catch it — it refuses `draft → ready` without a review *of record*, and a fresh review of record existed. The review says the plan is sound; the gate asks whether a human accepts what it now promises.
 

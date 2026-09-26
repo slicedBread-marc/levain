@@ -68,7 +68,12 @@ Order of work:
    eval "$(scripts/lv-exec.sh lv-manual-gate.sh <PLN-ID>)"
    ```
    - `GATE='false'` → **do not stop for a human.** A plan whose diff renders nothing to a human never stops for a human. But `GATE='false'` is a statement about *human eyes*, not about test results, and it does not turn an untested criterion into a PASS:
-     - Any criterion recorded **FAIL** → take the **findings** exit and route back to the builder. Scope is not reduced here and `GATE='false'` does not authorize it.
+     - Any criterion recorded **FAIL** → take the **findings** exit and route back to the builder. Scope is not reduced here and `GATE='false'` does not authorize it. **The express lane does not change this.**
+     - `LANE='express'` → a human declared this plan safe to ship unseen, and the lane check still passes on the plan as written (LVI-025). Instead of deferring the untested eyes criteria, move them to the plan's post-ship checklist — the script ticks each one, lists it under `## Post-ship checklist` for a human after it ships, logs the answer as `express`, and commits:
+       ```bash
+       scripts/lv-exec.sh lv-lane.sh answer <PLN-ID> manual-test
+       ```
+       Exit `0` → go to the all-pass exit. Exit `1` → the lane downgraded between the gate script and now (the plan changed): ask `lv-manual-gate.sh` again and follow its new answer. Never tick an eyes criterion by hand to get the same effect — the completion guard reads a ticked box as *settled*, and only the lane's own record says why it was.
      - Each remaining untested criterion → defer it with `lv-defer-criterion.sh`, giving `$GATE_REASON`, per [Deferring a criterion](#deferring-a-criterion) — and mind the quoting rule above (WFI-194). A deferral is the form the completion guard can read; a free-text "untested" note in `test-progress.md` is not, and `lv-registry-update.sh` refuses `testing → complete` when an `eyes:blocking` criterion has no PASS, no deferral and no answered gate (client-d WFI-009).
      - Only then take the all-pass exit path (step 4). The **Completion gate** below governs that exit, and this bullet is not an exception to it.
    - `GATE='true'` → **[GATE]** once, with everything that is left listed together:

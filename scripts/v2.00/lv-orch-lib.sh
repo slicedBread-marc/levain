@@ -883,6 +883,10 @@ wf_plan_fingerprint() {
 #     a specification it amends the plan body and `## Amendments`, both still
 #     hashed — so a real consistency amendment still reads as stale, and only
 #     the bookkeeping line stops doing so.
+#   - `## Lane`, `## Post-ship checklist` and the `> **Lane:**` header line.
+#     All three are written by lv-lane.sh, after the review, by design: the
+#     express lane is checked against the reviewed plan, so hashing its verdict
+#     would make every lane check void the review it was checking (LVI-025).
 #   - Trailing whitespace, which no reviewer read.
 #
 # The `## Goal` one-liner stays IN. It is the plan's promise, a scope reduction
@@ -896,10 +900,11 @@ wf_plan_body_fingerprint() {
   plan_md="$root/plans/${id}-${slug}/plan.md"
   [ -f "$plan_md" ] || return 0
   awk '
-    /^## /  { inside = ($0 ~ /^## (Review|Consistency)([ \t]|$)/) ? 1 : 0 }
+    /^## /  { inside = ($0 ~ /^## (Review|Consistency|Lane|Post-ship checklist)([ \t]|$)/) ? 1 : 0 }
     /^### / { hist   = ($0 ~ /^### Goal History([ \t]|$)/) ? 1 : 0 }
     /^## /  { hist = 0 }
     inside || hist { next }
+    /^[ \t]*>?[ \t]*\*\*Lane:\*\*/ { next }
     {
       line = $0
       gsub(/\[[xX]\]/, "[ ]", line)     # a ticked box is not a spec change
