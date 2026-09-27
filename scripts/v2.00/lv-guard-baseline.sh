@@ -68,8 +68,9 @@
 #   pipe-to-shell     curl or wget piped into a shell or interpreter
 #
 # This is a guard against a mistaken or misled agent, not a sandbox against a
-# hostile one. A command assembled at run time (eval, base64, variables) can
-# get past a text match. Deny rules and the provider's own scoping remain the
+# hostile one. Rules match where a command starts (LVI-036), so prose naming a
+# command in a quoted argument is not refused. A command assembled at run time
+# (base64, variables) can still get past it. Deny rules and the provider's own scoping remain the
 # deeper layers.
 #
 # THE HOOKS (LVI-013)
@@ -141,8 +142,12 @@ RULES = [
     ("provider-destroy", r"\bgh\s+repo\s+edit\b.*--visibility\b", "changing a repository's visibility"),
     ("provider-destroy", r"\bgh\s+api\b.*(-X|--method)\s*DELETE\b", "a DELETE through the GitHub API"),
     ("history-rewrite", r"\bgit\s+(filter-repo|filter-branch)\b", "rewriting history"),
-    ("pipe-to-shell", r"\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|dash|python3?|perl|ruby|node)\b", "piping a download into an interpreter"),
 ]
+
+# Piping a download into an interpreter spans two commands, so it is checked
+# on the pipeline below, not as a rule; this is the fallback for text the
+# lexer cannot follow.
+PIPE_TO_SHELL = r"\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|dash|python3?|perl|ruby|node)\b"
 
 # What the secrets-deny-patterns and provider-deny hooks added (see the shell
 # above). A line this cannot use refuses: a pack's rule that silently fails to
@@ -212,15 +217,17 @@ if not isinstance(cmd, str):
 # refused as though it ran it (a client's LVI-004), and the worker had to fall
 # back to the Edit tool. So the body is dropped before matching, but only
 # when the reader is on this short list of data sinks and nothing on the
-# opening line pipes onward; a body fed to a shell, an interpreter, ssh or
-# anything else is still checked in full.
+# opening line pipes onward. A body a shell reads stays in the command, where
+# its lines are commands like any other; a body anything else reads (python,
+# node, ...) is code of another language and is checked as plain text.
 DATA_SINKS = {"cat", "tee", "git", "gh", "wc", "grep", "head", "tail", "sort"}
-HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "ssh"}
+HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"]?)\\?([A-Za-z_][A-Za-z0-9_]*)\2")
 
 
 def strip_heredocs(text):
     lines = text.split("\n")
-    out, i = [], 0
+    out, text_bodies, i = [], [], 0
     while i < len(lines):
         line = lines[i]
         out.append(line)
@@ -228,25 +235,215 @@ def strip_heredocs(text):
         m = HEREDOC.search(line)
         if not m:
             continue
-        before = re.split(r"\$\(|\(|\||;|&&|\|\|", line[:m.start()])[-1]
+        before = re.split(r"\$\(|\(|;|&&|\|\|", line[:m.start()])[-1]
+        piped = line[m.end():].split("|", 1)
+        reader = piped[1] if len(piped) > 1 else before.split("|")[-1]
         try:
-            first = shlex.split(before)[0] if before.strip() else ""
+            rw = [w for w in shlex.split(reader) if w not in ("sudo", "env", "command")]
+            first = os.path.basename(rw[0]) if rw else ""
         except ValueError:
             first = ""
-        data = os.path.basename(first) in DATA_SINKS and "|" not in line[m.end():]
+        kind = "data" if first in DATA_SINKS and len(piped) == 1 else "shell" if first in SHELLS else "text"
         dash, delim = m.group(1), m.group(3)
+        body = []
         while i < len(lines):
-            body = lines[i]
+            b = lines[i]
             i += 1
-            if (body.lstrip("\t") if dash else body) == delim:
-                out.append(body)
+            if (b.lstrip("\t") if dash else b) == delim:
+                out.append(b)
                 break
-            if not data:
-                out.append(body)
-    return "\n".join(out)
+            body.append(b)
+        if kind == "shell":
+            out.extend(body)
+        elif kind == "text":
+            text_bodies.append("\n".join(body))
+    return "\n".join(out), text_bodies
 
 
-cmd = strip_heredocs(cmd)
+# A rule names a command, so it is matched where a command starts, not
+# anywhere in the text: a worker filing an issue whose quoted --actual named a
+# secrets tool's print command, and a test asserting a runbook lacks it, were
+# both refused as though they ran it (a client's LVI-036). lex() splits shell
+# text into simple commands and pulls out every $(...) and `...` it meets
+# outside single quotes, which run and are checked in turn.
+class Unparsed(ValueError):
+    pass
+
+
+def close_paren(s, i):
+    """Index of the ')' closing the '(' at s[i]; quotes inside are skipped."""
+    depth, q = 0, None
+    while i < len(s):
+        c = s[i]
+        if q:
+            if c == "\\" and q == '"':
+                i += 1
+            elif c == q:
+                q = None
+        elif c in "'\"":
+            q = c
+        elif c == "\\":
+            i += 1
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    raise Unparsed("unclosed $(")
+
+
+def close_tick(s, i):
+    j = i + 1
+    while j < len(s):
+        if s[j] == "\\":
+            j += 2
+            continue
+        if s[j] == "`":
+            return j
+        j += 1
+    raise Unparsed("unclosed backtick")
+
+
+def lex(s):
+    """([[word, ...], ...], [(command index, separator before it)], [substitution text])"""
+    cmds, seps, subs = [[]], ["start"], []
+    word, i, n = None, 0, len(s)
+
+    def end_word():
+        nonlocal word
+        if word is not None:
+            cmds[-1].append(word)
+            word = None
+
+    def new_cmd(sep):
+        end_word()
+        if cmds[-1]:
+            cmds.append([])
+            seps.append(sep)
+        else:
+            seps[-1] = sep if seps[-1] == "start" else seps[-1]
+
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            if s[i + 1:i + 2] != "\n":
+                word = (word or "") + s[i + 1:i + 2]
+            i += 2
+        elif c == "'":
+            j = s.find("'", i + 1)
+            if j < 0:
+                raise Unparsed("unclosed '")
+            word = (word or "") + s[i + 1:j]
+            i = j + 1
+        elif c == '"':
+            i += 1
+            buf = ""
+            while i < n and s[i] != '"':
+                if s[i] == "\\" and i + 1 < n:
+                    buf += s[i + 1] if s[i + 1] in '"\\$`' else s[i:i + 2]
+                    i += 2
+                elif s.startswith("$(", i):
+                    j = close_paren(s, i + 1)
+                    subs.append(s[i + 2:j])
+                    buf += s[i:j + 1]
+                    i = j + 1
+                elif s[i] == "`":
+                    j = close_tick(s, i)
+                    subs.append(s[i + 1:j])
+                    buf += s[i:j + 1]
+                    i = j + 1
+                else:
+                    buf += s[i]
+                    i += 1
+            if i >= n:
+                raise Unparsed('unclosed "')
+            word = (word or "") + buf
+            i += 1
+        elif s.startswith("$(", i):
+            j = close_paren(s, i + 1)
+            subs.append(s[i + 2:j])
+            word = (word or "") + s[i:j + 1]
+            i = j + 1
+        elif c == "`":
+            j = close_tick(s, i)
+            subs.append(s[i + 1:j])
+            word = (word or "") + s[i:j + 1]
+            i = j + 1
+        elif c in " \t":
+            end_word()
+            i += 1
+        elif c == "|" and s[i + 1:i + 2] != "|":
+            new_cmd("|")
+            i += 1
+        elif c in "\n;&|(){}":
+            new_cmd(";")
+            i += 1
+        elif c in "<>":
+            end_word()
+            i += 1
+        elif c == "#" and word is None:
+            while i < n and s[i] != "\n":
+                i += 1
+        else:
+            word = (word or "") + c
+            i += 1
+    end_word()
+    return cmds, seps, subs
+
+
+# Words that run the rest of their line as a command.
+PREFIXES = {"sudo", "env", "command", "builtin", "exec", "nice", "nohup", "time", "timeout", "xargs", "stdbuf", "watch"}
+# Commands that run a string argument as shell text.
+STRING_RUNNERS = {"sh", "bash", "zsh", "dash", "ksh", "eval", "ssh", "su"}
+
+
+def head(words):
+    """The words from the command name on: assignments and wrappers dropped."""
+    k = 0
+    while k < len(words):
+        w = words[k]
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", w, re.S):
+            k += 1
+        elif os.path.basename(w) in PREFIXES:
+            k += 1
+            while k < len(words) and (words[k].startswith("-") or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*|[\d.]+[smhd]?", words[k], re.S)):
+                k += 1
+        else:
+            break
+    return words[k:]
+
+
+def commands(text, depth=0):
+    """Each simple command in text, as its words from the command name on."""
+    if depth > 4:
+        raise Unparsed("nested too deep")
+    cmds, seps, subs = lex(text)
+    found = []
+    for sub in subs:
+        found += commands(sub, depth + 1)
+    for idx, words in enumerate(cmds):
+        h = head(words)
+        if not h:
+            continue
+        name = os.path.basename(h[0])
+        found.append(([name] + h[1:], seps[idx]))
+        # A command name with spaces in it is a quoted script; a shell, eval or
+        # ssh runs its string arguments.
+        if re.search(r"\s", h[0]):
+            found += commands(h[0], depth + 1)
+        if name in STRING_RUNNERS:
+            for w in h[1:]:
+                if re.search(r"\s", w):
+                    found += commands(w, depth + 1)
+            found += commands(" ".join(h[1:]), depth + 1)
+    return found
+
+
+INTERPRETERS = {"sh", "bash", "zsh", "dash", "python", "python3", "perl", "ruby", "node"}
+
+cmd, text_bodies = strip_heredocs(cmd)
 flat = " ".join(cmd.split())
 
 try:
@@ -261,9 +458,39 @@ for w in words:
         if part and re.fullmatch(r"\.env(\.[\w-]+)?", part) and is_secret(part):
             block("secret-read", f"the command references secret material ({part})")
 
-for rule, rx, why in RULES:
-    if re.search(rx, flat):
-        block(rule, why)
+for body in text_bodies:
+    body_flat = " ".join(body.split())
+    for rule, rx, why in RULES:
+        if re.search(rx, body_flat):
+            block(rule, why)
+
+try:
+    simple = commands(cmd)
+except Unparsed:
+    simple = None
+
+if simple is None:
+    # Text the lexer cannot follow is matched anywhere, as before LVI-036:
+    # a guard that cannot read a command refuses rather than guesses.
+    for rule, rx, why in RULES:
+        if re.search(rx, flat):
+            block(rule, why)
+    if re.search(PIPE_TO_SHELL, flat):
+        block("pipe-to-shell", "piping a download into an interpreter")
+else:
+    for rule, rx, why in RULES:
+        crx = re.compile(rx)
+        for words_, _ in simple:
+            if crx.match(" ".join(words_)):
+                block(rule, why)
+    fetched = False
+    for words_, sep in simple:
+        if sep != "|":
+            fetched = False
+        if words_[0] in ("curl", "wget"):
+            fetched = True
+        elif fetched and sep == "|" and words_[0] in INTERPRETERS:
+            block("pipe-to-shell", "piping a download into an interpreter")
 
 # git push: flags and refspecs, per push in a compound command.
 for seg in re.split(r"&&|\|\||;|\|", cmd):
