@@ -2901,7 +2901,7 @@ assert_eq "needs-input fits any state" "ok" \
 # listed state=complete fit=ok, 45 minutes after PLN-039 was committed, merged,
 # completed and promoted to main. Answering it as written would have re-landed
 # all of it; only reading git history caught that.
-"$SCRIPT_DIR/lv-registry-update.sh" PLN-910 testing complete >/dev/null 2>&1
+LV_ALLOW_UNGATED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-910 testing complete >/dev/null 2>&1
 assert_eq "but not once the plan is complete" "mismatch" \
   "$("$SCRIPT_DIR/lv-list-gates.sh" PLN-910 2>/dev/null | cut -f8)"
 "$SCRIPT_DIR/lv-registry-update.sh" PLN-910 complete abandoned >/dev/null 2>&1
@@ -6202,6 +6202,42 @@ registry_add_row PLN-982 ungated-plan draft
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-982" >/dev/null 2>&1
 assert_ok "a plan that was never gated transitions normally" \
   env LV_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-982 draft ready
+
+# ═══════════════════════════════════════════════════════════════════════
+section "A plan does not complete over an open question (LVI-008)"
+
+# PLN-006's unattended tester opened needs-input, kept going, and committed
+# testing -> complete three minutes later. The gate stood a day on a
+# finished plan, reported by the daemon as blocking the pipeline.
+cd "$TEST_DIR/main" || exit 1
+registry_add_row PLN-978 open-question testing
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-978" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-978 needs-input "Is the identity provider on :8080?" >/dev/null 2>&1
+
+out=$(env LV_ALLOW_UNTESTED=1 LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-978 testing complete - 2>&1; echo "rc=$?")
+assert_eq "testing -> complete is refused while a needs-input gate is open" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
+assert_eq "and names the gate and replays its question" "true" \
+  "$(printf '%s' "$out" | grep -q "OPEN 'needs-input' gate" && printf '%s' "$out" | grep -q 'identity provider on :8080' && echo true || echo false)"
+assert_eq "the row is untouched" "testing" "$(registry_state PLN-978)"
+
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-978 "provider is on :8084" --only needs-input >/dev/null 2>&1
+assert_ok "once answered, the same call goes through" \
+  env LV_ALLOW_UNTESTED=1 LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-978 testing complete -
+
+# manual-test is closed by /lv-test after the commit (guard ordering), so it
+# never refuses here.
+registry_add_row PLN-979 own-gate testing
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-979" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-979 manual-test "Check the layout" >/dev/null 2>&1
+assert_ok "an open manual-test gate does not refuse — the tester closes it next" \
+  env LV_ALLOW_UNTESTED=1 LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-979 testing complete -
+
+registry_add_row PLN-989 reconcile testing
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-989" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-989 needs-input "Stale?" >/dev/null 2>&1
+assert_ok "LV_ALLOW_UNGATED=1 overrides for the reconcile case" \
+  env LV_ALLOW_UNTESTED=1 LV_ALLOW_UNMERGED=1 LV_ALLOW_UNGATED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-989 testing complete -
 
 # ═══════════════════════════════════════════════════════════════════════
 section "A human test nobody performed does not complete (client-d WFI-009)"

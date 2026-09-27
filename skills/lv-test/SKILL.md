@@ -102,7 +102,7 @@ Order of work:
 | Exit | `git push` refused (protected branch, non-fast-forward, permission) | **[GATE]** | `merge-failed` — question is the git error verbatim |
 | Exit | `gh pr merge` failed | [AUTO] | Already routes to the builder on its own — follow that path, don't gate |
 
-**Never guess.** You have no eyes on the running app beyond what Chrome and the test suites report. If a criterion's outcome is not something you established from a test result, a Chrome observation, or a build log, it is **not** a PASS — defer it to the `manual-test` gate. Recording an unverified PASS is worse than recording nothing, because it ships. A test result you did not produce yourself, in this plan's stamped tree, is in the same category as a guess — and a FAIL copied out of the bug report that motivated the plan is the shape this actually took (WFI-132). Anything you are about to ask that isn't in the table above is a [GATE] with gate name `needs-input`.
+**Never guess.** You have no eyes on the running app beyond what Chrome and the test suites report. If a criterion's outcome is not something you established from a test result, a Chrome observation, or a build log, it is **not** a PASS — defer it to the `manual-test` gate. Recording an unverified PASS is worse than recording nothing, because it ships. A test result you did not produce yourself, in this plan's stamped tree, is in the same category as a guess — and a FAIL copied out of the bug report that motivated the plan is the shape this actually took (WFI-132). Anything you are about to ask that isn't in the table above is a [GATE] with gate name `needs-input`. **Opening any gate ends the run:** unclaim and exit 0 in the same breath. Do not defer the criteria you just asked about and carry on to `complete` — a client's PLN-006 tester opened `needs-input` about the identity provider, did exactly that three minutes later, and left the question standing a day on a finished plan (LVI-008). `lv-registry-update.sh` now refuses `→ complete` while any gate but `manual-test` is open.
 
 Everything else (creating the PR, writing findings, routing back to the builder) is a normal state transition and proceeds without asking.
 
@@ -1073,7 +1073,11 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
 
    **If `lv-registry-update.sh` exits non-zero here, stop — do not run the two lines
    below it.** They are the guards, and dropping them on a plan the registry still
-   reads as `testing` is the race `docs/guard-ordering.md` exists to prevent. The
+   reads as `testing` is the race `docs/guard-ordering.md` exists to prevent. A
+   refusal naming an OPEN gate other than `manual-test` means a question is still
+   waiting on a human (LVI-008): unattended, unclaim and exit 0 — the gate holds
+   dispatch; attended, put its question to the human and close it with their answer
+   via `lv-gate-close.sh PLN-NNN "<answer>" --only <gate>`, then retry. Otherwise the
    refusal you will see here is the `eyes:blocking` completion guard: a Manual
    criterion has no PASS, no deferral and no answered gate, and by this point the
    PR is already merged to `release`, so the work is shipped and only the bookkeeping

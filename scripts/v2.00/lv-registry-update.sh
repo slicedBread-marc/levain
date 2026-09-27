@@ -328,6 +328,45 @@ if [ "$from_state" = "draft" ] && [ "$to_state" = "ready" ] && [ "${LV_ALLOW_UNG
   fi
 fi
 
+# --- Guard: a plan does not finish over a question still open on it --------
+#
+# A gate is a question to a human, and dispatch holds while it stands. A plan
+# that reaches `complete` with one open strands it: nothing will ever be
+# dispatched at a finished plan to hear the answer, the daemon reports the plan
+# as blocking the pipeline, and lv-list-gates.sh shows fit=mismatch until a
+# human reconciles it.
+#
+# a client's LVI-008: PLN-006's unattended tester opened `needs-input` at
+# 20:28:41Z asking whether the local identity provider was up, did not stop,
+# deferred the criteria it had asked about, and committed testing -> complete
+# at 20:31:39Z. Its own exit then tried to close `manual-test`, which the
+# WFI-010 rule rightly refused. The gate stood for a day on a complete plan.
+#
+# The tester cannot close someone else's gate on its way out (WFI-010: that
+# records its exit message as the answer to a different question). So the
+# transition refuses and names the question; whoever completes the plan
+# answers it deliberately. `manual-test` is exempt: /lv-test closes it AFTER
+# this commit, by design (docs/guard-ordering.md).
+#
+# LV_ALLOW_UNGATED=1 overrides, for the reconcile case as above.
+if [ "$to_state" = "complete" ] && [ "${LV_ALLOW_UNGATED:-}" != "1" ]; then
+  if og_file=$(wf_gate_file "$plan_id"); then
+    og_name=$(wf_gate_field "$og_file" GATE_NAME 2>/dev/null || true)
+    if [ "$og_name" != "manual-test" ]; then
+      og_q=$(wf_gate_field "$og_file" GATE_QUESTION --unescape 2>/dev/null || true)
+      echo "Error: $plan_id has an OPEN '${og_name:-unknown}' gate — refusing '$from_state' -> 'complete'." >&2
+      echo "       A question is still waiting on a human, and nothing is dispatched at a" >&2
+      echo "       finished plan to hear the answer (a client's LVI-008)." >&2
+      [ -n "$og_q" ] && echo "       Asked: $og_q" >&2
+      echo "       Unattended: you asked it — stop here, unclaim, exit 0; the gate holds dispatch." >&2
+      echo "       Attended: put the question to the human, record their answer, then run this again:" >&2
+      echo "         lv-gate-close.sh $plan_id \"<their answer>\" --only ${og_name:-<gate>}" >&2
+      echo "       Nothing was changed. LV_ALLOW_UNGATED=1 overrides (reconcile only)." >&2
+      exit 1
+    fi
+  fi
+fi
+
 # --- Guard: a human test that nobody performed ---------------------------
 #
 # `testing -> complete` is the transition that asserts the human criteria were
