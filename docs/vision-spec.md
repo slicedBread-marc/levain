@@ -95,6 +95,26 @@ So something stuck in a parked or low project stays stuck on purpose: `next` rep
 8. **Ranking belongs to `{{OWNER}}`.** Propose a change to `{{TREE}}PRIORITIES.md` with its
    evidence, and apply it only once `{{OWNER}}` agrees. `next` never re-ranks.
 9. **Never a secret value**, and no path into a secrets store.
+10. **Guard the whole family.** Whenever `{{OWNER}}` moves to change one project (its role,
+    scope, audience, data, auth, hosting, a feature, a filing), check that change against
+    everything else *before* it is applied or filed. This is why the session runs in the
+    coordinator and not as a brainstorm inside the project: a project session sees its own
+    repo, and the overseer sees the interdependencies (LVI-030). Check against:
+    - the principles and non-goals in `{{ROOT}}`
+    - the standing facts and known risks in `{{PROJECT_MAP}}`
+    - every accepted decision in `{{DECISIONS}}`, not only the ones that name the project
+    - the other projects' roles and pages, especially what each one **deliberately does not**
+      do
+    - work in flight in `{{WORK}}`, and work already filed in other projects that the change
+      would invalidate or duplicate
+    - the coordinator's own standing conventions (its `CLAUDE.md`)
+
+    **Raise every conflict as soon as you see it**, even mid-thread and even when `{{OWNER}}`
+    seems settled. Cite both sources and say what the change would cost the other side.
+    `{{OWNER}}` decides: drop or reshape the change, change the vision (rule 2), or supersede
+    the decision (rule 4). Never resolve a conflict silently in either direction. When the check
+    finds nothing, say so in one line, so `{{OWNER}}` knows it ran. Record the result in the
+    session note's **Cross-portfolio check**.
 
 ## Inquiry (explore, challenge)
 
@@ -164,7 +184,8 @@ In challenge, ask of every claim what would have to be true, what it costs and w
 Always: `{{ROOT}}`, the latest 2–3 session notes, `{{TREE}}BACKLOG.md`, `{{TREE}}PRIORITIES.md`
 (it ranks projects, and so board items), the latest check-in note, pages the theme touches,
 `{{PROJECT_MAP}}`. When needed: `{{DECISIONS}}`, `{{WORK}}`, `{{LOG}}`, a project's own
-`CLAUDE.md` or README to check a claim.
+`CLAUDE.md` or README to check a claim. Whenever a session changes a project, rule 10's sources
+are required reading, not optional.
 
 ## Output format: the root
 
@@ -262,6 +283,9 @@ The **Goals** table is what the next check-in grades; keep its wording checkable
 ## Q&A
 ## Conclusions
 ## Changes to the vision
+## Cross-portfolio check
+<Rule 10: each conflict found, its sources, and what {{OWNER}} decided. "Ran, none found" when
+clean. Omit only when the session changed no project.>
 ## Tensions & open threads
 ## Actions taken
 ```
