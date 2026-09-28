@@ -94,14 +94,28 @@ release-branches/release → release's own permanent worktree — staging enviro
    Then unclaim (`scripts/lv-exec.sh lv-unclaim.sh RELEASE`) and exit. Next step: work on a plan with `/lv-implement`, test it with `/lv-test`, then return here.
 4a. **Check for open deferred criteria on the plans being staged:**
    ```bash
-   scripts/lv-exec.sh lv-deferred-check.sh $(git log origin/release..develop --oneline | grep -oE 'PLN-[0-9]+' | sort -u)
+   scripts/lv-exec.sh lv-deferred-check.sh --range origin/release..develop
    ```
-   Exit `1` — show its output to the user alongside the commit list in the next step. These are
-   `external`/`soak`/`unbuilt` criteria read from `plans/deferred-criteria.md` that a plan shipped
-   without — most are harmless, but one describing a hard runtime dependency (a secret, a
-   certificate, a required external service) can crash production if `/lv-deploy` promotes it
-   before that dependency exists (WFI-011). Surfacing here gives `/lv-deploy` a second, earlier
-   read of the same list.
+   Exit `0` — nothing open, continue. Exit `1` — show its output to the user alongside the commit
+   list in the next step. These are `external`/`soak`/`unbuilt` criteria read from
+   `plans/deferred-criteria.md` that a plan shipped without — most are harmless, but one
+   describing a hard runtime dependency (a secret, a certificate, a required external service)
+   can crash production if `/lv-deploy` promotes it before that dependency exists (WFI-011).
+   Surfacing here gives `/lv-deploy` a second, earlier read of the same list. Exit `2` — the range
+   could not be read; say so in your report and continue, because step 4a informs and never gates.
+
+   **This step is read-only and never stops the release, attended or not.** Do not open a gate
+   over its output, do not treat a deferred criterion as an E2E prerequisite, and do not read
+   `plans/deferred-criteria.md` yourself to widen the list. Deferred criteria are production
+   checks; the gate that decides them is `/lv-deploy` step 4a's `deploy-deferred-criteria`, scoped
+   to the batch being promoted. What the suite needs to run is declared in `levain.yml`
+   `e2ePrereqs:` and checked at step 6b, nowhere else. Under `LV_UNATTENDED=1` there is no user to
+   show the list to — quote it in your final report and continue at step 5. A client's LVI-037:
+   an unattended worker opened a `needs-input` gate on RELEASE claiming three of PLN-032's
+   criteria (a Fly secret, a `secrets-tool verify --fly`, a second repo running on `localhost:8083`)
+   were "prerequisites required for the test suite to function". PLN-032 had completed eleven
+   days earlier and was not in the batch — a PLN-041 spec commit merely mentioned it, and the old
+   `grep` of every ID in every subject pulled it in. Staging stalled until a human closed the gate.
 5. **Ask whether this promotion needs a person at all** (coordinator WFI-006):
    ```bash
    scripts/lv-exec.sh lv-autonomy.sh release

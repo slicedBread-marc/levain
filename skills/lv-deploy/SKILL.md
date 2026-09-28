@@ -149,8 +149,12 @@ Before starting, confirm E2E passed on release:
    Then unclaim (`scripts/lv-exec.sh lv-unclaim.sh DEPLOY`) and exit.
 4a. **Check for open deferred criteria on the plans being promoted:**
    ```bash
-   scripts/lv-exec.sh lv-deferred-check.sh $(git log --oneline release --not $BASE | grep -oE 'PLN-[0-9]+' | sort -u)
+   scripts/lv-exec.sh lv-deferred-check.sh --range release --not $BASE
    ```
+   The batch is the plan each commit is *about* — the first plan ID in its subject; a plan a
+   subject only mentions is not in it (LVI-037). Exit `2` means the range could not be read: that
+   is a check that did not run, not a clean result — attended, tell the user and ask; under
+   `LV_UNATTENDED=1`, open a `needs-input` gate quoting the error, then unclaim and exit 0.
    Exit `0` — nothing open, continue. Exit `1` — print its output to the user before the confirmation
    prompt below: these are `external`/`soak`/`unbuilt` criteria that plan shipped without,
    read from `plans/deferred-criteria.md`. Most are harmless (a soak period, a future

@@ -126,6 +126,25 @@ assert_eq "a plan with none: exit 0"                   "0" "$(rc "$SD/lv-deferre
 assert_eq "no plan ids (an empty range): exit 0, not a usage error" "0" "$(rc "$SD/lv-deferred-check.sh")"
 has "ids are pulled out of commit-subject noise"       "$("$SD/lv-deferred-check.sh" "feat(PLN-001-merged-one):" 2>/dev/null)" "PLN-001"
 
+# --range: the batch is the plan each commit is ABOUT — the first id in its
+# subject. A later id is a mention (LVI-037: a spec commit naming another plan
+# pulled that plan's production-only criteria into a staging run).
+git tag lvi037-base
+git commit -q --allow-empty -m "spec(PLN-010-other): record PLN-001 production step applied"
+git commit -q --allow-empty -m "registry(PLN-010): deps → PLN-004,PLN-001"
+out=$("$SD/lv-deferred-check.sh" --range lvi037-base..HEAD 2>/dev/null); code=$?
+assert_eq "--range: a plan only mentioned in a subject is not in the batch" "0" "$code"
+hasnt "--range: its rows are not read out"             "$out" "PLN-001"
+git commit -q --allow-empty -m "test(PLN-001-merged-one): complete — merged, see PLN-010"
+out=$("$SD/lv-deferred-check.sh" --range lvi037-base..HEAD 2>/dev/null); code=$?
+assert_eq "--range: a plan a commit is about is in the batch" "1" "$code"
+assert_eq "--range: with both of its rows"            "2" "$(printf '%s\n' "$out" | grep -c 'PLN-001')"
+assert_eq "--range: multi-arg revisions pass through" "1" "$(rc "$SD/lv-deferred-check.sh" --range HEAD --not lvi037-base)"
+assert_eq "--range: an empty range is exit 0"         "0" "$(rc "$SD/lv-deferred-check.sh" --range HEAD..HEAD)"
+assert_eq "--range: no revision args is a usage error" "2" "$(rc "$SD/lv-deferred-check.sh" --range)"
+assert_eq "--range: a bad revision is exit 2, not a clean pass" "2" "$(rc "$SD/lv-deferred-check.sh" --range nosuchref..HEAD)"
+git reset -q --hard lvi037-base && git tag -d lvi037-base >/dev/null
+
 # ═════════════════════════════════════════════════════════════════════════════
 echo
 echo "4. lv-bug-close-sweep.sh — triaged bugs whose plan already shipped"
