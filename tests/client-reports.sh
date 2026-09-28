@@ -6225,13 +6225,20 @@ assert_eq "the row is untouched" "testing" "$(registry_state PLN-978)"
 assert_ok "once answered, the same call goes through" \
   env LV_ALLOW_UNTESTED=1 LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-978 testing complete -
 
-# manual-test is closed by /lv-test after the commit (guard ordering), so it
-# never refuses here.
+# manual-test is closed by an ATTENDED /lv-test after the commit (guard
+# ordering), with the human in the session as its answer — so attended it
+# does not refuse. Unattended there is no answer and the close is refused for
+# want of a --basis (LVI-009: PLN-003's tester asked, ruled PASS itself 55s
+# later, completed, and stranded the gate), so unattended it refuses.
 registry_add_row PLN-979 own-gate testing
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-979" >/dev/null 2>&1
 "$SCRIPT_DIR/lv-gate-open.sh" PLN-979 manual-test "Check the layout" >/dev/null 2>&1
-assert_ok "an open manual-test gate does not refuse — the tester closes it next" \
-  env LV_ALLOW_UNTESTED=1 LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-979 testing complete -
+out=$(env LV_UNATTENDED=1 LV_ALLOW_UNTESTED=1 LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-979 testing complete - 2>&1; echo "rc=$?")
+assert_eq "unattended: an open manual-test gate refuses -> complete (LVI-009)" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=1' && printf '%s' "$out" | grep -q "OPEN 'manual-test' gate" && echo true || echo false)"
+assert_eq "unattended: the row is untouched" "testing" "$(registry_state PLN-979)"
+assert_ok "attended: an open manual-test gate does not refuse — the tester closes it next" \
+  env -u LV_UNATTENDED LV_ALLOW_UNTESTED=1 LV_ALLOW_UNMERGED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-979 testing complete -
 
 registry_add_row PLN-989 reconcile testing
 git add -A >/dev/null 2>&1 && git commit -qm "add PLN-989" >/dev/null 2>&1

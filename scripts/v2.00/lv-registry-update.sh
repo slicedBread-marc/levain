@@ -345,18 +345,26 @@ fi
 # The tester cannot close someone else's gate on its way out (WFI-010: that
 # records its exit message as the answer to a different question). So the
 # transition refuses and names the question; whoever completes the plan
-# answers it deliberately. `manual-test` is exempt: /lv-test closes it AFTER
-# this commit, by design (docs/guard-ordering.md).
+# answers it deliberately. `manual-test` is exempt ATTENDED ONLY: /lv-test
+# closes it AFTER this commit, by design (docs/guard-ordering.md), with the
+# human in the session as the answer. Unattended there is no such answer —
+# lv-gate-close.sh refuses an unattended close with no --basis, and a tester
+# has none — so an open manual-test at this point is a question the worker
+# asked and did not wait for, and completing strands it exactly as above.
+# a client's LVI-009: PLN-003's unattended tester opened manual-test on an
+# eyes:blocking criterion at 21:05:21Z, ruled it PASS itself from an older
+# build 55 seconds later, committed complete, and its gate close was refused
+# (no --basis). The gate stood open on a finished plan.
 #
 # LV_ALLOW_UNGATED=1 overrides, for the reconcile case as above.
 if [ "$to_state" = "complete" ] && [ "${LV_ALLOW_UNGATED:-}" != "1" ]; then
   if og_file=$(wf_gate_file "$plan_id"); then
     og_name=$(wf_gate_field "$og_file" GATE_NAME 2>/dev/null || true)
-    if [ "$og_name" != "manual-test" ]; then
+    if [ "$og_name" != "manual-test" ] || [ "${LV_UNATTENDED:-0}" = "1" ]; then
       og_q=$(wf_gate_field "$og_file" GATE_QUESTION --unescape 2>/dev/null || true)
       echo "Error: $plan_id has an OPEN '${og_name:-unknown}' gate — refusing '$from_state' -> 'complete'." >&2
       echo "       A question is still waiting on a human, and nothing is dispatched at a" >&2
-      echo "       finished plan to hear the answer (a client's LVI-008)." >&2
+      echo "       finished plan to hear the answer (a client's LVI-008, LVI-009)." >&2
       [ -n "$og_q" ] && echo "       Asked: $og_q" >&2
       echo "       Unattended: you asked it — stop here, unclaim, exit 0; the gate holds dispatch." >&2
       echo "       Attended: put the question to the human, record their answer, then run this again:" >&2
