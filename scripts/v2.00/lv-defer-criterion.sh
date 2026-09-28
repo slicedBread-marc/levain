@@ -453,6 +453,12 @@ case "$tag" in
   *) echo "Error: tag must be 'external', 'soak' or 'unbuilt' (got '$tag') — eyes:* criteria never defer" >&2; exit 1 ;;
 esac
 
+# The caller's text as given, kept for the plan.md checkoff below. The table
+# copy loses its pipes, and a plan line still has them: DC-066 on a client was
+# a `grep ... | wc -l` criterion passed verbatim on stdin that could not tick,
+# because the matcher was handed the `/ wc -l` spelling (LVI-038).
+plan_criterion="$criterion"
+
 # Pipes would break the table; both fields are free text from a plan or a user.
 criterion=$(printf '%s' "$criterion" | tr '|' '/' | tr -d '\n')
 note=$(printf '%s' "$note" | tr '|' '/' | tr -d '\n')
@@ -543,16 +549,19 @@ elif [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
   # ENVIRON, not -v: awk expands escape sequences in a -v assignment, so a
   # criterion naming a Windows path (`D:\git\...`) loses its backslashes and
   # then matches nothing. ENVIRON hands the bytes over untouched.
-  if LV_CRIT="$criterion" awk -v dc="$next" '
+  if LV_CRIT="$plan_criterion" awk -v dc="$next" '
       # The criterion reaching this script is nearly always the plan text with
       # its inline markdown stripped — a caller reads `- [ ] (external) run
       # `tool doctor` **and** ...` off the screen and types it back without the
       # backticks. A literal substring match then fails on every criterion a
       # planner formatted, which is most of them (WFI-137). Compare a
       # normalised copy of both sides as the fallback: same characters, minus
-      # the emphasis markers and any whitespace the reflow moved.
+      # the emphasis markers and any whitespace the reflow moved. Pipes fold to
+      # `/` on both sides too, so a criterion copied back out of the DC table,
+      # where they were already folded, still finds its line (LVI-038).
       function norm(s) {
         gsub(/[`*_]/, "", s)
+        gsub(/[|]/, "/", s)
         gsub(/[[:space:]]+/, " ", s)
         gsub(/^ | $/, "", s)
         return s

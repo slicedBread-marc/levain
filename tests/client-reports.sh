@@ -2329,6 +2329,26 @@ defermd_miss=$(cd "$DEFERMD" && ./scripts/lv-defer-criterion.sh PLN-052 soak \
 assert_eq "an unmatched criterion says ACTION REQUIRED, not 'note'" "true" \
   "$(printf '%s' "$defermd_miss" | grep -q 'ACTION REQUIRED' && echo true || echo false)"
 
+# A pipe in the criterion is folded to `/` for the DC table. The matcher was
+# handed that folded copy, so a verbatim `grep ... | wc -l` criterion never
+# found its own line (LVI-038, DC-066 on a client).
+cat >> "$DEFERMD/plans/PLN-052-gitignore-probe/plan.md" << 'PLANEOF'
+- [ ] (external) `fly ssh console -C "sh -c 'grep -l doublemapper /proc/[0-9]*/maps 2>/dev/null | wc -l'"` prints `0`
+- [ ] (external) `ps aux | grep relay` shows one process
+PLANEOF
+(cd "$DEFERMD" && ./scripts/lv-defer-criterion.sh PLN-052 external - >/dev/null 2>&1 << 'CRITEOF'
+`fly ssh console -C "sh -c 'grep -l doublemapper /proc/[0-9]*/maps 2>/dev/null | wc -l'"` prints `0`
+CRITEOF
+)
+assert_eq "a criterion carrying a pipe, passed verbatim on stdin, ticks" "true" \
+  "$(grep -F 'doublemapper' "$DEFERMD/plans/PLN-052-gitignore-probe/plan.md" | grep -q '^- \[x\].*deferred as DC-' && echo true || echo false)"
+assert_eq "and the DC row stores it with the pipe folded, so the table holds" "true" \
+  "$(grep -F 'doublemapper' "$DEFERMD/plans/deferred-criteria.md" | grep -qF '/ wc -l' && echo true || echo false)"
+(cd "$DEFERMD" && ./scripts/lv-defer-criterion.sh PLN-052 external \
+   'ps aux / grep relay shows one process') >/dev/null 2>&1
+assert_eq "the folded spelling, copied back out of the table, still ticks" "true" \
+  "$(grep -F 'grep relay' "$DEFERMD/plans/PLN-052-gitignore-probe/plan.md" | grep -q '^- \[x\]' && echo true || echo false)"
+
 # ═══════════════════════════════════════════════════════════════════════
 section "Verify reads the branch's own config (client-a WFI-052)"
 
