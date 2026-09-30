@@ -74,7 +74,22 @@ find_project_root() {
   return 1
 }
 
-ROOT="$(find_project_root)" || { echo "lv-exec.sh: cannot locate scripts/version-map.txt (run from within a project)" >&2; exit 1; }
+# Only when that finds nothing: the session's own project. A hook runs in the
+# session's cwd, and a worker that cd's into an additional working directory
+# (~/Downloads) left every PreToolUse hook unable to find a project — the
+# fail-closed baseline guard then refused every tool call, Read and ToolSearch
+# included, and the worker could neither finish, unclaim, nor file the issue
+# (LVI-031). $CLAUDE_PROJECT_DIR is where the session started; it never outranks
+# a project the cwd is actually in, so LVI-022's rule above still holds. The cd
+# is for the script's own git and wf_develop_root calls, which read the cwd.
+if ! ROOT="$(find_project_root)"; then
+  if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$CLAUDE_PROJECT_DIR/scripts/version-map.txt" ]; then
+    ROOT="$CLAUDE_PROJECT_DIR"
+    cd "$ROOT" || exit 1
+  else
+    echo "lv-exec.sh: cannot locate scripts/version-map.txt (run from within a project)" >&2; exit 1
+  fi
+fi
 
 # ── Resolve effective workflow version ───────────────────────────────────
 # A version is dotted digits and nothing else. This matters: `sort -V` places

@@ -172,6 +172,13 @@ for role in pipeline coordinator; do
   out=$(cd "$C" && CLAUDE_PROJECT_DIR="$C" LV_PACKS="$A" scripts/lv-exec.sh lv-hook.sh project-registry </dev/null 2>&1)
   assert_eq "$role: lv-exec.sh reaches a pack through it" "$out" "$C1"
 done
+# LVI-031: a worker that cd's out of the project runs its hooks from there.
+# The session's project is the fallback, never the first choice.
+E="$TEST_DIR/elsewhere"; mkdir -p "$E"
+out=$(cd "$E" && CLAUDE_PROJECT_DIR="$TEST_DIR/inst-pipeline" LV_PACKS="$A" "$TEST_DIR/inst-pipeline/scripts/lv-exec.sh" lv-hook.sh project-registry </dev/null 2>&1)
+assert_eq "lv-exec.sh outside any project falls back to CLAUDE_PROJECT_DIR" "$out" "$C1"
+out=$(cd "$E" && env -u CLAUDE_PROJECT_DIR "$TEST_DIR/inst-pipeline/scripts/lv-exec.sh" lv-hook.sh project-registry </dev/null 2>&1); rc=$?
+assert_eq "and without it still says it cannot locate a project" "1" "$rc"
 P="$TEST_DIR/inst-pipeline"; K="$TEST_DIR/inst-coordinator"
 [ ! -d "$P/.claude/skills/lv-rack" ] && [ ! -d "$P/.claude/skills/lv-vision" ] \
   && ok "pipeline: no overseer skills (/lv-rack, /lv-vision)" || bad "pipeline: no overseer skills"
