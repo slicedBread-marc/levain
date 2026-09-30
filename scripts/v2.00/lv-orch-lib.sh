@@ -1091,9 +1091,31 @@ wf_goal_span() {
 #
 # Prints one criterion text per line. No file, no rows, no output, exit 0 —
 # "nothing was recorded" is an answer, not an error.
+#
+# Unattended (LV_UNATTENDED=1), a PASS counts only if the COMMITTED file holds
+# it too. Every criterion this set settles is a `#### Manual` one, and an
+# unattended worker has no eyes: a PASS it wrote into the working copy this
+# run is a guess, however it is worded. A client's LVI-033: an unattended
+# tester rewrote two eyes:cosmetic rows a human had FAILed to PASS ("all
+# verified") and the gate subtracted them. A human's PASS was committed by the
+# session that recorded it, so it survives the filter.
 wf_test_progress_passes() {
-  local file="$1" sha="${2:-}"
+  local file="$1" sha="${2:-}" committed
   [ -f "$file" ] || return 0
+  if [ "${LV_UNATTENDED:-0}" = "1" ] \
+     && git -C "$(dirname "$file")" rev-parse --git-dir >/dev/null 2>&1; then
+    committed=$(git -C "$(dirname "$file")" show "HEAD:./$(basename "$file")" 2>/dev/null || true)
+    [ -n "$committed" ] || return 0
+    grep -xF -f <(printf '%s\n' "$committed" | wf_test_progress_passes_of "$sha") \
+      <(wf_test_progress_passes_of "$sha" < "$file") || true
+    return 0
+  fi
+  wf_test_progress_passes_of "$sha" < "$file"
+}
+
+# wf_test_progress_passes_of [sha] — the parser behind the above, on stdin.
+wf_test_progress_passes_of() {
+  local sha="${1:-}"
   awk -F'|' -v sha="$sha" '
     function trim(x) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", x); return x }
     NF < 6 { next }
@@ -1113,7 +1135,7 @@ wf_test_progress_passes() {
         }
       }
     }
-  ' "$file"
+  '
 }
 
 # wf_live_criteria <plan.md>

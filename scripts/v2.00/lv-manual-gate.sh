@@ -44,7 +44,11 @@
 #   CHROME_OPEN — unchecked `#### Chrome-Assisted` criteria
 #   CHROME_UNRECORDED — how many of those test-progress.md holds no result
 #     or reason for (never run, or the record was never written)
-#   CHROME_UNTESTED — how many it records as not run, with a reason
+#   CHROME_UNTESTED — how many it records as not run, with a reason: a
+#     headless ERROR, a disagreement with a prior reading, or
+#     `needs: oauth|device|extension|profile`
+#   CHROME_EXCUSED — how many carry some other note instead of a run. They
+#     count in CHROME_UNRECORDED too: a note is not a result (LVI-030)
 #   PROGRESS_INCOMPLETE='true|false' — CHROME_UNRECORDED > 0
 #   PROGRESS_MISSING='<criteria, "; "-joined>' — the unrecorded ones
 #   LANE='express|normal|none' — lv-lane.sh's verdict. Under `express`, open
@@ -222,6 +226,15 @@ fi
 # only for a build git can still resolve here; everything else stays unsettled.
 carried=0
 carried_from=""
+# Unattended, only the committed record carries — the same rule, and the same
+# reason, as wf_test_progress_passes (LVI-033).
+carry_source() {
+  if [ "${LV_UNATTENDED:-0}" = "1" ]; then
+    git -C "$(dirname "$progress_md")" show "HEAD:./$(basename "$progress_md")" 2>/dev/null || true
+  else
+    cat "$progress_md"
+  fi
+}
 if [ -n "$surfaces" ] && [ -n "$build_sha" ] && [ -f "$progress_md" ]; then
   while IFS=$'\t' read -r crit cell; do
     [ -n "$crit" ] || continue
@@ -253,7 +266,7 @@ if [ -n "$surfaces" ] && [ -n "$build_sha" ] && [ -f "$progress_md" ]; then
     NF < 6 { next }
     { c = trim($3); b = trim($4); r = toupper(trim($5))
       if (r == "PASS" && c != "" && tolower(c) != "criterion") print c "\t" b }
-  ' "$progress_md")
+  ' < <(carry_source))
 fi
 
 # ── Criterion counts (single parser, shared with the lint) ────────────────
@@ -284,6 +297,17 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" '
     return t
   }
   function trim(x) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", x); return x }
+  # What counts as "a recorded reason it could not run": the ERROR line a
+  # headless script printed, a headless reading that disagrees with a prior
+  # one, or one of the four things Playwright cannot be (lv-test step 3c).
+  # Anything else is the tester explaining why it did not try.
+  function reasoned(n,   l) {
+    if (n ~ /ERROR/) return 1
+    l = tolower(n)
+    if (l ~ /headless:? *(pass|fail)/ && l ~ /prior/) return 1
+    if (l ~ /needs: *(oauth|device|extension|profile)/) return 1
+    return 0
+  }
   function lookup(nt,   k) {
     if (nt in RES) return nt
     for (k in RES)
@@ -305,14 +329,18 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" '
     text = $0; sub(/^[[:space:]]*-[[:space:]]*\[ \][[:space:]]*/, "", text)
     k = lookup(norm(text))
     if (k != "" && (RES[k] == "PASS" || RES[k] == "FAIL")) print "S\t" text
-    else if (k != "" && NOTE[k] != "") print "R\t" text
+    else if (k != "" && reasoned(NOTE[k])) print "R\t" text
+    else if (k != "" && NOTE[k] != "") print "E\t" text
     else print "U\t" text
   }
 ' <(wf_live_criteria "$ROOT/plans/$plan_name/plan.md" 2>/dev/null) 2>/dev/null || true)
-chrome_open=$(printf '%s\n' "$chrome_out" | grep -c '^[SRU]	' || true)
+chrome_open=$(printf '%s\n' "$chrome_out" | grep -c '^[SREU]	' || true)
 chrome_untested=$(printf '%s\n' "$chrome_out" | grep -c '^R	' || true)
-chrome_unrecorded=$(printf '%s\n' "$chrome_out" | grep -c '^U	' || true)
-chrome_missing=$(printf '%s\n' "$chrome_out" | sed -n 's/^U	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
+chrome_excused=$(printf '%s\n' "$chrome_out" | grep -c '^E	' || true)
+chrome_unrecorded=$(printf '%s\n' "$chrome_out" | grep -c '^[UE]	' || true)
+chrome_missing=$(printf '%s\n' "$chrome_out" | sed -n 's/^[UE]	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
+chrome_blank=$(printf '%s\n' "$chrome_out" | sed -n 's/^U	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
+chrome_excuses=$(printf '%s\n' "$chrome_out" | sed -n 's/^E	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
 chrome_reasoned=$(printf '%s\n' "$chrome_out" | sed -n 's/^R	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
 
 # ── How many open criteria actually count toward gating ───────────────────
@@ -396,10 +424,18 @@ fi
 # Manual counts decided. An unrecorded one is the tester's own unfinished work
 # (lv-test goes back and runs it before asking); one with a recorded reason is
 # genuinely the human's. Either way the gate question has to say so (LVI-040).
-if [ "$chrome_unrecorded" -gt 0 ]; then
+if [ "$chrome_excused" -gt 0 ]; then
+  # LVI-030: an unattended tester wrote "needs browser mode (iframe requires
+  # user interaction)" against all 6 criteria of a plan without running one,
+  # the gate took the notes as reasons, and an attended re-run passed all 6
+  # headlessly in under a minute. A note is not a run.
+  gate=true
+  reason="$chrome_excused Chrome-Assisted criteria carry a note but no headless result (no ERROR, no disagreement, no needs: oauth|device|extension|profile) — run them: $chrome_excuses; $reason"
+fi
+if [ "$chrome_unrecorded" -gt "$chrome_excused" ]; then
   gate=true
   if [ -f "$progress_md" ]; then
-    reason="$chrome_unrecorded Chrome-Assisted criteria have no result in test-progress.md: $chrome_missing; $reason"
+    reason="$((chrome_unrecorded - chrome_excused)) Chrome-Assisted criteria have no result in test-progress.md: $chrome_blank; $reason"
   else
     reason="$chrome_unrecorded Chrome-Assisted criteria have no result — test-progress.md does not exist: $chrome_missing; $reason"
   fi
@@ -436,6 +472,7 @@ wf_emit MANUAL_SCHEMA        "$MANUAL_SCHEMA"
 wf_emit CHROME_OPEN          "$chrome_open"
 wf_emit CHROME_UNRECORDED    "$chrome_unrecorded"
 wf_emit CHROME_UNTESTED      "$chrome_untested"
+wf_emit CHROME_EXCUSED       "$chrome_excused"
 wf_emit PROGRESS_INCOMPLETE  "$([ "$chrome_unrecorded" -gt 0 ] && echo true || echo false)"
 wf_emit PROGRESS_MISSING     "$chrome_missing"
 wf_emit LANE                 "$LANE"

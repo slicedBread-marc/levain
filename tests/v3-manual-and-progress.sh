@@ -332,6 +332,14 @@ assert_eq "every criterion PASS on this build does not stop for a human" "false"
 assert_eq "and all four are counted as settled by the record" "4" "$MANUAL_RESOLVED_RECORD"
 assert_contains "and the reason says where that came from" "already PASS on this build" "$GATE_REASON"
 
+# A client's LVI-033: unattended, a PASS the worker wrote into the working copy
+# is its own guess at an eyes criterion. Only the committed record settles one.
+eval "$(LV_UNATTENDED=1 "$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "unattended, an uncommitted PASS settles nothing" "true 0" "$GATE $MANUAL_RESOLVED_RECORD"
+git add plans/PLN-007-ui/test-progress.md && git commit -qm "test: record" >/dev/null
+eval "$(LV_UNATTENDED=1 "$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "a committed PASS does" "false 4" "$GATE $MANUAL_RESOLVED_RECORD"
+
 # The Build column is the whole point of that file: a PASS is a measurement of
 # one tree, and this is no longer that tree.
 sed -i.bak "s/$ui_sha/0000000/g" plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
@@ -375,8 +383,14 @@ assert_contains "the reason names them" "dragging a photo reorders the grid" "$G
 
 cat >> plans/PLN-007-ui/test-progress.md << PROGRESS
 | 5 | /collage — the photo grid renders every uploaded image | Aug 01 09:15 ($ui_sha) | PASS | headless eval |
-| 6 | /collage — dragging a photo reorders the grid | — | — | headless: drag-and-drop needs a pointer device |
+| 6 | /collage — dragging a photo reorders the grid | — | — | needs browser mode (drag-and-drop requires user interaction) |
 PROGRESS
+# A client's LVI-030: a note is not a run. Drag-and-drop is scriptable.
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "a note with no headless result is not a reason" "1 1 0" "$CHROME_EXCUSED $CHROME_UNRECORDED $CHROME_UNTESTED"
+assert_eq "so the record is incomplete" "true" "$PROGRESS_INCOMPLETE"
+assert_contains "and the tester is told to run it" "no headless result" "$GATE_REASON"
+sed -i.bak 's/| needs browser mode (drag-and-drop requires user interaction) |/| headless: ERROR waitForSelector #photo-2 timed out |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
 eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "one run, one untested with a reason: nothing unrecorded" "0" "$CHROME_UNRECORDED"
 assert_eq "so the record is complete" "false" "$PROGRESS_INCOMPLETE"
