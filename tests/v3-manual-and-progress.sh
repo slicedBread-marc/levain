@@ -393,6 +393,40 @@ eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_contains "no test-progress.md at all is said out loud" "test-progress.md does not exist" "$GATE_REASON"
 mv plans/PLN-007-ui/plan.md.orig plans/PLN-007-ui/plan.md
 
+# A client's LVI-027: an amendment replaced criteria with its own, and the gate
+# read only the original lists — it named the superseded criteria as unrun and
+# never saw the amendment's. Replaced criteria drop out; the amendment's count.
+cp plans/PLN-007-ui/plan.md plans/PLN-007-ui/plan.md.orig
+eval "$("$SCRIPT_DIR/lv-manual-lint.sh" PLN-007 --counts)"; blocking_before=$MANUAL_OPEN_BLOCKING
+cat >> plans/PLN-007-ui/plan.md << 'P'
+
+#### Chrome-Assisted
+- [ ] /collage — the old flat grid shows every photo in one row
+- [ ] /collage — the photo grid renders every uploaded image
+
+## Amendments
+
+### A-1 (BUG-099): the grid becomes a tree
+
+#### Human Test Criteria (A-1) — replace Chrome-Assisted 1
+
+##### Chrome-Assisted
+- [ ] /collage — the photo tree nests every photo under its album
+
+##### Manual
+- [ ] (eyes:blocking) /collage — the album tree reads as the albums the user made
+P
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "a replaced criterion drops out and the amendment's counts" "2" "$CHROME_OPEN"
+assert_contains "the amendment's criterion is named" "photo tree nests" "$PROGRESS_MISSING"
+assert_eq "the replaced one is not" "0" "$(printf '%s' "$PROGRESS_MISSING" | grep -c 'old flat grid')"
+eval "$("$SCRIPT_DIR/lv-manual-lint.sh" PLN-007 --counts)"
+assert_eq "an amendment's Manual criterion is open like any other" "$((blocking_before + 1))" "$MANUAL_OPEN_BLOCKING"
+printf '\n**Supersedes:** Chrome-Assisted 2\n' >> plans/PLN-007-ui/plan.md
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "a Supersedes line retires criteria too" "1" "$CHROME_OPEN"
+mv plans/PLN-007-ui/plan.md.orig plans/PLN-007-ui/plan.md
+
 rm -f plans/PLN-007-ui/test-progress.md
 
 git worktree remove --force feature-branches/PLN-007-ui

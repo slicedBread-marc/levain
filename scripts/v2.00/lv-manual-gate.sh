@@ -308,7 +308,7 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" '
     else if (k != "" && NOTE[k] != "") print "R\t" text
     else print "U\t" text
   }
-' "$ROOT/plans/$plan_name/plan.md" 2>/dev/null || true)
+' <(wf_live_criteria "$ROOT/plans/$plan_name/plan.md" 2>/dev/null) 2>/dev/null || true)
 chrome_open=$(printf '%s\n' "$chrome_out" | grep -c '^[SRU]	' || true)
 chrome_untested=$(printf '%s\n' "$chrome_out" | grep -c '^R	' || true)
 chrome_unrecorded=$(printf '%s\n' "$chrome_out" | grep -c '^U	' || true)

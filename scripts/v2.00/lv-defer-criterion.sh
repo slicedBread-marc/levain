@@ -567,9 +567,9 @@ elif [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
         return s
       }
       BEGIN { done = 0; crit = ENVIRON["LV_CRIT"]; ncrit = norm(crit) }
-      /^####[[:space:]]*Manual/ { in_manual = 1; print; next }
-      /^(#|##|###|####)[[:space:]]/ {
-        if (in_manual && $0 !~ /^####[[:space:]]*Manual/) in_manual = 0
+      /^#####?[[:space:]]*Manual/ { in_manual = 1; print; next }
+      /^#+[[:space:]]/ {
+        if (in_manual && $0 !~ /^#####?[[:space:]]*Manual/) in_manual = 0
       }
       {
         # index() not a regex: the criterion is free text and may contain any
@@ -595,8 +595,8 @@ elif [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
     echo "  Do not complete the plan with the box still empty — an empty box reads as 'silently dropped'." >&2
     echo "  Unchecked Manual criteria in that file:" >&2
     awk '
-      /^####[[:space:]]*Manual/ { in_manual = 1; next }
-      /^(#|##|###|####)[[:space:]]/ { if (in_manual) in_manual = 0 }
+      /^#####?[[:space:]]*Manual/ { in_manual = 1; next }
+      /^#+[[:space:]]/ { if (in_manual) in_manual = 0 }
       in_manual && /^[[:space:]]*-[[:space:]]*\[[ ]\]/ { printf "    %s\n", $0 }
     ' "$plan_file" >&2
   fi

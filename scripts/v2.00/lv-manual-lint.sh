@@ -385,7 +385,7 @@ out=$(awk -v legacy="$legacy" -v resolved="$resolved_file" '
       open_eyes + 0, open_blocking + 0, open_cosmetic + 0, unbuilt + 0, open_untagged + 0, \
       resolved_record + 0
   }
-' "$plan_file")
+' <(wf_live_criteria "$plan_file"))
 
 counts=$(printf '%s\n' "$out" | grep '^C	' | tail -1)
 findings=$(printf '%s\n' "$out" | grep '^F	' || true)

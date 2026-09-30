@@ -1108,6 +1108,87 @@ wf_test_progress_passes() {
   ' "$file"
 }
 
+# wf_live_criteria <plan.md>
+#
+# Prints plan.md as the criteria parsers should read it: the Human Test
+# Criteria that are live NOW, once every amendment is applied. Same line count
+# as the file, so a line number reported against the view is a line number in
+# plan.md.
+#
+#   - An amendment's own `##### Chrome-Assisted` / `##### Manual` lists are
+#     live criteria. They come out as `#### …` headings, which is what every
+#     parser keys on.
+#   - Original criteria an amendment replaces drop out. A line that names
+#     them — a `Human Test Criteria` heading, or a `**Supersedes:**` line —
+#     saying e.g. "replace Chrome-Assisted 1–2 and Manual 8" retires those
+#     criteria of the ORIGINAL `#### Chrome-Assisted` / `#### Manual` lists.
+#     The numbers are positions in the one flat list /lv-test works from and
+#     test-progress.md's `#` column shows (Chrome-Assisted first, then
+#     Manual), so with 7 Chrome-Assisted criteria "Manual 8" is the first
+#     Manual one. A Manual number no larger than the Chrome-Assisted count
+#     cannot be flat, and is read as a position in the Manual list instead.
+#     The retired line becomes an HTML comment: neither criterion nor heading.
+#
+# The parsers used to read only the original `####` lists. A client's PLN-038
+# A-2 replaced two Chrome-Assisted criteria and one Manual criterion with seven
+# and one of its own: the gate named all seven superseded originals as
+# unrecorded, never saw the A-2 criteria, and once the originals were SKIPped
+# it reported CHROME_UNTESTED=2 on a plan whose every live criterion had
+# passed (LVI-027).
+wf_live_criteria() {
+  local file="$1"
+  [ -f "$file" ] || return 0
+  # Two passes over one file: the supersession list can sit after the lists it
+  # retires, and it always does — amendments are appended.
+  # The dashes go in as variables: a range is written `1–2` as often as `1-2`,
+  # and BSD awk has no portable way to spell a multibyte character in a regex.
+  awk -v en='–' -v em='—' '
+    function mark(sec, list,   n, parts, i, ab, k) {
+      n = split(list, parts, ",")
+      for (i = 1; i <= n; i++) {
+        if (parts[i] ~ /^[0-9]+-[0-9]+$/) {
+          split(parts[i], ab, "-")
+          for (k = ab[1] + 0; k <= ab[2] + 0; k++) SUP[sec "\t" k] = 1
+        } else if (parts[i] ~ /^[0-9]+$/) SUP[sec "\t" (parts[i] + 0)] = 1
+      }
+    }
+    function scan(line,   l, sec, rest, m) {
+      l = tolower(line)
+      if (l !~ /replac|supersed/) return
+      gsub(en, "-", l); gsub(em, "-", l)
+      while (match(l, /(chrome-assisted|manual)( criteri(on|a))?[[:space:]]+[0-9]/)) {
+        sec = (substr(l, RSTART, 6) == "manual") ? "manual" : "chrome"
+        rest = substr(l, RSTART + RLENGTH - 1)
+        match(rest, /^[0-9]+([[:space:]]*(-|,|and)[[:space:]]*[0-9]+)*/)
+        m = substr(rest, 1, RLENGTH)
+        gsub(/[[:space:]]*-[[:space:]]*/, "-", m)
+        gsub(/[[:space:]]*(,|and)[[:space:]]*/, ",", m)
+        mark(sec, m)
+        l = substr(rest, RLENGTH + 1)
+      }
+    }
+    FNR == NR {
+      if ($0 ~ /^###+[[:space:]]*Human Test Criteria/ || $0 ~ /^[[:space:]]*\*\*Supersedes:?\*\*/) scan($0)
+      if ($0 ~ /^####[[:space:]]*Chrome-Assisted/) { in_c = 1; next }
+      if ($0 ~ /^#+[[:space:]]/) in_c = 0
+      if (in_c && $0 ~ /^[[:space:]]*-[[:space:]]*\[[ xX]\]/) CN++
+      next
+    }
+    /^####[[:space:]]*Chrome-Assisted/  { sec = "chrome"; n = 0; print; next }
+    /^####[[:space:]]*Manual/           { sec = "manual"; n = 0; print; next }
+    /^#####[[:space:]]*Chrome-Assisted/ { sec = ""; sub(/^#####/, "####"); print; next }
+    /^#####[[:space:]]*Manual/          { sec = ""; sub(/^#####/, "####"); print; next }
+    /^#+[[:space:]]/ { sec = ""; print; next }
+    sec != "" && /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ {
+      n++
+      if (sec == "chrome") gone = (("chrome\t" n) in SUP)
+      else gone = (("manual\t" (n + CN)) in SUP) || (n <= CN && (("manual\t" n) in SUP))
+      if (gone) { print "<!-- superseded by an amendment -->"; next }
+    }
+    { print }
+  ' "$file" "$file"
+}
+
 # ── Claims ────────────────────────────────────────────────────────────────
 #
 # A claim says "a live session is working this artifact". It is only worth
