@@ -439,6 +439,42 @@ assert_eq "an amendment's Manual criterion is open like any other" "$((blocking_
 printf '\n**Supersedes:** Chrome-Assisted 2\n' >> plans/PLN-007-ui/plan.md
 eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "a Supersedes line retires criteria too" "1" "$CHROME_OPEN"
+
+# A client's LVI-010: a later amendment's "replace Manual 2" could retire only
+# an ORIGINAL criterion, so A-4 left A-1's replacement live beside its own.
+# Amendments apply in order: each counts the live list as it stood before it.
+cat >> plans/PLN-007-ui/plan.md << 'P'
+
+### A-2 (BUG-100): albums are folders
+
+#### Human Test Criteria (A-2) — replace Chrome-Assisted 1
+
+##### Chrome-Assisted
+- [ ] /collage — the folder tree nests every photo under its folder
+P
+live=$(bash -c "source '$SCRIPT_DIR/lv-orch-lib.sh'; wf_live_criteria plans/PLN-007-ui/plan.md")
+assert_eq "a later amendment retires an earlier amendment's criterion" "0" \
+  "$(printf '%s\n' "$live" | grep -c 'photo tree nests')"
+assert_eq "and its own replacement is live" "1" "$(printf '%s\n' "$live" | grep -c 'folder tree nests')"
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "the Chrome-Assisted count stays one" "1" "$CHROME_OPEN"
+# Its flat position: every live Chrome-Assisted criterion, then its place among the Manual ones.
+album_pos=$(printf '%s\n' "$live" | awk '
+  /^####[[:space:]]*Chrome-Assisted/ { s = "c"; next }
+  /^####[[:space:]]*Manual/ { s = "m"; next }
+  /^#/ { s = ""; next }
+  s == "c" && /^[[:space:]]*- \[/ { c++ }
+  s == "m" && /^[[:space:]]*- \[/ { m++; if (/album tree reads/) p = m }
+  END { print c + p }')
+cat >> plans/PLN-007-ui/plan.md << P
+
+### A-3 (BUG-101): the album tree check moves to a script
+
+**Supersedes:** Manual $album_pos
+P
+live=$(bash -c "source '$SCRIPT_DIR/lv-orch-lib.sh'; wf_live_criteria plans/PLN-007-ui/plan.md")
+assert_eq "a flat Manual position reaches an amendment's Manual criterion" "0" \
+  "$(printf '%s\n' "$live" | grep -c 'album tree reads')"
 mv plans/PLN-007-ui/plan.md.orig plans/PLN-007-ui/plan.md
 
 rm -f plans/PLN-007-ui/test-progress.md

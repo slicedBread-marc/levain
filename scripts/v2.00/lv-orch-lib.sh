@@ -1148,28 +1148,37 @@ wf_test_progress_passes_of() {
 #   - An amendment's own `##### Chrome-Assisted` / `##### Manual` lists are
 #     live criteria. They come out as `#### …` headings, which is what every
 #     parser keys on.
-#   - Original criteria an amendment replaces drop out. A line that names
-#     them — a `Human Test Criteria` heading, or a `**Supersedes:**` line —
-#     saying e.g. "replace Chrome-Assisted 1–2 and Manual 8" retires those
-#     criteria of the ORIGINAL `#### Chrome-Assisted` / `#### Manual` lists.
-#     The numbers are positions in the one flat list /lv-test works from and
-#     test-progress.md's `#` column shows (Chrome-Assisted first, then
-#     Manual), so with 7 Chrome-Assisted criteria "Manual 8" is the first
-#     Manual one. A Manual number no larger than the Chrome-Assisted count
-#     cannot be flat, and is read as a position in the Manual list instead.
-#     The retired line becomes an HTML comment: neither criterion nor heading.
+#   - Criteria an amendment replaces drop out. A line that names them — a
+#     `Human Test Criteria` heading, or a `**Supersedes:**` line — saying e.g.
+#     "replace Chrome-Assisted 1–2 and Manual 8" retires those criteria. The
+#     numbers are positions in the one flat list /lv-test works from and
+#     test-progress.md's `#` column shows (Chrome-Assisted first, then Manual),
+#     so with 7 Chrome-Assisted criteria "Manual 8" is the first Manual one. A
+#     Manual number no larger than the Chrome-Assisted count cannot be flat,
+#     and is read as a position in the Manual list instead. The retired line
+#     becomes an HTML comment: neither criterion nor heading.
+#   - Amendments apply IN ORDER. A retirement counts positions in the live
+#     list as it stood before the amendment naming it — the original criteria
+#     and every earlier amendment's, less what earlier amendments retired —
+#     and never the amendment's own criteria. An amendment starts at a `###`
+#     heading or a `Human Test Criteria` heading; a `**Supersedes:**` line
+#     belongs to the amendment it sits in.
 #
 # The parsers used to read only the original `####` lists. A client's PLN-038
 # A-2 replaced two Chrome-Assisted criteria and one Manual criterion with seven
 # and one of its own: the gate named all seven superseded originals as
 # unrecorded, never saw the A-2 criteria, and once the originals were SKIPped
 # it reported CHROME_UNTESTED=2 on a plan whose every live criterion had
-# passed (LVI-027).
+# passed (LVI-027). Retirement then reached only the ORIGINAL lists, so a later
+# amendment's "replace Manual 2" could not retire an earlier amendment's
+# criterion: PLN-026's A-4 left A-1's Manual 2 live beside its own replacement,
+# and MANUAL_TOTAL went 3 -> 4 (a client's LVI-010).
 wf_live_criteria() {
   local file="$1"
   [ -f "$file" ] || return 0
-  # Two passes over one file: the supersession list can sit after the lists it
-  # retires, and it always does — amendments are appended.
+  # Two passes over one file: the first records every criterion and every
+  # retirement against the amendment block it sits in and resolves them in
+  # order; the second prints.
   # The dashes go in as variables: a range is written `1–2` as often as `1-2`,
   # and BSD awk has no portable way to spell a multibyte character in a regex.
   awk -v en='–' -v em='—' '
@@ -1178,8 +1187,8 @@ wf_live_criteria() {
       for (i = 1; i <= n; i++) {
         if (parts[i] ~ /^[0-9]+-[0-9]+$/) {
           split(parts[i], ab, "-")
-          for (k = ab[1] + 0; k <= ab[2] + 0; k++) SUP[sec "\t" k] = 1
-        } else if (parts[i] ~ /^[0-9]+$/) SUP[sec "\t" (parts[i] + 0)] = 1
+          for (k = ab[1] + 0; k <= ab[2] + 0; k++) SUP[blk, ++NS[blk]] = sec "\t" k
+        } else if (parts[i] ~ /^[0-9]+$/) SUP[blk, ++NS[blk]] = sec "\t" (parts[i] + 0)
       }
     }
     function scan(line,   l, sec, rest, m) {
@@ -1198,23 +1207,35 @@ wf_live_criteria() {
       }
     }
     FNR == NR {
-      if ($0 ~ /^###+[[:space:]]*Human Test Criteria/ || $0 ~ /^[[:space:]]*\*\*Supersedes:?\*\*/) scan($0)
-      if ($0 ~ /^####[[:space:]]*Chrome-Assisted/) { in_c = 1; next }
-      if ($0 ~ /^#+[[:space:]]/) in_c = 0
-      if (in_c && $0 ~ /^[[:space:]]*-[[:space:]]*\[[ xX]\]/) CN++
+      if ($0 ~ /^###+[[:space:]]*Human Test Criteria/) { blk++; cs = ""; scan($0); next }
+      if ($0 ~ /^###[[:space:]]/) { blk++; cs = ""; next }
+      if ($0 ~ /^[[:space:]]*\*\*Supersedes:?\*\*/) { scan($0); next }
+      if ($0 ~ /^#####?[[:space:]]*Chrome-Assisted/) { cs = "chrome"; next }
+      if ($0 ~ /^#####?[[:space:]]*Manual/) { cs = "manual"; next }
+      if ($0 ~ /^#+[[:space:]]/) { cs = ""; next }
+      if (cs != "" && $0 ~ /^[[:space:]]*-[[:space:]]*\[[ xX]\]/) { N++; LN[N] = FNR; S[N] = cs; B[N] = blk }
       next
     }
-    /^####[[:space:]]*Chrome-Assisted/  { sec = "chrome"; n = 0; print; next }
-    /^####[[:space:]]*Manual/           { sec = "manual"; n = 0; print; next }
-    /^#####[[:space:]]*Chrome-Assisted/ { sec = ""; sub(/^#####/, "####"); print; next }
-    /^#####[[:space:]]*Manual/          { sec = ""; sub(/^#####/, "####"); print; next }
-    /^#+[[:space:]]/ { sec = ""; print; next }
-    sec != "" && /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ {
-      n++
-      if (sec == "chrome") gone = (("chrome\t" n) in SUP)
-      else gone = (("manual\t" (n + CN)) in SUP) || (n <= CN && (("manual\t" n) in SUP))
-      if (gone) { print "<!-- superseded by an amendment -->"; next }
+    FNR == 1 {
+      # Resolve each block against the list as it stood before it.
+      for (b = 0; b <= blk; b++) {
+        if (!NS[b]) continue
+        nc = 0; nm = 0
+        for (i = 1; i <= N; i++) {
+          if (B[i] >= b || (LN[i] in GONE)) continue
+          if (S[i] == "chrome") C[++nc] = LN[i]; else M[++nm] = LN[i]
+        }
+        for (j = 1; j <= NS[b]; j++) {
+          split(SUP[b, j], sk, "\t"); k = sk[2] + 0
+          if (sk[1] == "chrome") { if (k >= 1 && k <= nc) KILL[C[k]] = 1 }
+          else if (k > nc) { if (k - nc <= nm) KILL[M[k - nc]] = 1 }
+          else if (k >= 1 && k <= nm) KILL[M[k]] = 1
+        }
+        for (l in KILL) { GONE[l] = 1; delete KILL[l] }
+      }
     }
+    /^#####[[:space:]]*(Chrome-Assisted|Manual)/ { sub(/^#####/, "####"); print; next }
+    (FNR in GONE) { print "<!-- superseded by an amendment -->"; next }
     { print }
   ' "$file" "$file"
 }
