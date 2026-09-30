@@ -101,7 +101,7 @@ RUNNER="$CACHE_DIR/run-session.mjs"
 
 cat > "$RUNNER" <<'NODE'
 import { chromium } from 'playwright';
-import { runActions } from './actions.mjs';
+import { runActions, exprScope, exprFunction } from './actions.mjs';
 
 const [, , specJson] = process.argv;
 
@@ -166,8 +166,7 @@ try {
   }
 
   const target = resolve(spec.expr.context, 'expr');
-  const fn = new Function('consoleErrors', `return (${spec.expr.js});`);
-  const value = await target.page.evaluate(fn, target.consoleErrors);
+  const value = await target.page.evaluate(exprFunction(spec.expr.js), exprScope(target.page, target.consoleErrors));
 
   await browser.close();
   if (value) {

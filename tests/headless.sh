@@ -102,6 +102,16 @@ else
 </script>
 </body></html>
 HTML
+  cat > "$TEST_DIR/www/files.html" <<'HTML'
+<!doctype html><html><body>
+<a id="dl" href="data:text/csv;charset=utf-8,name%2Cscore%0Aellie%2C9" download="scores.csv">export</a>
+<input id="f" type="file" onchange="f.files[0].text().then(t => { out.textContent = f.files[0].name + ':' + t })">
+<button id="pick" onclick="f.click()">choose</button>
+<div id="out"></div>
+<button id="copy" onclick="navigator.clipboard.writeText('share-code-42')">copy</button>
+<textarea id="paste"></textarea>
+</body></html>
+HTML
   cat > "$TEST_DIR/www/tall.html" <<'HTML'
 <!doctype html><html><body style="margin:0"><div style="height:2000px">tall</div></body></html>
 HTML
@@ -140,6 +150,25 @@ HTML
     "$(run lv-headless-eval.sh "$U" "window.innerWidth")"
   assert_eq "width and height set a breakpoint"        '0|PASS 1280' \
     "$(run lv-headless-eval.sh "$U" "window.innerWidth" '[]' 1280 800)"
+  # Downloads, uploads and the clipboard: an unattended tester had no verb for
+  # any of them and recorded all 7 of a plan's criteria as "needs: device"
+  # (LVI-036).
+  F="http://127.0.0.1:$PORT/files.html"
+  assert_eq "download: the file is kept, with its name and text" '0|PASS true' \
+    "$(run lv-headless-eval.sh "$F" "downloads.length === 1 && downloads[0].filename === 'scores.csv' && downloads[0].text.startsWith('name,score')" '[{"type":"download","selector":"#dl"}]')"
+  assert_eq "download: its size is reported"          '0|PASS 18' \
+    "$(run lv-headless-eval.sh "$F" "downloads[0].size" '[{"type":"download","selector":"#dl"}]')"
+  assert_eq "upload: inline content into a file input" '0|PASS "a.csv:x,y"' \
+    "$(run lv-headless-eval.sh "$F" "document.getElementById('out').textContent" '[{"type":"upload","selector":"#f","files":[{"name":"a.csv","mimeType":"text/csv","text":"x,y"}]},{"type":"waitForSelector","selector":"#out:not(:empty)"}]')"
+  printf 'from disk' > "$TEST_DIR/note.txt"
+  assert_eq "upload: a path, through the chooser a button opens" '0|PASS "note.txt:from disk"' \
+    "$(run lv-headless-eval.sh "$F" "document.getElementById('out').textContent" '[{"type":"upload","click":"#pick","files":["'"$TEST_DIR/note.txt"'"]},{"type":"waitForSelector","selector":"#out:not(:empty)"}]')"
+  assert_eq "clipboard: what a copy button wrote"     '0|PASS "share-code-42"' \
+    "$(run lv-headless-eval.sh "$F" "clipboard" '[{"type":"click","selector":"#copy"},{"type":"clipboard"}]')"
+  assert_eq "clipboardWrite seeds a paste"            '0|PASS "pasted-in"' \
+    "$(run lv-headless-eval.sh "$F" "document.getElementById('paste').value" '[{"type":"clipboardWrite","text":"pasted-in"},{"type":"focus","selector":"#paste"},{"type":"keyboard","key":"ControlOrMeta+V"}]')"
+  assert_eq "session exprs see downloads too"         '0|PASS "scores.csv"' \
+    "$(run lv-headless-session.sh '{"contexts":[{"name":"a","url":"'"$F"'","actions":[{"type":"download","selector":"#dl"}]}],"expr":{"context":"a","js":"downloads[0].filename"}}')"
   r=$(run lv-headless-eval.sh "$U" "true" '[{"type":"wave"}]')
   assert_eq "an unknown action is ERROR, naming it"    "2|ERROR unknown action type: wave" "$r"
   r=$(run lv-headless-eval.sh "$U" "true" '[{"type":"waitForSelector","selector":"#never","timeout":300}]')

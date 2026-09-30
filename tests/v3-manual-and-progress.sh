@@ -390,7 +390,16 @@ eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "a note with no headless result is not a reason" "1 1 0" "$CHROME_EXCUSED $CHROME_UNRECORDED $CHROME_UNTESTED"
 assert_eq "so the record is incomplete" "true" "$PROGRESS_INCOMPLETE"
 assert_contains "and the tester is told to run it" "no headless result" "$GATE_REASON"
-sed -i.bak 's/| needs browser mode (drag-and-drop requires user interaction) |/| headless: ERROR waitForSelector #photo-2 timed out |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+# A client's LVI-036: "needs: device" for a file download. Downloads, uploads
+# and the clipboard all have headless verbs, so the four-thing excuse does not
+# cover them.
+sed -i.bak 's/| needs browser mode (drag-and-drop requires user interaction) |/| needs: device — file download requires real browser |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "needs: device for a download is an excuse, not a reason" "1 1 0" "$CHROME_EXCUSED $CHROME_UNRECORDED $CHROME_UNTESTED"
+sed -i.bak 's/| needs: device — file download requires real browser |/| needs: device — the camera prompt on a real phone |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "needs: device for a real device is still a reason" "0 0 1" "$CHROME_EXCUSED $CHROME_UNRECORDED $CHROME_UNTESTED"
+sed -i.bak 's/| needs: device — the camera prompt on a real phone |/| headless: ERROR waitForSelector #photo-2 timed out |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
 eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "one run, one untested with a reason: nothing unrecorded" "0" "$CHROME_UNRECORDED"
 assert_eq "so the record is complete" "false" "$PROGRESS_INCOMPLETE"

@@ -21,7 +21,8 @@
 #   return something coercible to boolean. A `consoleErrors` array
 #   (strings, collected from console and page errors since navigation
 #   start, including any raised during the actions) is in scope for
-#   "no console errors" style criteria.
+#   "no console errors" style criteria. `downloads` (what download steps
+#   saved) and `clipboard` (what a clipboard step read) are in scope too.
 #
 #   Default viewport is 390x844 (mobile), matching lv-headless-screenshot.sh
 #   — pass width/height to check a different breakpoint (e.g. 1280 800 for
@@ -46,13 +47,24 @@
 #     {"type":"wait","ms":300}
 #     {"type":"goto","url":"..."}   — navigate again (e.g. to check a redirect)
 #     {"type":"reload"}             — for persistence checks (survives refresh)
+#     {"type":"download","selector":"#export","name":"csv"}
+#                                   — click, keep the file: downloads[i] is
+#                                     {name, filename, size, sha256, text, failure}
+#     {"type":"upload","selector":"input[type=file]","files":["fixtures/a.png"]}
+#     {"type":"upload","click":"#pick","files":[{"name":"a.csv","mimeType":"text/csv","text":"x,y"}]}
+#                                   — a path, or inline {name, mimeType, text|base64};
+#                                     "click" answers the file chooser a button opens
+#     {"type":"clipboard"}          — read the clipboard into `clipboard`
+#     {"type":"clipboardWrite","text":"..."} — seed it, for a paste criterion
 #   Every step optionally takes "timeout" (ms, default 5000/15000 per type).
 #   Selectors are Playwright's: CSS pierces open shadow roots on its own
 #   (`my-menu button` finds a button inside <my-menu>'s shadow DOM), and
 #   `text=Round 2` matches by visible text. For layering, evaluate
 #   `document.elementFromPoint(x, y)` in the expression. A hover, a Tab
 #   order or a shadow-DOM menu is scriptable, so it is never a reason to
-#   leave a criterion for a human (LVI-029).
+#   leave a criterion for a human (LVI-029). Neither is a file download, an
+#   upload or the clipboard: all three have verbs above, and a criterion about
+#   them is never "needs: device" (LVI-036).
 #   See lv-headless-common.sh's actions.mjs for the canonical definitions.
 #
 # Exit codes (this is the output contract callers parse):
@@ -86,7 +98,7 @@ RUNNER="$CACHE_DIR/run-eval.mjs"
 
 cat > "$RUNNER" <<'NODE'
 import { chromium } from 'playwright';
-import { runActions } from './actions.mjs';
+import { runActions, exprScope, exprFunction } from './actions.mjs';
 
 const [, , url, expr, actionsJson, width, height] = process.argv;
 
@@ -100,8 +112,7 @@ try {
   await page.goto(url, { waitUntil: 'load', timeout: 15000 });
   await page.waitForTimeout(300);
   await runActions(page, JSON.parse(actionsJson || '[]'));
-  const fn = new Function('consoleErrors', `return (${expr});`);
-  const value = await page.evaluate(fn, consoleErrors);
+  const value = await page.evaluate(exprFunction(expr), exprScope(page, consoleErrors));
   await browser.close();
   if (value) {
     console.log(`PASS ${JSON.stringify(value)}`);

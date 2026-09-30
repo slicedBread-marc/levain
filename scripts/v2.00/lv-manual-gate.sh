@@ -305,7 +305,15 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" '
     if (n ~ /ERROR/) return 1
     l = tolower(n)
     if (l ~ /headless:? *(pass|fail)/ && l ~ /prior/) return 1
-    if (l ~ /needs: *(oauth|device|extension|profile)/) return 1
+    # A download, an upload or the clipboard is not one of the four, whatever
+    # the note calls it: each has a headless verb. LVI-036 from a client wrote
+    # "needs: device — file download requires real browser" on all 7 criteria
+    # of one plan, and this accepted it; an attended session then ran all 7 to
+    # PASS against the same cached browser.
+    if (l ~ /needs: *(oauth|device|extension|profile)/) {
+      if (l ~ /download|upload|file (input|chooser|picker|dialog)|clipboard|copy|paste/) return 0
+      return 1
+    }
     return 0
   }
   function lookup(nt,   k) {
@@ -430,7 +438,7 @@ if [ "$chrome_excused" -gt 0 ]; then
   # the gate took the notes as reasons, and an attended re-run passed all 6
   # headlessly in under a minute. A note is not a run.
   gate=true
-  reason="$chrome_excused Chrome-Assisted criteria carry a note but no headless result (no ERROR, no disagreement, no needs: oauth|device|extension|profile) — run them: $chrome_excuses; $reason"
+  reason="$chrome_excused Chrome-Assisted criteria carry a note but no headless result (no ERROR, no disagreement, no needs: oauth|device|extension|profile that a headless verb cannot cover) — run them: $chrome_excuses; $reason"
 fi
 if [ "$chrome_unrecorded" -gt "$chrome_excused" ]; then
   gate=true
