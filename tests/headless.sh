@@ -89,7 +89,12 @@ else
 <input id="i">
 <button id="c" onclick="document.cookie='device=one; path=/'">cookie</button>
 <div id="v"></div>
+<span id="h" onmouseenter="this.textContent='hovered'">tray</span>
+<x-menu id="m"></x-menu>
 <script>
+  customElements.define('x-menu', class extends HTMLElement {
+    connectedCallback() { this.attachShadow({ mode: 'open' }).innerHTML = '<button id="s" onclick="this.textContent=\'shadow\'">in</button>'; }
+  });
   const n = Number(localStorage.getItem('visits') || 0) + 1;
   localStorage.setItem('visits', n);
   document.getElementById('v').textContent = n;
@@ -119,6 +124,14 @@ HTML
     "$(run lv-headless-eval.sh "$U" "document.getElementById('t').textContent === 'clicked'" '[{"type":"click","selector":"#b"}]')"
   assert_eq "fill"                                     '0|PASS true' \
     "$(run lv-headless-eval.sh "$U" "document.getElementById('i').value === 'typed'" '[{"type":"fill","selector":"#i","value":"typed"}]')"
+  assert_eq "hover"                                    '0|PASS true' \
+    "$(run lv-headless-eval.sh "$U" "document.getElementById('h').textContent === 'hovered'" '[{"type":"hover","selector":"#h"}]')"
+  assert_eq "a page-level Tab moves focus (no selector)" '0|PASS true' \
+    "$(run lv-headless-eval.sh "$U" "document.activeElement.id === 'i'" '[{"type":"focus","selector":"#b"},{"type":"press","key":"Tab"}]')"
+  assert_eq "keyboard: Shift+Tab goes back"            '0|PASS true' \
+    "$(run lv-headless-eval.sh "$U" "document.activeElement.id === 'b'" '[{"type":"focus","selector":"#i"},{"type":"keyboard","key":"Shift+Tab"}]')"
+  assert_eq "a CSS selector pierces open shadow DOM"   '0|PASS true' \
+    "$(run lv-headless-eval.sh "$U" "document.getElementById('m').shadowRoot.getElementById('s').textContent === 'shadow'" '[{"type":"click","selector":"x-menu button"}]')"
   assert_eq "reload: state that survives a refresh"    '0|PASS true' \
     "$(run lv-headless-eval.sh "$U" "document.getElementById('v').textContent === '2'" '[{"type":"reload"}]')"
   assert_eq "consoleErrors holds the page's errors"    '0|PASS true' \

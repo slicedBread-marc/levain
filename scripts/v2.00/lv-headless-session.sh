@@ -56,7 +56,7 @@
 #   steps[]     Run in order, across contexts. This is the whole point: the
 #               interleaving is what a two-device criterion asserts about. The
 #               action vocabulary is actions.mjs's, identical to
-#               lv-headless-eval.sh's — click, fill, press, selectOption,
+#               lv-headless-eval.sh's — click, fill, press, keyboard, hover, focus, mouse, selectOption,
 #               check/uncheck, waitForSelector, wait, goto, reload.
 #   expr        ONE boolean expression, evaluated in ONE named context, after
 #               every step. `consoleErrors` is in scope and holds that

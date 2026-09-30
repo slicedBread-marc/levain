@@ -10,8 +10,9 @@
 #     per-plan is wasteful.
 #   - Writes actions.mjs into that cache dir: a shared action-runner module
 #     (`runActions(page, actions)`) both scripts import, so the interaction
-#     vocabulary (click, fill, press, selectOption, check/uncheck,
-#     waitForSelector, wait, goto, reload) is defined in exactly one place.
+#     vocabulary (click, fill, press, keyboard, hover, focus, mouse,
+#     selectOption, check/uncheck, waitForSelector, wait, goto, reload) is
+#     defined in exactly one place.
 #   - Sets (unprefixed, in the caller's shell — this is sourced, not
 #     subshelled) CACHE_DIR for the caller to build runner/output paths from.
 #
@@ -54,7 +55,22 @@ export async function runActions(page, actions) {
         await page.fill(step.selector, step.value ?? '', { timeout });
         break;
       case 'press':
-        await page.press(step.selector, step.key, { timeout });
+        // No selector: the key goes to whatever has focus, the way a user's
+        // Tab does. Needing a selector made Tab traversal unscriptable (LVI-029).
+        if (step.selector) await page.press(step.selector, step.key, { timeout });
+        else await page.keyboard.press(step.key);
+        break;
+      case 'keyboard':
+        await page.keyboard.press(step.key);
+        break;
+      case 'hover':
+        await page.hover(step.selector, { timeout });
+        break;
+      case 'focus':
+        await page.focus(step.selector, { timeout });
+        break;
+      case 'mouse':
+        await page.mouse.move(step.x, step.y);
         break;
       case 'selectOption':
         await page.selectOption(step.selector, step.value, { timeout });

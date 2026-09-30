@@ -35,6 +35,11 @@
 #     {"type":"click","selector":"..."}
 #     {"type":"fill","selector":"...","value":"..."}
 #     {"type":"press","selector":"...","key":"Enter"}
+#     {"type":"press","key":"Tab"}   — no selector: to whatever has focus
+#     {"type":"keyboard","key":"Shift+Tab"}  — same, spelled as a page key
+#     {"type":"hover","selector":"..."}      — hover trays, tooltips, :hover
+#     {"type":"focus","selector":"..."}
+#     {"type":"mouse","x":640,"y":12}        — move the pointer to a point
 #     {"type":"selectOption","selector":"...","value":"..."}
 #     {"type":"check","selector":"..."}  /  {"type":"uncheck",...}
 #     {"type":"waitForSelector","selector":"...","state":"visible"}
@@ -42,6 +47,12 @@
 #     {"type":"goto","url":"..."}   — navigate again (e.g. to check a redirect)
 #     {"type":"reload"}             — for persistence checks (survives refresh)
 #   Every step optionally takes "timeout" (ms, default 5000/15000 per type).
+#   Selectors are Playwright's: CSS pierces open shadow roots on its own
+#   (`my-menu button` finds a button inside <my-menu>'s shadow DOM), and
+#   `text=Round 2` matches by visible text. For layering, evaluate
+#   `document.elementFromPoint(x, y)` in the expression. A hover, a Tab
+#   order or a shadow-DOM menu is scriptable, so it is never a reason to
+#   leave a criterion for a human (LVI-029).
 #   See lv-headless-common.sh's actions.mjs for the canonical definitions.
 #
 # Exit codes (this is the output contract callers parse):
