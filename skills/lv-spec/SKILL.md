@@ -247,6 +247,12 @@ If the user picks a bug BUG-NNN:
 
 1. **Read the input** — if from a brief: read the relevant brief in `plans/briefs/`; if from a bug: the bug's `bug.md` becomes the scope definition
 
+   **Then read what a human already decided about it.** An answer given at `/lv-attend` is recorded in the gate ledger under `.claude/orchestrator/`, which is untracked — it is *not* in `bug.md` or the brief unless someone copied it there, so reading those alone misses it:
+   ```bash
+   eval "$(scripts/lv-exec.sh lv-gate-status.sh <BUG-NNN|BRF-NNN> needs-input)"
+   ```
+   `GATE_RESOLUTION` non-empty → `GATE_QUESTION` was asked about this artifact and that is the answer. It is part of the input and outranks your own reading of it: if it says "write a plan, with Deps PLN-X", that is the plan you write. Quote it in the plan's Design Decisions (question, answer, `GATE_RESOLVED_AT`) so the decision travels with the tracked plan, and never re-ask it. `GATE_OPEN=true` → the question is still parked; stop and unclaim, as for any open gate. A client's LVI-032: an operator answered BUG-054's `needs-input` with "write a plan, with deps", and the unattended `/lv-spec` worker dispatched onto the bug had no instruction to look — the operator had to paste the decision into `bug.md` by hand.
+
 1z. **If this artifact cannot be converted to a plan yet, say so on the artifact and stop.**
    Three shapes reach here and none is work: a brief blocked on something outside this repo (an
    open bug in another project, a dependency that does not exist yet); a brief that *sequences
