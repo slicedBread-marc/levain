@@ -488,6 +488,19 @@ cat >> plans/PLN-011-dep/plan.md << 'P'
 P
 assert_exit "the template placeholder is not a pass" 0 "$SCRIPT_DIR/lv-list-consistency.sh" PLN-011
 
+# A client's LVI-028: a pass is a verdict on the closure as it stood. Amend a
+# plan in the closure after the entry was committed and the pass is owed again.
+git add -A >/dev/null && git commit -qm "fixture: consistency entries" >/dev/null
+assert_exit "a checked plan whose closure is unchanged stays done" 1 "$SCRIPT_DIR/lv-list-consistency.sh" PLN-013
+printf '\n## Amendments\n\n### A-1 (BUG-099): the CLI takes a --dry-run flag\n' >> plans/PLN-004-cli/plan.md
+git add -A >/dev/null && git commit -qm "spec: amend PLN-004" >/dev/null
+cand=$("$SCRIPT_DIR/lv-list-consistency.sh" PLN-013 || true)
+assert_contains "amending a dependency makes the pass outstanding again" "PLN-013-done" "$cand"
+assert_contains "and says which plan moved" "amended since the last pass — PLN-004" "$cand"
+printf '\n> **Checked:** 2026-08-02 — closure: PLN-004\n' >> plans/PLN-013-done/plan.md
+git add -A >/dev/null && git commit -qm "consistency: re-checked" >/dev/null
+assert_exit "a fresh entry settles it" 1 "$SCRIPT_DIR/lv-list-consistency.sh" PLN-013
+
 # ── config reads ───────────────────────────────────────────────────────
 section "lv-config-get"
 

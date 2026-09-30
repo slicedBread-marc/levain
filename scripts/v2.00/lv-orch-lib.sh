@@ -899,6 +899,14 @@ wf_plan_body_fingerprint() {
   [ -n "$slug" ] || return 0
   plan_md="$root/plans/${id}-${slug}/plan.md"
   [ -f "$plan_md" ] || return 0
+  wf_plan_body_hash < "$plan_md"
+}
+
+# wf_plan_body_hash — the body fingerprint above, of whatever plan.md text is
+# on stdin. Split out so a caller can fingerprint a plan as it stood at a past
+# commit (`git show <sha>:<path> | wf_plan_body_hash`) and compare like with
+# like.
+wf_plan_body_hash() {
   awk '
     /^## /  { inside = ($0 ~ /^## (Review|Consistency|Lane|Post-ship checklist)([ \t]|$)/) ? 1 : 0 }
     /^### / { hist   = ($0 ~ /^### Goal History([ \t]|$)/) ? 1 : 0 }
@@ -911,7 +919,7 @@ wf_plan_body_fingerprint() {
       sub(/[ \t]+$/, "", line)
       print line
     }
-  ' "$plan_md" | shasum 2>/dev/null | awk '{print $1}' || true
+  ' | shasum 2>/dev/null | awk '{print $1}' || true
 }
 
 # ── Reading a review verdict ──────────────────────────────────────────────

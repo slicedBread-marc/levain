@@ -39,6 +39,8 @@ scripts/lv-exec.sh lv-list-consistency.sh PLN-NNN
 
 Exit 1 — **stand down.** Say the closure was already checked and exit 0 without claiming, reading or writing. The `## Consistency` section in plan.md is the done-marker this script reads, it is committed with the plan, and a second entry recording the same check against the same unchanged closure is noise in the one place a later reader goes for the answer.
 
+Exit 0 with the goal column starting `re-check: amended since the last pass — <ids>` — **the existing entry is out of date**: those plans' bodies changed after it was committed. Run the full pass, and append a *new* `> **Checked:**` entry under the old one; never edit the old one (LVI-028).
+
 client-d's PLN-014 (WFI-013) already carried a current entry — same closure (PLN-010, PLN-011), same six cited docs, plan unamended, `REVIEW_STALE=false` — and this lister named nothing outstanding. The documented path went straight from `lv-plan-info.sh` to `lv-claim.sh` to reading the transitive closure, so following it meant re-reading ~2100 lines to reach a conclusion already on disk, and appending a second entry for it. The entry-check existed; nothing told you to make it.
 
 Exit 0 — it is outstanding, carry on:
