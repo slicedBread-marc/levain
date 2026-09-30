@@ -250,6 +250,15 @@ if $apply; then
         printf '%s\n' "$gating" | grep -qx "$t" && { hit="$t"; break; }
       done
     fi
+    why_gated="carries the gating tag '$hit'"
+    # specApproval.mode=gate gates every plan, tagged or not: a spec may be
+    # written unattended but never approved unattended. The check above only
+    # read tags, so in gate mode an untagged plan with no spec-approval of
+    # record went straight to ready on a replan (LVI-035).
+    if [ -z "$hit" ] && [ "$(wf_cfg specApproval.mode verdict)" = "gate" ]; then
+      hit="specApproval.mode=gate"
+      why_gated="is in a project with specApproval.mode=gate"
+    fi
     # The express lane answers this approval when a human accepted the gating
     # tag with `lv-lane.sh check --accept-warnings` and the AMENDED plan still
     # passes — status re-checks the text as it now reads, so a replan that
@@ -259,13 +268,13 @@ if $apply; then
       eval "$("$SELF_DIR/lv-lane.sh" status "$plan_id" 2>/dev/null || true)"
     fi
     if [ -n "$hit" ] && [ "$LANE" = express ]; then
-      echo "$plan_id carries the gating tag '$hit'; the express lane answers its spec-approval (accepted: ${LANE_ACCEPTED:-—})." >&2
+      echo "$plan_id $why_gated; the express lane answers its spec-approval (accepted: ${LANE_ACCEPTED:-—})." >&2
     elif [ -n "$hit" ]; then
       eval "$("$SELF_DIR/lv-gate-status.sh" "$plan_id" spec-approval 2>/dev/null || true)"
       if [ "${GATE_ANSWERED:-false}" != "true" ] || [ "${GATE_STALE:-false}" = "true" ]; then
         why="unanswered"
         [ "${GATE_STALE:-false}" = "true" ] && why="stale — the plan changed after it"
-        echo "Error: $plan_id carries the gating tag '$hit' and its spec-approval is $why." >&2
+        echo "Error: $plan_id $why_gated, and its spec-approval is $why." >&2
         echo "  Not transitioning $state -> $target. The plan changed after the approval, so the" >&2
         echo "  approval is for a document that no longer says what it said (WFI-178)." >&2
         echo "  Open spec-approval with the amended scope in the question, then run this again:" >&2

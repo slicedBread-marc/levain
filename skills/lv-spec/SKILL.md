@@ -909,10 +909,13 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
 
 6d. **Does the amended plan still have its approval?** The Replanning path used to have no such check — step 6a gates only on scope *reduction* — so an amendment that widened scope went straight to step 7 and was transitioned and committed:
     ```bash
+    SPEC_MODE=$(scripts/lv-exec.sh lv-config-get.sh specApproval.mode verdict)
     GATE_TAGS=$(scripts/lv-exec.sh lv-list-tags.sh --gating)
     eval "$(scripts/lv-exec.sh lv-gate-status.sh PLN-NNN spec-approval)"
     ```
-    If the plan carries a tag in `GATE_TAGS` **and** `GATE_ANSWERED` is not `true`, or `GATE_STALE=true`, first ask `scripts/lv-exec.sh lv-lane.sh answer PLN-NNN spec-approval`: exit `0` means the express lane still holds for the plan *as amended* (it re-reads the text), and you continue to step 7. Otherwise **[GATE]** `spec-approval` with the *amendment* in the question, leave the state at `draft`, and exit. Same rule as the new-plan exit: an approval is given to a document, and the document changed.
+    The plan **needs an approval** when `SPEC_MODE` is `gate` or it carries a tag in `GATE_TAGS` — the same test as the new-plan exit's step 6. Checking only the tags let an untagged plan in a gate-mode project reach step 7 with no approval of record, which is an unattended approval the mode forbids (a client's LVI-035).
+
+    If the plan needs an approval **and** `GATE_ANSWERED` is not `true`, or `GATE_STALE=true`, first ask `scripts/lv-exec.sh lv-lane.sh answer PLN-NNN spec-approval`: exit `0` means the express lane still holds for the plan *as amended* (it re-reads the text), and you continue to step 7. Otherwise **[GATE]** `spec-approval` with the *amendment* in the question, leave the state at `draft`, and exit. Same rule as the new-plan exit: an approval is given to a document, and the document changed.
 
     client-a's PLN-110 (WFI-178) was tagged `contract`, the project's only gating tag. A replan widened Step 10 from 2 documents to 10 and added a test; the plan reached `ready` and was dispatchable on an approval that `lv-gate-status.sh` reported stale seconds later. `lv-registry-update.sh`'s guard could not catch it — it refuses `draft → ready` without a review *of record*, and a fresh review of record existed. The review says the plan is sound; the gate asks whether a human accepts what it now promises.
 

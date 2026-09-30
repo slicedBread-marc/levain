@@ -4994,6 +4994,21 @@ printf '\n## Review\n> **Result:** Approved\n' >> plans/PLN-281-untagged-replan/
 assert_ok "a plan carrying no gating tag replans without a gate" \
   "$SCRIPT_DIR/lv-replan-target.sh" PLN-281 --apply
 assert_eq "and promotes" "ready" "$(registry_state PLN-281)"
+
+# In specApproval.mode=gate every plan gates, tagged or not (LVI-035). The
+# guard read only tags, so an untagged plan with no spec-approval of record
+# would have gone draft -> ready on a replan: an unattended approval the mode
+# forbids. The worker gated it only because it was cautious.
+printf 'specApproval:\n  mode: gate\n' > levain.yml
+registry_add_row PLN-284 gate-mode-replan draft
+printf '\n## Review\n> **Result:** Approved\n' >> plans/PLN-284-gate-mode-replan/plan.md
+assert_eq "gate mode: an untagged plan with no approval is refused with exit 2" "2" \
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-284 --apply >/dev/null 2>&1; echo $?)"
+assert_eq "and it is still draft" "draft" "$(registry_state PLN-284)"
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-284 spec-approval "amended — approve?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-284 "approved" >/dev/null 2>&1
+assert_ok "gate mode: once approved, it promotes" "$SCRIPT_DIR/lv-replan-target.sh" PLN-284 --apply
+assert_eq "and lands ready" "ready" "$(registry_state PLN-284)"
 [ -n "$REPLAN_CFG_BACKUP" ] && printf '%s\n' "$REPLAN_CFG_BACKUP" > levain.yml
 
 # ═══════════════════════════════════════════════════════════════════════
