@@ -8,6 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 TIMESTAMP_FILE="$SCRIPT_DIR/local-env.timestamp"
 PID_FILE="$SCRIPT_DIR/local-env.pid"
+RUN_PID_FILE="$SCRIPT_DIR/local-env-run.pid"
+RUN_LOG="$SCRIPT_DIR/local-env-run.log"
 IDLE_SECONDS=3600
 
 # Quoted heredocs, not "…": the commands are eval'd later, after FEATURE_PORT
@@ -69,12 +71,47 @@ _kill_watcher() {
     fi
 }
 
+# ── The command runs detached, in its own process group ──────────────────
+# The post-commit hook calls this script, and git waits for the hook — and for
+# anything still holding the hook's stdout — before `git commit` returns. A
+# command that stays up (`exec python3 -m http.server $PORT`, `dotnet run`)
+# therefore hung every implement( commit, and every lv-progress-tick.sh commit
+# behind it, until someone killed the server (LVI-037). So the command never
+# runs in the foreground: it gets its own process group (so a server's children
+# go with it), /dev/null for stdin, and RUN_LOG for output; its group id goes in
+# RUN_PID_FILE. A `docker compose up -d` exits on its own; a server stays up and
+# is what the next deploy, `stop`, or the idle timer ends.
+_kill_run() {
+    if [ -f "$RUN_PID_FILE" ]; then
+        local pgid
+        pgid=$(tr -d '[:space:]' < "$RUN_PID_FILE")
+        if [ -n "$pgid" ] && kill -0 "$pgid" 2>/dev/null; then
+            kill -TERM -- "-$pgid" 2>/dev/null || kill -TERM "$pgid" 2>/dev/null || true
+        fi
+        rm -f "$RUN_PID_FILE"
+    fi
+}
+
+_run_detached() {
+    _kill_run   # a redeploy replaces the previous run, never stacks on it
+    : > "$RUN_LOG"
+    # `cd` on its own line: `cd … && nohup … &` backgrounds the whole list, in a
+    # subshell that holds the hook's stdout until the server exits — the hang
+    # this function exists to prevent — and $! names that subshell, not the group.
+    ( cd "$PROJECT_DIR" || exit 1
+      nohup perl -e 'setpgrp(0, 0); exec "bash", "-c", $ARGV[0]' "$1" \
+          >>"$RUN_LOG" 2>&1 </dev/null &
+      echo $! > "$RUN_PID_FILE" )
+    echo "local-env: running detached (pgid $(cat "$RUN_PID_FILE")) — log: $RUN_LOG"
+}
+
 _start_watcher() {
     local stop_cmd="$STOP_CMD"
     local timestamp_file="$TIMESTAMP_FILE"
     local pid_file="$PID_FILE"
     local idle_seconds="$IDLE_SECONDS"
     local project_dir="$PROJECT_DIR"
+    local run_pid_file="$RUN_PID_FILE"
 
     nohup bash -c "
         while true; do
@@ -85,12 +122,17 @@ _start_watcher() {
             age=\$((now - last))
             if [ \$age -gt $idle_seconds ]; then
                 echo \"local-env: idle timeout — stopping\"
+                if [ -f \"$run_pid_file\" ]; then
+                    pg=\$(tr -d '[:space:]' < \"$run_pid_file\")
+                    [ -n \"\$pg\" ] && kill -TERM -- \"-\$pg\" 2>/dev/null
+                    rm -f \"$run_pid_file\"
+                fi
                 cd \"$project_dir\" && $stop_cmd
                 rm -f \"$timestamp_file\" \"$pid_file\"
                 exit 0
             fi
         done
-    " > "$SCRIPT_DIR/local-env.log" 2>&1 &
+    " > "$SCRIPT_DIR/local-env.log" 2>&1 </dev/null &
 
     echo $! > "$PID_FILE"
     disown $! 2>/dev/null || true
@@ -103,7 +145,7 @@ case "${1:-deploy}" in
             exit 1
         fi
         echo "local-env: starting..."
-        cd "$PROJECT_DIR" && eval "$START_CMD"
+        _run_detached "$START_CMD"
         _write_timestamp
         _kill_watcher
         _start_watcher
@@ -117,7 +159,7 @@ case "${1:-deploy}" in
             exit 1
         fi
         echo "local-env: deploying..."
-        cd "$PROJECT_DIR" && eval "$local_cmd"
+        _run_detached "$local_cmd"
         _write_timestamp
         _kill_watcher
         _start_watcher
@@ -125,13 +167,18 @@ case "${1:-deploy}" in
         ;;
 
     stop)
-        if [ -z "$STOP_CMD" ]; then
+        # A detached run is stopped by its process group, so a project whose
+        # command is a plain server needs no local_stop_command.
+        if [ -z "$STOP_CMD" ] && [ ! -f "$RUN_PID_FILE" ]; then
             echo "local-env: local_stop_command is not set in levain.yml" >&2
             exit 1
         fi
         echo "local-env: stopping..."
         _kill_watcher
-        cd "$PROJECT_DIR" && eval "$STOP_CMD"
+        _kill_run
+        if [ -n "$STOP_CMD" ]; then
+            cd "$PROJECT_DIR" && eval "$STOP_CMD"
+        fi
         rm -f "$TIMESTAMP_FILE"
         echo "local-env: stopped"
         ;;

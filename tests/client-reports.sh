@@ -983,6 +983,51 @@ assert_eq "the harness copier puts the local-env script in the worktree, executa
 rm -rf "$lv_wt_repo"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A local-env server does not hold git commit open (LVI-037)"
+
+# git waits for the post-commit hook and for anything holding its stdout. A
+# command that stays up — `exec python3 -m http.server $PORT` — hung every
+# implement( commit until the server was killed. Render the real template with
+# a command that never exits and writes to stdout, and pipe the commit through
+# cat, as a worker's Bash tool does.
+eval "$(sed -n '/^sed_lit() {/,/^}/p' "$LIB_ROOT/install.sh")"
+lv_hang_repo=$(mktemp -d)
+lv_hang_cmd='echo serving on $PORT; exec sleep 300'
+(
+  cd "$lv_hang_repo" && git init -q -b develop && git config user.email t@t && git config user.name t
+  mkdir -p .claude && printf '.claude/\n' > .gitignore
+  git add .gitignore && git commit -qm init
+  sed -e "s|{{local_start_command}}|$(sed_lit "$lv_hang_cmd")|g" \
+      -e "s|{{local_deploy_command}}|$(sed_lit "$lv_hang_cmd")|g" \
+      -e "s|{{local_stop_command}}||g" \
+      -e "s|{{project_slug}}|testproj|g" \
+      "$LIB_ROOT/templates/on-implement-commit.sh" > .claude/on-implement-commit.sh
+  chmod +x .claude/on-implement-commit.sh
+  cp "$LIB_ROOT/templates/hooks/post-commit" .git/hooks/post-commit && chmod +x .git/hooks/post-commit
+  git checkout -q -b feature/PLN-007-x && printf 'PLN-007\n' > .plan-ref
+) >/dev/null 2>&1
+# A marker, not `kill -0`: an exited but unreaped subshell still answers kill -0.
+( cd "$lv_hang_repo" && echo x > f && git add f .plan-ref \
+    && git commit -m "implement(PLN-007-x): step 1" 2>&1 | cat; touch "$lv_hang_repo/.commit-returned" ) >/dev/null &
+lv_hang_git=$!
+for _ in $(seq 1 20); do [ -f "$lv_hang_repo/.commit-returned" ] && break; sleep 0.5; done
+lv_hang_returned=$([ -f "$lv_hang_repo/.commit-returned" ] && echo true || echo false)
+assert_eq "git commit returns while the local-env server is still up" "true" "$lv_hang_returned"
+lv_hang_pg=$(tr -d '[:space:]' < "$lv_hang_repo/.claude/local-env-run.pid" 2>/dev/null)
+assert_eq "the server is still running, its process group recorded" "true" \
+  "$([ -n "$lv_hang_pg" ] && kill -0 "$lv_hang_pg" 2>/dev/null && echo true || echo false)"
+for _ in $(seq 1 10); do grep -q "serving on 8107" "$lv_hang_repo/.claude/local-env-run.log" 2>/dev/null && break; sleep 0.2; done
+assert_eq "its output goes to the run log, with PORT from .plan-ref" "true" \
+  "$(grep -q 'serving on 8107' "$lv_hang_repo/.claude/local-env-run.log" 2>/dev/null && echo true || echo false)"
+( cd "$lv_hang_repo" && .claude/on-implement-commit.sh stop ) >/dev/null 2>&1
+sleep 0.5
+assert_eq "stop ends the server with no local_stop_command set" "false" \
+  "$([ -n "$lv_hang_pg" ] && kill -0 "$lv_hang_pg" 2>/dev/null && echo true || echo false)"
+[ "$lv_hang_returned" = true ] || kill "$lv_hang_git" 2>/dev/null
+[ -n "$lv_hang_pg" ] && kill -TERM -- "-$lv_hang_pg" 2>/dev/null
+rm -rf "$lv_hang_repo"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "Rendering-surface globs span directories (client-a WFI-044)"
 
 # `/**/` was rewritten to `/(.*/)?`, and then the rule narrowing a lone `*` to
