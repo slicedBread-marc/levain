@@ -276,6 +276,18 @@ get_config() {
       | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/" || true
 }
 
+# sed_lit VALUE — VALUE made literal for the replacement side of `s|...|...|`.
+#
+# Every config value is rendered through `sed -e "s|{{key}}|$(sed_lit "$VALUE")|g"`, and in
+# a replacement `&` means "the matched text", `\` escapes, and `|` ends the
+# expression. So `node build.ts && node lineage.ts` rendered as
+# `node build.ts {{local_deploy_command}}{{local_deploy_command}} node ...` —
+# a shell command that could never run, installed without a word
+# (LVI-034). Any `&&` in a build, test or start command did the same.
+sed_lit() {
+    printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
+}
+
 BUILD_CMD=$(get_config "build_command")
 TEST_CMD=$(get_config "test_command")
 TEST_FILTER=$(get_config "test_filter_flag")
@@ -394,9 +406,9 @@ if [ "$ROLE" = "coordinator" ]; then
         mkdir -p "$DEST_VDIR"
         for name in $COORD_SCRIPTS; do
             [ -f "$version_dir/$name" ] || continue
-            sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
-                -e "s|{{production_logs_url}}|$PRODUCTION_LOGS_URL|g" \
-                -e "s|{{production_url}}|$PRODUCTION_URL|g" \
+            sed -e "s|{{project_slug}}|$(sed_lit "$PROJECT_SLUG")|g" \
+                -e "s|{{production_logs_url}}|$(sed_lit "$PRODUCTION_LOGS_URL")|g" \
+                -e "s|{{production_url}}|$(sed_lit "$PRODUCTION_URL")|g" \
                 "$version_dir/$name" > "$DEST_VDIR/$name"
         done
         [ -d "$version_dir/hooks.default" ] && cp -R "$version_dir/hooks.default" "$DEST_VDIR/"
@@ -444,7 +456,7 @@ if [ "$ROLE" = "coordinator" ]; then
     for name in $COORD_SKILLS; do
         COORD_SKILL_DIR="$TARGET_DIR/.claude/skills/$name"
         mkdir -p "$COORD_SKILL_DIR"
-        sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
+        sed -e "s|{{project_slug}}|$(sed_lit "$PROJECT_SLUG")|g" \
             "$SCRIPT_DIR/skills/$name/SKILL.md" | render_ids | atomic_write "$COORD_SKILL_DIR/SKILL.md"
         echo -e "${GREEN}  Installed /$name${NC}"
     done
@@ -473,8 +485,8 @@ if [ "$ROLE" = "coordinator" ]; then
     # The entry contract. A coordinator's version describes the pipelines it
     # files into and where its own authority stops — regenerated every deploy,
     # so it cannot drift from the harness the coordinated projects are running.
-    sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
-        -e "s|{{workflow_version}}|$WORKFLOW_VERSION|g" \
+    sed -e "s|{{project_slug}}|$(sed_lit "$PROJECT_SLUG")|g" \
+        -e "s|{{workflow_version}}|$(sed_lit "$WORKFLOW_VERSION")|g" \
         "$SCRIPT_DIR/templates/WORKFLOW-coordinator.md" | render_ids | atomic_write "$TARGET_DIR/WORKFLOW.md"
     echo -e "${GREEN}  Installed WORKFLOW.md (coordinator entry point)${NC}"
 
@@ -747,17 +759,17 @@ for f in "$SCRIPT_DIR/templates/plans/TEMPLATE.md" "$SCRIPT_DIR/templates/plans/
         # Render to a temp file and swap. The v6 replacement below removes a
         # file the client is using, so a failed render must not be able to
         # leave them with no template at all.
-        sed -e "s|{{build_command}}|$BUILD_CMD|g" \
-            -e "s|{{test_command}}|$TEST_CMD|g" \
-            -e "s|{{test_filter_flag}}|$TEST_FILTER|g" \
-            -e "s|{{test_exclude_e2e}}|$TEST_EXCLUDE_E2E|g" \
-            -e "s|{{test_only_e2e}}|$TEST_ONLY_E2E|g" \
-            -e "s|{{namespace_convention}}|$NAMESPACE_CONV|g" \
-            -e "s|{{conventions_note}}|$CONVENTIONS_NOTE|g" \
-            -e "s|{{source_dirs}}|$SOURCE_DIRS|g" \
-            -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
-            -e "s|{{production_logs_url}}|$PRODUCTION_LOGS_URL|g" \
-            -e "s|{{production_url}}|$PRODUCTION_URL|g" \
+        sed -e "s|{{build_command}}|$(sed_lit "$BUILD_CMD")|g" \
+            -e "s|{{test_command}}|$(sed_lit "$TEST_CMD")|g" \
+            -e "s|{{test_filter_flag}}|$(sed_lit "$TEST_FILTER")|g" \
+            -e "s|{{test_exclude_e2e}}|$(sed_lit "$TEST_EXCLUDE_E2E")|g" \
+            -e "s|{{test_only_e2e}}|$(sed_lit "$TEST_ONLY_E2E")|g" \
+            -e "s|{{namespace_convention}}|$(sed_lit "$NAMESPACE_CONV")|g" \
+            -e "s|{{conventions_note}}|$(sed_lit "$CONVENTIONS_NOTE")|g" \
+            -e "s|{{source_dirs}}|$(sed_lit "$SOURCE_DIRS")|g" \
+            -e "s|{{project_slug}}|$(sed_lit "$PROJECT_SLUG")|g" \
+            -e "s|{{production_logs_url}}|$(sed_lit "$PRODUCTION_LOGS_URL")|g" \
+            -e "s|{{production_url}}|$(sed_lit "$PRODUCTION_URL")|g" \
             "$f" | render_ids > "$DEST.new"
 
         if [ "$REPLACING" = true ]; then
@@ -855,17 +867,17 @@ for skill_dir in "$SCRIPT_DIR/skills"/*/; do
     case " $COORD_ONLY_SKILLS " in *" $SKILL_NAME "*) rm -rf "$DEST_DIR"; continue ;; esac
     mkdir -p "$DEST_DIR"
 
-    sed -e "s|{{build_command}}|$BUILD_CMD|g" \
-        -e "s|{{test_command}}|$TEST_CMD|g" \
-        -e "s|{{test_filter_flag}}|$TEST_FILTER|g" \
-        -e "s|{{test_exclude_e2e}}|$TEST_EXCLUDE_E2E|g" \
-        -e "s|{{test_only_e2e}}|$TEST_ONLY_E2E|g" \
-        -e "s|{{namespace_convention}}|$NAMESPACE_CONV|g" \
-        -e "s|{{conventions_note}}|$CONVENTIONS_NOTE|g" \
-        -e "s|{{source_dirs}}|$SOURCE_DIRS|g" \
-        -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
-        -e "s|{{production_logs_url}}|$PRODUCTION_LOGS_URL|g" \
-        -e "s|{{production_url}}|$PRODUCTION_URL|g" \
+    sed -e "s|{{build_command}}|$(sed_lit "$BUILD_CMD")|g" \
+        -e "s|{{test_command}}|$(sed_lit "$TEST_CMD")|g" \
+        -e "s|{{test_filter_flag}}|$(sed_lit "$TEST_FILTER")|g" \
+        -e "s|{{test_exclude_e2e}}|$(sed_lit "$TEST_EXCLUDE_E2E")|g" \
+        -e "s|{{test_only_e2e}}|$(sed_lit "$TEST_ONLY_E2E")|g" \
+        -e "s|{{namespace_convention}}|$(sed_lit "$NAMESPACE_CONV")|g" \
+        -e "s|{{conventions_note}}|$(sed_lit "$CONVENTIONS_NOTE")|g" \
+        -e "s|{{source_dirs}}|$(sed_lit "$SOURCE_DIRS")|g" \
+        -e "s|{{project_slug}}|$(sed_lit "$PROJECT_SLUG")|g" \
+        -e "s|{{production_logs_url}}|$(sed_lit "$PRODUCTION_LOGS_URL")|g" \
+        -e "s|{{production_url}}|$(sed_lit "$PRODUCTION_URL")|g" \
         "$skill_dir/SKILL.md" | render_ids | atomic_write "$DEST_DIR/SKILL.md"
 
     echo -e "${GREEN}  Installed /$(basename "$skill_dir")${NC}"
@@ -875,10 +887,10 @@ install_referenced_docs "$TARGET_DIR/.claude/skills" "$TARGET_DIR/.claude/docs"
 
 # Install local env script (only if local_deploy_command is set)
 if [ -n "$LOCAL_DEPLOY" ]; then
-    sed -e "s|{{local_start_command}}|$LOCAL_START|g" \
-        -e "s|{{local_deploy_command}}|$LOCAL_DEPLOY|g" \
-        -e "s|{{local_stop_command}}|$LOCAL_STOP|g" \
-        -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
+    sed -e "s|{{local_start_command}}|$(sed_lit "$LOCAL_START")|g" \
+        -e "s|{{local_deploy_command}}|$(sed_lit "$LOCAL_DEPLOY")|g" \
+        -e "s|{{local_stop_command}}|$(sed_lit "$LOCAL_STOP")|g" \
+        -e "s|{{project_slug}}|$(sed_lit "$PROJECT_SLUG")|g" \
         "$SCRIPT_DIR/templates/on-implement-commit.sh" | atomic_write "$TARGET_DIR/.claude/on-implement-commit.sh"
     chmod +x "$TARGET_DIR/.claude/on-implement-commit.sh"
     echo -e "${GREEN}  Installed .claude/on-implement-commit.sh${NC}"
@@ -1272,9 +1284,9 @@ for version_dir in "$SCRIPT_DIR/scripts"/v*/; do
         # rather than one per file: this loop runs ~80 times per client and
         # deploy-all.sh runs it for every client.
         DEST="$DEST_VDIR/${script##*/}"
-        sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
-            -e "s|{{production_logs_url}}|$PRODUCTION_LOGS_URL|g" \
-            -e "s|{{production_url}}|$PRODUCTION_URL|g" \
+        sed -e "s|{{project_slug}}|$(sed_lit "$PROJECT_SLUG")|g" \
+            -e "s|{{production_logs_url}}|$(sed_lit "$PRODUCTION_LOGS_URL")|g" \
+            -e "s|{{production_url}}|$(sed_lit "$PRODUCTION_URL")|g" \
             "$script" > "$DEST"
     done
     # The extension hooks' neutral defaults (lv-hook.sh). Copied, not
@@ -1338,8 +1350,8 @@ printf '%s\n' "$SCRIPT_DIR" | atomic_write "$TARGET_DIR/.claude/workflow-source"
 # pipeline, which hooks fire automatically, and the lv-orchestrate.sh exit codes
 # an external process needs in order to drive a plan.
 # Regenerated on every install so it can't drift from the installed version.
-sed -e "s|{{project_slug}}|$PROJECT_SLUG|g" \
-    -e "s|{{workflow_version}}|$WORKFLOW_VERSION|g" \
+sed -e "s|{{project_slug}}|$(sed_lit "$PROJECT_SLUG")|g" \
+    -e "s|{{workflow_version}}|$(sed_lit "$WORKFLOW_VERSION")|g" \
     "$SCRIPT_DIR/templates/WORKFLOW.md" | render_ids | atomic_write "$TARGET_DIR/WORKFLOW.md"
 echo -e "${GREEN}  Installed WORKFLOW.md (project-root entry point)${NC}"
 
@@ -1471,9 +1483,9 @@ fi
 
 # Always overwrite .claude/workflow.md (the referenced file — keeps it current on every deploy)
 WORKFLOW_MD="$TARGET_DIR/.claude/workflow.md"
-sed -e "s|{{build_command}}|$BUILD_CMD|g" \
-    -e "s|{{test_command}}|$TEST_CMD|g" \
-    -e "s|{{source_dirs}}|$SOURCE_DIRS|g" \
+sed -e "s|{{build_command}}|$(sed_lit "$BUILD_CMD")|g" \
+    -e "s|{{test_command}}|$(sed_lit "$TEST_CMD")|g" \
+    -e "s|{{source_dirs}}|$(sed_lit "$SOURCE_DIRS")|g" \
     "$SCRIPT_DIR/claude-md/workflow-snippet.md" | render_ids | atomic_write "$WORKFLOW_MD"
 echo -e "${GREEN}  Installed .claude/workflow.md${NC}"
 

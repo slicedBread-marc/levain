@@ -15,6 +15,7 @@
 #   .claude/workflow.md           the same, for the workflow reference
 #   scripts/lv-exec.sh            skills invoke it by relative path
 #   .claude/settings.local.json   the session's own write permissions (WFI-015)
+#   .claude/on-implement-commit.sh  the post-commit hook runs it from here
 #
 # Everything else workflow-owned resolves from the MAIN worktree — including
 # all of scripts/v*/, because lv-exec.sh's find_project_root answers with the
@@ -67,7 +68,12 @@ if [ -d "$MAIN/.claude/skills" ]; then
   done
 fi
 
-for rel in .claude/workflow.md scripts/lv-exec.sh; do
+# .claude/on-implement-commit.sh: the post-commit hook runs it from the
+# worktree's own toplevel, and it derives the plan's port and container name
+# from the .plan-ref beside it. Left in the main checkout only, every
+# implement( commit on a feature branch found nothing to run
+# (LVI-034).
+for rel in .claude/workflow.md scripts/lv-exec.sh .claude/on-implement-commit.sh; do
   if [ -f "$MAIN/$rel" ]; then
     mkdir -p "$(dirname "$rel")"
     cp -p "$MAIN/$rel" "$rel" 2>/dev/null && copied=$((copied + 1)) || true

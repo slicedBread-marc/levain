@@ -946,6 +946,43 @@ assert_eq "the hook's port formula agrees with lv-plan-port.sh" "$port_ref" "$ho
 rm -rf "$hook_dir"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "Local-env commands render literally and reach the worktree (LVI-034)"
+
+# `&` in a sed replacement is "the matched text", so `a && b` installed as
+# `a {{local_start_command}}{{local_start_command}} b`. Render through the
+# installer's own helper and the template, then read the command back out.
+eval "$(sed -n '/^sed_lit() {/,/^}/p' "$LIB_ROOT/install.sh")"
+render_dir=$(mktemp -d)
+lv_cmd='node build.ts && exec python3 -m http.server $PORT --bind "127.0.0.1" | tee a\b'
+sed -e "s|{{local_start_command}}|$(sed_lit "$lv_cmd")|g" \
+    -e "s|{{local_deploy_command}}|$(sed_lit "$lv_cmd")|g" \
+    -e "s|{{local_stop_command}}||g" \
+    -e "s|{{project_slug}}|testproj|g" \
+    "$LIB_ROOT/templates/on-implement-commit.sh" > "$render_dir/hook.sh"
+assert_eq "no placeholder survives the render" "false" \
+  "$(grep -q '{{' "$render_dir/hook.sh" && echo true || echo false)"
+rendered_cmd=$(PORT=9999 bash -c "$(awk '/^START_CMD=/, /^\)$/' "$render_dir/hook.sh"); printf '%s' \"\$START_CMD\"")
+assert_eq "START_CMD is the configured command, byte for byte, \$PORT unexpanded" "$lv_cmd" "$rendered_cmd"
+assert_eq "every template substitution in install.sh goes through sed_lit" "0" \
+  "$(grep -cE 's\|\{\{[a-z_]+\}\}\|\$[A-Z]' "$LIB_ROOT/install.sh")"
+rm -rf "$render_dir"
+
+# The post-commit hook runs $ROOT/.claude/on-implement-commit.sh with ROOT the
+# feature worktree — where the gitignored script never existed.
+lv_wt_repo=$(mktemp -d)
+(
+  cd "$lv_wt_repo" && git init -q -b develop && git config user.email t@t && git config user.name t
+  mkdir -p .claude && printf '.claude/on-implement-commit.sh\nfeature-branches/\n' > .gitignore
+  printf '#!/bin/bash\necho ran\n' > .claude/on-implement-commit.sh && chmod +x .claude/on-implement-commit.sh
+  git add .gitignore && git commit -qm init
+  git worktree add -q -b feature/PLN-001-x feature-branches/PLN-001-x
+  "$SCRIPT_DIR/lv-worktree-harness.sh" feature-branches/PLN-001-x
+) >/dev/null 2>&1
+assert_eq "the harness copier puts the local-env script in the worktree, executable" "true" \
+  "$([ -x "$lv_wt_repo/feature-branches/PLN-001-x/.claude/on-implement-commit.sh" ] && echo true || echo false)"
+rm -rf "$lv_wt_repo"
+
+# ═══════════════════════════════════════════════════════════════════════
 section "Rendering-surface globs span directories (client-a WFI-044)"
 
 # `/**/` was rewritten to `/(.*/)?`, and then the rule narrowing a lone `*` to

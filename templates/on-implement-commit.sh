@@ -10,9 +10,22 @@ TIMESTAMP_FILE="$SCRIPT_DIR/local-env.timestamp"
 PID_FILE="$SCRIPT_DIR/local-env.pid"
 IDLE_SECONDS=3600
 
-START_CMD="{{local_start_command}}"
-DEPLOY_CMD="{{local_deploy_command}}"
-STOP_CMD="{{local_stop_command}}"
+# Quoted heredocs, not "…": the commands are eval'd later, after FEATURE_PORT
+# and PORT are exported below. Double quotes expanded `$PORT` here, at
+# assignment, to nothing — and a `"` inside a command ended the string
+# (LVI-034).
+START_CMD=$(cat <<'LV_LOCAL_CMD'
+{{local_start_command}}
+LV_LOCAL_CMD
+)
+DEPLOY_CMD=$(cat <<'LV_LOCAL_CMD'
+{{local_deploy_command}}
+LV_LOCAL_CMD
+)
+STOP_CMD=$(cat <<'LV_LOCAL_CMD'
+{{local_stop_command}}
+LV_LOCAL_CMD
+)
 
 # ── Plan-scoped container identity ────────────────────────────────────────
 # Every command below is eval'd, and the compose file they drive reads
@@ -35,6 +48,7 @@ if [ -f "$PROJECT_DIR/.plan-ref" ]; then
     if [ -n "$_plan_num" ]; then
         _plan_num=$((10#$_plan_num))
         export FEATURE_PORT="${FEATURE_PORT:-$((8100 + _plan_num))}"
+        export PORT="${PORT:-$FEATURE_PORT}"   # as lv-docker-up.sh exports it
         export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(printf '{{project_slug}}-pln%03d' "$_plan_num")}"
         echo "local-env: $COMPOSE_PROJECT_NAME on port $FEATURE_PORT (from .plan-ref)"
     fi

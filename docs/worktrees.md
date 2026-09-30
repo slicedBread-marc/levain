@@ -41,6 +41,7 @@ bought nothing and cost the exclusion.
 ## Gitignored — a session reads these off its own disk
 
 `.claude/workflow.md`, `.claude/skills/lv-*/`, `.claude/docs/`, `scripts/lv-exec.sh`,
+`.claude/on-implement-commit.sh`,
 `.plan-ref`.
 
 Claude Code loads skills from the tree it is running in, skills invoke
