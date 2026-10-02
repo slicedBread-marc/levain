@@ -425,7 +425,7 @@ section "local-env deploy is feature-branch only (client-a WFI-016)"
 # a one-shot migration check — which froze the hook on every client that had
 # it, so this very fix reached exactly one of four projects on first deploy.
 assert_eq "install.sh refreshes the hook when it differs" "true" \
-  "$(grep -q 'cmp -s "$HOOK_SRC" "$HOOK"' "$LIB_ROOT/install.sh" && echo true || echo false)"
+  "$(grep -q 'cmp -s "$src" "$hook"' "$LIB_ROOT/install.sh" && echo true || echo false)"
 assert_eq "and no longer gates on the verify-trigger marker" "false" \
   "$(grep -q 'grep -q "claude-workflow: verify agent trigger" "$HOOK"' "$LIB_ROOT/install.sh" && echo true || echo false)"
 
