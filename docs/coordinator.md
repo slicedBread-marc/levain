@@ -164,7 +164,14 @@ A coordinator is where one person oversees several pipelines (LVI-014). Beyond f
   a project dormant: no column and no scan, unless its daemon is live, and `--include-dormant`
   still shows it. The `harness` row compares each client's installed version with the library's, and `U`
   runs the library's `deploy-all.sh`, refusing on a held `LIBRARY-LOCK.md`, a dirty library or
-  a red suite. Its projects come from the `project-registry` hook: the owner's pack, else
+  a red suite. The library line under it counts open client issues, and `W` starts a **blind
+  sweep** (`lv-library-sweep.sh`): a detached, headless session in the library that fixes the
+  top three, oldest first with duplicates as one, while the board keeps running. The script, not
+  the session, holds the lock, runs it under the permission baseline, and decides the deploy:
+  a green suite deploys and resolves; a red one, or a fix touching the baseline, the denylist or
+  the deploy itself, is committed and held for review until `U`. It never reads `--upstream`.
+  The line shows `sweeping…`, then one result; the log is under
+  `.claude/orchestrator/library-sweep/logs/`. Its projects come from the `project-registry` hook: the owner's pack, else
   the library's `deployments.txt` (found through `.claude/workflow-source`), else this
   coordinator's `coordinates:` list. Its own state, the suspend record, the dormant set and the snapshot cache,
   lives in the coordinator's gitignored `.claude/orchestrator/`.

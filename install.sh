@@ -383,7 +383,7 @@ if [ "$ROLE" = "coordinator" ]; then
     # PATH-adjacent disk, and the only reason to withhold it is that running it
     # here is a bad idea — the same argument install.sh already makes for
     # pruning stale scripts out of a client.
-    COORD_SCRIPTS="lv-orch-lib.sh lv-lock.sh lv-ids.sh lv-dep-notify.sh lv-dep-bug.sh lv-issue.sh lv-hook.sh lv-rack.sh lv-direct.sh"
+    COORD_SCRIPTS="lv-orch-lib.sh lv-lock.sh lv-ids.sh lv-dep-notify.sh lv-dep-bug.sh lv-issue.sh lv-hook.sh lv-rack.sh lv-direct.sh lv-library-sweep.sh lv-guard-baseline.sh"
 
     echo "Installing scripts..."
     # Built into a staging directory nothing resolves, then published and

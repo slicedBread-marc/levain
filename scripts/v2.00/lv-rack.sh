@@ -234,6 +234,9 @@ DORMANT_STATE="${LV_DORMANT_STATE:-$COORD_DIR/.claude/orchestrator/dormant}"
 # version, and the deploy-all.sh behind `U`. LV_LIBRARY_DIR is the test seam.
 LIB_DIR="${LV_LIBRARY_DIR:-}"
 [ -z "$LIB_DIR" ] && [ -f "$COORD_DIR/.claude/workflow-source" ] && LIB_DIR=$(head -1 "$COORD_DIR/.claude/workflow-source")
+# The blind sweep's state — pid, result, logs, held fixes (lv-library-sweep.sh,
+# LVI-031). LV_SWEEP_STATE is the test seam.
+SWEEP_STATE="${LV_SWEEP_STATE:-$COORD_DIR/.claude/orchestrator/library-sweep}"
 
 # The snapshot cache — see "Snapshots" below. The coordinator's own state, like
 # the suspend record: "what the portfolio last looked like" is a coordinator
@@ -910,6 +913,7 @@ collect_all() {
   f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_ts=()
   collect
   snapshot_save
+  refresh_library_count
 }
 
 # start_refresh_async — kick off one collect() worth of work in a
@@ -926,6 +930,7 @@ start_refresh_async() {
       [ -n "$project_path" ] || continue
       printf '%s\x1e%s\x1e%s\n' "$(basename "$project_path")" "$project_path" "$(fetch_one "$project_path")"
     done <<< "$(scan_projects)"
+    refresh_library_count
   ) >"$refresh_file" 2>/dev/null &
   refresh_pid=$!
   refreshing=true
@@ -1278,7 +1283,7 @@ render_text() {
     else cell "$cw" "$hv" "$DIM"; fi
   done
   printf '\n'
-  [ -n "$lib_v" ] && printf '%-11s%slibrary %s%s\n' "" "$DIM" "$lib_v" "$R"
+  [ -n "$lib_v" ] && printf '%-11s%slibrary %s%s%s\n' "" "$DIM" "$lib_v" "$(library_sweep_line)" "$R"
 
   # ── Legend for anything not "ok" ─────────────────────────────────────
   local any_bad=false
@@ -1311,6 +1316,62 @@ library_version() {
   local v=""
   [ -n "$LIB_DIR" ] && read_stamp v "$LIB_DIR/VERSION"
   printf '%s' "$v"
+}
+
+# ── The blind sweep (LVI-031) ───────────────────────────────────────────
+#
+# The library line carries the number of open client issues (sweep-issues.sh
+# --count, summed), refreshed with the board rather than every frame, and the
+# state of a blind sweep: `sweeping…` while one runs, its one result line
+# after. `W` starts one through lv-library-sweep.sh, detached, so the board
+# keeps running. The script holds the lock, runs the session under the
+# permission baseline, and decides the deploy itself; a fix to a guard file is
+# committed and "held for review" until the operator presses `U`.
+
+# refresh_library_count — the summed count into $SWEEP_STATE/lvis, or the file
+# removed when there is no answer. Runs inside the background refresh, so it
+# writes a file: a subshell cannot set the board's variables.
+refresh_library_count() {
+  [ -n "$LIB_DIR" ] && [ -x "$HERE/lv-library-sweep.sh" ] || return 0
+  mkdir -p "$SWEEP_STATE" 2>/dev/null || return 0
+  local n
+  if n=$("$HERE/lv-library-sweep.sh" count "$LIB_DIR" 2>/dev/null) && [ -n "$n" ]; then
+    printf '%s\n' "$n" > "$SWEEP_STATE/lvis"
+  else
+    rm -f "$SWEEP_STATE/lvis"
+  fi
+}
+
+# library_sweep_line — " · N open issues · sweeping…" or "… · sweep: <result>",
+# from files only: render_text calls it every frame.
+library_sweep_line() {
+  local n="" pid="" res=""
+  read_stamp n "$SWEEP_STATE/lvis"
+  [ -n "$n" ] && printf ' · %s open issue%s' "$n" "$([ "$n" = 1 ] || printf s)"
+  read_stamp pid "$SWEEP_STATE/pid"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    printf ' · sweeping…'
+  else
+    read_stamp res "$SWEEP_STATE/result"
+    [ -n "$res" ] && printf ' · sweep: %s' "$res"
+  fi
+  return 0
+}
+
+# sweep_library — `W`: start a blind sweep. Exit 0 started, 3 refused (the
+# script names why: no issues, lock held, a sweep already running, a dirty
+# tree, no baseline guard).
+sweep_library() {
+  if [ -z "$LIB_DIR" ] || [ ! -x "$HERE/lv-library-sweep.sh" ]; then
+    printf '  %sno library to sweep — .claude/workflow-source names none, or lv-library-sweep.sh is missing%s\n' "$YEL" "$R"
+    return 3
+  fi
+  printf '%sBLIND SWEEP%s  %s%s — top 3 open client issues, oldest first%s\n\n' "$B" "$R" "$DIM" "$LIB_DIR" "$R"
+  local out rc
+  out=$("$HERE/lv-library-sweep.sh" start "$LIB_DIR" "$SWEEP_STATE" 2>&1); rc=$?
+  if [ "$rc" -eq 0 ]; then printf '  %s%s%s\n' "$GRN" "$out" "$R"
+  else printf '  %s%s%s\n' "$RED" "$out" "$R"; fi
+  return "$rc"
 }
 
 # deploy_library — `U`: run the library's deploy-all.sh, after the checks that
@@ -1349,7 +1410,13 @@ deploy_library() {
   printf '  suite green — deploying\n\n'
   (cd "$LIB_DIR" && ./deploy-all.sh) 2>&1 | sed 's/^/  /'
   rc=${PIPESTATUS[0]}
-  if [ "$rc" -eq 0 ]; then printf '\n  %sdeployed %s%s\n' "$GRN" "$(library_version)" "$R"
+  if [ "$rc" -eq 0 ]; then
+    printf '\n  %sdeployed %s%s\n' "$GRN" "$(library_version)" "$R"
+    # A blind sweep held for review left its fixes pending: this deploy is
+    # the review, so they are resolved now (LVI-031).
+    if [ -s "$SWEEP_STATE/pending" ] && [ -x "$HERE/lv-library-sweep.sh" ]; then
+      "$HERE/lv-library-sweep.sh" resolve-pending "$LIB_DIR" "$SWEEP_STATE" 2>&1 | sed 's/^/  /'
+    fi
   else printf '\n  %sdeploy-all.sh exited %s%s\n' "$RED" "$rc" "$R"; fi
   return "$rc"
 }
@@ -2328,8 +2395,8 @@ board_action_key() {
 menu_loop() {
   local choice i
   while true; do
-    printf '\n%sselect a project%s (1-%d), %sr%s refresh, %ss%s stop all daemons, %sR%s resume, %sz%s on/dormant, %sU%s deploy library, %sq%s quit:\n' \
-      "$B" "$R" "${#names[@]}" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
+    printf '\n%sselect a project%s (1-%d), %sr%s refresh, %ss%s stop all daemons, %sR%s resume, %sz%s on/dormant, %sU%s deploy library, %sW%s sweep library, %sq%s quit:\n' \
+      "$B" "$R" "${#names[@]}" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
     for i in "${!names[@]}"; do
       printf '  %d) %s\n' "$((i + 1))" "${names[$i]}"
     done
@@ -2344,6 +2411,8 @@ menu_loop() {
          printf '\033[2J\033[H'; render ;;
       z) dormant_screen; printf '\033[2J\033[H'; render ;;
       U) printf '\033[2J\033[H'; deploy_library; printf '\n  (press enter to continue) '; IFS= read -r _
+         printf '\033[2J\033[H'; render ;;
+      W) printf '\033[2J\033[H'; sweep_library; printf '\n  (press enter to continue) '; IFS= read -r _
          printf '\033[2J\033[H'; render ;;
       *)
         if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#names[@]}" ]; then
@@ -2830,6 +2899,13 @@ if $watch_mode; then
       U)                                # deploy the library to every client (LVI-026)
         printf '\033[?25h\033[2J\033[H'
         deploy_library
+        printf '\n  (press any key to continue) '; read_key key
+        resume_board
+        age_sig=$(age_signature)
+        ;;
+      W)                                # blind library sweep, detached (LVI-031)
+        printf '\033[?25h\033[2J\033[H'
+        sweep_library
         printf '\n  (press any key to continue) '; read_key key
         resume_board
         age_sig=$(age_signature)

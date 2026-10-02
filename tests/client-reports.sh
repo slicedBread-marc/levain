@@ -1812,7 +1812,7 @@ coord_scripts=$(ls "$(live_script_dir "$COORD")" | sort | tr '\n' ' ')
 # lv-hook.sh and its defaults are in the slice: a coordinator reaches the
 # owner's packs (registry, activity log) through them too (LVI-013).
 assert_eq "scripts/ is pruned to the filing slice" \
-  "hooks.default lv-dep-bug.sh lv-dep-notify.sh lv-direct.sh lv-hook.sh lv-ids.sh lv-issue.sh lv-lock.sh lv-orch-lib.sh lv-rack.sh " "$coord_scripts"
+  "hooks.default lv-dep-bug.sh lv-dep-notify.sh lv-direct.sh lv-guard-baseline.sh lv-hook.sh lv-ids.sh lv-issue.sh lv-library-sweep.sh lv-lock.sh lv-orch-lib.sh lv-rack.sh " "$coord_scripts"
 assert_eq "lv-implement's scripts are not installed" "true" \
   "$([ -f "$(live_script_dir "$COORD")/lv-worktree-sparse.sh" ] && echo false || echo true)"
 
