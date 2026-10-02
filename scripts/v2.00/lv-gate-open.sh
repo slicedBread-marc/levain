@@ -197,6 +197,27 @@ fi
 # which is where a new one belongs.
 gate_file=$(wf_gate_file "$id" || true)
 
+# ── A design question names the decisions it moves with (LVI-033) ──────────
+#
+# A spec-approval or spec-stuck answer on one plan can quietly change what the
+# plans downstream of it were specced against, and an upstream still in draft
+# can change what this one is. A client's PLN-026 was resolved by removing an
+# allow-list while PLN-028, specced on that allow-list, waited at its own
+# spec-approval; nothing in either question said the other existed. So the
+# question carries it, computed here so it cannot be forgotten by a skill.
+# Deterministic, so a --requestion with nothing else changed still compares
+# equal.
+plan_context=""
+if [[ "$id" =~ ^($LV_PLN_RE)-[0-9]+$ ]]; then
+  case "$gate_name" in
+    spec-approval|spec-stuck)
+      flux=$(wf_plan_flux_note "$id")
+      case "$question" in *"$flux"*) ;; *) question="$question$flux" ;; esac
+      ;;
+  esac
+  plan_context=$(wf_plan_context "$id")
+fi
+
 if [ -f "$gate_file" ]; then
   existing=$(wf_gate_field "$gate_file" GATE_NAME)
   if [ "$existing" = "$gate_name" ]; then
@@ -263,6 +284,12 @@ if [ -f "$gate_file" ]; then
         # test makes the group exit 1 and `set -e` kills the script.
         if [ -n "$open_fp" ]; then
           wf_emit GATE_PLAN_BODY_FP_AT_OPEN "$open_fp"
+        fi
+        # Refreshed with the fingerprint, for the same reason: the question
+        # now describes the plan, and what it was decided against, as they
+        # stand (LVI-033).
+        if [ -n "$plan_context" ]; then
+          wf_emit GATE_PLAN_CONTEXT_AT_OPEN "$plan_context"
         fi
       } > "$gate_file"
       wf_event gate-requestion "$id" "$gate_name: $question"
@@ -457,6 +484,13 @@ fi
   # Empty for a bug or brief with no plan folder yet, which is fine: those
   # gates fall back to the close-time comparison.
   wf_emit GATE_PLAN_BODY_FP_AT_OPEN "$(wf_plan_body_fingerprint "$id" || true)"
+  # What the plan was decided AGAINST — the plans in its closure, the answers
+  # given on them, and its directives (wf_plan_context, LVI-033). A change
+  # there makes this question moot and its answer stale, the same as a change
+  # to the plan's own text.
+  if [ -n "$plan_context" ]; then
+    wf_emit GATE_PLAN_CONTEXT_AT_OPEN "$plan_context"
+  fi
   # ── What a promotion approval is an approval OF ────────────────────────
   #
   # RELEASE and DEPLOY have no plan.md, so the fingerprint above is empty and

@@ -60,7 +60,23 @@
 #                                fingerprint. Refresh with
 #                                `lv-gate-open.sh … --requestion`, and only
 #                                when the recorded fact really changed.
-#   GATE_STALE=true|false        closed, but plan.md has changed since
+#   GATE_STALE=true|false        closed, but plan.md has changed since — or
+#                                what it was decided against has (below)
+#   GATE_PLAN_CONTEXT_STALE=true|false
+#                                the plan's CONTEXT moved since the question
+#                                was asked: a plan in its dependency closure
+#                                (its text, its directives, an answer given on
+#                                it) or this plan's own directives (LVI-033).
+#                                Folded into GATE_STALE for an answered gate
+#                                and GATE_QUESTION_STALE for an open one, and
+#                                reported on its own so a caller can say WHY.
+#   GATE_PLAN_CONTEXT_CHANGED='PLN-026 directives'
+#                                what moved, by name. Empty when nothing did.
+#   GATE_WITHDRAWN=true|false    the last close was a WITHDRAWAL — the question
+#                                went moot and nothing was answered
+#                                (lv-gate-close.sh --withdraw). GATE_ANSWERED
+#                                is false for it; GATE_RESOLUTION carries why,
+#                                and that reason is input to the next worker.
 #   GATE_DECISION=approve|reject the answer to a `release-approval` /
 #                                `deploy-approval` gate as a value. Empty on
 #                                every other gate, and on a promotion gate
@@ -131,6 +147,10 @@ resolved_at=""
 fp_at_open=""
 decision=""
 promote_tip=""
+withdrawn=false
+ctx_at_open=""
+ctx_stale=false
+ctx_changed=""
 
 if [ -f "$resolved_file" ]; then
   resolution=$(wf_gate_field "$resolved_file" GATE_RESOLUTION)
@@ -151,6 +171,8 @@ if [ -f "$resolved_file" ]; then
   # decides whether a promotion is authorized by them.
   decision=$(wf_gate_field "$resolved_file" GATE_DECISION)
   promote_tip=$(wf_gate_field "$resolved_file" GATE_PROMOTE_TIP)
+  [ "$(wf_gate_field "$resolved_file" GATE_WITHDRAWN)" = "true" ] && withdrawn=true
+  ctx_at_open=$(wf_gate_field "$resolved_file" GATE_PLAN_CONTEXT_AT_OPEN)
   # The body fingerprint decides when the record carries one: it normalises the
   # regions that move under machine control while the specification stands still
   # — ticked checkboxes above all. A tester ticking a deferred criterion, as
@@ -184,6 +206,28 @@ if [ -f "$resolved_file" ]; then
     basis=revision
   else
     stale=true
+  fi
+
+  # ── Decided against something that has since moved (LVI-033) ─────────────
+  #
+  # The fingerprint above is the plan's own text. An approval is also an
+  # approval of the plan AS IT FITS the plans it depends on and the direction
+  # it was given: when one of those moves, the text can stand still while what
+  # it means changes underneath it. A client's PLN-028 was approved-in-waiting
+  # on an allow-list its upstream PLN-026 had just been told to drop.
+  if [ -n "$ctx_at_open" ] && ! $withdrawn; then
+    ctx_changed=$(wf_context_changed "$ctx_at_open" "$(wf_plan_context "$id")")
+    if [ -n "$ctx_changed" ]; then
+      ctx_stale=true
+      if $answered; then answered=false; basis=none; stale=true; fi
+    fi
+  fi
+
+  # A withdrawal is a record that a question went moot. It answered nothing,
+  # so it can never read as an answer — least of all as an approval, which is
+  # what lv-spec's step 6 takes GATE_ANSWERED=true to mean.
+  if $withdrawn; then
+    answered=false; basis=none; stale=false
   fi
 fi
 
@@ -221,6 +265,23 @@ if [ "$open" = "true" ] && [ -n "$open_fp" ]; then
     question_stale=true
   fi
 fi
+# And the context, for an open question: the same comparison as above, against
+# what the question was asked in. The dispatcher withdraws a spec-approval
+# whose context moved (lv-orchestrate.sh); this is what it reads.
+if [ "$open" = "true" ]; then
+  open_ctx=$(wf_gate_field "$gate_file" GATE_PLAN_CONTEXT_AT_OPEN)
+  if [ -n "$open_ctx" ]; then
+    ctx_changed=$(wf_context_changed "$open_ctx" "$(wf_plan_context "$id")")
+    if [ -n "$ctx_changed" ]; then
+      ctx_stale=true
+      question_stale=true
+    else
+      ctx_stale=false
+    fi
+  else
+    ctx_stale=false; ctx_changed=""
+  fi
+fi
 # An open gate reports the revision it was asked about too, not just a closed
 # one — that is what the check above compares, and a caller may want it.
 if [ "$open" = "true" ] && [ -z "$fp_at_open" ]; then
@@ -255,6 +316,9 @@ wf_emit GATE_RESOLUTION  "$resolution"
 wf_emit GATE_QUESTION    "$question"
 wf_emit GATE_RESOLVED_AT "$resolved_at"
 wf_emit GATE_STALE       "$stale"
+wf_emit GATE_PLAN_CONTEXT_STALE   "$ctx_stale"
+wf_emit GATE_PLAN_CONTEXT_CHANGED "$ctx_changed"
+wf_emit GATE_WITHDRAWN   "$withdrawn"
 wf_emit GATE_PLAN_BODY_FP_AT_OPEN "$fp_at_open"
 wf_emit GATE_DECISION    "$decision"
 wf_emit GATE_PROMOTE_TIP "$promote_tip"

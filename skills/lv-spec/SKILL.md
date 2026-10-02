@@ -253,6 +253,23 @@ If the user picks a bug BUG-NNN:
    ```
    `GATE_RESOLUTION` non-empty → `GATE_QUESTION` was asked about this artifact and that is the answer. It is part of the input and outranks your own reading of it: if it says "write a plan, with Deps PLN-X", that is the plan you write. Quote it in the plan's Design Decisions (question, answer, `GATE_RESOLVED_AT`) so the decision travels with the tracked plan, and never re-ask it. `GATE_OPEN=true` → the question is still parked; stop and unclaim, as for any open gate. A client's LVI-032: an operator answered BUG-054's `needs-input` with "write a plan, with deps", and the unattended `/lv-spec` worker dispatched onto the bug had no instruction to look — the operator had to paste the decision into `bug.md` by hand.
 
+1y. **Read the directives and what this work depends on — before you read anything else about the design.** An overseer (the operator, or the coordinator acting for them) can steer a plan without editing it, through `lv-direct.sh`. Those directives live in the plan's own `directives.md`, and a decision a human made on a plan *this one depends on* lives on that plan, not here:
+   ```bash
+   scripts/lv-exec.sh lv-direct.sh list PLN-NNN         # this plan's live directives (replanning, or a plan you inherit)
+   scripts/lv-exec.sh lv-plan-context.sh PLN-NNN        # its Deps: state, directives, decisions of record, and what MOVED
+   ```
+   For a brief or bug not yet a plan, run `lv-plan-context.sh` once the plan exists and its Deps are set (step 4 onward), and before the review.
+
+   **A directive of kind `constraint` or `replan` is input of record. It outranks your own reading** of the brief, the bug and the plan, exactly as a gate answer does. Write the plan so it meets it, and quote it in Design Decisions (`D-n`, author, date, text). A `hold` is not yours to act on — the dispatcher does not send work at a held plan, and an attended session that finds one stops and says so. **A decision of record on an upstream plan binds this one too**: if PLN-026's spec-approval was answered "drop the allow-list", a plan that consumes PLN-026 is not specced against the allow-list, whatever PLN-026's text still says. When an upstream is still `draft`, write the dependency against its decisions of record and name the assumption in Design Decisions; if it has none on the point, say so — that is what the consistency pass at spec-approval checks.
+
+   A client's LVI-033: PLN-028 was respecced against PLN-026's draft text minutes after the operator had resolved PLN-026 by removing the very allow-list PLN-028 relied on. The answer existed, in the ledger of a different plan, and no worker was told to look.
+
+   **After the commit that applies a directive, record it** — once per directive, with that commit:
+   ```bash
+   scripts/lv-exec.sh lv-direct.sh apply PLN-NNN D-n --sha "$(git rev-parse HEAD)"
+   ```
+   An unapplied directive keeps the plan on the replanning list; an applied one stays binding, and every later worker still reads it.
+
 1z. **If this artifact cannot be converted to a plan yet, say so on the artifact and stop.**
    Three shapes reach here and none is work: a brief blocked on something outside this repo (an
    open bug in another project, a dependency that does not exist yet); a brief that *sequences
@@ -570,6 +587,13 @@ Read plans/PLN-NNN-[name]/plan.md IN FULL — it is the artifact under review, n
 target, and a finding you miss because you skimmed is a finding nobody makes. Read whatever
 source files it names, and the project docs it relies on, the same way.
 
+Then run `scripts/lv-exec.sh lv-plan-context.sh PLN-NNN` (read-only). The directives it prints
+for this plan, and the decisions of record it prints for the plans this one depends on, are
+binding: a plan that does not meet a live constraint/replan directive, or that relies on
+something an upstream decision of record removed or changed, is Blocked (Critical, category
+'directive' or 'upstream decision'), whatever else is right with it. A line starting MOVED
+names what changed since this plan's approval was last asked — check the plan against it.
+
 Evaluate against: architecture (project patterns, dependency direction),
 security (auth on endpoints, input sanitization, no hardcoded secrets),
 performance (no unbounded queries, N+1 patterns),
@@ -765,7 +789,8 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
    eval "$(scripts/lv-exec.sh lv-gate-status.sh PLN-NNN spec-approval)"
    ```
    - `GATE_ANSWERED=true` → **do not gate.** The human already approved *this* revision. Honour the recorded `GATE_RESOLUTION`, transition `draft → ready`, and note in `## Review` that you acted on an existing approval.
-   - `GATE_STALE=true` → the plan changed after the approval. Gate again: the approval was given to a document that no longer says what it said.
+   - `GATE_STALE=true` → the plan changed after the approval — or what it was specced against did (`GATE_PLAN_CONTEXT_CHANGED` names it: an upstream plan's text or answers, or a directive). Gate again: the approval was given to a document, and a context, that no longer say what they said.
+   - `GATE_WITHDRAWN=true` → the last question was **withdrawn, not answered** — a directive or an upstream change made it moot before a human replied. Nothing was approved. Gate as below; the new question is about this revision.
    - Otherwise → gate as below.
 
    **If the approval is provable but unrecorded, record it instead of re-asking.** A resolution that predates the ledger — or one a human gave in a commit message or in `findings.md` while the gate file was cleared some other way — reads here as `GATE_ANSWERED=false`, and following the rule then re-asks a question already answered in writing (WFI-060). When you can point at the evidence, back-fill it and proceed:
@@ -826,12 +851,17 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
 
 ## Replanning
 
-When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `findings.md`, it's a plan returned from verify or test that needs review. Findings come in two categories:
+When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `findings.md`, it's a plan returned from verify or test that needs review. Two more triggers land here with an empty `findings.md`, and the list's detail column names them:
+
+- **`directive D-n to apply`** — an overseer's `constraint` or `replan` directive (`lv-direct.sh list PLN-NNN`) not yet applied. **The directive's text is the brief for this pass**: amend the plan to meet it, run the review, then `lv-direct.sh apply` it (step 1y of [What you do](#what-you-do)).
+- **`spec-approval withdrawn`** — the plan's approval question was withdrawn because what it was specced against moved (`GATE_PLAN_CONTEXT_CHANGED` from `lv-gate-status.sh PLN-NNN spec-approval`). Read `lv-plan-context.sh PLN-NNN`, amend the plan against what moved — or record in `## Review` that it does not touch this plan — and gate again. A withdrawal is never an approval.
+
+Findings come in two categories:
 
 - **ESCALATED** (design) — require plan amendments and design decisions
 - **Behavior** (code fix) — bugs found during human testing, routed here for Opus review before sending to builder
 
-1. **Read `plan.md` and `findings.md`** from `plans/PLN-NNN-<slug>/` — understand the full plan and all findings
+1. **Read `plan.md` and `findings.md`** from `plans/PLN-NNN-<slug>/` — understand the full plan and all findings. Then `lv-direct.sh list PLN-NNN` and `lv-plan-context.sh PLN-NNN` (step 1y of [What you do](#what-you-do)): a live directive outranks a finding that contradicts it.
 1b. **Push a sub-goal** — summarize the pending findings as the active goal. If any finding is a show-stopper (critical/ESCALATED), make it the focus of the goal. Run:
     ```bash
     scripts/lv-exec.sh lv-goal-push.sh PLN-NNN "<findings summary goal>" "<trigger description>"
@@ -978,7 +1008,7 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
 
 ## Cross-plan consistency
 
-You are scoped to one plan. Nothing you write here can see a contradiction with the plan next to it — that is `lv-consistency`'s job, and it runs automatically when a plan with declared `Deps` reaches `ready`.
+You are scoped to one plan. Nothing you write here can see a contradiction with the plan next to it — that is `lv-consistency`'s job, and it runs automatically when a plan with declared `Deps` reaches `ready`, **and also while it waits at `spec-approval` on a dependency that is still unbuilt** — so the human is asked after the check, not before. A finding from that early pass withdraws the question and brings the plan back here.
 
 Your part of that contract is **declaring the dependencies in the first place.** A plan whose `Deps` column reads `—` is never cross-checked, whatever it actually consumes:
 

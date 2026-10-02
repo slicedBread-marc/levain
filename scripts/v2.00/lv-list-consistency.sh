@@ -2,7 +2,17 @@
 # lv-list-consistency.sh [plan-id]
 #
 # Plans that are `ready`, declare Deps, and have not had a cross-plan
-# consistency pass yet.
+# consistency pass yet — and plans WAITING AT SPEC-APPROVAL (draft, the gate
+# open) whose Deps are not all complete (LVI-033).
+#
+# The second set is new. A pass that runs only at `ready` runs after a human
+# has approved the plan, so the approval was given without anyone having
+# checked the plan against what it consumes. A client's PLN-028 sat at
+# spec-approval specced on an allow-list its upstream had just been told to
+# drop; a pass at `ready` would have found it only after a human approved it.
+# The goal column starts `at spec-approval —` for these, which is how
+# lv-consistency knows to route a finding against the plan itself as a
+# withdrawal of the question rather than an amendment.
 #
 # Format: <plan-name>\t<deps>\t<goal>
 # Exit 0 if any found, 1 if none.
@@ -79,11 +89,25 @@ closure_moved() {
 }
 
 while IFS=$'\037' read -r id slug state _priority _branch _updated _wf _tags deps; do
-  [ "$state" = "ready" ] || continue
   [ -n "$want" ] && [ "$id" != "$want" ] && continue
 
   # No declared dependencies → nothing between-plan to check.
   case "$deps" in ""|"—"|"-") continue ;; esac
+
+  at_approval=""
+  case "$state" in
+    ready) ;;
+    draft)
+      # Only while its approval is being asked, and only while something it
+      # depends on is still a document: against complete Deps the check at
+      # `ready` (and the build) is soon enough.
+      gf=$(wf_gate_file "$id" || true)
+      [ -f "$gf" ] && [ "$(wf_gate_field "$gf" GATE_NAME)" = "spec-approval" ] || continue
+      wf_blocking_deps "$deps" "$REGISTRY" >/dev/null || continue
+      at_approval="at spec-approval — "
+      ;;
+    *) continue ;;
+  esac
 
   plan_file="plans/${id}-${slug}/plan.md"
   [ -f "$plan_file" ] || continue
@@ -100,7 +124,7 @@ while IFS=$'\037' read -r id slug state _priority _branch _updated _wf _tags dep
   fi
 
   goal=$(wf_goal_text "$plan_file")
-  printf "%s\t%s\t%s\n" "${id}-${slug}" "$deps" "${reason:+$reason — }$goal"
+  printf "%s\t%s\t%s\n" "${id}-${slug}" "$deps" "${at_approval}${reason:+$reason — }$goal"
   found=1
 done < <(wf_registry_rows "$REGISTRY")
 

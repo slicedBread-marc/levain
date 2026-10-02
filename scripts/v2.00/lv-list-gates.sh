@@ -12,7 +12,7 @@
 # <state> is the artifact's current REGISTRY state, and <fit> is `ok` or
 # `mismatch` — whether a gate by that name can still be acted on from there.
 #
-# <qfit> is `current` or `stale`: whether the QUESTION still describes the plan.
+# <qfit> is `current`, `stale` or `moved`: whether the QUESTION still describes the plan.
 # A question is a claim of fact composed when the gate opened — a verdict, a
 # round count, a test tally — and the plan can move while the gate is parked,
 # because re-running lv-gate-open.sh on an open gate leaves it as is by design.
@@ -22,6 +22,13 @@
 # Two different columns for two different failures — <fit> says the gate has
 # outlived its state, <qfit> says the text has outlived its plan — and a row
 # can be `ok` and `stale` at once, which is exactly WFI-018's row.
+#
+# A third value, `moved`, says the plan's own text still matches but what it
+# was specced against does not: an upstream plan's text or answered gates, or
+# a directive on this plan (wf_plan_context, LVI-033). That is a collision —
+# a human approving it approves a plan built on a basis that has since changed
+# (a client's PLN-028, specced on an allow-list its upstream had just been told
+# to drop). `stale` wins when both are true.
 #
 # Appended as a NINTH field rather than folded into <fit>, because every caller
 # in the tree reads these rows with `cut -f<n>` for n ≤ 8 and a new column at
@@ -119,14 +126,18 @@ gate_fit() {
 # absent fingerprint is not evidence the question drifted, and flagging every
 # such row `stale` would train a reader to ignore the column.
 question_fit() {
-  local qid="$1" was="$2" now
-  [ -n "$was" ] || { printf 'current'; return 0; }
-  now=$(wf_plan_body_fingerprint "$qid" 2>/dev/null || true)
-  if [ -n "$now" ] && [ "$now" != "$was" ]; then
-    printf 'stale'
-  else
-    printf 'current'
+  local qid="$1" was="$2" ctx="${3:-}" now
+  if [ -n "$was" ]; then
+    now=$(wf_plan_body_fingerprint "$qid" 2>/dev/null || true)
+    if [ -n "$now" ] && [ "$now" != "$was" ]; then
+      printf 'stale'; return 0
+    fi
   fi
+  if [ -n "$ctx" ] && [[ "$qid" =~ ^($LV_PLN_RE)- ]] \
+     && [ -n "$(wf_context_changed "$ctx" "$(wf_plan_context "$qid" 2>/dev/null)")" ]; then
+    printf 'moved'; return 0
+  fi
+  printf 'current'
 }
 
 # How many other incomplete plans sit behind each plan in the Deps graph.
@@ -206,7 +217,7 @@ if [ -n "$query" ]; then
     "$GATE_ID" "$GATE_NAME" "$GATE_OPENED" "$(flatten "$GATE_QUESTION")" \
     "$(flatten "${GATE_CONTEXT:-—}")" "$(blocked_by "$id")" \
     "$gstate" "$(gate_fit "$GATE_NAME" "$gstate")" \
-    "$(question_fit "$GATE_ID" "${GATE_PLAN_BODY_FP_AT_OPEN:-}")"
+    "$(question_fit "$GATE_ID" "${GATE_PLAN_BODY_FP_AT_OPEN:-}" "${GATE_PLAN_CONTEXT_AT_OPEN:-}")"
   exit 0
 fi
 
@@ -234,7 +245,7 @@ for gate_file in "$gates_dir"/*.gate; do
       "$(blocked_by "$GATE_ID")" "$GATE_OPENED" "$GATE_ID" "$GATE_NAME" \
       "$(flatten "$GATE_QUESTION")" "$(flatten "${GATE_CONTEXT:-—}")" \
       "$gstate" "$(gate_fit "$GATE_NAME" "$gstate")" \
-      "$(question_fit "$GATE_ID" "${GATE_PLAN_BODY_FP_AT_OPEN:-}")"
+      "$(question_fit "$GATE_ID" "${GATE_PLAN_BODY_FP_AT_OPEN:-}" "${GATE_PLAN_CONTEXT_AT_OPEN:-}")"
   ) >> "$tmp" 2>/dev/null || true
 done
 

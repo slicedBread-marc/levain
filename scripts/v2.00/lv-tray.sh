@@ -27,7 +27,9 @@
 #                 script to parse (see coordinator' lv-rack, which builds a
 #                 cross-project grid from this). Not for humans. Includes
 #                 attn=<comma-separated gated plan IDs, most-important
-#                 first, `!` suffix on a stuck one>,
+#                 first, `!` suffix on a stuck one, `~` on a collision:
+#                 a question whose plan's upstream or directives moved
+#                 after it was asked (LVI-033)>,
 #                 brainstorms=<briefs listed under ## Idea / ## Exploring in
 #                 plans/briefs/INDEX.md — thinking never carried to a
 #                 decision> with brainstorms_drift=<brief files that have no
@@ -525,6 +527,7 @@ render() {
       id = $1; sub(/^[A-Z]+-/, "", id)
       tok = id
       if ($2 ~ /stuck/) tok = tok "!"
+      if ($9 == "moved") tok = tok "~"
       printf "%s%s", (NR > 1 ? "," : ""), tok
     }')
   fi
@@ -681,8 +684,11 @@ render() {
     # ── Gates ─────────────────────────────────────────────────────────
     printf '%s\n' "${B}GATES${R} ${DIM}— waiting on you (/lv-attend)${R}"
     if [ -n "$gates" ]; then
-      printf '%s\n' "$gates" | while IFS=$'\t' read -r gid gname gopened gq _gctx gblk; do
+      printf '%s\n' "$gates" | while IFS=$'\t' read -r gid gname gopened gq _gctx gblk _gst _gfit gqfit; do
         [ -n "$gid" ] || continue
+        # A collision: the plan's own text is unchanged, but what it was
+        # specced against moved after the question was asked (LVI-033).
+        [ "$gqfit" = "moved" ] && gq="${RED}COLLISION — upstream or directives moved since asked; do not approve (lv-plan-context.sh $gid)${R} $gq"
         # Stuck outranks blocking: a stall needs a human look regardless of
         # whether anything downstream depends on it.
         local gcolor="$YEL"
@@ -700,6 +706,27 @@ render() {
       printf '  %snone — nothing is waiting on you%s\n' "$DIM" "$R"
     fi
     printf '\n'
+
+    # ── Directives ────────────────────────────────────────────────────
+    # An overseer's standing instructions on plans in flight (lv-direct.sh,
+    # LVI-033): holds, and constraints/replans not yet applied by /lv-spec.
+    # Applied ones are binding too but need nothing from anyone, so they are
+    # not listed. Printed only when there is something to show.
+    local dlines="" dfile did drows
+    for dfile in "$ROOT"/plans/*/directives.md; do
+      [ -f "$dfile" ] || continue
+      did=$(basename "$(dirname "$dfile")" | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+      [ -n "$did" ] || continue
+      drows=$(wf_directives_live "$did" 2>/dev/null | awk -F'\037' -v id="$did" '
+        $2 == "hold" { printf "  HOLD    %-11s %s %s\n", id, $1, $7; next }
+        $3 == "open" { printf "  %-7s %-11s %s %s\n", toupper($2), id, $1, $7 }')
+      [ -n "$drows" ] && dlines="$dlines$drows"$'\n'
+    done
+    if [ -n "$dlines" ]; then
+      printf '%s\n' "${B}DIRECTIVES${R} ${DIM}— held, or not yet applied (lv-direct.sh list <ID>)${R}"
+      printf '%s' "$dlines"
+      printf '\n'
+    fi
   fi
 
   # ── Pipeline ────────────────────────────────────────────────────────

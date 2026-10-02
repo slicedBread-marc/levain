@@ -158,6 +158,18 @@
 # Attended callers are unaffected. A human at a terminal IS the basis, and
 # `/lv-attend` is where that answer belongs.
 #
+# --withdraw    The question is MOOT, not answered: what it asked about has
+#                moved underneath it (LVI-033). A plan at spec-approval whose
+#                upstream plan was re-decided, or which a directive changed, is
+#                asking a human to approve a document that no longer covers
+#                the decision. The gate goes, and the record says WITHDRAWN:
+#                lv-gate-status.sh reports GATE_ANSWERED=false and
+#                GATE_WITHDRAWN=true for it, so it can never be read back as an
+#                approval, and the resolution text (why it was withdrawn) is
+#                what the next /lv-spec reads as its brief. Needs an open gate;
+#                never a backfill, never with --decision. No --basis is needed
+#                unattended, because nothing is being decided.
+#
 # Exit 0 on success (idempotent), 1 on usage error,
 #        4 when an unattended close has no acceptable basis,
 #        5 when an `approve` names a batch the source ref has moved past.
@@ -179,6 +191,8 @@ promote_tip=""
 covers_push=""
 decision=""
 batch_moved_ok=false
+withdraw=false
+plan_context_at_open=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -194,6 +208,7 @@ while [ $# -gt 0 ]; do
       shift 2 ;;
     --resolves) resolves="${2:?--resolves requires a finding substring, or 'all'}"; shift 2 ;;
     --batch-moved-ok) batch_moved_ok=true; shift ;;
+    --withdraw) withdraw=true; shift ;;
     -*)      echo "Unknown option: $1" >&2; exit 1 ;;
     *)
       if [ -z "$artifact" ]; then artifact="$1"; else resolution="$1"; fi
@@ -203,6 +218,12 @@ done
 
 [ -n "$artifact" ] || { echo "Usage: $0 <artifact-id> [resolution] [--gate <name>] [--only <name>] [--basis <basis>]" >&2; exit 1; }
 resolution="${resolution:-resolved}"
+
+if $withdraw && { [ -n "$decision" ] || [ -n "$forced_gate" ]; }; then
+  echo "Error: --withdraw records that a question became moot. It cannot carry a --decision," >&2
+  echo "       and it cannot backfill (--gate) a question that is not open." >&2
+  exit 1
+fi
 
 if [ -n "$only_gate" ] && [ -n "$forced_gate" ]; then
   echo "Error: --only and --gate are opposites — --gate records a resolution with no gate open," >&2
@@ -226,6 +247,7 @@ fi
 gate_file=$(wf_gate_file "$id" || true)
 
 if [ ! -f "$gate_file" ] && [ -z "$forced_gate" ]; then
+  # Includes --withdraw: a question already gone has nothing left to withdraw.
   echo "$id: no open gate"
   exit 0
 fi
@@ -262,6 +284,9 @@ if [ -f "$gate_file" ]; then
   # This is the plan's fingerprint as of when the question was ASKED — see the
   # comment above `record=` for why the close-time one cannot stand alone.
   plan_body_fp_at_open=$(wf_gate_field "$gate_file" GATE_PLAN_BODY_FP_AT_OPEN)
+  # And the context the question was asked in — the plans it depends on and
+  # its directives (LVI-033). Carried into the record for the same reason.
+  plan_context_at_open=$(wf_gate_field "$gate_file" GATE_PLAN_CONTEXT_AT_OPEN)
   # The commit set a promotion gate was asked about — the scope of any approval
   # recorded below. Read here with the rest, because the gate file is gone by
   # the time the record is written.
@@ -326,7 +351,7 @@ fi
 #
 # Checked BEFORE the gate file is removed, so a refusal leaves the gate exactly
 # as it was and the human still owes the same answer. See WFI-227 in the header.
-if [ "${LV_UNATTENDED:-0}" = "1" ]; then
+if [ "${LV_UNATTENDED:-0}" = "1" ] && ! $withdraw; then
   refuse_basis() {
     echo "lv-gate-close: refusing to close '$gate_name' on $id — $1" >&2
     echo "  You are running UNATTENDED (LV_UNATTENDED=1). A gate is a question parked for a" >&2
@@ -530,13 +555,21 @@ record=$(
   wf_emit GATE_RESOLVED_STATE "${gate_state:-—}"
   # WHO answered, in the record. An empty basis is an attended close: a human
   # was at the terminal. Anything else names the mechanism, checked above.
-  wf_emit GATE_RESOLVED_BASIS "${basis:-human (attended)}"
+  if $withdraw; then
+    wf_emit GATE_RESOLVED_BASIS "withdrawn${basis:+ ($basis)}"
+    wf_emit GATE_WITHDRAWN true
+  else
+    wf_emit GATE_RESOLVED_BASIS "${basis:-human (attended)}"
+  fi
   wf_emit GATE_RESOLVED_UNATTENDED "${LV_UNATTENDED:-0}"
   # Not `[ -n … ] && wf_emit …`: as the LAST command in this substitution a
   # false test makes the subshell exit 1, and `set -e` then kills the script
   # before the record is ever written.
   if [ -n "$plan_body_fp_at_open" ]; then
     wf_emit GATE_PLAN_BODY_FP_AT_OPEN "$plan_body_fp_at_open"
+  fi
+  if [ -n "$plan_context_at_open" ]; then
+    wf_emit GATE_PLAN_CONTEXT_AT_OPEN "$plan_context_at_open"
   fi
   # The answer as a VALUE, and the commit set it is an answer about. Both only
   # exist for the promotion gates; everywhere else the prose resolution is the
@@ -598,7 +631,11 @@ transcribe_resolution() {
     printf '\n### %s — %s\n' "$gate_name" "$(wf_now)"
     [ -n "$gate_question" ] && printf '> **Asked:** %s\n' "$(printf '%s' "$gate_question" | tr '\n' ' ')"
     printf '> **Resolution:** %s\n' "$(printf '%s' "$resolution" | tr '\n' ' ')"
-    printf '> **Answered by:** %s\n' "${basis:-a human at an attended terminal}"
+    if $withdraw; then
+      printf '> **Withdrawn:** the question became moot and was not answered — nothing was approved. Re-spec against the reason above.\n'
+    else
+      printf '> **Answered by:** %s\n' "${basis:-a human at an attended terminal}"
+    fi
     printf '> **State at close:** %s\n' "${gate_state:-—}"
     printf '> Recorded by lv-gate-close.sh. This is the decision of record — act on it rather than re-deriving the question (WFI-181).\n'
   } >> "$findings"
@@ -700,6 +737,11 @@ if ls "$attempts_dir/$id".* >/dev/null 2>&1; then
   wf_event attempts-reset "$id" "gate '$gate_name' answered — attempt budget cleared (WFI-185)"
 fi
 
+if $withdraw; then
+  wf_event gate-withdrawn "$id" "$gate_name: $resolution"
+  echo "$id: gate '$gate_name' withdrawn — $resolution"
+  exit 0
+fi
 wf_event gate-close "$id" "$gate_name: $resolution"
 if [ -n "$forced_gate" ] && [ ! -f "$gate_file" ]; then
   echo "$id: recorded '$gate_name' as answered — $resolution"

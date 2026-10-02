@@ -176,6 +176,21 @@ scripts/lv-exec.sh lv-autonomy.sh --show    # what this project has granted, and
 work a machine is allowed to do and a human now owns the next decision. Retrying
 burns tokens and trips the attempt budget.
 
+### Steer a plan in flight
+
+```bash
+scripts/lv-exec.sh lv-direct.sh add PLN-NNN --kind constraint --text "<what must hold>"
+scripts/lv-exec.sh lv-direct.sh add PLN-NNN --kind hold --text "<why>"     # release-hold resumes it
+scripts/lv-exec.sh lv-direct.sh list PLN-NNN
+scripts/lv-exec.sh lv-plan-context.sh PLN-NNN    # what the plan was decided against, and what moved
+```
+
+A directive is binding input for every worker that touches the plan, and it
+travels with the plan in `directives.md`. Only the operator or a coordinator
+may add one; an unattended worker is refused. A directive withdraws an open
+`spec-approval`, and so does a change upstream. A withdrawal is never an
+approval.
+
 ### See what is happening
 
 ```bash

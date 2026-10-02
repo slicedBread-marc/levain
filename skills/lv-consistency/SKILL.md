@@ -1,6 +1,6 @@
 ---
 name: lv-consistency
-description: Cross-plan consistency pass. Checks a ready plan against every plan in its dependency closure — consumed APIs, provisioning paths, conflicting artifact definitions. Use when a plan with declared Deps reaches ready.
+description: Cross-plan consistency pass. Checks a plan against every plan in its dependency closure — consumed APIs, provisioning paths, conflicting artifact definitions, and the directives and decisions of record on those plans. Use when a plan with declared Deps reaches ready, or waits at spec-approval on an unbuilt dependency.
 user_invocable: true
 model: sonnet
 ---
@@ -43,11 +43,14 @@ Exit 0 with the goal column starting `re-check: amended since the last pass — 
 
 client-d's PLN-014 (WFI-013) already carried a current entry — same closure (PLN-010, PLN-011), same six cited docs, plan unamended, `REVIEW_STALE=false` — and this lister named nothing outstanding. The documented path went straight from `lv-plan-info.sh` to `lv-claim.sh` to reading the transitive closure, so following it meant re-reading ~2100 lines to reach a conclusion already on disk, and appending a second entry for it. The entry-check existed; nothing told you to make it.
 
+Exit 0 with the goal column starting `at spec-approval —` — **the plan is still `draft`, waiting on a human's approval, and something it depends on is unbuilt.** You are the check that runs *before* that human answers, so they are not asked to approve a plan that contradicts its upstream. Everything below applies, with the [spec-approval routing](#a-plan-waiting-at-spec-approval) for findings against this plan. A client's LVI-033: PLN-028 sat at spec-approval specced against an allow-list its upstream had just been told to drop; the pass at `ready` would have found it only after the approval.
+
 Exit 0 — it is outstanding, carry on:
 
 ```bash
 eval "$(scripts/lv-exec.sh lv-plan-info.sh PLN-NNN)"     # PLAN_SLUG, PLAN_STATE, PLAN_DIR, PLAN_NAME
-scripts/lv-exec.sh lv-claim.sh PLN-NNN --state ready
+scripts/lv-exec.sh lv-claim.sh PLN-NNN --state ready,draft
+scripts/lv-exec.sh lv-plan-context.sh PLN-NNN            # directives + decisions of record across the closure, and what MOVED
 scripts/lv-exec.sh lv-check-deps.sh PLN-NNN              # the declared Deps and their states
 scripts/lv-exec.sh lv-list-closure.sh PLN-NNN            # the TRANSITIVE closure — id, slug, state
 scripts/lv-exec.sh lv-list-cited-docs.sh PLN-NNN         # the reference docs those plans cite
@@ -63,7 +66,9 @@ keys on the number, so the bare `PLN-NNN` above is always enough.
 
 `lv-claim.sh` exits **2** when a live session already holds the plan. That is a stand-down, not a failure to route around: report it and stop (WFI-146).
 
-It exits **3** when the plan is no longer `ready` — a builder picked it up, or it was replanned, between the dispatch and you. Exit 0 without doing anything; nothing was claimed. A consistency pass is worth running while both plans are still documents and worth nothing once one is being built (WFI-153).
+It exits **3** when the plan is no longer `ready` or `draft` — a builder picked it up between the dispatch and you. (A plan dispatched `at spec-approval` that has since become `ready` is still worth the pass; one that has gone `active` is not.) Exit 0 without doing anything; nothing was claimed. A consistency pass is worth running while both plans are still documents and worth nothing once one is being built (WFI-153).
+
+**`lv-plan-context.sh` is input of record.** A live directive (`lv-direct.sh list`) on any plan in the closure, and an answer a human gave on an upstream plan's design gate, outrank that plan's text: if PLN-026's spec-approval was answered "drop the allow-list" and PLN-026's Steps still describe one, PLN-026 *will not have one*, and a dependent relying on it is a finding. Check every plan against the decisions, not just against each other's prose.
 
 Read `$PLAN_DIR/plan.md`, then `plan.md` for **every plan `lv-list-closure.sh` names** — the plans in `Deps`, the plans in *their* `Deps`, transitively. Read them all before concluding anything; a contradiction is by definition not visible in one file.
 
@@ -98,6 +103,22 @@ Where a finding lands depends entirely on whether the dependency has been **buil
 | `active`, `verify`, `testing`, `complete` | Built — code exists | **Escalate.** This is a migration and a human should see it. |
 
 Amending an unbuilt plan is cheap and correct — that is exactly how the paging mismatch above was fixed, as a dated amendment adding a `before=` parameter to a plan still sitting in `ready`.
+
+### A plan waiting at spec-approval
+
+When the lister said `at spec-approval —`, a human is about to be asked to approve this plan's text. **A finding whose fix is on *this* plan withdraws the question** — do not amend the plan under a pending question, which would change the document while it is being read:
+
+```bash
+# THIS plan's findings.md — an unchecked item is what sends it back to /lv-spec:
+- [ ] **Design**: <finding, naming the upstream plan and the directive or decision it contradicts> ← ESCALATED
+
+scripts/lv-exec.sh lv-gate-close.sh PLN-NNN "consistency at spec-approval: <one line>" \
+  --only spec-approval --withdraw
+```
+
+`--withdraw` records the question as moot, never as answered: `lv-gate-status.sh` reports `GATE_WITHDRAWN=true` and `GATE_ANSWERED=false`, so nothing downstream can read it as an approval. `/lv-spec` amends the plan against the finding and asks again. A finding whose fix is on an unbuilt *upstream* plan is routed by the table above — amend that plan; this plan's question is withdrawn automatically by the dispatcher once the upstream settles, because its context moved.
+
+**A clean pass leaves the gate open.** Write the `## Consistency` entry as usual; the human answering the question now has the check of record to read.
 
 ### An amendment lands on a plan somebody already reviewed
 
@@ -163,7 +184,7 @@ scripts/lv-exec.sh lv-unclaim.sh PLN-NNN-<slug>
 ```
 **Commit first, unclaim second.** The `## Consistency` entry is this pass's done-marker, and until it is committed it is a dirty file on a shared working tree — another worker's `git stash push` or pathspec commit can take it (WFI-061/065). Releasing the claim before it lands invites a second consistency worker onto a plan you have already checked.
 
-State stays `ready`. The plan proceeds to the builder.
+State stays where it was — `ready` proceeds to the builder; `draft` waits on its spec-approval (or, withdrawn, on `/lv-spec`).
 
 **Escalated (built dep):** commit the findings and the `## Consistency` entry the same way, leave the gate open, and stop.
 

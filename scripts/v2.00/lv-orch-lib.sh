@@ -2010,3 +2010,207 @@ wf_bad_option() {
   wf_usage "$f" >&2
   exit 1
 }
+
+# ── Directives and the context a plan was decided in (LVI-033) ─────────────
+#
+# A plan is specified, reviewed and approved as a document — but it is written
+# against OTHER documents: the plans in its Deps, the answers a human gave on
+# them, and any direction the overseer has given. Every staleness test the
+# harness had looked only at the plan's own text. So when one of those other
+# documents moved, the plan's approval stood.
+#
+# A client, 2026-09-30. PLN-026 bounced implement→spec, ran three review
+# rounds and parked `spec-stuck`; the operator resolved it by removing the
+# Folder allow-list. PLN-028 (Deps PLN-025, PLN-026) had been specced against
+# PLN-026's draft text and sat at spec-approval built on that allow-list — the
+# only guard on serving a child's photo. Nothing marked PLN-028's approval
+# stale, lv-consistency ran only at `ready`, and the overseer had no channel a
+# /lv-spec worker would read as binding. The operator's only path was to
+# remember to reject PLN-028's gate by hand.
+#
+# Two things live here. DIRECTIVES are that channel: binding direction written
+# by lv-direct.sh into plans/<plan>/directives.md, which every worker reading
+# the plan loads first. CONTEXT is the fingerprint of everything a plan was
+# decided against — each plan in its closure (body, directives, answered
+# revision-scoped gates) and its own directives. lv-gate-open.sh records it
+# when a question is asked, lv-gate-close.sh when it is answered, and
+# lv-gate-status.sh compares: a moved context makes an answer stale and an
+# open question moot, the same as a moved plan body does.
+
+# wf_plan_dir <id> → plans/<id>-<slug> in the develop root; 1 when none.
+wf_plan_dir() {
+  local id="$1" root slug d
+  root="$(wf_develop_root)"
+  slug=$(wf_registry_field "$id" slug "$root/plans/REGISTRY.md")
+  if [ -n "$slug" ] && [ -d "$root/plans/${id}-${slug}" ]; then
+    printf '%s' "$root/plans/${id}-${slug}"; return 0
+  fi
+  for d in "$root/plans/${id}"-*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"; printf '%s' "$d"; return 0
+  done
+  return 1
+}
+
+# wf_directives_rows <plan-id> → one row per directive, \037-separated:
+#   D-n  kind  status  author  date  supersedes  text
+# The text is the body on one line, its line breaks shown as " / ". Nothing,
+# and 0, when the plan has no directives.md.
+wf_directives_rows() {
+  local dir file
+  dir=$(wf_plan_dir "$1") || return 0
+  file="$dir/directives.md"
+  [ -f "$file" ] || return 0
+  awk '
+    function flush() {
+      if (did == "") return
+      gsub(/^( \/ )+|( \/ )+$/, "", text)
+      printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\n", did, kind, status, author, date, sup, text
+    }
+    function field(line,   v) { v = line; sub(/^>[ \t]*\*\*[A-Za-z]+:\*\*[ \t]*/, "", v); sub(/[ \t]+$/, "", v); return v }
+    /^## D-[0-9]+/ {
+      flush()
+      did = $2; kind = $0; sub(/^## D-[0-9]+[ \t]*—[ \t]*/, "", kind); sub(/[ \t]+$/, "", kind)
+      status = "open"; author = ""; date = ""; sup = "—"; text = ""
+      next
+    }
+    did == "" { next }
+    /^>[ \t]*\*\*Status:\*\*/     { status = field($0); next }
+    /^>[ \t]*\*\*Author:\*\*/     { author = field($0); next }
+    /^>[ \t]*\*\*Date:\*\*/       { date = field($0); next }
+    /^>[ \t]*\*\*Supersedes:\*\*/ { sup = field($0); next }
+    {
+      line = $0; sub(/[ \t]+$/, "", line)
+      if (line == "" && text == "") next
+      text = (text == "") ? line : text " / " line
+    }
+    END { flush() }
+  ' "$file"
+}
+
+# wf_directives_live <plan-id> → the rows above that still bind: everything
+# not superseded. Applied directives still bind — `applied` says the plan text
+# now carries them, not that they lapsed.
+wf_directives_live() {
+  wf_directives_rows "$1" | awk -F'\037' '$3 !~ /^superseded/'
+}
+
+# wf_plan_held <plan-id> → the D-n of a live `hold`, exit 0; exit 1 when the
+# plan is not held. `release-hold` supersedes the hold it releases, so a live
+# hold row is the whole answer.
+wf_plan_held() {
+  local d
+  d=$(wf_directives_live "$1" | awk -F'\037' '$2 == "hold" { h = $1 } END { print h }')
+  [ -n "$d" ] || return 1
+  printf '%s' "$d"
+}
+
+# wf_directives_hash <plan-id> → a hash of the live directives that say
+# something about the SPECIFICATION — constraint and replan — or empty. Status
+# is left out, so marking a directive applied stales nothing; holds are left
+# out, because pausing dispatch changes no design.
+wf_directives_hash() {
+  local rows
+  rows=$(wf_directives_live "$1" | awk -F'\037' '$2 == "constraint" || $2 == "replan" { print $1 "\037" $2 "\037" $6 "\037" $7 }')
+  [ -n "$rows" ] || return 0
+  printf '%s\n' "$rows" | shasum | awk '{print substr($1, 1, 12)}'
+}
+
+# wf_gate_answers_stamp <id> → when each revision-scoped gate on that artifact
+# (any prefix carrying its number) was last answered, as `gate@time` words.
+# A withdrawn question was not answered, so it does not count.
+wf_gate_answers_stamp() {
+  local id="$1" dir num f base gate out=""
+  dir="$(wf_orch_dir)/gates/resolved"
+  [ -d "$dir" ] || return 0
+  num=$((10#${id##*-}))
+  for f in "$dir"/*; do
+    [ -f "$f" ] || continue
+    case "$f" in *.log) continue ;; esac
+    base=$(basename "$f")
+    [[ "$base" =~ ^($LV_WORK_RE)-([0-9]+)\.(.+)$ ]] || continue
+    [ "$((10#${BASH_REMATCH[2]}))" = "$num" ] || continue
+    gate="${base#*.}"
+    wf_gate_revision_scoped "$gate" || continue
+    [ "$(wf_gate_field "$f" GATE_WITHDRAWN)" = "true" ] && continue
+    out="$out${out:+ }$gate@$(wf_gate_field "$f" GATE_RESOLVED)"
+  done
+  printf '%s' "$out"
+}
+
+# wf_plan_context <plan-id> → the context fingerprint, as sorted words:
+#   PLN-025=<hash> PLN-026=<hash> directives=<hash>
+# One word per plan in the transitive closure (its body, its directives, the
+# answers given on it), plus this plan's own directives when it has any.
+# `none` for a plan with no Deps and no directives: a context that was TAKEN and
+# is empty, which is different from one never taken (an empty field in an older
+# record) — a directive added later must still read as a change.
+# Words rather than one hash so a change can be NAMED: wf_context_changed.
+wf_plan_context() {
+  local id="$1" words="" cid _slug _state h d
+  while IFS=$'\t' read -r cid _slug _state; do
+    [ -n "$cid" ] || continue
+    h=$(printf '%s|%s|%s' "$(wf_plan_body_fingerprint "$cid")" "$(wf_directives_hash "$cid")" \
+          "$(wf_gate_answers_stamp "$cid")" | shasum | awk '{print substr($1, 1, 12)}')
+    words="$words $cid=$h"
+  done < <("$(dirname "${BASH_SOURCE[0]}")/lv-list-closure.sh" "$id" 2>/dev/null || true)
+  d=$(wf_directives_hash "$id")
+  [ -n "$d" ] && words="$words directives=$d"
+  [ -n "$words" ] || { printf 'none'; return 0; }
+  printf '%s\n' $words | sort | tr '\n' ' ' | sed 's/^ *//; s/ *$//'
+}
+
+# wf_context_changed <old-context> <new-context> → the names whose words differ
+# (a plan id, or `directives`), space-separated; empty when they agree. An old
+# context that is empty is a record written before contexts existed, and is
+# never reported as changed — a fingerprint that was never taken cannot have
+# moved, and treating it as moved would stale every answer on upgrade.
+wf_context_changed() {
+  local old="$1" new="$2"
+  [ -n "$old" ] || return 0
+  [ "$old" = "$new" ] && return 0
+  [ "$old" = "none" ] && old=""
+  [ "$new" = "none" ] && new=""
+  {
+    printf '%s\n' $old | sed 's/^/o /'
+    printf '%s\n' $new | sed 's/^/n /'
+  } | awk '
+    { split($2, kv, "="); k = kv[1]; v = kv[2]
+      if ($1 == "o") o[k] = v; else n[k] = v; seen[k] = 1 }
+    END { for (k in seen) if (o[k] != n[k]) print k }
+  ' | sort | tr '\n' ' ' | sed 's/ *$//'
+}
+
+# wf_plan_dependents <plan-id> → the plans whose Deps name this one directly
+# and that are not built yet (draft or ready), as `PLN-028 (draft)` words,
+# comma-separated. An open gate on one is named too: `PLN-028 (draft,
+# spec-approval open)`.
+wf_plan_dependents() {
+  local want="$1" out="" did _s state _p _b _u _w _t deps d g gf
+  while IFS=$'\037' read -r did _s state _p _b _u _w _t deps; do
+    case "$state" in draft|ready) ;; *) continue ;; esac
+    case ",${deps// /}," in *",$want,"*) ;; *) continue ;; esac
+    d="$did ($state"
+    gf=$(wf_gate_file "$did" || true)
+    if [ -f "$gf" ]; then g=$(wf_gate_field "$gf" GATE_NAME); d="$d, $g open"; fi
+    out="$out${out:+, }$d)"
+  done < <(wf_registry_rows)
+  printf '%s' "$out"
+}
+
+# wf_plan_flux_note <plan-id> → a bracketed note naming the plans upstream of
+# this one that are still being decided (draft), and the unbuilt plans that
+# depend on it — or nothing. Appended to spec-approval and spec-stuck
+# questions, so the human answering one sees which other decisions it moves
+# with (LVI-033).
+wf_plan_flux_note() {
+  local id="$1" up="" cid _slug state deps
+  while IFS=$'\t' read -r cid _slug state; do
+    [ -n "$cid" ] || continue
+    [ "$state" = "draft" ] && up="$up${up:+, }$cid (draft)"
+  done < <("$(dirname "${BASH_SOURCE[0]}")/lv-list-closure.sh" "$id" 2>/dev/null || true)
+  deps=$(wf_plan_dependents "$id")
+  [ -n "$up" ] && printf ' [upstream still in flux: %s]' "$up"
+  [ -n "$deps" ] && printf ' [unbuilt dependents that move with this answer: %s]' "$deps"
+  return 0
+}

@@ -110,6 +110,21 @@ gate_note() {   # gate_note <artifact-id> → "GATED(<name>) …; " or nothing
 # them, but the lv-spec entry menu parses exactly three (`# replanning`,
 # `# bugs`, `# briefs`) and would drop rows under a fourth. The `detail` column
 # is what tells them apart.
+# directive_note <plan-id> → why a draft plan is steering work, or nothing
+# (LVI-033). An overseer's directive not yet applied, or a spec-approval that
+# was WITHDRAWN because what it asked about moved, is a replan brief exactly
+# as an escalated finding is — and findings.md carries neither as a checkbox.
+directive_note() {
+  local id="$1" ids rf note=""
+  ids=$(wf_directives_live "$id" | awk -F'\037' '($2 == "constraint" || $2 == "replan") && $3 == "open" { printf "%s%s", s, $1; s = "," }')
+  [ -n "$ids" ] && note="directive ${ids} to apply"
+  rf=$(wf_gate_resolved_file "$id" spec-approval || true)
+  if [ -f "$rf" ] && [ "$(wf_gate_field "$rf" GATE_WITHDRAWN)" = "true" ]; then
+    note="${note:+$note, }spec-approval withdrawn"
+  fi
+  printf '%s' "$note"
+}
+
 escalated=()
 unreviewed=()
 while IFS=$'\037' read -r id slug state priority _rest; do
@@ -120,6 +135,13 @@ while IFS=$'\037' read -r id slug state priority _rest; do
   # Claimed by a live session, or parked on a gate? Not ours to offer — and
   # say which, on stderr. See not_offered above.
   skip_with_reason "${id}-${slug}" && continue
+
+  dnote=$(directive_note "$id")
+  if [ -n "$dnote" ]; then
+    escalated+=("${id}-${slug}	$(gate_note "$id")${dnote}	$priority")
+    found=1
+    continue
+  fi
 
   findings="$plan_dir/findings.md"
   unchecked=$(wf_unchecked_count "$findings")

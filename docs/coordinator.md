@@ -35,6 +35,7 @@ scripts/v*/lv-dep-bug.sh        file into a declared dependency
 scripts/v*/lv-issue.sh          report a harness fault
 scripts/v*/lv-hook.sh           the extension-hook dispatcher, + hooks.default/
 scripts/v*/lv-rack.sh           the cross-project board
+scripts/v*/lv-direct.sh         steer a coordinated plan (--project), via the target's own harness
 .claude/skills/lv-dep-notify/   filing: the entry point a human or agent invokes
 .claude/skills/lv-rack/         the board, summarised
 .claude/skills/lv-vision/       the owner's vision skill, or the interview that writes one
@@ -76,6 +77,12 @@ the library regenerates on every deploy. That is `WORKFLOW.md`, rendered from
 `templates/WORKFLOW-coordinator.md`.
 
 ## Where its authority stops
+
+There is one other thing it may write into a target, and it does not write it
+itself. `lv-direct.sh … --project <name>` runs the target's own `lv-direct.sh`
+through the target's `lv-exec.sh`. The directive is recorded as
+`coordinator:<slug>` and committed by the target's harness. The target's own
+workers then apply it ([directives.md](directives.md)).
 
 Filing is the **terminal action**. Everything downstream of a filed report —
 triage, spec, claiming, registry rows, implementation, verification, testing,

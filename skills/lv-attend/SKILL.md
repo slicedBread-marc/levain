@@ -127,6 +127,17 @@ Once the user picks one, read the gate's `<context>` file if it has one, then fo
 
 The plan is drafted, **already reviewed**, and committed in `draft` state. The orchestrator wrote it and ran the architecture review; it is not allowed to approve it.
 
+0. **Ask whether the question still describes what it was asked against — before you present it:**
+   ```bash
+   eval "$(scripts/lv-exec.sh lv-gate-status.sh <PLN-ID> spec-approval)"
+   scripts/lv-exec.sh lv-plan-context.sh <PLN-ID>
+   ```
+   `GATE_PLAN_CONTEXT_STALE=true` → **do not approve it.** Something the plan was specced against moved after the question was asked: an upstream plan's text or its answered gate, or a directive (`GATE_PLAN_CONTEXT_CHANGED` names which). An approval now would be given to a plan that still assumes the old upstream. Tell the human what moved, then withdraw the question so `/lv-spec` re-specs against it:
+   ```bash
+   scripts/lv-exec.sh lv-gate-close.sh <PLN-ID> "withdrawn at attend: <what moved>" --only spec-approval --withdraw
+   ```
+   If the human, having seen what moved, says the plan is unaffected, do not approve the stale question anyway and do not reject it: append a checked note to `findings.md` naming what moved and why it does not touch this plan, withdraw as above, and let the re-spec confirm it and ask again against the current context. A client's LVI-033: PLN-028 was presented for approval specced on an allow-list its upstream PLN-026 had just been told to drop. The question text carries `[upstream still in flux: …]` when a dependency was still a document at the time it was asked; read that too.
+
 1. **Locate the verdict before assuming there isn't one:**
    ```bash
    eval "$(scripts/lv-exec.sh lv-review-status.sh <PLN-ID>)"

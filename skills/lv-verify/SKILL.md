@@ -70,7 +70,7 @@ You receive a plan ID (e.g. `PLN-003`) as context. From this:
 > commands below, or repeat the `eval` in the same call that uses them. Passing
 > an unset `$PLAN_NAME` to `lv-claim.sh` claims the empty string and prints a
 > usage error that reads like a rejected plan name (WFI-107).
-3. **Read the plan** — `$PLAN_DIR/plan.md` on develop
+3. **Read the plan** — `$PLAN_DIR/plan.md` on develop, and its live directives: `scripts/lv-exec.sh lv-direct.sh list PLN-NNN`. A `constraint` directive is part of the spec you verify against; code that contradicts one is an `ESCALATED` finding quoting the directive (`D-n`), because the plan and an overseer's instruction disagree and that is a planner's call, not a builder's.
 4. **Read the code** — in the feature worktree at `feature-branches/$PLAN_NAME/`
 
 ## What you check

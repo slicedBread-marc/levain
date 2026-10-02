@@ -1081,7 +1081,7 @@ render_text() {
     local total="${#ids[@]}" shown="" k tok
     local shown_count=$total; [ "$shown_count" -gt 2 ] && shown_count=2
     for ((k = 0; k < shown_count; k++)); do
-      tok="${ids[$k]%!}"
+      tok="${ids[$k]%\~}"; tok="${tok%!}"
       # A single plan gets room to spell out "PLN-" in full; with two shown,
       # bare numbers keep the cell from crowding out its neighbours. RELEASE
       # and DEPLOY are the orchestrator's fixed stage-gate literals (see
@@ -1094,8 +1094,12 @@ render_text() {
       [ -n "$shown" ] && shown="$shown, $tok" || shown="$tok"
     done
     [ "$total" -gt 2 ] && shown="$shown (+$((total - 2)))"
+    # `~` is a collision: a plan at spec-approval whose upstream or
+    # directives moved after it was asked (LVI-033). It is marked in the cell,
+    # not just coloured, because red already means stuck.
+    [[ "$raw" == *\~* ]] && shown="$shown ~"
     f_attn_disp[$i]="$shown"
-    if [[ "$raw" == *!* ]]; then f_attn_color[$i]="$RED"; else f_attn_color[$i]="$YEL"; fi
+    if [[ "$raw" == *!* || "$raw" == *\~* ]]; then f_attn_color[$i]="$RED"; else f_attn_color[$i]="$YEL"; fi
     [ "${#shown}" -gt "$cw" ] && cw="${#shown}"
   done
   cw=$((cw + 1))
@@ -1533,7 +1537,7 @@ show_gates() {
     printf '  %snone — nothing is waiting on you%s\n' "$DIM" "$R"
     return
   fi
-  printf '%s\n' "$gates" | while IFS=$'\t' read -r gid gname gage gq gctx gblk gstate gfit; do
+  printf '%s\n' "$gates" | while IFS=$'\t' read -r gid gname gage gq gctx gblk gstate gfit gqfit; do
     [ -n "$gid" ] || continue
     local c="$YEL"
     [[ "$gname" == *stuck* ]] && c="$RED"
@@ -1542,6 +1546,7 @@ show_gates() {
       printf '    %s(blocking %s other plan(s))%s\n' "$DIM" "$gblk" "$R"
     fi
     [ "$gfit" = "mismatch" ] && printf '    %s(state is now %s — this gate no longer fits)%s\n' "$DIM" "$gstate" "$R"
+    [ "$gqfit" = "moved" ] && printf '    %s(collision: its upstream or directives moved since this was asked — do not approve)%s\n' "$RED" "$R"
   done
 }
 

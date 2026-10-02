@@ -176,6 +176,23 @@ plan_name_of() {
 }
 
 gate_open()  { "$SELF_DIR/lv-list-gates.sh" "$1" >/dev/null 2>&1; }
+
+# open_gate_name <id> → the name of the gate open on that artifact, or nothing.
+open_gate_name() {
+  local gf
+  gf=$(wf_gate_file "$1" || true)
+  [ -f "$gf" ] && wf_gate_field "$gf" GATE_NAME
+  return 0
+}
+
+# held_by <id> → the D-n of a live `hold` directive on the plan this artifact
+# is (or becomes), exit 0; exit 1 when it is not held (LVI-033).
+held_by() {
+  local id="$1" pid=""
+  case "$id" in RELEASE|DEPLOY) return 1 ;; esac
+  if [[ "$id" =~ ^($LV_PLN_RE)-[0-9]+$ ]]; then pid="$id"; else pid=$(wf_plan_id_for_num "${id##*-}"); fi
+  wf_plan_held "$pid"
+}
 gate_line()  { "$SELF_DIR/lv-list-gates.sh" "$1" 2>/dev/null; }
 
 # Live worker count for a role, across all artifacts.
@@ -443,8 +460,20 @@ dispatch() {
   local role="$1" artifact="$2"
   local id; id=$(bare_id "$artifact")
 
+  # A consistency pass may run while spec-approval is parked — it checks the
+  # very fit between plans the human is being asked to approve, and answers
+  # nothing (LVI-033; lv-spawn.sh's gate guard says the same).
   if gate_open "$id"; then
-    skip_note "$role" "$id" "gate open"
+    if ! { [ "$role" = consistency ] && [ "$(open_gate_name "$id")" = "spec-approval" ]; }; then
+      skip_note "$role" "$id" "gate open"
+      return 1
+    fi
+  fi
+
+  # An overseer's hold (lv-direct.sh) stops every role on the plan.
+  local held
+  if held=$(held_by "$id"); then
+    skip_note "$role" "$id" "held by directive $held — lv-direct.sh release-hold resumes it" held
     return 1
   fi
 
@@ -767,6 +796,57 @@ candidates_spec() {
 # built, it is a migration.
 SWEEP_ROLES="release deploy verify test consistency implement spec"
 
+# ── A parked approval whose premise moved is withdrawn (LVI-033) ──────────
+#
+# A plan waits at spec-approval for a human. Meanwhile a plan it depends on is
+# re-decided — amended, a gate on it answered, a directive given — or the plan
+# itself is given a directive. The question now asks a human to approve a
+# document specced against something that no longer holds. A client's PLN-028
+# sat at spec-approval on an allow-list its upstream PLN-026 had just been told
+# to drop, and the only thing standing between it and `ready` was the operator
+# remembering to reject it.
+#
+# lv-gate-status.sh reports that as GATE_PLAN_CONTEXT_STALE. This acts on it:
+# the question is WITHDRAWN (lv-gate-close.sh --withdraw — not answered, never
+# readable as an approval), so the plan returns to /lv-spec with the reason as
+# its brief. Not while an upstream plan is itself still in draft: its decision
+# is not settled, and withdrawing now would re-spec this plan once per upstream
+# round. The question reads stale in the meantime, so a human draining the
+# queue is told not to approve it. A directive on the plan itself is settled
+# by definition and withdraws at once.
+withdraw_moot_approvals() {
+  local gf gid changed flux why
+  for gf in "$ORCH/gates"/*.gate; do
+    [ -f "$gf" ] || continue
+    [ "$(wf_gate_field "$gf" GATE_NAME)" = "spec-approval" ] || continue
+    gid=$(wf_gate_field "$gf" GATE_ID)
+    [[ "$gid" =~ ^($LV_PLN_RE)-[0-9]+$ ]] || continue
+    [ -n "$(wf_gate_field "$gf" GATE_PLAN_CONTEXT_AT_OPEN)" ] || continue
+    changed=$(wf_context_changed "$(wf_gate_field "$gf" GATE_PLAN_CONTEXT_AT_OPEN)" "$(wf_plan_context "$gid")")
+    [ -n "$changed" ] || continue
+    case " $changed " in
+      *" directives "*) ;;
+      *)
+        flux=$("$SELF_DIR/lv-list-closure.sh" "$gid" 2>/dev/null | awk -F'\t' '$3 == "draft" { printf "%s%s", s, $1; s = " " }')
+        if [ -n "$flux" ]; then
+          skip_note spec "$gid" "spec-approval moot ($changed moved) — withdrawn once $flux leaves draft" moot
+          continue
+        fi
+        ;;
+    esac
+    why="withdrawn — what this plan was specced against moved after the question was asked: $changed. Re-spec against it (lv-plan-context.sh $gid)."
+    if $dry_run; then
+      echo "  would WITHDRAW: spec-approval on $gid ($changed moved)"
+      continue
+    fi
+    if "$SELF_DIR/lv-gate-close.sh" "$gid" "$why" --only spec-approval --withdraw >/dev/null 2>&1; then
+      echo "$(wf_now)  withdrew spec-approval on $gid — $changed moved"
+      skip_clear spec "$gid"
+    fi
+  done
+  return 0
+}
+
 # sweep() reports its count in SWEPT, not on stdout.
 #
 # It used to `printf '%s' "$spawned"` and be called as `n=$(sweep)`. Everything
@@ -796,6 +876,8 @@ sweep() {
     return 0
   fi
   skip_clear "orchestrator" "—"
+
+  withdraw_moot_approvals
 
   for role in $SWEEP_ROLES; do
     cap=$(max_concurrent "$role")

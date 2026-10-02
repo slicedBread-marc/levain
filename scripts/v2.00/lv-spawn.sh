@@ -323,7 +323,8 @@ if [ -n "$cur_state" ]; then
     implement)   allowed="ready active" ;;
     verify)      allowed="verify" ;;
     test)        allowed="testing" ;;
-    consistency) allowed="ready" ;;
+    # `draft` only at spec-approval — checked with the gate guard below.
+    consistency) allowed="ready draft" ;;
   esac
   if ! printf '%s\n' $allowed | grep -qx "$cur_state"; then
     # Name the plan that answered, which is not always the artifact asked
@@ -358,14 +359,51 @@ fi
 # path converges, and because the same read answers for the dispatcher's own
 # calls — redundantly, which is the point: a guard that only one caller performs
 # is a guard the next caller forgets.
+#
+# ONE EXCEPTION: a consistency pass on a plan waiting at spec-approval
+# (LVI-033). The human is being asked to approve the plan as it fits the plans
+# it depends on, and the pass is what checks that fit; running it while the
+# question is parked is the point. It answers nothing — a finding withdraws the
+# question (lv-gate-close.sh --withdraw), and a clean pass leaves it open.
+consistency_at_approval=false
 for gated in "$id" "$state_id"; do
   [ -n "$gated" ] || continue
   if "$SELF_DIR/lv-list-gates.sh" "$gated" >/dev/null 2>&1; then
+    if [ "$role" = "consistency" ]; then
+      _gf=$(wf_gate_file "$gated" || true)
+      if [ -f "$_gf" ] && [ "$(wf_gate_field "$_gf" GATE_NAME)" = "spec-approval" ]; then
+        consistency_at_approval=true
+        continue
+      fi
+    fi
     echo "lv-spawn: $gated has an open gate — $role is not dispatched until a human answers it; not spawning" >&2
     wf_event skip "$id" "$role: gate open on $gated before launch"
     exit 2
   fi
 done
+
+if [ "$role" = "consistency" ] && [ "$cur_state" = "draft" ] && ! $consistency_at_approval; then
+  echo "lv-spawn: $state_id is 'draft' with no spec-approval open — consistency acts on a draft plan only while its approval is asked; not spawning" >&2
+  wf_event skip "$id" "consistency: draft without an open spec-approval before launch"
+  exit 2
+fi
+
+# ── Hold guard (LVI-033) ──────────────────────────────────────────────────
+#
+# An overseer's `hold` directive (lv-direct.sh) stops dispatch on a plan until
+# it is released — while two plans are being reconciled, say, and a worker on
+# either would build on a decision about to change. Checked here, where every
+# launch path converges, for the same reason as the gate guard above.
+_hold_id="$state_id"
+if ! [[ "$_hold_id" =~ ^($LV_PLN_RE)-[0-9]+$ ]]; then
+  _hold_id=""
+  [[ "$id" =~ ^($LV_WORK_RE)-[0-9]+$ ]] && _hold_id=$(wf_plan_id_for_num "${id##*-}" 2>/dev/null || true)
+fi
+if [ -n "$_hold_id" ] && _held=$(wf_plan_held "$_hold_id"); then
+  echo "lv-spawn: $_hold_id is held by directive $_held — nothing is dispatched until release-hold; not spawning" >&2
+  wf_event skip "$id" "$role: held by $_held before launch"
+  exit 2
+fi
 
 # ── Worker prompt ─────────────────────────────────────────────────────────
 # Skills live at .claude/skills/lv-<role>/SKILL.md on a client checkout.

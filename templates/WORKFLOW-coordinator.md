@@ -26,6 +26,7 @@ happens *here*.
 | **May** | File a bug, request or notice into a coordinated project's `bugs/open/` |
 | **May** | Read a coordinated project's `plans/REGISTRY.md`, plans and bugs |
 | **May** | Report a harness fault against the library (`lv-issue.sh`) |
+| **May** | Steer a coordinated project's plan with a directive (`lv-direct.sh add PLN-NNN --kind constraint\|replan\|hold\|release-hold --text "…" --project <name>`). The target's own harness records and commits it, and its own workers apply it. See the library's `docs/directives.md` |
 | **Must not** | Write anything else into a coordinated project — no plan folders, no registry rows, no claims, no state transitions, no commits |
 | **Must not** | Allocate an artifact ID by hand, or read one off a counter to reuse |
 
@@ -170,6 +171,7 @@ scripts/v*/lv-lock.sh       lock helper
 scripts/v*/lv-dep-notify.sh file into the projects this one coordinates
 scripts/v*/lv-dep-bug.sh    file into a declared dependency
 scripts/v*/lv-issue.sh      report a harness fault
+scripts/v*/lv-direct.sh     steer a coordinated project's plan (--project)
 .claude/skills/lv-dep-notify/
 ```
 
