@@ -206,6 +206,33 @@ def upstream_at(path):
     except Exception:
         return None
 
+def common_dir(path):
+    # The repository a directory belongs to, as git'"'"'s common dir — shared by
+    # every worktree of one repo, so release-branches/main counts as home.
+    try:
+        r = subprocess.run(["git", "-C", path, "rev-parse", "--path-format=absolute",
+                            "--git-common-dir"],
+                           capture_output=True, text=True, timeout=2)
+        return os.path.realpath(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+    except Exception:
+        return None
+
+# The gates this guard enforces belong to the repo the hook runs in. A command
+# that `cd`s or `-C`s into a DIFFERENT repository and pushes its main is not
+# this project'"'"'s promotion: a client session pushing the coordinator'"'"'s main
+# was refused on the client'"'"'s own open DEPLOY gate (LVI-012). Only a positive
+# answer skips — a directory git cannot resolve stays "this repo", so a typo
+# or a not-yet-created worktree path still blocks.
+home_common = None
+def elsewhere(path):
+    global home_common
+    if home_common is None:
+        home_common = common_dir(os.getcwd()) or ""
+    if not home_common:
+        return False
+    other = common_dir(path)
+    return other is not None and other != home_common
+
 cur_dir = base_cwd
 for piece in re.split(r"&&|\|\||;|\n", cmd):
     try:
@@ -251,6 +278,8 @@ for piece in re.split(r"&&|\|\||;|\n", cmd):
         continue
     subcmd, rest = toks[i], toks[i + 1:]
     effective_dir = dir_override if dir_override is not None else cur_dir
+    if subcmd in ("push", "merge") and effective_dir != base_cwd and elsewhere(effective_dir):
+        continue
 
     if subcmd == "push":
         args = [t for t in rest if not t.startswith("-")]

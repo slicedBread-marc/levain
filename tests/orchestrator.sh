@@ -2537,6 +2537,20 @@ assert_eq "deploy-deferred-criteria open: push main blocked" "2" \
   "$(promote_guard_rc 'git push origin main')"
 assert_eq "deploy-deferred-criteria open: push release is unaffected (different gate)" "0" \
   "$(promote_guard_rc 'git push origin release')"
+# LVI-012: a client session pushed another repository's main and was refused
+# on the client's own DEPLOY gate. The gate belongs to this repo only.
+PROMOTE_OTHER="$TEST_DIR/promote-other-repo"
+mkdir -p "$PROMOTE_OTHER"
+( cd "$PROMOTE_OTHER" && git init -qb main . && git config user.email t@t && git config user.name t \
+  && git commit -q --allow-empty -m init ) >/dev/null 2>&1
+assert_eq "deploy-deferred-criteria open: cd into another repo and push its main is unaffected" "0" \
+  "$(promote_guard_rc "cd $PROMOTE_OTHER && git push origin main")"
+assert_eq "deploy-deferred-criteria open: git -C another repo push main is unaffected" "0" \
+  "$(promote_guard_rc "git -C $PROMOTE_OTHER push origin main")"
+assert_eq "deploy-deferred-criteria open: cd into this repo's own path still blocks" "2" \
+  "$(promote_guard_rc "cd $TEST_DIR && git push origin main")"
+assert_eq "deploy-deferred-criteria open: cd into a path git cannot resolve still blocks" "2" \
+  "$(promote_guard_rc "cd $TEST_DIR/no-such-dir && git push origin main")"
 "$SCRIPT_DIR/lv-gate-close.sh" DEPLOY "read them — none is a runtime dependency" >/dev/null 2>&1
 assert_eq "deploy-deferred-criteria closed: step-7 merge allowed again" "0" \
   "$(promote_guard_rc "git merge -X theirs --no-ff release -m release-promote-to-main")"
