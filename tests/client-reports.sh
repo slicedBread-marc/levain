@@ -59,6 +59,18 @@ assert_eq() {
   fi
 }
 
+# Fixed-string match. Five assertions called this before it was defined here,
+# so each printed "command not found" and counted nothing.
+assert_contains() {
+  local label="$1" needle="$2" haystack="$3"
+  if printf '%s' "$haystack" | grep -qF -- "$needle"; then
+    printf '  \033[32m✓\033[0m %s\n' "$label"; PASS=$((PASS + 1))
+  else
+    printf '  \033[31m✗\033[0m %s\n      expected to contain: %s\n      actual: %s\n' "$label" "$needle" "$haystack"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 assert_ok() {
   local label="$1"; shift
   if "$@" >/dev/null 2>&1; then
@@ -2430,6 +2442,23 @@ assert_eq "and the DC row stores it with the pipe folded, so the table holds" "t
    'ps aux / grep relay shows one process') >/dev/null 2>&1
 assert_eq "the folded spelling, copied back out of the table, still ticks" "true" \
   "$(grep -F 'grep relay' "$DEFERMD/plans/PLN-052-gitignore-probe/plan.md" | grep -q '^- \[x\]' && echo true || echo false)"
+
+# The 500-character limit guards argv, where substitution happens. A long
+# criterion on stdin was never a shell word, and refusing it left lv-test's
+# deferral rule impossible to follow (LVI-011/014/016/017 on a client).
+defer_long="the household fan-out reaches every member$(printf ' and the round stays visible to its own tenant%.0s' $(seq 1 12))"
+printf -- '- [ ] (external) %s\n' "$defer_long" >> "$DEFERMD/plans/PLN-052-gitignore-probe/plan.md"
+defer_long_argv=$(cd "$DEFERMD" && ./scripts/lv-defer-criterion.sh PLN-052 external "$defer_long" --no-commit 2>&1 || true)
+assert_eq "a long criterion in argv is still refused" "true" \
+  "$(printf '%s' "$defer_long_argv" | grep -q 'over the 500-character limit' && echo true || echo false)"
+printf '%s\n' "$defer_long" | (cd "$DEFERMD" && ./scripts/lv-defer-criterion.sh PLN-052 external - >/dev/null 2>&1)
+assert_eq "the same criterion on stdin is deferred and ticked" "true" \
+  "$(grep -F 'household fan-out' "$DEFERMD/plans/PLN-052-gitignore-probe/plan.md" | grep -q '^- \[x\].*deferred as DC-' && echo true || echo false)"
+assert_eq "and its DC row holds the whole text" "true" \
+  "$(grep -qF "$defer_long" "$DEFERMD/plans/deferred-criteria.md" && echo true || echo false)"
+defer_nl=$(printf 'one line\nand another\n' | (cd "$DEFERMD" && ./scripts/lv-defer-criterion.sh PLN-052 external - 2>&1) || true)
+assert_eq "stdin still refuses embedded newlines" "true" \
+  "$(printf '%s' "$defer_nl" | grep -q 'embedded newlines' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "Verify reads the branch's own config (client-a WFI-052)"

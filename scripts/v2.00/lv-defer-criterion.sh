@@ -182,6 +182,15 @@ sync_header() {
 # And the affordance that makes the right thing easy: `-` reads the criterion
 # from stdin, where no shell quoting exists to get wrong. Callers passing text
 # they did not write should prefer it; single quotes are the minimum.
+#
+# THE LENGTH LIMIT GUARDS ARGV ONLY. Text read from stdin was never a shell
+# word, so substitution cannot have happened to it, and a long criterion there
+# is just a long criterion. Planners do write them: four of one client's
+# (external) Manual criteria ran 549-861 characters, verbatim from plan.md on a
+# quoted heredoc, and every one was refused — so lv-test's own deferral rule
+# could not be followed, and each was deferred truncated with its tail in
+# --note (LVI-011/014/016/017). The newline check still applies on stdin: a
+# criterion is one line either way.
 CRITERION_MAX=500
 
 read_criterion_stdin() {
@@ -191,8 +200,9 @@ read_criterion_stdin() {
 }
 
 check_criterion() {
-  # $1 = the text, $2 = what to call it in the error
-  local text="$1" what="$2"
+  # $1 = the text, $2 = what to call it in the error, $3 = "stdin" when it was
+  # read from stdin (no length limit — see above)
+  local text="$1" what="$2" source="${3:-argv}"
   # `case`, not `grep -q $'\n'`: a grep pattern containing a newline is two
   # patterns, and both halves are empty, so that form matches every string.
   if [ "$text" != "${text%$'\n'*}" ]; then
@@ -203,11 +213,12 @@ check_criterion() {
     echo "       Pass the criterion in SINGLE quotes, or pass '-' and give it on stdin." >&2
     return 1
   fi
-  if [ "${#text}" -gt "$CRITERION_MAX" ]; then
+  if [ "$source" != "stdin" ] && [ "${#text}" -gt "$CRITERION_MAX" ]; then
     echo "Error: $what is ${#text} characters — over the $CRITERION_MAX-character limit." >&2
     echo "       Criteria are a sentence or two. This length usually means backticks in" >&2
     echo "       the criterion were command-substituted by the caller's shell (WFI-194)." >&2
-    echo "       Pass the criterion in SINGLE quotes, or pass '-' and give it on stdin." >&2
+    echo "       If it is genuinely this long, pass '-' and give it on stdin — stdin has" >&2
+    echo "       no length limit, because nothing there can have been substituted." >&2
     return 1
   fi
   return 0
@@ -300,11 +311,13 @@ case "${1:-}" in
 
     # `--criterion -` reads from stdin, so text full of backticks never passes
     # through a shell word at all. See the header.
+    criterion_source=argv
     if $set_criterion && [ "$new_criterion" = "-" ]; then
       new_criterion=$(read_criterion_stdin)
+      criterion_source=stdin
     fi
     if $set_criterion; then
-      check_criterion "$new_criterion" "--criterion" || exit 1
+      check_criterion "$new_criterion" "--criterion" "$criterion_source" || exit 1
     fi
 
     # Same sanitising as the add path: this is free text going into a markdown
@@ -443,8 +456,12 @@ if [ -z "$plan_id" ] || [ -z "$criterion" ]; then
 fi
 
 # `-` means the criterion is on stdin, where the shell has nothing to expand.
-[ "$criterion" = "-" ] && criterion=$(read_criterion_stdin)
-check_criterion "$criterion" "the criterion" || exit 1
+criterion_source=argv
+if [ "$criterion" = "-" ]; then
+  criterion=$(read_criterion_stdin)
+  criterion_source=stdin
+fi
+check_criterion "$criterion" "the criterion" "$criterion_source" || exit 1
 
 case "$tag" in
   external) [ -n "$prereq" ] || prereq="first-real-use" ;;
