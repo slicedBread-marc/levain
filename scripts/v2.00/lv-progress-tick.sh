@@ -55,10 +55,17 @@ plan_id=$(printf '%s' "$raw_id" | grep -oE "($LV_PLN_RE)-[0-9]+" || true)
 # by hand — on the one file whose checklist the orchestrator reads as forward
 # progress, and whose per-tick commit is what makes it survive a stash
 # (WFI-263).
-if [ -z "$plan_id" ] || ! printf '%s' "$step" | grep -qE '^[A-Za-z]*[0-9][0-9A-Za-z]*([.-][0-9A-Za-z]+)*$'; then
+#
+# The digit may come after a separator, too: some plans write the amendment's
+# own id into the label — `Step A-1.1` — and the old pattern, which wanted
+# letters then straight into a digit, refused it, so the worker ticked under
+# `A1.1` instead (LVI-022 on a client). Segments of letters and digits joined
+# by single dots or hyphens, with a digit somewhere, is the whole rule.
+if [ -z "$plan_id" ] || ! printf '%s' "$step" | grep -qE '^[0-9A-Za-z]+([.-][0-9A-Za-z]+)*$' \
+   || ! printf '%s' "$step" | grep -q '[0-9]'; then
   echo "Usage: $0 <plan-id-or-name> <step-label> [description] [--blocked]" >&2
   echo "  <step-label> is the whole label the checklist writes after 'Step':" >&2
-  echo "  3, a sub-lettered step such as 1a or 1a-iii, or an amendment's A1.1" >&2
+  echo "  3, a sub-lettered step such as 1a or 1a-iii, or an amendment's A1.1 or A-1.1" >&2
   exit 1
 fi
 

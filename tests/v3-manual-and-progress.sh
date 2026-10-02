@@ -228,6 +228,19 @@ assert_exit "a bare amendment prefix is refused" 1 \
   "$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 A1 "family, not a step"
 assert_exit "a label with no digit is a usage error" 1 \
   "$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 foo "not a label"
+# Some plans keep the amendment's hyphen in the label — `Step A-1.1`. The
+# label grammar refused it, so the row could not be ticked by its own name
+# (LVI-022 on a client).
+awk '{print} /^## Steps/ && !d {print "- [ ] Step A-2.1: hyphenated amendment step"; d=1}' \
+  plans/PLN-020-legacy/progress.md > plans/PLN-020-legacy/progress.md.tmp \
+  && mv plans/PLN-020-legacy/progress.md.tmp plans/PLN-020-legacy/progress.md
+assert_exit "a hyphenated amendment label is accepted" 0 \
+  "$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 A-2.1 "hyphenated amendment step"
+assert_contains "and ticks the row the plan wrote" "- \[x\] Step A-2.1: hyphenated amendment step" \
+  "$(cat plans/PLN-020-legacy/progress.md)"
+assert_eq "without appending a second one" "6/7" "$("$SCRIPT_DIR/lv-progress-count.sh" PLN-020)"
+assert_exit "a label ending on a separator is still a usage error" 1 \
+  "$SCRIPT_DIR/lv-progress-tick.sh" PLN-020 A-2. "trailing dot"
 
 # ── P-002 manual criterion lint ────────────────────────────────────────
 section "lv-manual-lint (P-002)"
