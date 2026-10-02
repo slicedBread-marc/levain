@@ -41,6 +41,9 @@
 #   test-progress.md already recorded PASS against this very build, or against
 #   an earlier one when no renderingSurfaces path changed in between
 #   MANUAL_CARRIED — how many of those came from an earlier build
+#   SURFACE_MOVED / SURFACE_MOVED_FROM — when an earlier PASS did NOT carry,
+#     the renderingSurfaces path that changed since and the build it passed
+#     on. This, not SURFACE_HIT, is what a re-ask names (LVI-021)
 #   CHROME_OPEN — unchecked `#### Chrome-Assisted` criteria
 #   CHROME_UNRECORDED — how many of those test-progress.md holds no result
 #     or reason for (never run, or the record was never written)
@@ -226,6 +229,15 @@ fi
 # only for a build git can still resolve here; everything else stays unsettled.
 carried=0
 carried_from=""
+# The first earlier PASS that did NOT carry, and the surface path that stopped
+# it. SURFACE_HIT is the plan's whole diff against develop — a fine answer to
+# "does this plan render anything", and the wrong one to "why is a criterion
+# that already passed being asked again". A client's LVI-021 re-gate quoted
+# SURFACE_HIT=client/src/index.css, which the plan itself changed and which was
+# identical on both builds; the path that actually moved was a .tsx brought in
+# by a develop merge.
+moved_path=""
+moved_from=""
 # Unattended, only the committed record carries — the same rule, and the same
 # reason, as wf_test_progress_passes (LVI-033).
 carry_source() {
@@ -251,7 +263,10 @@ if [ -n "$surfaces" ] && [ -n "$build_sha" ] && [ -f "$progress_md" ]; then
       moved=$(printf '%s\n' "$between" | grep -E "$(glob_to_regex "$pattern")" | head -1 || true)
       [ -n "$moved" ] && break
     done <<< "$surfaces"
-    [ -z "$moved" ] || continue
+    if [ -n "$moved" ]; then
+      [ -n "$moved_path" ] || { moved_path="$moved"; moved_from="${old:0:7}"; }
+      continue
+    fi
     if [ -z "$resolved_file" ]; then
       resolved_file=$(mktemp "${TMPDIR:-/tmp}/lv-manual-gate.XXXXXX")
       trap 'rm -f "$resolved_file"' EXIT
@@ -464,10 +479,15 @@ if [ "${MANUAL_RESOLVED_RECORD:-0}" -gt 0 ]; then
     reason="$reason; ${MANUAL_RESOLVED_RECORD} already PASS on this build in test-progress.md"
   fi
 fi
+if [ -n "$moved_path" ]; then
+  reason="$reason; a PASS on build $moved_from did not carry: $moved_path (a renderingSurfaces path) changed between that build and this one"
+fi
 
 wf_emit GATE         "$gate"
 wf_emit GATE_REASON  "$reason"
 wf_emit SURFACE_HIT  "$surface_hit"
+wf_emit SURFACE_MOVED      "$moved_path"
+wf_emit SURFACE_MOVED_FROM "$moved_from"
 wf_emit MANUAL_TOTAL         "$MANUAL_TOTAL"
 wf_emit MANUAL_OPEN_BLOCKING "$MANUAL_OPEN_BLOCKING"
 wf_emit MANUAL_OPEN_COSMETIC "$MANUAL_OPEN_COSMETIC"

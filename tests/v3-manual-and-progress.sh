@@ -374,6 +374,13 @@ assert_contains "and the reason names the build it came from" "carried from buil
 eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "a commit that touches a rendering surface re-asks" "true" "$GATE"
 assert_eq "and carries nothing" "0" "$MANUAL_CARRIED"
+# A client's LVI-021: the re-ask quoted SURFACE_HIT — the plan's whole diff —
+# naming a file identical on both builds. The path that blocked the carry is
+# its own field, and the reason says it.
+assert_eq "the surface path that moved since the PASS is named" "src/App/wwwroot/app.js" "$SURFACE_MOVED"
+assert_eq "with the build the PASS was on" "${ui_sha:0:7}" "$SURFACE_MOVED_FROM"
+assert_contains "and the reason says that path, not the plan's whole diff" \
+  "did not carry: src/App/wwwroot/app.js" "$GATE_REASON"
 
 # A client's LVI-040: an unattended tester left every Chrome-Assisted criterion
 # unrun and gated on the one Manual criterion — the question never named the
