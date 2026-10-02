@@ -39,9 +39,10 @@ Order of work:
    moment you stop producing output, so anything still running is killed unread
    and the turn is recorded as a worker that accomplished nothing (WFI-114).
    Where this skill spawns a background test agent below, that is the attended
-   path only. **Redirect stdin from `/dev/null`** on every suite you run
-   (`… && {{test_command}} < /dev/null`): your shell's stdin is not at EOF, so
-   a single test that reads it blocks forever with no failure and no output to
+   path only. The suite goes through `lv-suite-run.sh` (step 4), which
+   redirects stdin from `/dev/null`; **anything else you run that could read
+   stdin gets `< /dev/null` too**: your shell's stdin is not at EOF, so a
+   single test that reads it blocks forever with no failure and no output to
    say why (WFI-240).
 3. **Auto-test every criterion you can before anything reaches a human** — `#### Chrome-Assisted` *and* `#### Manual`. [Step 3c](#testing) drives them through headless Playwright: literal DOM/JS assertions, interaction sequences (click/fill/submit/refresh), two-browser sessions, and visual/subjective criteria via a saved screenshot you Read and judge yourself. There is no Chrome extension and no browser mode (LVI-001). The aim is that a human is asked only about what no automated run could settle (LVI-002):
    - **Chrome-Assisted** — every one ends at PASS, FAIL or a recorded reason it could not run. Leaving them at `—` and then gating for "one Manual criterion" misreports what is actually left, and the gate question is the only thing a human reads (WFI-070).
@@ -204,7 +205,7 @@ Exit 1 here means you are standing somewhere else — almost always the develop 
 ```bash
 cd /abs/path/to/feature-branches/PLN-NNN-<slug> \
   && ../../scripts/lv-exec.sh lv-test-tree.sh PLN-NNN-<slug> \
-  && {{test_command}} < /dev/null
+  && ../../scripts/lv-exec.sh lv-suite-run.sh --label test-PLN-NNN --only-e2e --extra-args "$E2E_SCOPE" --reuse
 ```
 It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp in `test-progress.md` immediately above the totals it belongs to — copied verbatim from the tool output, character for character.** Never compose the line yourself and never write a `$(…)` into a document: client-a's PLN-153 carries `TREE … @ feature/PLN-153-projectname-path-guard $(git rev-parse HEAD) ($(date '+%b %d %H:%M'))` as literal text (WFI-183), which records neither the commit nor the time — the two facts the stamp exists to record. A stamp whose sha is unresolved is worth less than no stamp, because it looks like provenance. A test result is a measurement of one working tree and nothing in `dotnet test`'s output says which — an unattended tester recorded develop's 1120 tests against a plan whose tree holds 1123, and opened a gate saying the implementation "appears incomplete" while verify's own run of the same plan was 1123 passed / 0 failed (WFI-132). A totals line without a stamp above it is not a result; re-run it.
 
@@ -335,27 +336,30 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    - **A sign-in is not a reason a criterion cannot run headlessly when `$TEST_ACCOUNT` gives a recipe.** Put the recipe's `/login` steps at the front of the criterion's `<actions-json>` (or into an `lv-headless-session.sh` context) and run it. "OIDC sign-in cannot be completed headlessly in unattended mode" is not a result: a client's LVI-040 recorded exactly that for all 6 Chrome-Assisted criteria of a plan whose `test_account_note` spelled out the headless `/login` recipe, and a human was asked about work nobody tried. Only a recipe that was *run* and returned `ERROR` is a recorded reason — note the step that failed.
    - **Exit 2 (`ERROR` on stdout, any of the three scripts) is "a recorded reason it could not run", never a FAIL.** Leave the criterion at `—` with that `ERROR` line noted in session memory (it surfaces in test-progress.md's Notes on exit, verbatim: `lv-manual-gate.sh` reads a note with no `ERROR`, no disagreement and no `needs: oauth|device|extension|profile` as a criterion nobody ran) and let it fall through to the criteria loop / gate below like any other untested Chrome-Assisted criterion. A missing headless browser on this machine (no network on first use), a selector that never appears, or a criterion that genuinely needs real third-party OAuth, a physical device, a browser extension, or the user's own logged-in profile are the ordinary cases of this — not defects to work around, and the point at which a human is the right next step, not this step retried differently.
    - **A headless PASS or FAIL that contradicts a result already recorded for this same assertion on a prior build — attended human testing included — is low-confidence, whatever the headless run says.** Do not overwrite the existing record with the automated verdict in either direction. Instead: leave the criterion at `—`, note both readings ("headless: FAIL (scrollWidth 464 > innerWidth 390), prior human PASS on build <sha>"), and let it reach the gate as a named disagreement — the gate question should say what conflicts, not just that a criterion is untested. client-f's PLN-004 criterion 6 is the worked example: a real-device human PASS and a 390px-CSS-viewport headless FAIL on the same "no horizontal scroll" assertion disagreed, and the disagreement — not either individual reading — is what needed a human's eyes (WFI-008). A criterion with no prior recorded result has nothing to disagree with, so an unambiguous headless PASS/FAIL there is not low-confidence merely for being the first result.
-4. **Run e2e tests** (app is now running):
-
-   First, extract the plan's e2e scope (may be blank):
+4. **Run e2e tests** (app is now running) — **through `lv-suite-run.sh`, never a typed test command**, in one call that extracts the plan's E2E scope, stamps the tree and runs:
    ```bash
-   E2E_SCOPE=$(awk '/^## E2E Scope/{found=1;next} found && /^## /{exit} found && /[^[:space:]]/ && !/^_/{print}' ../../plans/$PLAN_NAME/plan.md | tr '\n' ' ' | xargs)
+   cd /abs/path/to/feature-branches/PLN-NNN-<slug> \
+     && E2E_SCOPE=$(awk '/^## E2E Scope/{found=1;next} found && /^## /{exit} found && /[^[:space:]]/ && !/^_/{print}' ../../plans/PLN-NNN-<slug>/plan.md | tr '\n' ' ' | xargs) \
+     && ../../scripts/lv-exec.sh lv-test-tree.sh PLN-NNN-<slug> \
+     && ../../scripts/lv-exec.sh lv-suite-run.sh --label test-PLN-NNN --only-e2e --extra-args "$E2E_SCOPE" --reuse
    ```
+   The script appends `test_only_e2e` and the scope to `test_command` itself. With both empty that is the **full suite** — the same command `lv-verify` ran on the same tree — and `--reuse` then hands back verify's verdict instead of running it again, when the tree, the command, the toolchain and the Levain version all match and both trees were clean (LVI-035). It ends with `SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`.
 
-   If `$E2E_SCOPE` is non-empty, run only those tests. Otherwise run the full suite.
-
-   **Under `LV_UNATTENDED=1` run the command yourself, in the foreground** — the
-   background agent below is the attended path (WFI-114).
+   **Under `LV_UNATTENDED=1` run it yourself, in the foreground** — the background agent below is the attended path (WFI-114).
    ```
    Agent(model: haiku, run_in_background: true, prompt:
-     "Run `{{test_command}} {{test_only_e2e}} $E2E_SCOPE < /dev/null` in the current directory.
-      (If E2E_SCOPE is empty, omit it — runs full suite.)
+     "Run this in ONE foreground Bash call: <the command above, with absolute paths>.
+      Quote the TREE line and the SUITE_CMD=, SUITE_LOG= and SUITE_RESULT= lines verbatim.
+      If SUITE_RESULT says 'reused', the suite was not run now: read the counts from the log
+      named in SUITE_REUSED_FROM= and say 'reused from <that log>'.
       Report: total tests, passed, failed, skipped.
       If any failed, list each failure with test name and error message.
       Final response under 1500 characters.")
    ```
 
-   **Pass every flag as a separate bare word.** Wrapping the filter flags in one pair of quotes does not error — the runner takes the lot as a single unrecognised argument, ignores the filter, and runs the **whole suite** while reporting it as the scoped result. Measured on client-a's PLN-007: quoted, `total: 435`; the same flags unquoted, `total: 1`. Nothing in the output distinguishes them (WFI-080), and every "scoped" run was really a full-suite run hammering the rate limiter — a 429 cascade that two verify passes had blamed on daemon contention.
+   **A reused result is recorded as reused.** In `test-progress.md` it goes under the `TREE` stamp `lv-test-tree.sh` printed for this call, with its totals from the `SUITE_REUSED_FROM=` log and the line `SUITE_RESULT=pass (reused …)` quoted verbatim — never as a run you made.
+
+   **Never type the scope flags yourself.** The script appends them through `eval`, which keeps several flags several arguments. Wrapped in one pair of quotes they do not error — the runner takes the lot as a single unrecognised argument, ignores the filter, and runs the **whole suite** while reporting it as the scoped result. Measured on client-a's PLN-007: quoted, `total: 435`; the same flags unquoted, `total: 1`. Nothing in the output distinguishes them (WFI-080), and every "scoped" run was really a full-suite run hammering the rate limiter — a 429 cascade that two verify passes had blamed on daemon contention.
 
    **So check the count, not just the exit code.** If `$E2E_SCOPE` named a handful of tests and the agent reports hundreds, the filter did not apply: fix the command form and re-run before reading anything into the result.
 

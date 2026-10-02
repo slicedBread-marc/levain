@@ -309,9 +309,11 @@ Before starting, confirm E2E passed on release:
 
 8. **Run full test suite** (final integration check) — **run the script, do not type a test command:**
    ```bash
-   scripts/lv-exec.sh lv-suite-run.sh --label deploy --build
+   scripts/lv-exec.sh lv-suite-run.sh --label deploy --build --reuse-stage deploy
    ```
    It runs `build_command` then `test_command` from `levain.yml`, verbatim and unfiltered, against merged `main` in the worktree you are standing in, and ends with `SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`. **Exit 0 pass, 1 fail, 2 no suite configured** — 2 is a gap to report, never a pass. Report the `SUITE_RESULT=` line verbatim with `SUITE_CMD=` beside it; a count read out of the output is not evidence of what ran (WFI-252, where a release was pushed on one assembly's 474 tests reported as the whole E2E suite — **this step is what caught it**, and it only caught it because it ran the configured command).
+
+   **`--reuse-stage deploy` reuses a receipt only when `levain.yml` says `suiteReuse: deploy`** — the default (`release`) and `none` always run the suite here (LVI-035). When it does reuse, the receipt is for this exact tree, command, toolchain and Levain version on a clean tree, and `SUITE_RESULT=pass (reused …)` says so: report it as reused, naming the run.
 
    **On a pass, and only then, disarm the guard and clear any recorded failure:**
    ```bash
@@ -330,7 +332,7 @@ Before starting, confirm E2E passed on release:
 
    **When the suite will not fit in one call, detach it and wait in slices — never background it and move on:**
    ```bash
-   scripts/lv-exec.sh lv-suite-run.sh --label deploy --build --detach   # prints SUITE_HANDLE=
+   scripts/lv-exec.sh lv-suite-run.sh --label deploy --build --reuse-stage deploy --detach   # prints SUITE_HANDLE=
    scripts/lv-exec.sh lv-suite-wait.sh <SUITE_HANDLE>                   # blocks up to 9 minutes
    ```
    `lv-suite-wait.sh` exits **0 pass, 1 fail, 3 still running**. On `3`, call it again with the same handle, as many times as it takes. Each call is its own foreground command, safely under the cap, and every one of them is a tool call that keeps the session alive.

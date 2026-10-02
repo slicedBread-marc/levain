@@ -138,7 +138,7 @@ You are in **implementer mode**. Your job is to execute an implementation plan c
 
 Do NOT use agents for writing code — implementation is inherently sequential and context-dependent. Agents are used for:
 
-- **Build and test verification (step 18):** *Attended only* — launch haiku agents in the background to run build, unit tests, and E2E tests while you do code/architecture review in parallel. Under `LV_UNATTENDED=1` run them in the foreground yourself; see rule 5 above.
+- **Build and test verification (step 18):** *Attended only* — launch one haiku agent in the background to run `lv-suite-run.sh --build --exclude-e2e` while you do code/architecture review in parallel. Under `LV_UNATTENDED=1` run it in the foreground yourself; see rule 5 above.
 - **Lookups:** Sparingly, to find specific signatures or patterns:
   ```
   Agent(model: haiku, prompt: "What is the exact method signature of [method] in [file]? Response under 500 chars.")
@@ -371,32 +371,52 @@ and must be discarded, not reported.
     $DEVELOP_ROOT/scripts/lv-exec.sh lv-config-get.sh local_deploy_command
     ```
     Empty means this project has no local container — skip the step and say so in `progress.md`. Non-empty means the container is expected; a failure there is a failure to report, not a step to drop.
-18. **Run build and tests.**
+18. **Run build and tests — through the script, never a typed test command.**
 
-    **Under `LV_UNATTENDED=1`, run both commands yourself, in the foreground,
-    with stdin redirected from `/dev/null`, and read the output** — see rules 5
-    and 6 in [Unattended mode](#unattended-mode). A suite containing one test
-    that reads stdin hangs indefinitely without that redirect (WFI-240).
-    Backgrounding here is what ended three PLN-030 dispatches with nothing done
-    (WFI-114). Steps 19–20 are then done after the output is in hand rather
-    than alongside it; that costs wall-clock and nothing else.
+    **Commit first.** Everything this plan changed is committed on the feature
+    branch before the suite runs (step 22's command, early). The run leaves a
+    receipt keyed on the tree, and a receipt measured on a dirty tree is never
+    reusable — so a clean run here is what lets `lv-verify` and `/lv-test` skip
+    running the identical suite on the identical commit, which used to happen
+    three times per plan (LVI-035).
+
+    The command, from the worktree:
+    ```bash
+    DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+    $DEVELOP_ROOT/scripts/lv-exec.sh lv-suite-run.sh --label implement-PLN-NNN --build --exclude-e2e
+    ```
+    It runs `build_command`, then `test_command` plus `test_exclude_e2e` from
+    `levain.yml`, sequentially, with stdin at `/dev/null` (WFI-240), and ends
+    with `SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`. **Exit 0 pass, 1 build or
+    suite failed, 2 no `test_command` configured** — 2 is a gap to note in
+    `progress.md`, never a pass. The full output is in `SUITE_LOG`.
+
+    **Under `LV_UNATTENDED=1`, run it yourself, in the foreground, and read the
+    output** — see rule 5 in [Unattended mode](#unattended-mode). Backgrounding
+    here is what ended three PLN-030 dispatches with nothing done (WFI-114).
+    Steps 19–20 are then done after the output is in hand rather than
+    alongside it; that costs wall-clock and nothing else.
 
     Attended only — a human is present to receive the completion notification,
-    so the reviews in steps 19–20 can run in parallel:
+    so the reviews in steps 19–20 can run in parallel. **One** agent, because
+    build and test share the worktree's build output and two concurrent writers
+    corrupt it (WFI-023):
     ```
     Agent(model: haiku, run_in_background: true, prompt:
-      "Run `{{build_command}} < /dev/null` in the current directory.
-       Report: success or failure. If failure, list all errors (not warnings).
-       Final response under 1000 characters.")
-
-    Agent(model: haiku, run_in_background: true, prompt:
-      "Run `{{test_command}} {{test_exclude_e2e}} < /dev/null` in the current directory.
-       Report: total tests, passed, failed, skipped.
-       If any failed, list each failure with test name and error message.
-       Final response under 1500 characters.")
+      "In <absolute worktree path>, run in the foreground:
+       `<absolute develop root>/scripts/lv-exec.sh lv-suite-run.sh --label implement-PLN-NNN --build --exclude-e2e`
+       Report: the SUITE_CMD=, SUITE_LOG= and SUITE_RESULT= lines verbatim, then
+       total tests, passed, failed, skipped. If the build failed, list its errors
+       (not warnings). If any test failed, quote each failure line verbatim from
+       the output. Final response under 1500 characters.")
     ```
 
-    **Pass the exclusion flags as written — bare words, no quotes around them.** The value is several flags (`--ignore-exit-code 8 --filter-not-namespace "*E2E*"`), and wrapping the lot in one pair of quotes fuses them into a single unrecognised argument: the runner silently ignores the filter and runs the whole suite, then fails on an e2e test this step exists to exclude. client-a hit it twice on one plan (WFI-088, WFI-090) — an out-of-scope Playwright failure charged against an Infrastructure change.
+    **Never type the exclusion flags yourself.** The script appends
+    `test_exclude_e2e` through `eval`, which is the only form that keeps a
+    multi-flag value (`--ignore-exit-code 8 --filter-not-namespace "*E2E*"`) as
+    several arguments. Quoted as one word, the runner silently ignores the
+    filter and runs the whole suite, then fails on an e2e test this step exists
+    to exclude — client-a hit that twice on one plan (WFI-088, WFI-090).
 19. **Code review** (while agents run):
     - Read through all changed source files
     - Verify logic matches the plan's design decisions
@@ -418,8 +438,8 @@ and must be discarded, not reported.
       4. Display: "Design issue found. Run `/lv-spec` to amend the plan."
     - If issues are minor (code-level fixes), fix them and note in `progress.md`
 21. **Collect agent results** — check each result:
-    - **Build failed:** fix errors, re-verify via haiku agent
-    - **Tests failed:** fix failures, re-verify via haiku agent
+    - **Build failed:** fix errors, commit, re-run step 18
+    - **Tests failed:** fix failures, commit, re-run step 18
     - Log results in `progress.md`
     - **Tick off automated checklist sections** in `plan.md` — mark `### Build & Tests`, `### Code Quality`, `### Regression Scope` items as `[x]`
 22. **When all steps, reviews, and tests pass** — commit on feature branch (skip if nothing to commit — all changes may already be committed per-step):

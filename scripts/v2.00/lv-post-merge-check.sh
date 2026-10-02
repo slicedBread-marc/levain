@@ -38,11 +38,17 @@
 # above, and it is paid by the plan that caused it rather than by the release.
 #
 #   --label <name>  tag for the log file (default: post-merge)
+#   --no-reuse      run the suite even if a receipt covers this tree
 #   --detach        hand the run to a process that outlives this call and print
 #                   SUITE_HANDLE=; wait for it with lv-suite-wait.sh. Required
 #                   under LV_UNATTENDED=1 for any suite that may outlast the
 #                   10-minute foreground cap — see lv-suite-run.sh's header for
 #                   why backgrounding is not the same thing.
+#
+# REUSE (LVI-035). The full mode passes --reuse: when origin/release had
+# nothing new, the merge leaves the tree verify and /lv-test already measured,
+# and a passing receipt for that exact tree, command and toolchain is the
+# answer. lv-suite-run.sh decides; a reused result says so in SUITE_RESULT=.
 #
 # Exit 0 the merged tree is good, 1 it is not (build or suite), 2 nothing is
 # configured to check it with — a gap to report, never a pass. With --detach,
@@ -56,11 +62,13 @@ source "$SELF_DIR/lv-orch-lib.sh"
 
 label="post-merge"
 detach=false
+reuse=(--reuse)
 while [ $# -gt 0 ]; do
   case "$1" in
     --label) label="${2:?--label requires a name}"; shift 2 ;;
     --detach) detach=true; shift ;;
-    -h|--help) sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --no-reuse) reuse=(--no-reuse); shift ;;
+    -h|--help) sed -n '2,56p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "lv-post-merge-check.sh: unknown option '$1'" >&2; exit 2 ;;
   esac
 done
@@ -83,7 +91,7 @@ case "$mode" in
     exit 2 ;;
 esac
 
-set -- --label "$label" --build
+set -- --label "$label" --build "${reuse[@]}"
 $detach && set -- "$@" --detach
 "$SELF_DIR/lv-suite-run.sh" "$@"
 rc=$?

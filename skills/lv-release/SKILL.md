@@ -231,17 +231,19 @@ release-branches/release → release's own permanent worktree — staging enviro
 
 7. **Run E2E / integration tests** (staging validation), against the local merge — before anything is pushed. **Do not type a test command here; run the script:**
    ```bash
-   scripts/lv-exec.sh lv-suite-run.sh --label release --build
+   scripts/lv-exec.sh lv-suite-run.sh --label release --build --reuse-stage release
    ```
    It runs `build_command` and then `test_command` from `levain.yml`, verbatim and unfiltered, in the worktree you are standing in, and ends with three lines: `SUITE_CMD=`, `SUITE_LOG=`, `SUITE_RESULT=`. **Exit 0 pass, 1 fail, 2 no suite is configured** — 2 is a gap to report and never a pass.
 
    **`SUITE_RESULT=` is the only thing that may be reported as the verdict, and `SUITE_CMD=` must be quoted beside it.** A count you read out of the output is not evidence of what ran. client-a's WFI-252: a run reported "✓ E2E tests passed: **474 passed, 0 failed**" and pushed `release`. 474 was one assembly; the configured suite on that content was 3100 tests with 121 failures, every one of them in the E2E assembly the run had named as passing. So the run labelled a non-E2E assembly as the E2E suite, never ran the suite it claimed had passed, and pushed on that basis. `/lv-deploy`'s own full run caught it and reset `main` — nothing else would have.
 
+   **`--reuse-stage release` lets the script answer from a receipt instead of running** — but only when `levain.yml` `suiteReuse:` allows it (`release`, the default, or `deploy`; `none` always runs), and only for a pass recorded on this exact tree, with this exact command, toolchain and Levain version, on a clean tree (LVI-035). The script decides that, not you. A reused verdict reads `SUITE_RESULT=pass (reused <log>, <tip>, <ended>)` with `SUITE_REUSED_FROM=` beside it: report it **as reused**, naming the run it came from, never as a run you made. Do not drop the flag to "be safe" and do not add `--no-reuse` unless you are chasing a suspected flake — a receipt is the same measurement, already made.
+
    This is the **release aggregation guarantee** (BRF-080) and it is now enforced rather than requested: every test a feature branch skipped under tiered gating runs here, whole. Narrowing the suite — an assembly, a filter, a category — is not a judgment call available at this step.
 
    **The suite may outlast a foreground Bash call** (the cap is 10 minutes). Do not background it — detach it and wait in slices:
    ```bash
-   scripts/lv-exec.sh lv-suite-run.sh --label release --build --detach   # prints SUITE_HANDLE=
+   scripts/lv-exec.sh lv-suite-run.sh --label release --build --reuse-stage release --detach   # prints SUITE_HANDLE=
    scripts/lv-exec.sh lv-suite-wait.sh <SUITE_HANDLE>                    # blocks up to 9 minutes
    ```
    `lv-suite-wait.sh` exits **0 pass, 1 fail, 3 still running** — on `3`, call it again with the same handle, as many times as it takes. Each call is its own foreground command under the cap, and each one keeps the session alive. **`3` is neither a pass nor a failure**, and under `LV_UNATTENDED=1` a headless run ends the moment it stops producing output and takes every background job with it — which is how a DEPLOY worker came to announce it was awaiting results and exit sixty seconds later on a red suite (WFI-255). Never report a verdict `lv-suite-wait.sh` did not return.

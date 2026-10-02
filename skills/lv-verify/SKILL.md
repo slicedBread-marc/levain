@@ -82,7 +82,7 @@ TEST_ARGS=$(scripts/lv-exec.sh lv-test-scope.sh PLN-NNN-<slug> --args 2>/tmp/wf-
 # stderr carries "scope: <categories>" — include it in the verify log.
 ```
 
-If `$TEST_ARGS` is empty → run the **full suite** (backward-compat fallback). Otherwise append it to the test command **through `eval`** — `eval "{{test_command}} $TEST_ARGS < /dev/null"` — because the string carries its own quoting and may be several flags, not one. The `< /dev/null` is rule 6 and belongs on every form below.
+If `$TEST_ARGS` is empty → run the **full suite** (backward-compat fallback) **through `lv-suite-run.sh --reuse`** — never typed. `/lv-implement` step 18 ran the identical command on what is usually the identical commit and left a receipt; the script hands that verdict back instead of running the suite again when, and only when, the tree, the command, the toolchain and the Levain version all match and both trees were clean (LVI-035). A reused verdict reads `SUITE_RESULT=pass (reused <log>, <tip>, <ended>)` and names the original output in `SUITE_REUSED_FROM=`: the counts and the failure-line check below come from **that** log, and `findings.md` says the suite result was reused and from which run. A scoped run (`$TEST_ARGS` non-empty) is never a receipt for the full suite and is run as below. Otherwise append it to the test command **through `eval`** — `eval "{{test_command}} $TEST_ARGS < /dev/null"` — because the string carries its own quoting and may be several flags, not one. The `< /dev/null` is rule 6 and belongs on every form below.
 
 `--args` returns the whole argument string rather than a bare filter value on purpose: a Microsoft.Testing.Platform project needs a repeated `--filter-class` plus `--ignore-exit-code 8`, which `<flag> "<value>"` cannot express. Nothing here needs to know which runner is in play — `testFilterStyle` in `levain.yml` decides, defaulting to auto-detection.
 
@@ -103,6 +103,9 @@ So for each failure the agent names:
 ```bash
 grep -n "<test name>" /tmp/wf-tests-PLN-NNN.log
 ```
+
+(On a reused result, grep the log `SUITE_REUSED_FROM=` names instead — that is
+where the run's output is.)
 
 A failure that is not in the log did not happen — drop it, and say in the verify
 log that the agent reported it and the log did not corroborate it. If the log is
@@ -148,7 +151,12 @@ Agent(model: haiku, prompt: "In feature-branches/PLN-NNN-<slug>/, run these ONE 
   2. Then the test command, tee'd to a log: append ` 2>&1 | tee /tmp/wf-tests-PLN-NNN.log` to
      whichever command you run.
   If TEST_ARGS is non-empty: `eval \"{{test_command}} $TEST_ARGS < /dev/null\"`
-  Otherwise (full-suite fallback): `{{test_command}} {{test_exclude_e2e}} < /dev/null`
+  Otherwise (full-suite fallback) do NOT run steps 1 and 2 separately — run ONE command, which
+  builds and then tests, sequentially:
+    `../../scripts/lv-exec.sh lv-suite-run.sh --label verify-PLN-NNN --build --exclude-e2e --reuse 2>&1 | tee /tmp/wf-tests-PLN-NNN.log`
+  and quote its SUITE_CMD=, SUITE_LOG= and SUITE_RESULT= lines verbatim. If SUITE_RESULT says
+  'reused', the suite was not run now: read the counts and any failure lines from the log named
+  in SUITE_REUSED_FROM=, and say 'reused from <that log>' in your report.
   The `< /dev/null` is not optional: a single test that reads stdin blocks forever without it (WFI-240).
   RUN IT IN THE FOREGROUND, in ONE Bash call, with an explicit generous timeout
   (timeout: 600000). Do not use run_in_background. Do not use Monitor. Do not

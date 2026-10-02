@@ -55,6 +55,31 @@ test_command: ""
 # every plan exit, and an accepted cost of finding merge breaks at deploy.
 postMergeCheck: full
 
+# Suite receipts (LVI-035). Every lv-suite-run.sh run records a receipt keyed on
+# the tree (HEAD^{tree}), the resolved build and test commands, the toolchain
+# versions and the Levain version. lv-verify, /lv-test step 4 and the post-merge
+# check reuse a PASS for that exact key on a clean tree instead of running the
+# identical suite again. A fail, a dirty tree (untracked files included) or a
+# filtered run is never reused; --no-reuse or LV_SUITE_REUSE=0 forces a run.
+#
+# Which promotion stages may reuse too: none | release (default) | deploy
+# (deploy implies release).
+suiteReuse: release
+#
+# What "the toolchain" means. Default: `<tool> --version` for each of dotnet,
+# node, npm, python3, go, rustc and java found on PATH, plus DOTNET_ROOT and
+# JAVA_HOME. List probe commands here to replace that set.
+#
+#   suiteToolchain:
+#     - dotnet --version
+#     - node --version
+#
+# Env vars a test reads that must invalidate a receipt when they change. Names
+# only: the value is hashed into the key and never written to a receipt or log.
+#
+#   suiteKeyEnv:
+#     - ASPNETCORE_ENVIRONMENT
+
 # Paths whose untracked and git-ignored files are real work product, not build
 # output. `git worktree remove --force` deletes those with a feature worktree,
 # so /lv-test copies them to the develop root first (lv-worktree-preserve.sh).
