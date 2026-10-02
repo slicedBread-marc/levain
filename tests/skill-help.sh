@@ -40,7 +40,7 @@ assert_eq "the generator's --check agrees"            "0" \
 
 echo
 echo "2. Moved names keep working"
-for old in lv-stage-stop lv-chrome-test lv-status lv-info lv-debug; do
+for old in lv-stage-stop lv-status lv-info lv-debug; do
   f="$SKILLS/$old/SKILL.md"
   if [ ! -f "$f" ]; then bad "$old still exists" "no $f"; continue; fi
   if is_alias "$f"; then ok "$old is an alias"; else bad "$old is an alias" "description does not start Alias:"; fi

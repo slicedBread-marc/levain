@@ -1123,8 +1123,24 @@ assert_eq "our stash is found after the stack shifts under it" "MINE" "$(cat "$S
 
 assert_eq "lv-test no longer pops positionally" "false" \
   "$(grep -q 'git stash pop 2>/dev/null' "$LIB_ROOT/skills/lv-test/SKILL.md" && echo true || echo false)"
-assert_eq "lv-chrome-test is only an alias, with no flow of its own to pop in" "false" \
-  "$(grep -q 'git stash' "$LIB_ROOT/skills/lv-chrome-test/SKILL.md" && echo true || echo false)"
+assert_eq "lv-chrome-test is retired, so no flow of its own is left to pop in" "false" \
+  "$([ -e "$LIB_ROOT/skills/lv-chrome-test" ] && echo true || echo false)"
+
+# LVI-001: the Chrome-extension browser mode never worked; Playwright is the
+# only automated browser. LVI-002: it runs every criterion it can, Manual eyes
+# ones included, and commits the record before the gate is asked — unattended
+# the gate reads Manual PASSes from the committed file only.
+LVT="$LIB_ROOT/skills/lv-test/SKILL.md"
+assert_eq "lv-test has no browser mode section" "false" \
+  "$(grep -q '^## Browser mode' "$LVT" && echo true || echo false)"
+assert_eq "and no usage line offering it" "false" \
+  "$(sed -n '/^## Usage/,$p' "$LVT" | grep -q 'browser' && echo true || echo false)"
+assert_eq "install retires the lv-chrome-test alias in clients" "true" \
+  "$(sed -n '/^RETIRED_SKILLS=(/,/^)/p' "$LIB_ROOT/install.sh" | grep -q '"lv-chrome-test"' && echo true || echo false)"
+assert_eq "step 3c auto-checks Manual eyes criteria too" "true" \
+  "$(grep -q '^3c\. \*\*Auto-check every criterion with headless Playwright\*\*.*#### Manual. criterion tagged .(eyes:blocking)' "$LVT" && echo true || echo false)"
+assert_eq "step 6 commits test-progress.md before asking the gate" "true" \
+  "$(awk '/^6\. \*\*Write .test-progress.md. first/{f=1} f&&/lv-commit.sh/{c=1} f&&/lv-manual-gate.sh <PLN-ID>/{print (c?"true":"false"); exit}' "$LVT")"
 assert_eq "and the restored-changes commit is guarded on LV_RESTORED" "true" \
   "$(grep -q 'LV_RESTORED:-false' "$LIB_ROOT/skills/lv-test/SKILL.md" && echo true || echo false)"
 
@@ -1256,7 +1272,7 @@ assert_eq "and re-reviews a plan amended since its verdict" "true" \
   "$(grep -q 'REVIEW_STALE=true' "$LIB_ROOT/skills/lv-attend/SKILL.md" && echo true || echo false)"
 assert_eq "the replan path is told where the verdict goes" "true" \
   "$(awk '/^## Replanning/, /^## Cross-plan consistency/' "$LIB_ROOT/skills/lv-spec/SKILL.md" \
-     | grep -q 'Never in `findings.md`' && echo true || echo false)"
+     | grep -c 'Never in `findings.md`' >/dev/null && echo true || echo false)"
 # wf-review was retired in v10.6.0 — it told the agent to write the verdict that
 # lv-spec:566 reserves for the spawning session and lv-review-guard.sh exists to
 # block. Guard both halves: the skill stays gone, and it stays on the retirement
@@ -1287,8 +1303,8 @@ retired_parsed="$(
     { cat; printf '\nfor r in "${RETIRED_SKILLS[@]}"; do printf "[%%s]" "$r"; done\n'; } |
     bash 2>/dev/null
 )"
-assert_eq "the retirement list parses to exactly the three retired names" \
-  "[wf-review][wf-init][wf-next]" "$retired_parsed"
+assert_eq "the retirement list parses to exactly the four retired names" \
+  "[wf-review][wf-init][wf-next][lv-chrome-test]" "$retired_parsed"
 
 # The salvage: wf-init's release-branch warning had to land somewhere, and an
 # install is when a missing `release` is cheap to fix.

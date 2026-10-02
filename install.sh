@@ -845,6 +845,12 @@ RETIRED_SKILLS=(
     # behaviour — the release-branch warning — is salvaged below.
     "wf-init"
     "wf-next"
+
+    # lv-chrome-test — retired v14.34.0. An alias for `/lv-test <ID> browser`,
+    # which drove criteria through the Claude in Chrome extension. The extension
+    # never worked reliably for the operator, and headless Playwright already
+    # covered everything it did (LVI-001). The browser mode went with it.
+    "lv-chrome-test"
 )
 
 for retired in "${RETIRED_SKILLS[@]}"; do

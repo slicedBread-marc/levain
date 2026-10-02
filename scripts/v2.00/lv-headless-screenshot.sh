@@ -6,11 +6,9 @@
 # or `#### Manual` criterion whose pass condition is genuinely visual
 # ("layout correct on mobile", "looks right") can still be resolved without
 # the Claude-in-Chrome extension: lv-test runs this, then Reads the saved
-# PNG itself and judges it the way it would judge a Chrome-extension
-# screenshot — no human, no extension connection required. Reserve
-# lv-test's browser mode (`/lv-test <ID> browser`) for what this genuinely
-# can't do: real third-party OAuth, a physical device, browser extensions,
-# or the user's own logged-in profile.
+# PNG itself and judges it — no human required. Only what this genuinely
+# can't do reaches a human: real third-party OAuth, a physical device,
+# browser extensions, or the user's own logged-in profile (LVI-001/002).
 #
 # Usage: lv-headless-screenshot.sh <url> <output-path> [actions-json] [width] [height]
 #                                  [--viewport]

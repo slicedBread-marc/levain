@@ -1,6 +1,6 @@
 ---
 name: lv-test
-description: Human acceptance testing for plans that passed automated verification. Guides the user through acceptance criteria, writes findings, creates PR on pass. `/lv-test <ID> browser` drives criteria through the Chrome extension in the user's real browser.
+description: Acceptance testing for plans that passed automated verification. Auto-tests every criterion it can with headless Playwright first, then guides the user through only what is left, writes findings, creates PR on pass.
 user_invocable: true
 model: haiku
 ---
@@ -43,7 +43,10 @@ Order of work:
    (`… && {{test_command}} < /dev/null`): your shell's stdin is not at EOF, so
    a single test that reads it blocks forever with no failure and no output to
    say why (WFI-240).
-3. Work every `#### Chrome-Assisted` criterion — these are scripted navigations and assertions, so run them and record PASS/FAIL yourself. [Step 3c](#testing) runs them through a headless Playwright browser automatically — literal DOM/JS assertions, interaction sequences (click/fill/submit/refresh), and now visual/subjective ones via a saved screenshot you Read and judge yourself — with no Chrome extension and no [browser mode](#browser-mode). Playwright is the default path; browser mode needs a human to connect the extension, so it is never yours unattended — what Playwright genuinely can't do stays at `—` with its reason (see step 3c). **Every one of them ends at PASS, FAIL or a recorded reason it could not run** — leaving them at `—` and then gating for "one Manual criterion" misreports what is actually left, and the gate question is the only thing a human reads (WFI-070).
+3. **Auto-test every criterion you can before anything reaches a human** — `#### Chrome-Assisted` *and* `#### Manual`. [Step 3c](#testing) drives them through headless Playwright: literal DOM/JS assertions, interaction sequences (click/fill/submit/refresh), two-browser sessions, and visual/subjective criteria via a saved screenshot you Read and judge yourself. There is no Chrome extension and no browser mode (LVI-001). The aim is that a human is asked only about what no automated run could settle (LVI-002):
+   - **Chrome-Assisted** — every one ends at PASS, FAIL or a recorded reason it could not run. Leaving them at `—` and then gating for "one Manual criterion" misreports what is actually left, and the gate question is the only thing a human reads (WFI-070).
+   - **Manual `(eyes:blocking)`, `(eyes:cosmetic)` and untagged** — run the same way: reach the state, screenshot it at the widths the criterion names (both widths when it names none), Read the PNG, judge. A non-browser surface is no different: CLI help text or a generated file is output you can produce and read. A clear PASS or FAIL is recorded like any other result, with Notes saying how you saw it (`headless screenshot 390+1280: …`). Ambiguous — you cannot honestly tell from what you captured — stays at `—` with a note on what was ambiguous, and reaches the gate. So does any reading that disagrees with a prior recorded result (step 3c's disagreement rule).
+   - **`(external)`, `(soak)`, `(unbuilt)`** — not auto-tested; step 5 disposes of them.
 4. For every criterion where the mode menu applies, take `[a]` (auto-test) whenever the criterion matches a recurring auto-testable shape. On auto-test FAIL, record it as a Candidate as normal — do **not** fall through to the manual flow.
 5. Dispose of the criteria that never need a human, whatever remains untested:
    - `(external)` and `(soak)` — defer each and check it off. They cannot be satisfied at gate time by anyone, so they never gate:
@@ -54,10 +57,15 @@ Order of work:
      ```
      **Never put criterion text in double quotes** — backticks in it are commands, and the shell runs them before the script sees them (WFI-194). See [Deferring a criterion](#deferring-a-criterion).
      **Read what it printed.** The DC row is only half the job — the other half is the checkbox in `plan.md`, which is what anyone opening the completed plan actually reads. `ticked in …` means both halves are done. `ACTION REQUIRED: no matching unchecked criterion` means only the row was written: edit `plan.md` yourself, tick the box it listed, append ` — deferred as DC-NNN`, and only then move on. A completed plan with an empty box says "silently dropped", which is the exact ambiguity deferral exists to remove (WFI-056, WFI-137).
-   - `(eyes:cosmetic)` — leave untested and unchecked; whether it gates is the gate script's call, not yours.
+   - `(eyes:cosmetic)` that step 3 could not settle — leave untested and unchecked; whether it gates is the gate script's call, not yours.
 6. **Write `test-progress.md` first, then ask the gate script whether a human is needed. Do not decide this yourself.**
 
-   **The order is load-bearing: `lv-manual-gate.sh` reads that file.** A `#### Manual` criterion you judged and passed this session stays unchecked in `plan.md` — that is by design, you only ever tick a box on a deferral or a cosmetic failure — so the gate has no way to learn the criterion is settled except from the record. Ask it before writing, and you are asking about a plan whose results do not exist yet: client-b' PLN-011 had 8 of 8 criteria PASS on the current build and opened a manual-test gate naming an `eyes:blocking` criterion that had already been judged and passed (WFI-013). Write every result you hold — the full file, per [Saving test progress](#saving-test-progress), build identifiers included — and only then run the script.
+   **The order is load-bearing: `lv-manual-gate.sh` reads that file.** A `#### Manual` criterion you judged and passed this session stays unchecked in `plan.md` — that is by design, you only ever tick a box on a deferral or a cosmetic failure — so the gate has no way to learn the criterion is settled except from the record. Ask it before writing, and you are asking about a plan whose results do not exist yet: client-b' PLN-011 had 8 of 8 criteria PASS on the current build and opened a manual-test gate naming an `eyes:blocking` criterion that had already been judged and passed (WFI-013). Write every result you hold — the full file, per [Saving test progress](#saving-test-progress), build identifiers included — then **commit it**, and only then run the script:
+   ```bash
+   scripts/lv-exec.sh lv-commit.sh "test(PLN-NNN-<slug>): headless results on <sha>" \
+     --add plans/PLN-NNN-<slug>/test-progress.md
+   ```
+   Unattended, the gate reads `#### Manual` PASSes from the committed file only (LVI-033), so an eyes criterion you settled in step 3 and did not commit still stops for a human.
 
    **Then let the script confirm step 3 actually happened — do not trust that it did.** It counts every unchecked `#### Chrome-Assisted` criterion against `test-progress.md` on disk, not against what you remember writing:
    - `PROGRESS_INCOMPLETE='true'` → `$PROGRESS_MISSING` names criteria with no PASS, FAIL or recorded reason in the file — or the file does not exist at all (`$GATE_REASON` says which). That is your unfinished work, not a human's: go back to step 3c, run each one, rewrite `test-progress.md`, and ask the script again. Open the gate on an incomplete record only when a criterion genuinely could not be run *and* you failed to record why — never as a shortcut.
@@ -93,7 +101,7 @@ Order of work:
 | Entry | Plan selection menu | [AUTO] | Use the plan named in your instructions |
 | Step 2 | Goal missing | **[GATE]** | `goal-missing` |
 | Step 7.2 | Mode menu | [AUTO] | `[a]` when the criterion matches a recurring shape, otherwise defer it to the `manual-test` gate |
-| Step 7.3 | "What do you see?" | [AUTO] | Chrome-Assisted reaching here already failed step 3c's auto-check (not scriptable at all, or a low-confidence disagreement) — leave it at `—` with the recorded reason for step 5/6's gate, same as `#### Manual` |
+| Step 7.3 | "What do you see?" | [AUTO] | Any criterion reaching here, Chrome-Assisted or `#### Manual`, already went through step 3c's headless run and was not settled (not scriptable at all, ambiguous, or a low-confidence disagreement) — leave it at `—` with the recorded reason for step 5/6's gate |
 | Step 7.3 | FAIL classification | [AUTO] | Write the finding and route to spec as normal — that is a state transition, not a question. An `(eyes:cosmetic)` failure files a bug and checks off instead |
 | Step 7.3 | Deferring a criterion | [AUTO] | Defer `(external)` and `(soak)` criteria — that is mechanical. Never defer anything else unattended |
 | Step 6 | Whether to open `manual-test` | [AUTO] | `lv-manual-gate.sh` decides. Do not second-guess it in either direction |
@@ -102,73 +110,15 @@ Order of work:
 | Exit | `git push` refused (protected branch, non-fast-forward, permission) | **[GATE]** | `merge-failed` — question is the git error verbatim |
 | Exit | `gh pr merge` failed | [AUTO] | Already routes to the builder on its own — follow that path, don't gate |
 
-**Never guess.** You have no eyes on the running app beyond what Chrome and the test suites report. If a criterion's outcome is not something you established from a test result, a Chrome observation, or a build log, it is **not** a PASS — defer it to the `manual-test` gate. Recording an unverified PASS is worse than recording nothing, because it ships. A test result you did not produce yourself, in this plan's stamped tree, is in the same category as a guess — and a FAIL copied out of the bug report that motivated the plan is the shape this actually took (WFI-132). Anything you are about to ask that isn't in the table above is a [GATE] with gate name `needs-input`. **Opening any gate ends the run:** unclaim and exit 0 in the same breath. Do not defer the criteria you just asked about and carry on to `complete` — a client's PLN-006 tester opened `needs-input` about the identity provider, did exactly that three minutes later, and left the question standing a day on a finished plan (LVI-008). **`manual-test` is no exception.** A client's PLN-003 tester opened `manual-test` on an `eyes:blocking` criterion, then 55 seconds later ruled that same criterion PASS itself — "verified on prior build; not affected" — overriding the gate script it had just obeyed, completed the plan, and had its closing `lv-gate-close.sh` refused for want of a `--basis`; the gate stood open on a finished plan (LVI-009). Its question also claimed the new build "adds RunPage route" when the diff touched only `NewSheet.tsx`. Unattended, `lv-registry-update.sh` now refuses `→ complete` while any gate is open, `manual-test` included; attended, `manual-test` is the one exempt, because the human in the session answers it and step 4 closes it after the commit.
+**Never guess.** You have no eyes on the running app beyond what headless Playwright and the test suites report. If a criterion's outcome is not something you established from a test result, a headless run or screenshot you captured on this build, or a build log, it is **not** a PASS — defer it to the `manual-test` gate. Recording an unverified PASS is worse than recording nothing, because it ships. A test result you did not produce yourself, in this plan's stamped tree, is in the same category as a guess — and a FAIL copied out of the bug report that motivated the plan is the shape this actually took (WFI-132). Anything you are about to ask that isn't in the table above is a [GATE] with gate name `needs-input`. **Opening any gate ends the run:** unclaim and exit 0 in the same breath. Do not defer the criteria you just asked about and carry on to `complete` — a client's PLN-006 tester opened `needs-input` about the identity provider, did exactly that three minutes later, and left the question standing a day on a finished plan (LVI-008). **`manual-test` is no exception.** A client's PLN-003 tester opened `manual-test` on an `eyes:blocking` criterion, then 55 seconds later ruled that same criterion PASS itself — "verified on prior build; not affected" — overriding the gate script it had just obeyed, completed the plan, and had its closing `lv-gate-close.sh` refused for want of a `--basis`; the gate stood open on a finished plan (LVI-009). Its question also claimed the new build "adds RunPage route" when the diff touched only `NewSheet.tsx`. Unattended, `lv-registry-update.sh` now refuses `→ complete` while any gate is open, `manual-test` included; attended, `manual-test` is the one exempt, because the human in the session answers it and step 4 closes it after the commit.
 
 Everything else (creating the PR, writing findings, routing back to the builder) is a normal state transition and proceeds without asking.
 
 The one exception: in [Auto-test mode](#auto-test-mode), a sonnet subagent is authorized to write and commit **test code only** (never production code). The subagent is explicitly instructed on this boundary.
 
-## Browser mode
+## The `browser` argument (retired)
 
-`/lv-test <ID> browser` (or `--browser`) drives criteria through the **Claude in Chrome extension** — the user's own browser, so their real logged-in profile, real third-party OAuth, an installed browser extension, or a physical device reached through that browser. It exists for what [step 3c](#testing)'s headless Playwright genuinely can't do; it needs a human to connect the extension, so it is never the default. This used to be the separate `/lv-chrome-test` skill, which kept its own copies of the PR, merge, claim and findings logic below; it now uses this skill's, unchanged.
-
-**Everything outside steps 5–7 is this skill as written** — entry, claim, container, `$TEST_ACCOUNT`, step 3c, e2e, `test-progress.md`, the completion gate and both exit paths. Browser mode changes only how criteria are walked, plus the wording noted at the end of this section.
-
-**Attended only.** Under `LV_UNATTENDED=1` ignore the argument and run as normal. A criterion that needs the real browser stays at `—` with the reason `needs browser mode`, and the `manual-test` gate question names it, so the human who answers knows to run `/lv-test <ID> browser`.
-
-**Connect first, before you claim anything.** If the Chrome extension is not connected, tell the user: "Chrome not connected. Run `/chrome` to connect, or use `/lv-test <ID>` for automated testing (headless Playwright covers most Chrome-Assisted criteria without the extension)." Then stop — nothing is claimed yet, so there is nothing to release. On `develop`, run `scripts/lv-exec.sh lv-docker-cleanup.sh 2>/dev/null || true` (best-effort, silent) before listing plans.
-
-**Step 3c still runs first.** A headless PASS/FAIL is a high-confidence result and is recorded as usual; the browser walk takes what 3c left at `—`, plus every `#### Manual` criterion. Skip 3c only when the user asks for everything to be driven in their real browser — typically because the app behaves differently under their profile.
-
-**Classify every criterion by type** for the walk:
-
-| Type | Source | Who decides |
-|-|-|-|
-| `browser` | `#### Chrome-Assisted` | Chrome drives, you judge |
-| `manual` | `#### Manual` | Chrome navigates and screenshots, the human decides |
-
-A plan in the older flat format (no subsections) is classified by its text:
-
-| Type | Signal |
-|-|-|
-| `browser` | "redirects to", "shows X", "click", "submit", "error shown when", "persists after", "should not" |
-| `manual` | "layout", "looks correct", "animation", "feels", "responsive", or no clear signal |
-
-**Display (step 5)** — the same three states, with a `Type` column added to the criteria list and one extra option, offered first and taken on an empty reply:
-```
-| # | Criterion | Type |
-|-|-|-|
-| 1 | `/login` — redirects to /dashboard | browser |
-| 4 | `/settings` — layout correct on mobile viewport | manual |
-
-[**b**rowser] - Drive what I can in Chrome, pause for your eyes on the rest
-[**e**ach]    - Walk through each criterion manually
-[**a**ll]     - Pass all criteria (assume they all passed)
-```
-`[sweep]` walks only stale-build criteria using the `[browser]` logic; `[each]`, `[all]` and `[restart]` are unchanged.
-
-**The `[browser]` walk** — criteria in order. For a `browser` criterion:
-
-1. **Announce** it: `#3 [browser] Checking: "Login page redirects to /dashboard" → navigating to http://localhost:$FEATURE_PORT/login …`
-2. **Drive Chrome** — navigate, perform the interactions (click, type, submit), screenshot after the action settles (a second screenshot if the result state needs it), read DOM state, text or URL as needed.
-   - *State persistence* ("persists after refresh", "session survives") — do the action, then refresh or navigate away and back before judging.
-   - *Negative checks* ("should not", "blocked from", "error shown when") — attempt the forbidden action and confirm the app blocks it.
-3. **Judge strictly:**
-   - **PASS** — one line on what you observed: `#3 PASS — /login redirected to /dashboard (URL confirmed)`.
-   - **UNCERTAIN** — ambiguous result: show the screenshot, say what is ambiguous, and let the human decide, exactly as for a `manual` criterion.
-   - **FAIL** — screenshot plus observed vs expected. Keep going; don't stop the walk.
-4. **A Chrome failure is not a test failure.** If Chrome can't navigate, click or read the page, fall back to the manual flow (step 7.3) for that criterion — never mark it FAIL for the tool's fault.
-
-For a `manual` criterion: announce it (`#5 [manual] Need your eyes: …`), open the page, screenshot it, ask "Does this meet the criterion? Describe what you see.", and classify the answer per step 7.3 — `(eyes:cosmetic)` dispositions, deferral and scope reduction included. **Never pass a `manual` criterion on your own reading of the screenshot** — in browser mode a human is at the keyboard, and the screenshot is for them.
-
-Between criteria, print a running tally (`Progress: 3/8 — 2 PASS, 1 FAIL (#3)`) and continue on your own through `browser` criteria. Pause only for a human decision, or to acknowledge the session's **first** FAIL; later FAILs are noted without pausing. After the last one, show a summary table (`# | Criterion | Type | Result`) with per-type totals, then go to the [Completion gate](#completion-gate) or the findings exit as normal.
-
-**Recording.** Results go into `test-progress.md` in this skill's format — no `Type` column; the gate script matches the Criterion column against `plan.md`, so it takes the criterion verbatim as always. Put the provenance in Notes: `browser: redirected to /dashboard`, or `browser, human confirmed`.
-
-**Wording at exit** — the paths are this skill's; only what they say differs, so the record reads what actually happened:
-- Findings heading: `## Browser Test — YYYY-MM-DD`; findings commit: `test(PLN-NNN-<slug>): N findings from browser test — routing to spec`.
-- PR body's Test Results line: `All acceptance criteria passed (browser-assisted + human verification)`.
-- Completion commit: `test(PLN-NNN-<slug>): browser-assisted test passed — complete`.
+`/lv-test <ID> browser` (or `--browser`) used to drive criteria through the Claude in Chrome extension. It never worked reliably and is gone (LVI-001): headless Playwright ([step 3c](#testing)) is the only automated browser. If you are given the argument, say once "`browser` mode was retired — step 3c drives criteria with headless Playwright" and run as normal. What Playwright genuinely cannot be — real third-party OAuth, a physical device, an installed browser extension, the user's own logged-in profile — goes to the human through the manual flow (step 7.3) — or, unattended, through the `manual-test` gate, with its `needs:` reason.
 
 ## Entry (simple)
 
@@ -271,7 +221,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    - Read Goal and Verification Checklist sections
    - **Only present `### Human Test Criteria` items** (combine `#### Chrome-Assisted` and `#### Manual` into a single flat list) — Build & Tests and Code Quality were already handled by the verify agent. **Get that list from `../../scripts/lv-exec.sh lv-manual-lint.sh PLN-NNN --live`, not by assembling it yourself:** its first column is the number to show, to write in test-progress.md's `#` column, and the one an amendment's `replace Chrome-Assisted N` / `Manual N` resolves against. A list built by hand put an amendment's replacement in the replaced criterion's slot, and the next amendment's numbers retired the wrong criterion (a client's LVI-013).
    - **Amendments change that list.** A `#### Human Test Criteria (A-N)` block's `##### Chrome-Assisted` / `##### Manual` criteria are live and are tested like the originals; the originals its heading or `**Supersedes:**` line retires are not tested and get no row. `lv-manual-gate.sh` counts the same live set (LVI-027).
-   - **Chrome-assisted detection:** If the plan contains a `#### Chrome-Assisted` subsection with criteria, note it — [step 3c](#testing) below auto-checks nearly all of it with headless Playwright, once the container is up. Do not suggest [browser mode](#browser-mode) (`/lv-test <ID> browser`) for criteria step 3c already resolved; only mention it for ones it left untested for a reason Playwright can't script around — real third-party OAuth, a physical device, a browser extension, the user's own logged-in profile, or no headless browser installable on this machine at all (see step 3c).
+   - **Nothing reaches the human before step 3c has tried it.** Once the container is up, [step 3c](#testing) runs every Chrome-Assisted criterion and every `#### Manual` eyes or untagged criterion through headless Playwright, attended or not (LVI-002). The human walks only what it left: a FAIL to look at, an ambiguous screenshot, a disagreement with a prior reading, or something Playwright cannot be — real third-party OAuth, a physical device, an installed browser extension, the user's own logged-in profile, or no headless browser installable on this machine at all.
 2. **Check for prior test progress** — look for `../../plans/PLN-NNN-<slug>/test-progress.md`. If it exists, read it to get per-criterion results and build identifiers.
 3. **Deploy to local container and capture build identifier** (single bash call — already inside feature branch):
    ```bash
@@ -332,7 +282,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    After editing, restart the container: ../../scripts/lv-exec.sh lv-docker-up.sh
    ```
    When presenting or walking through individual criteria, if a criterion tests behavior that appears controlled by one of these parameters, remind the user which parameter to set and to what value before testing that criterion.
-3c. **Auto-check Chrome-Assisted criteria with headless Playwright** — for every `#### Chrome-Assisted` criterion not already `PASS`/`FAIL` on the current build in `test-progress.md`. **Favour this over [browser mode](#browser-mode) for anything scriptable at all** — the extension needs a human to connect it and is the fallback, not the default. Three tools, pick by what the criterion needs:
+3c. **Auto-check every criterion with headless Playwright** — every `#### Chrome-Assisted` criterion, and every `#### Manual` criterion tagged `(eyes:blocking)`, `(eyes:cosmetic)` or untagged, that is not already `PASS`/`FAIL` on the current build in `test-progress.md`. `(external)`, `(soak)` and `(unbuilt)` are skipped: no run today can settle them. This runs attended too, before step 5 shows the human anything, so the human's walk starts where automation stopped (LVI-002). There is no other automated browser — the Chrome-extension browser mode was retired (LVI-001). Three tools, pick by what the criterion needs:
 
    - **Assertion criteria** (element geometry, computed style, cookie attributes, meta tags, console errors, a redirect's resulting URL, text/element presence, state that must survive a refresh) — formulate the JS boolean expression yourself from the criterion text, and the interaction that leads to it (if any) as an `actions-json` array (`click`/`fill`/`press`/`keyboard`/`hover`/`focus`/`mouse`/`selectOption`/`check`/`uncheck`/`waitForSelector`/`wait`/`goto`/`reload`/`download`/`upload`/`clipboard`/`clipboardWrite` — see the script's header comment for the full vocabulary; `press` with no selector is a page-level key such as `Tab`, and CSS selectors pierce open shadow DOM), then run:
      ```bash
@@ -350,7 +300,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
      ```bash
      ../../scripts/lv-exec.sh lv-headless-screenshot.sh "http://localhost:$FEATURE_PORT<route>" "/tmp/wf-shots/<plan>-<n>.png" '<actions-json>'
      ```
-     On exit 0, **Read the saved PNG and judge it against the criterion the same way you would a Chrome-extension screenshot** — record PASS/FAIL with a one-line description of what you saw, same as any other result. Pass `width height` (5th/6th args) to check a specific breakpoint the criterion names; default is 390×844 mobile.
+     On exit 0, **Read the saved PNG and judge it against the criterion as a careful human looking at that screen would** — record PASS/FAIL with a one-line description of what you saw, same as any other result. Pass `width height` (5th/6th args) to check a specific breakpoint the criterion names; default is 390×844 mobile.
 
      **A criterion about the fold needs `--viewport`.** The default capture is `fullPage` — the whole scrollable document stitched into one tall image, so content the user would have to scroll to reach appears in the PNG exactly as if it were on screen. Any criterion phrased "without scrolling", "above the fold", "visible on landing" or "first thing you see" is unjudgeable from that image in either direction, and client-b read a 390×1196 full-page PNG as satisfying one (WFI-011). Add the flag, and the image stops where the viewport does:
      ```bash
@@ -380,9 +330,9 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
      Same exit contract as `lv-headless-eval.sh` — 0 `PASS`, 1 `FAIL`, 2 `ERROR` — and `--help` is the header. Pass a long session as `@/path/to/session.json` rather than fighting the quoting.
 
      **A criterion that needs two browsers is scriptable, not human-only.** client-b WFI-028: PLN-014's criteria 8 and 9 each needed two concurrent contexts, step 3c had no verb for it, and the unattended tester recorded both as untestable — *"no interactive browser window can be opened"* — and opened a manual-test gate. An attended session then wrote a two-context driver by hand against this same cached browser and both passed. The capability was always there; only the vocabulary was missing, and a criterion that is scriptable but has no verb reaches a human exactly as if it were not scriptable at all.
-   - **Exit 0 or 1 from `lv-headless-eval.sh` or `lv-headless-session.sh` (`PASS`/`FAIL` on stdout), or a judged screenshot from `lv-headless-screenshot.sh`, is a real, high-confidence result — record it and move on. Do not gate on it and do not also route it through the manual criteria loop.** A criterion this scriptable does not need a human, an extension, or even asking — the result goes straight into `test-progress.md` against the current `$BUILD`, same as any other recorded PASS/FAIL.
+   - **Exit 0 or 1 from `lv-headless-eval.sh` or `lv-headless-session.sh` (`PASS`/`FAIL` on stdout), or a judged screenshot from `lv-headless-screenshot.sh`, is a real, high-confidence result — record it and move on. Do not gate on it and do not also route it through the manual criteria loop.** That holds for a `#### Manual` eyes criterion too: a screenshot you captured on this build and judged clearly is its result, and its Notes say so (`headless screenshot 390+1280: …`). Only a capture you cannot honestly judge either way stays at `—`, with what was ambiguous noted, for the human. A criterion this scriptable does not need a human, an extension, or even asking — the result goes straight into `test-progress.md` against the current `$BUILD`, same as any other recorded PASS/FAIL.
    - **A sign-in is not a reason a criterion cannot run headlessly when `$TEST_ACCOUNT` gives a recipe.** Put the recipe's `/login` steps at the front of the criterion's `<actions-json>` (or into an `lv-headless-session.sh` context) and run it. "OIDC sign-in cannot be completed headlessly in unattended mode" is not a result: a client's LVI-040 recorded exactly that for all 6 Chrome-Assisted criteria of a plan whose `test_account_note` spelled out the headless `/login` recipe, and a human was asked about work nobody tried. Only a recipe that was *run* and returned `ERROR` is a recorded reason — note the step that failed.
-   - **Exit 2 (`ERROR` on stdout, any of the three scripts) is "a recorded reason it could not run", never a FAIL.** Leave the criterion at `—` with that `ERROR` line noted in session memory (it surfaces in test-progress.md's Notes on exit, verbatim: `lv-manual-gate.sh` reads a note with no `ERROR`, no disagreement and no `needs: oauth|device|extension|profile` as a criterion nobody ran) and let it fall through to the criteria loop / gate below like any other untested Chrome-Assisted criterion. A missing headless browser on this machine (no network on first use), a selector that never appears, or a criterion that genuinely needs real third-party OAuth, a physical device, a browser extension, or the user's own logged-in profile are the ordinary cases of this — not defects to work around, and the point at which [browser mode](#browser-mode) (`/lv-test <ID> browser`, or a human) is the right next step, not this step retried differently.
+   - **Exit 2 (`ERROR` on stdout, any of the three scripts) is "a recorded reason it could not run", never a FAIL.** Leave the criterion at `—` with that `ERROR` line noted in session memory (it surfaces in test-progress.md's Notes on exit, verbatim: `lv-manual-gate.sh` reads a note with no `ERROR`, no disagreement and no `needs: oauth|device|extension|profile` as a criterion nobody ran) and let it fall through to the criteria loop / gate below like any other untested Chrome-Assisted criterion. A missing headless browser on this machine (no network on first use), a selector that never appears, or a criterion that genuinely needs real third-party OAuth, a physical device, a browser extension, or the user's own logged-in profile are the ordinary cases of this — not defects to work around, and the point at which a human is the right next step, not this step retried differently.
    - **A headless PASS or FAIL that contradicts a result already recorded for this same assertion on a prior build — attended human testing included — is low-confidence, whatever the headless run says.** Do not overwrite the existing record with the automated verdict in either direction. Instead: leave the criterion at `—`, note both readings ("headless: FAIL (scrollWidth 464 > innerWidth 390), prior human PASS on build <sha>"), and let it reach the gate as a named disagreement — the gate question should say what conflicts, not just that a criterion is untested. client-f's PLN-004 criterion 6 is the worked example: a real-device human PASS and a 390px-CSS-viewport headless FAIL on the same "no horizontal scroll" assertion disagreed, and the disagreement — not either individual reading — is what needed a human's eyes (WFI-008). A criterion with no prior recorded result has nothing to disagree with, so an unambiguous headless PASS/FAIL there is not low-confidence merely for being the first result.
 4. **Run e2e tests** (app is now running):
 
@@ -422,7 +372,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    `lv-registry-update.sh` now refuses to move a plan out of a terminal state, so this particular regression stops at a refused transition. That is the backstop. The fault it is catching is that you were dispatched at a finished plan at all: re-check step 0's `--state testing` claim before doing anything else.
 5. **Classify state and display criteria:**
 
-   Compare the current `$BUILD` against the build column in test-progress.md (if it exists) to determine which of three states applies. In [browser mode](#browser-mode), add its `Type` column and `[browser]` option to whichever state applies:
+   Compare the current `$BUILD` against the build column in test-progress.md (if it exists) to determine which of three states applies. Step 3c has already run, so its results are part of what you compare: list them with their result and `(headless)`, and `[each]` walks only what it left. When step 3c settled every criterion PASS on the current build there is nothing to walk — go straight to the [Completion confirmation](#completion-confirmation):
 
    **State A — Fresh start** (no test-progress.md):
    ```
@@ -735,7 +685,7 @@ Last failure: #3 on build Apr 08 14:32 (f4e5d6c)
 - The `TREE` line is the one `lv-test-tree.sh` printed, pasted. If you are writing this file without one in your tool output, you have no provenance for the results below it — re-run the command in the plan's worktree and paste what it prints.
 - One row per criterion, always present. Result: `PASS`, `FAIL`, `SKIP`, or `—` (untested).
 - **An untested Chrome-Assisted row's Notes must be one of three things, or the gate counts the criterion as never run** (`CHROME_EXCUSED`, LVI-030/033): the `ERROR …` line a headless script printed; a headless reading that disagrees with a prior one (row 5); or `needs: oauth|device|extension|profile — <why>` for the four things Playwright cannot be. "Needs browser mode", "requires user interaction" or "needs eyes" describe a criterion you did not try — hover, Tab order, iframes, shadow DOM, file downloads, file uploads and the clipboard are all scriptable, and a `needs:` note naming a download, an upload or the clipboard is counted as an excuse (LVI-036).
-- **Unattended, never write `PASS` on a `#### Manual` eyes criterion, and never change a result you did not produce this run.** The gate counts an unattended worker's Manual PASS only once it is in a commit it did not make, so rewriting a human's FAIL to PASS does not settle the criterion; it only puts a false row in the record (LVI-033).
+- **Unattended, write `PASS` on a `#### Manual` eyes criterion only from a headless run or screenshot you captured on this build, with Notes saying which, and never change a result you did not produce this run.** A human's FAIL, or any prior reading, that your run contradicts is a disagreement (row 5), not something to overwrite. The gate counts an unattended worker's Manual PASS only from the committed file, which is why step 6 commits before it asks (LVI-033, LVI-002).
 - **Notes is where an untested (`—`) row's reason ends up at exit.** Held in session memory like every other result until then (see above), but write it here rather than dropping it: the auto-test agent's outcome (`EXISTS`/`PASS` name, or a `FAIL` reason) and step 3c's headless-eval outcome (why it couldn't run, or what it disagreed with) both belong in this column. A reason that never reaches the file does not survive a compaction or a different session resuming the plan — this file is the only thing either reads (WFI-070's own lesson, applied to the reason column, not just the verdict column).
 - Only the most recent result per criterion is stored — overwrite on retest.
 - **The Criterion column is matched against `plan.md` by the gate script**, so copy the criterion text rather than summarizing it. Matching survives a dropped route prefix or a trimmed trailing clause; a criterion rewritten in your own words matches nothing, and the gate counts it open and stops for a human who has already judged it.
@@ -1343,7 +1293,6 @@ These are swept into the Levain library and fixed upstream, so one report fixes 
 
 ```text
 /lv-test                   pick a plan in testing and walk its acceptance criteria
-/lv-test <PLN-ID>          walk that plan: headless checks first, then what needs your eyes
-/lv-test <PLN-ID> browser  same, driving criteria in your real Chrome (needs the extension)
-                           also: --browser; replaces /lv-chrome-test
+/lv-test <PLN-ID>          walk that plan: headless Playwright checks every criterion it can,
+                           then you walk only what it left
 ```

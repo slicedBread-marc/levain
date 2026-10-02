@@ -297,7 +297,7 @@ Run these from a Claude session in this repo.
 | `/lv-spec` | Turn a brief or bug into a plan |
 | `/lv-consistency` | Check a plan against its dependency closure (automatic when it declares `Deps`) |
 | `/lv-implement` | Build a ready plan |
-| `/lv-test` | Human acceptance test (`browser` mode drives Chrome) |
+| `/lv-test` | Acceptance test: headless Playwright first, a human only for what it left |
 | `/lv-release`, `/lv-deploy` | Promote to staging, then production |
 | `/lv-help` | Every skill, one line each. Any skill answers `help` with its usage |
 
