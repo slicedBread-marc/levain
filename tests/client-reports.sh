@@ -1039,6 +1039,16 @@ assert_eq "stop ends the server with no local_stop_command set" "false" \
 [ -n "$lv_hang_pg" ] && kill -TERM -- "-$lv_hang_pg" 2>/dev/null
 rm -rf "$lv_hang_repo"
 
+# Every runtime file the script writes must be one install gitignores. The run
+# pid and run log arrived with the detached launch above without being added,
+# and lv-test's pre-merge `git add -A` committed the pid onto three feature
+# branches (LVI-015/018/020 on a client).
+lv_env_unignored=""
+for f in $(grep -oE '\$SCRIPT_DIR/local-env[A-Za-z.-]*' "$LIB_ROOT/templates/on-implement-commit.sh" | sort -u); do
+  grep -qF "\".claude/${f#\$SCRIPT_DIR/}\"" "$LIB_ROOT/install.sh" || lv_env_unignored="$lv_env_unignored ${f#\$SCRIPT_DIR/}"
+done
+assert_eq "install gitignores every local-env runtime file the script writes" "" "$lv_env_unignored"
+
 # ═══════════════════════════════════════════════════════════════════════
 section "Rendering-surface globs span directories (client-a WFI-044)"
 

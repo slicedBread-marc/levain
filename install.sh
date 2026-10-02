@@ -895,9 +895,13 @@ if [ -n "$LOCAL_DEPLOY" ]; then
     chmod +x "$TARGET_DIR/.claude/on-implement-commit.sh"
     echo -e "${GREEN}  Installed .claude/on-implement-commit.sh${NC}"
 
-    # Gitignore local-env runtime files
+    # Gitignore local-env runtime files. Every file on-implement-commit.sh
+    # writes belongs here: the run pid and run log arrived with the detached
+    # launch (LVI-037) without being added, and lv-test's pre-merge `git add -A`
+    # committed the pid onto three feature branches (LVI-015/018/020).
     GITIGNORE="$TARGET_DIR/.gitignore"
-    for pattern in ".claude/local-env.timestamp" ".claude/local-env.pid" ".claude/local-env.log"; do
+    for pattern in ".claude/local-env.timestamp" ".claude/local-env.pid" ".claude/local-env.log" \
+                   ".claude/local-env-run.pid" ".claude/local-env-run.log"; do
         if ! grep -qF "$pattern" "$GITIGNORE" 2>/dev/null; then
             echo "$pattern" >> "$GITIGNORE"
         fi
