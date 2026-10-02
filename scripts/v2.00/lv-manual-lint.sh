@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # lv-manual-lint.sh <plan-id-or-name> [--counts] [--file <plan.md>]
 #                   [--resolved <file>]
+# lv-manual-lint.sh <plan-id-or-name> --live [--file <plan.md>]
 #
 # Lints the `#### Manual` criteria in a plan's Verification Checklist.
 #
@@ -51,6 +52,23 @@
 #              than plan.md's wording — and the diagnostic reported clean,
 #              which is what made it expensive to find. A near-miss is now
 #              reported AS a near-miss rather than as silence.
+#
+#   --live     print the live Human Test Criteria as ONE numbered flat list —
+#              the numbering /lv-test shows and an amendment's `replace …`
+#              names — and exit 0. One per line, tab-separated:
+#                <flat#> <TAB> <Chrome-Assisted|Manual> <TAB> <n in section>
+#                <TAB> <line-no> <TAB> <criterion line as written>
+#              Chrome-Assisted first, then Manual, each in plan.md order,
+#              after every amendment's retirements (wf_live_criteria).
+#
+#              THE NUMBERS HAD NO SINGLE SOURCE. lv-test assembled its own
+#              flat list by reading the plan, and lv-spec wrote "replace
+#              Chrome-Assisted 1" from its own reading of that, where an
+#              amendment's replacement sat in the slot of the criterion it
+#              replaced. The gate resolves positions in file order, so a
+#              client's PLN-028 A-5 retired the 403 check it meant to keep and
+#              left A-2's walkthrough live beside A-5's own (LVI-013). Both
+#              skills read the list from here now.
 #
 #   --counts   print eval-safe KEY='value' lines and exit 0:
 #                MANUAL_TOTAL, MANUAL_EYES_BLOCKING, MANUAL_EYES_COSMETIC,
@@ -103,6 +121,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --counts)   mode="counts"; shift ;;
     --open)     mode="open"; shift ;;
+    --live)     mode="live"; shift ;;
     --file)     plan_file="${2:?--file requires a path}"; shift 2 ;;
     --resolved) resolved_file="${2:?--resolved requires a path}"; shift 2 ;;
     -*)         echo "Unknown option: $1" >&2; exit 2 ;;
@@ -169,6 +188,24 @@ fi
 if ! grep -q . "$plan_file" 2>/dev/null; then
   echo "Error: $plan_file has no readable text — refusing to report a lint verdict on it." >&2
   exit 2
+fi
+
+if [ "$mode" = "live" ]; then
+  wf_live_criteria "$plan_file" | awk '
+    /^####[[:space:]]*Chrome-Assisted/ { cs = "Chrome-Assisted"; next }
+    /^####[[:space:]]*Manual/          { cs = "Manual"; next }
+    /^#+[[:space:]]/                   { cs = ""; next }
+    cs != "" && /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ {
+      line = $0; sub(/^[[:space:]]+/, "", line)
+      if (cs == "Chrome-Assisted") { nc++; C[nc] = nc "\t" NR "\t" line }
+      else                         { nm++; M[nm] = nm "\t" NR "\t" line }
+    }
+    END {
+      for (i = 1; i <= nc; i++) print i "\tChrome-Assisted\t" C[i]
+      for (i = 1; i <= nm; i++) print (nc + i) "\tManual\t" M[i]
+    }
+  '
+  exit 0
 fi
 
 # ── A review that was written and cannot be read ──────────────────────────

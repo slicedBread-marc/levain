@@ -495,6 +495,17 @@ album_pos=$(printf '%s\n' "$live" | awk '
   s == "c" && /^[[:space:]]*- \[/ { c++ }
   s == "m" && /^[[:space:]]*- \[/ { m++; if (/album tree reads/) p = m }
   END { print c + p }')
+# A client's LVI-013: lv-test and lv-spec numbered the list by hand and put a
+# replacement in the replaced criterion's slot. --live is the one numbering,
+# and it is the one the retirement resolves against.
+live_list=$("$SCRIPT_DIR/lv-manual-lint.sh" PLN-007 --live)
+assert_eq "--live numbers the album criterion where the gate resolves it" "$album_pos" \
+  "$(printf '%s\n' "$live_list" | grep 'album tree reads' | cut -f1)"
+assert_eq "--live lists Chrome-Assisted first, the amendment's replacement in file order" \
+  "1	Chrome-Assisted	1" "$(printf '%s\n' "$live_list" | grep 'folder tree nests' | cut -f1-3)"
+assert_eq "--live numbers every live criterion once, contiguously" \
+  "$(printf '%s\n' "$live_list" | wc -l | tr -d ' ')" "$(printf '%s\n' "$live_list" | cut -f1 | sort -n | uniq | tail -1)"
+assert_eq "--live leaves out a retired criterion" "0" "$(printf '%s\n' "$live_list" | grep -c 'photo tree nests')"
 cat >> plans/PLN-007-ui/plan.md << P
 
 ### A-3 (BUG-101): the album tree check moves to a script
