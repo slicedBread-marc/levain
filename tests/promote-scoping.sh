@@ -140,6 +140,27 @@ assert_eq "the record carries the moved-to tip" "$moved" "$recorded"
 "$SCRIPTS/lv-promote-approval.sh" deferred --quiet; rc=$?
 assert_eq "lv-promote-approval.sh deferred → authorized" "0" "$rc"
 
+echo ""
+echo "2b. the deploy's own plans/ and bugs/ bookkeeping does not lapse it (LVI-019)"
+# A client's deploy completed on an approved batch, then the sync back-merge
+# and a bug close reached release and the same DC question was asked again.
+commit_on_release() {
+  local path="$1" msg="$2"
+  mkdir -p "$(dirname "$TEST_DIR/wt-release/$path")"
+  echo "$msg" >> "$TEST_DIR/wt-release/$path"
+  git -C "$TEST_DIR/wt-release" add -A
+  git -C "$TEST_DIR/wt-release" commit -qm "$msg"
+  git -C "$TEST_DIR/wt-release" push -q origin release
+  git -C "$CLIENT" fetch -q origin release
+}
+commit_on_release plans/PLN-029-x/progress.md "sync: bring completed plans back to develop"
+commit_on_release bugs/closed/BUG-032-x/bug.md "bug(BUG-032): closed"
+"$SCRIPTS/lv-promote-approval.sh" deferred --quiet; rc=$?
+assert_eq "plans/ and bugs/ commits on release → still authorized" "0" "$rc"
+commit_on_release plans/deferred-criteria.md "defer DC-042"
+"$SCRIPTS/lv-promote-approval.sh" deferred --quiet; rc=$?
+assert_eq "a change to deferred-criteria.md is a new question → exit 2" "2" "$rc"
+
 # ── 3. DEPLOY_BASE names origin/main ────────────────────────────────────────
 echo ""
 echo "3. lv-release-sync.sh refreshes origin/main and names the base"

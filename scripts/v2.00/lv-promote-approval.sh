@@ -174,6 +174,32 @@ if [ -z "$now_tip" ]; then
   deny 1
 fi
 
+# THE DEPLOY'S OWN BOOKKEEPING IS NOT A NEW BATCH
+#
+# A deploy closes plans and bugs and back-merges main into develop, and those
+# commits reach release too. A client's LVI-019: deploy-deferred-criteria was
+# approved for release 92c1110, the deploy completed, two bookkeeping commits
+# (the sync back-merge and a bug close, plans/ and bugs/ only) moved
+# origin/release, and the gate re-opened asking the same DC question about the
+# same code. On release, a tip that descends from the approved one and differs
+# from it only under plans/ and bugs/ is the same batch — the rule
+# covered_push already applies to main. plans/deferred-criteria.md is the
+# exception: it IS the deferred-criteria question, so a change there re-asks.
+same_batch() {
+  local root="$(wf_develop_root)"
+  [ "$(wf_promote_tip_ref "$gate")" = release ] || return 1
+  git -C "$root" merge-base --is-ancestor "$approved_tip" "$now_tip" 2>/dev/null || return 1
+  git -C "$root" diff --quiet "$approved_tip" "$now_tip" -- . ':(exclude)plans' ':(exclude)bugs' 2>/dev/null || return 1
+  git -C "$root" diff --quiet "$approved_tip" "$now_tip" -- plans/deferred-criteria.md 2>/dev/null || return 1
+}
+
+if [ "$now_tip" != "$approved_tip" ] && same_batch; then
+  say "$id: '$gate' approved${resolved_at:+ at $resolved_at} by ${resolved_basis:-—} for release ${approved_tip:0:9};"
+  say "  release is at ${now_tip:0:9}, which adds only plans/ and bugs/ bookkeeping — the same batch, authorized."
+  say "  resolution: ${resolution:-—}"
+  exit 0
+fi
+
 if [ "$now_tip" != "$approved_tip" ]; then
   say "$id: '$gate' was approved${resolved_at:+ at $resolved_at} for $(wf_promote_tip_ref "$gate") at ${approved_tip:0:9},"
   say "  which is now at ${now_tip:0:9}. The batch has changed since the answer — ask again."
