@@ -531,13 +531,19 @@ Set when `LV_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   exactly `main`'s code — that is the one-question deploy, and its line says so. Exit `2` means
   `main` moved since the answer — treat it as no answer.
 
-  Neither → **open the push gate**, then unclaim and finish normally:
+  Neither → **open the push gate**, then unclaim and finish normally. The count goes in by
+  command, after a fetch — never typed. A client's LVI-039 asked "0 commits not on origin/main
+  (15 commits promoted in this batch)" about a `main` that was 16 ahead, and the human approved
+  a push the question said was empty:
   ```bash
+  git fetch -q origin main
+  AHEAD=$(git rev-list --count origin/main..main)
   scripts/lv-exec.sh lv-gate-open.sh DEPLOY production-push \
-    "Push main $(git rev-parse --short main) to origin? <N> commits not on origin/main; <what the push triggers — name the workflow, or 'CI only, nothing is deployed'>" \
+    "Push main $(git rev-parse --short main) to origin? $AHEAD commits not on origin/main; <what the push triggers — name the workflow, or 'CI only, nothing is deployed'>" \
     --skill lv-deploy
   scripts/lv-exec.sh lv-unclaim.sh DEPLOY
   ```
+  `AHEAD` of `0` means there is nothing to push: do not open the gate, and say so.
   Report the deploy as **complete, push awaiting approval at `/lv-attend`** — not as blocked.
   The promotion succeeded; the gate asks only about the push. That is why it has its own name:
   re-opening `deploy-approval` here, or replaying step 3's commit list as the question, parks a
