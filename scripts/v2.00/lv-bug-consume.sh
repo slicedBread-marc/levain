@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
-# lv-bug-consume.sh <bug-id> <plan-id> [--no-commit] [--force] [--amends]
+# lv-bug-consume.sh <bug-id> <plan-id> [--no-commit] [--force] [--amends|--folded]
 # Moves a bug from open → triaged and links it to a plan.
 # Updates bug.md Status to Triaged and sets Plan field.
+#
+#   --folded   the bug is consumed into a NEW plan alongside the bug that plan
+#              was drafted from — a pair, or a group's non-lead member (a
+#              client's LVI-025: PLN-045 drafted from BUG-045 also took
+#              BUG-044, and the only verbs past check 1 were --force and
+#              --amends, which committed "amendment to PLN-045" for what was
+#              not one). Check 1 is replaced by the --amends test — plan.md
+#              must name this bug outside its `**Bug:**` field — and check 2
+#              stays: a bug folded into a new plan existed before it.
 #
 #   --amends   the bug is consumed as an AMENDMENT to a plan that already
 #              exists, not as the source of a new one (a client's LVI-003: a
@@ -73,19 +82,25 @@ plan_id=""
 do_commit=true
 force=false
 amends=false
+folded=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-commit) do_commit=false; shift ;;
     --force)     force=true; shift ;;
     --amends)    amends=true; shift ;;
+    --folded)    folded=true; shift ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *)  if [ -z "$bug_id" ]; then bug_id="$1"; else plan_id="$1"; fi; shift ;;
   esac
 done
 
 if [ -z "$bug_id" ] || [ -z "$plan_id" ]; then
-  echo "Usage: $0 <bug-id> <plan-id> [--no-commit] [--force] [--amends]" >&2
+  echo "Usage: $0 <bug-id> <plan-id> [--no-commit] [--force] [--amends|--folded]" >&2
+  exit 1
+fi
+if $amends && $folded; then
+  echo "Error: --amends and --folded are exclusive — an existing plan amended, or a new plan that takes this bug alongside its own." >&2
   exit 1
 fi
 
@@ -142,22 +157,39 @@ refuse() {
   exit 2
 }
 
+# Does plan.md name this bug anywhere but its own `**Bug:**` field? The test
+# both --amends and --folded stand on: a plan that takes a bug it was not
+# drafted from says so in its text before the bug is moved, or the consume
+# leaves a triaged bug nothing fixes.
+# Not grep -q: it exits at the first match, and under pipefail the SIGPIPE it
+# leaves grep -v on a large plan reads as "not named" (LVI-007).
+plan_names_bug() {
+  grep -vE '^[ \t]*>?[ \t]*\*\*Bug:\*\*' "$plan_dir/plan.md" | grep -E "(^|[^0-9A-Za-z-])$bug_id([^0-9]|$)" >/dev/null
+}
+
 if $amends && ! $force; then
   # An amendment names the bug it answers; a plan that does not has not been
   # amended yet, and consuming first would leave a triaged bug nothing fixes.
   if [ ! -f "$plan_dir/plan.md" ]; then
     echo "Error: --amends needs an existing plan; $plan_dir/plan.md does not exist." >&2; exit 2
   fi
-  # Not grep -q: it exits at the first match, and under pipefail the SIGPIPE
-  # it leaves grep -v on a large plan reads as "not named" (LVI-007).
-  if ! grep -vE '^[ \t]*>?[ \t]*\*\*Bug:\*\*' "$plan_dir/plan.md" | grep -E "(^|[^0-9A-Za-z-])$bug_id([^0-9]|$)" >/dev/null; then
+  if ! plan_names_bug; then
     echo "Error: $plan_dir/plan.md does not name $bug_id — write the amendment (naming $bug_id) first." >&2
     echo "  Nothing was moved." >&2
     exit 2
   fi
 elif ! $force; then
-  # 1. The plan says which bug it is for.
-  if [ -f "$plan_dir/plan.md" ]; then
+  # 1. The plan says which bug it is for — or, folded, that it takes this one too.
+  if $folded; then
+    if [ ! -f "$plan_dir/plan.md" ]; then
+      echo "Error: --folded needs the plan written; $plan_dir/plan.md does not exist." >&2; exit 2
+    fi
+    if ! plan_names_bug; then
+      echo "Error: $plan_dir/plan.md does not name $bug_id outside its Bug field — say what the plan takes from $bug_id first." >&2
+      echo "  Nothing was moved." >&2
+      exit 2
+    fi
+  elif [ -f "$plan_dir/plan.md" ]; then
     declared=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Bug:\*\*' "$plan_dir/plan.md" 2>/dev/null \
                | grep -oE "($LV_BUG_RE)-[0-9]+" | head -1 || true)
     if [ -n "$declared" ] && [ "$declared" != "$bug_id" ]; then
@@ -258,7 +290,9 @@ echo "$bug_id → triaged (linked to $plan_id)"
 # which is how a bug once appeared in bugs/open/ AND bugs/triaged/ at the same
 # HEAD (WFI-066).
 if $do_commit; then
-  if $amends; then how="amendment to $plan_id"; else how="consumed by $plan_id"; fi
+  if $amends; then how="amendment to $plan_id"
+  elif $folded; then how="folded into $plan_id"
+  else how="consumed by $plan_id"; fi
   if ! "$SELF_DIR/lv-commit.sh" "bug($bug_id): triaged — $how" \
         --add "bugs/open/$bug_slug" "bugs/triaged/$bug_slug"; then
     echo "lv-bug-consume: the move is staged but could not be committed — commit it before another worker does" >&2

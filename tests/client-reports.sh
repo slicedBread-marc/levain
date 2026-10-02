@@ -5000,6 +5000,39 @@ git add -A >/dev/null 2>&1; git commit -qm "BUG-275 + a large PLN-274" >/dev/nul
 assert_ok "--amends finds an early mention in a plan larger than a pipe buffer" \
   "$SCRIPT_DIR/lv-bug-consume.sh" BUG-275 PLN-274-big-plan --amends
 
+# A client's LVI-025: PLN-045 was drafted from BUG-045 and also took its pair,
+# BUG-044. Plain mode refused the pair (the Bug field names BUG-045), and the
+# only way past was --amends, which committed "amendment to PLN-045" for a new
+# plan. --folded is the verb: the plan names the pair, and the pair predates it.
+mkdir -p bugs/open/BUG-276-wide-page bugs/open/BUG-277-wide-page-pair
+printf '# wide page\n\n> **Status:** Open\n> **ID:** BUG-276\n> **Plan:** _(none)_\n' \
+  > bugs/open/BUG-276-wide-page/bug.md
+printf '# wide page pair\n\n> **Status:** Open\n> **ID:** BUG-277\n> **Plan:** _(none)_\n' \
+  > bugs/open/BUG-277-wide-page-pair/bug.md
+git add -A >/dev/null 2>&1; git commit -qm "BUG-276 and its pair BUG-277" >/dev/null 2>&1
+registry_add_row PLN-276 wide-page draft
+printf '# wide page\n\n> **ID:** PLN-276\n> **Bug:** BUG-276 — wide page\n\n## Goal\nx\n' \
+  > plans/PLN-276-wide-page/plan.md
+git add -A >/dev/null 2>&1; git commit -qm "PLN-276 drafted from BUG-276" >/dev/null 2>&1
+assert_eq "--folded refuses until plan.md names the pair" "2" \
+  "$("$SCRIPT_DIR/lv-bug-consume.sh" BUG-277 PLN-276-wide-page --folded >/dev/null 2>&1; echo $?)"
+printf '\nAlso takes BUG-277 (the pair): same page, narrower viewport.\n' >> plans/PLN-276-wide-page/plan.md
+git add -A >/dev/null 2>&1; git commit -qm "PLN-276 names its pair" >/dev/null 2>&1
+assert_ok "--folded consumes the pair once the plan names it" \
+  "$SCRIPT_DIR/lv-bug-consume.sh" BUG-277 PLN-276-wide-page --folded
+assert_eq "the commit says folded, not amendment" "true" \
+  "$(git log -1 --format=%s | grep -q 'folded into PLN-276' && echo true || echo false)"
+assert_ok "and the source bug still consumes plainly" \
+  "$SCRIPT_DIR/lv-bug-consume.sh" BUG-276 PLN-276-wide-page
+mkdir -p bugs/open/BUG-278-late
+printf '# late\n\n> **Status:** Open\n> **ID:** BUG-278\n> **Plan:** _(none)_\n' > bugs/open/BUG-278-late/bug.md
+printf '\nBUG-278 too.\n' >> plans/PLN-276-wide-page/plan.md
+git add -A >/dev/null 2>&1; git commit -qm "BUG-278, filed after PLN-276" >/dev/null 2>&1
+assert_eq "--folded keeps the filed-after check: a later bug is an amendment" "2" \
+  "$("$SCRIPT_DIR/lv-bug-consume.sh" BUG-278 PLN-276-wide-page --folded >/dev/null 2>&1; echo $?)"
+assert_eq "--folded and --amends together are a usage error" "1" \
+  "$("$SCRIPT_DIR/lv-bug-consume.sh" BUG-278 PLN-276-wide-page --folded --amends >/dev/null 2>&1; echo $?)"
+
 # ═══════════════════════════════════════════════════════════════════════
 section "A replan does not promote on a stale approval (client-a WFI-178)"
 
