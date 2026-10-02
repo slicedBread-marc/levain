@@ -886,12 +886,14 @@ assert_eq "an edited goal is measured against the ORIGINAL, not the last commit"
 assert_eq "and reports changed" "true" \
   "$(printf '%s' "$delta" | grep -q '^GOAL_STATUS:   changed' && echo true || echo false)"
 
+# grep -c, not -q: -q exits on the first match, awk dies of SIGPIPE writing the
+# rest of the section, and pipefail reads that as a miss once the section grows.
 assert_eq "replanning runs the scope check" "true" \
   "$(awk '/^## Replanning/, /^## Cross-plan consistency/' "$LIB_ROOT/skills/lv-spec/SKILL.md" \
-     | grep -q 'lv-goal-delta.sh' && echo true || echo false)"
+     | grep -c 'lv-goal-delta.sh' >/dev/null && echo true || echo false)"
 assert_eq "and gates on it whatever the review verdict says" "true" \
   "$(awk '/^## Replanning/, /^## Cross-plan consistency/' "$LIB_ROOT/skills/lv-spec/SKILL.md" \
-     | grep -q 'whatever the review verdict says' && echo true || echo false)"
+     | grep -c 'whatever the review verdict says' >/dev/null && echo true || echo false)"
 assert_eq "lv-attend knows what to do with a scope-reduction gate" "true" \
   "$(grep -q '^### `scope-reduction`' "$LIB_ROOT/skills/lv-attend/SKILL.md" && echo true || echo false)"
 
@@ -3299,6 +3301,18 @@ printf -- '- [x] regression: A-1 covered by the existing suite\n' \
   >> plans/PLN-912-token-rework/plan.md
 assert_eq "a bullet citing an amendment is a reference, not one" "testing" \
   "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-912)"
+
+# A client's LVI-038: an amendment that only rewrote Human Test Criteria was
+# counted as build work and sent the plan through an empty builder cycle. One
+# that declares `**Build:** none` is not counted — sub-headings included.
+printf '\n### A-2 — 2026-09-03: C3 names where the chalkboard is\n\n**Build:** none — criteria only\n\n#### Human Test Criteria (A-2) — replace Chrome-Assisted 2\n\n#### A-2.1 Wording\n' \
+  >> plans/PLN-912-token-rework/plan.md
+assert_eq "an amendment declaring Build: none is not work outstanding" "testing" \
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-912)"
+printf '\n### A-3 — 2026-09-04: one new step\n' >> plans/PLN-912-token-rework/plan.md
+assert_eq "an undeclared amendment after it still is" "active" \
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-912)"
+git checkout -- plans/PLN-912-token-rework/plan.md >/dev/null 2>&1
 git worktree remove --force "$TEST_DIR/wt-912" >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════

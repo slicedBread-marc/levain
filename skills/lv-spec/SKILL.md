@@ -957,6 +957,10 @@ When a plan in REGISTRY.md has state `draft` AND has unchecked items in its `fin
 
    The third row is the bounce with nothing to build: a tester filed a behavior finding, the replan concluded it does not reproduce, and there is no work for a builder. Sending it to `active` dispatches a builder onto an empty list and re-runs a full scoped verify against a tip that already passed clean; client-a's WFI-096 instead parked on a `needs-input` gate that blocked eight dependent plans until a human authorised the transition by hand. The script now answers `testing` for that shape and only that shape — say so in `findings.md`, in one line, naming what did not reproduce and how you established it.
 
+   **An amendment with nothing to build says so: `**Build:** none — <why>` on its own line inside the amendment.** That covers one that only rewrites Human Test Criteria, retires them, or corrects prose a builder never acts on. The script counts any other new amendment heading as builder work and answers `active` (WFI-027), because it cannot tell a criteria rewrite from a new step. Write the line only when it is true: no step, no test, no file, no checklist item for a builder. An amendment that touches any of those leaves the line out.
+
+   **Any gate question that names the replan's target quotes it from `scripts/lv-exec.sh lv-replan-target.sh PLN-NNN` (no `--apply`), run after the amendment is committed.** It does not come from your own reading. A client's PLN-058 A-1 rewrote two Chrome-Assisted criteria, and its `spec-approval` question promised `testing`. The script, seeing a new amendment heading and no declaration, derived `active`, so the human approved one route and the plan took the other (LVI-038).
+
 8. **Commit:**
    ```
    scripts/lv-exec.sh lv-commit.sh "spec: PLN-NNN-<slug> — amendment, back to ready" \

@@ -42,7 +42,8 @@
 #     from the tester, not from verify — a verify bounce has code to answer);
 #   - every finding in the file is checked off (nothing is outstanding);
 #   - progress.md's `## Steps` checklist is complete, or absent;
-#   - plan.md has gained no amendment since the branch last committed.
+#   - plan.md has gained no amendment since the branch last committed,
+#     other than one that declares `**Build:** none` (LVI-038).
 # Anything less falls through to the ready/active rules, unchanged.
 #
 # THE FIFTH CONDITION: THE OTHER FOUR CAN BE SATISFIED BY THE PREVIOUS CYCLE
@@ -129,8 +130,30 @@ branch=$(wf_registry_field "$plan_id" branch "$REGISTRY")
 # behind a bracketed date — the three heading styles lv-goal-delta.sh learned
 # the hard way (WFI-051, WFI-201, WFI-230). Headings only: a bullet in prose
 # that cites A-1 is a reference, not an amendment.
+#
+# An amendment that declares `**Build:** none` is not counted. A sub-heading
+# inside an amendment (`#### A-1.1 …`) belongs to it and shares its
+# declaration. A client's PLN-058 A-1 only rewrote two Chrome-Assisted
+# criteria on a built, tested plan. lv-spec's gate question said `testing`,
+# and this script said `active` because a heading had appeared, so the plan
+# was sent through a builder cycle with nothing to build (LVI-038). Only the
+# planner knows whether an amendment needs code, so it says so on a line this
+# can read. A missing line means "it might", which is the safe default.
 amendment_headings() {
-  grep -cE '^#+[[:space:]]*(\[[^]]*\])?[[:space:]]*([^A-Za-z]*A[-_ ]?[0-9]+([^0-9]|$)|[Aa]mendment[[:space:]]+A?[-_ ]?[0-9]+)' || true
+  awk '
+    function close_block() { if (inb && !bex) total += bcount; inb = 0 }
+    /^#+[[:space:]]/ {
+      lvl = match($0, /[^#]/) - 1
+      if (inb && lvl <= blvl) close_block()
+      if ($0 ~ /^#+[[:space:]]*(\[[^]]*\])?[[:space:]]*([^A-Za-z]*A[-_ ]?[0-9]+([^0-9]|$)|[Aa]mendment[[:space:]]+A?[-_ ]?[0-9]+)/) {
+        if (!inb) { inb = 1; blvl = lvl; bcount = 0; bex = 0 }
+        bcount++
+      }
+      next
+    }
+    inb && tolower($0) ~ /^[[:space:]]*\*\*build:?\*\*:?[[:space:]]*none/ { bex = 1 }
+    END { close_block(); print total + 0 }
+  '
 }
 
 target="ready"
