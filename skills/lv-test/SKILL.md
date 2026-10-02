@@ -31,19 +31,7 @@ Order of work:
 
    Exit 0 is the normal case and includes `already held on your behalf by the dispatcher` — the orchestrator claims a plan before launching you, and that claim names *your* PID. Standing down there is standing down against yourself: it ended ~15s runs reporting a human who did not exist, and parked every plan that reached testing after three no-op dispatches (WFI-073, WFI-075). Only exit 2 means someone else.
 1. If your instructions name a plan, skip the selection menu and work that plan.
-2. Run the automated suites and e2e scope as normal — **from inside the plan's
-   own worktree, stamped** (`lv-test-tree.sh` chained ahead of the test command;
-   see [CWD note](#testing)), and **in the foreground, with
-   a generous timeout, reading the output yourself.** No `&`, no
-   `run_in_background: true`, no backgrounded subagent. A headless run ends the
-   moment you stop producing output, so anything still running is killed unread
-   and the turn is recorded as a worker that accomplished nothing (WFI-114).
-   Where this skill spawns a background test agent below, that is the attended
-   path only. The suite goes through `lv-suite-run.sh` (step 4), which
-   redirects stdin from `/dev/null`; **anything else you run that could read
-   stdin gets `< /dev/null` too**: your shell's stdin is not at EOF, so a
-   single test that reads it blocks forever with no failure and no output to
-   say why (WFI-240).
+2. **Start the suite detached, then collect it before you ask anything** — [step 3a](#testing) starts it (`lv-suite-run.sh --detach --reuse`, from inside the plan's own worktree, stamped with `lv-test-tree.sh` in the same call) and [Testing step 4](#testing) waits for it with `lv-suite-wait.sh`, looping on exit 3. Under `LV_UNATTENDED=1` the join comes **after** step 3c and step 5 and **before** step 6 — so the suite overlaps the headless criteria, and a gate is never opened with a suite still running behind it. No `&`, no `run_in_background: true`, no backgrounded subagent: a headless run ends the moment you stop producing output, so anything still running is killed unread and the turn is recorded as a worker that accomplished nothing (WFI-114). The detached process plus the wait loop is the only form that survives that. The suite goes through `lv-suite-run.sh`, which redirects stdin from `/dev/null`; **anything else you run that could read stdin gets `< /dev/null` too**: your shell's stdin is not at EOF, so a single test that reads it blocks forever with no failure and no output to say why (WFI-240).
 3. **Auto-test every criterion you can before anything reaches a human** — `#### Chrome-Assisted` *and* `#### Manual`. [Step 3c](#testing) drives them through headless Playwright: literal DOM/JS assertions, interaction sequences (click/fill/submit/refresh), two-browser sessions, and visual/subjective criteria via a saved screenshot you Read and judge yourself. There is no Chrome extension and no browser mode (LVI-001). The aim is that a human is asked only about what no automated run could settle (LVI-002):
    - **Chrome-Assisted** — every one ends at PASS, FAIL or a recorded reason it could not run. Leaving them at `—` and then gating for "one Manual criterion" misreports what is actually left, and the gate question is the only thing a human reads (WFI-070).
    - **Manual `(eyes:blocking)`, `(eyes:cosmetic)` and untagged** — run the same way: reach the state, screenshot it at the widths the criterion names (both widths when it names none), Read the PNG, judge. A non-browser surface is no different: CLI help text or a generated file is output you can produce and read. A clear PASS or FAIL is recorded like any other result, with Notes saying how you saw it (`headless screenshot 390+1280: …`). Ambiguous — you cannot honestly tell from what you captured — stays at `—` with a note on what was ambiguous, and reaches the gate. So does any reading that disagrees with a prior recorded result (step 3c's disagreement rule).
@@ -59,7 +47,7 @@ Order of work:
      **Never put criterion text in double quotes** — backticks in it are commands, and the shell runs them before the script sees them (WFI-194). See [Deferring a criterion](#deferring-a-criterion).
      **Read what it printed.** The DC row is only half the job — the other half is the checkbox in `plan.md`, which is what anyone opening the completed plan actually reads. `ticked in …` means both halves are done. `ACTION REQUIRED: no matching unchecked criterion` means only the row was written: edit `plan.md` yourself, tick the box it listed, append ` — deferred as DC-NNN`, and only then move on. A completed plan with an empty box says "silently dropped", which is the exact ambiguity deferral exists to remove (WFI-056, WFI-137).
    - `(eyes:cosmetic)` that step 3 could not settle — leave untested and unchecked; whether it gates is the gate script's call, not yours.
-6. **Write `test-progress.md` first, then ask the gate script whether a human is needed. Do not decide this yourself.**
+6. **Collect the suite (Testing step 4) — then write `test-progress.md`, then ask the gate script whether a human is needed. Do not decide this yourself.**
 
    **The order is load-bearing: `lv-manual-gate.sh` reads that file.** A `#### Manual` criterion you judged and passed this session stays unchecked in `plan.md` — that is by design, you only ever tick a box on a deferral or a cosmetic failure — so the gate has no way to learn the criterion is settled except from the record. Ask it before writing, and you are asking about a plan whose results do not exist yet: client-b' PLN-011 had 8 of 8 criteria PASS on the current build and opened a manual-test gate naming an `eyes:blocking` criterion that had already been judged and passed (WFI-013). Write every result you hold — the full file, per [Saving test progress](#saving-test-progress), build identifiers included — then **commit it**, and only then run the script:
    ```bash
@@ -91,7 +79,7 @@ Order of work:
        "N criteria need human eyes: <one-line list>" \
        --context plans/<plan-name>/plan.md --skill lv-test
      ```
-     Commit whatever results you recorded first, then exit 0. State stays `testing`.
+     Commit whatever results you recorded first, then exit 0. State stays `testing`. The suite was collected before step 6, so nothing is left running; put its `SUITE_RESULT=` line in the question as a second sentence, so the human answering knows the automated half is settled.
 
      **The question states only what you verified.** Name a changed file only if `git diff --name-only <old-build> HEAD` in the worktree lists it; quote `$SURFACE_HIT` and `$GATE_REASON` as the script printed them; never describe what a build "changed" from a commit subject or a guess. A re-ask of a criterion that already has a PASS on an earlier build says which build that was and which surface path changed since: quote `$SURFACE_MOVED_FROM` and `$SURFACE_MOVED`, never `$SURFACE_HIT` — that one is the plan's whole diff against develop and can name a file identical on both builds (LVI-021). If `$SURFACE_MOVED` is empty, the script would have carried the PASS (`MANUAL_CARRIED`), so recheck before asking. A client's LVI-006 re-asked a print check claiming a CSS change the diff did not contain.
 
@@ -105,6 +93,8 @@ Order of work:
 | Step 7.3 | "What do you see?" | [AUTO] | Any criterion reaching here, Chrome-Assisted or `#### Manual`, already went through step 3c's headless run and was not settled (not scriptable at all, ambiguous, or a low-confidence disagreement) — leave it at `—` with the recorded reason for step 5/6's gate |
 | Step 7.3 | FAIL classification | [AUTO] | Write the finding and route to spec as normal — that is a state transition, not a question. An `(eyes:cosmetic)` failure files a bug and checks off instead |
 | Step 7.3 | Deferring a criterion | [AUTO] | Defer `(external)` and `(soak)` criteria — that is mechanical. Never defer anything else unattended |
+| Testing step 4 | `lv-suite-wait.sh` exits 3 | [AUTO] | Call it again with the same handle. Never end the turn on a running suite |
+| Testing step 4 | Suite verdict is `pass (reused …)` | [AUTO] | Record it as reused under step 3a's `TREE` stamp, totals from `SUITE_REUSED_FROM=`. Do not re-run it to "confirm" |
 | Step 6 | Whether to open `manual-test` | [AUTO] | `lv-manual-gate.sh` decides. Do not second-guess it in either direction |
 | Completion | "All criteria pass — proceed?" | [AUTO] | Proceed when every criterion is PASS on the current build |
 | Exit | `git push` still failing transiently (`lv-retry.sh --tempfail` exit 75) | [AUTO] | No gate. Leave the plan in `testing`, unclaim, exit 0 — the next sweep retries (coordinator WFI-006) |
@@ -277,6 +267,18 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    which and how to install it. That is a **[GATE]** (`needs-input`) unattended,
    and a thing to tell the user attended. It is never grounds for marking a
    device criterion passed, skipped or untested-without-reason.
+3a. **Start the suite section — detached, so nothing waits on it.** Once the app is up, and before step 3c drives a single criterion, in one call:
+   ```bash
+   cd /abs/path/to/feature-branches/PLN-NNN-<slug> \
+     && E2E_SCOPE=$(awk '/^## E2E Scope/{found=1;next} found && /^## /{exit} found && /[^[:space:]]/ && !/^_/{print}' ../../plans/PLN-NNN-<slug>/plan.md | tr '\n' ' ' | xargs) \
+     && ../../scripts/lv-exec.sh lv-test-tree.sh PLN-NNN-<slug> \
+     && ../../scripts/lv-exec.sh lv-suite-run.sh --label test-PLN-NNN --only-e2e --extra-args "$E2E_SCOPE" --reuse --detach
+   ```
+   **Note the `TREE` line and the `SUITE_HANDLE=` it prints** — Testing step 4 collects the verdict with that handle, and nothing else will.
+
+   It runs only what verify did not. The script appends `test_only_e2e` and the plan's E2E scope to `test_command`; with both empty that is the **full suite**, the same command `lv-verify` ran, and `--reuse` hands back verify's verdict at once instead of running it again — when the tree, the command, the toolchain and the Levain version all match and both trees were clean (LVI-035). Any change since verify, or a non-empty scope, runs for real, in a process that outlives this call. The suite needs the app up for its E2E tests, which is why this follows step 3 and not entry.
+
+   **Do not wait for it here, and do not run it any other way.** This step used to run in the foreground after step 3c: a client's attended session was held through a whole unfiltered suite that verify had already run on the same tree, then through a second one at the exit's post-merge check, and the human waited through all of it (LVI-034). Go straight on to step 3b.
 3b. **Check for injectable test parameters** — scan `appsettings.json` (and `appsettings.Development.json` if present) for numeric fields whose names suggest probability, rate, chance, or frequency. If any are found, note them and surface them before the criteria list:
    ```
    💡 Injectable parameters detected — modify these in appsettings.json to force or suppress behaviors:
@@ -336,34 +338,23 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    - **A sign-in is not a reason a criterion cannot run headlessly when `$TEST_ACCOUNT` gives a recipe.** Put the recipe's `/login` steps at the front of the criterion's `<actions-json>` (or into an `lv-headless-session.sh` context) and run it. "OIDC sign-in cannot be completed headlessly in unattended mode" is not a result: a client's LVI-040 recorded exactly that for all 6 Chrome-Assisted criteria of a plan whose `test_account_note` spelled out the headless `/login` recipe, and a human was asked about work nobody tried. Only a recipe that was *run* and returned `ERROR` is a recorded reason — note the step that failed.
    - **Exit 2 (`ERROR` on stdout, any of the three scripts) is "a recorded reason it could not run", never a FAIL.** Leave the criterion at `—` with that `ERROR` line noted in session memory (it surfaces in test-progress.md's Notes on exit, verbatim: `lv-manual-gate.sh` reads a note with no `ERROR`, no disagreement and no `needs: oauth|device|extension|profile` as a criterion nobody ran) and let it fall through to the criteria loop / gate below like any other untested Chrome-Assisted criterion. A missing headless browser on this machine (no network on first use), a selector that never appears, or a criterion that genuinely needs real third-party OAuth, a physical device, a browser extension, or the user's own logged-in profile are the ordinary cases of this — not defects to work around, and the point at which a human is the right next step, not this step retried differently.
    - **A headless PASS or FAIL that contradicts a result already recorded for this same assertion on a prior build — attended human testing included — is low-confidence, whatever the headless run says.** Do not overwrite the existing record with the automated verdict in either direction. Instead: leave the criterion at `—`, note both readings ("headless: FAIL (scrollWidth 464 > innerWidth 390), prior human PASS on build <sha>"), and let it reach the gate as a named disagreement — the gate question should say what conflicts, not just that a criterion is untested. client-f's PLN-004 criterion 6 is the worked example: a real-device human PASS and a 390px-CSS-viewport headless FAIL on the same "no horizontal scroll" assertion disagreed, and the disagreement — not either individual reading — is what needed a human's eyes (WFI-008). A criterion with no prior recorded result has nothing to disagree with, so an unambiguous headless PASS/FAIL there is not low-confidence merely for being the first result.
-4. **Run e2e tests** (app is now running) — **through `lv-suite-run.sh`, never a typed test command**, in one call that extracts the plan's E2E scope, stamps the tree and runs:
+4. **Join the suite section — but not here.** Step 3a started it, detached; this step collects it, and *when* is the point of the split (LVI-034). The human's time, and step 3c's headless runs, overlap the suite instead of following it:
+
+   - **Attended:** after the criteria walk (steps 5–7), before the [Completion confirmation](#completion-confirmation) or any findings exit.
+   - **Unattended:** after step 3c and the step-5 dispositions, **before** step 6 asks `lv-manual-gate.sh` anything. A gate ends the run, and a run may not end with its suite still going — so the suite is collected first and the gate question can quote its verdict.
+
    ```bash
-   cd /abs/path/to/feature-branches/PLN-NNN-<slug> \
-     && E2E_SCOPE=$(awk '/^## E2E Scope/{found=1;next} found && /^## /{exit} found && /[^[:space:]]/ && !/^_/{print}' ../../plans/PLN-NNN-<slug>/plan.md | tr '\n' ' ' | xargs) \
-     && ../../scripts/lv-exec.sh lv-test-tree.sh PLN-NNN-<slug> \
-     && ../../scripts/lv-exec.sh lv-suite-run.sh --label test-PLN-NNN --only-e2e --extra-args "$E2E_SCOPE" --reuse
+   ../../scripts/lv-exec.sh lv-suite-wait.sh <SUITE_HANDLE>    # 0 pass, 1 fail, 3 still running
    ```
-   The script appends `test_only_e2e` and the scope to `test_command` itself. With both empty that is the **full suite** — the same command `lv-verify` ran on the same tree — and `--reuse` then hands back verify's verdict instead of running it again, when the tree, the command, the toolchain and the Levain version all match and both trees were clean (LVI-035). It ends with `SUITE_CMD=` / `SUITE_LOG=` / `SUITE_RESULT=`.
+   On `3`, call it again with the same handle, as many times as it takes — each call is a foreground command under the cap and keeps the session alive. **`3` is neither a pass nor a failure.** No `run_in_background`, no scheduled wake-up, no "I'll check back": the loop is the only wait that exists, and ending the turn is abandoning the run (WFI-114, WFI-255, WFI-266).
 
-   **Under `LV_UNATTENDED=1` run it yourself, in the foreground** — the background agent below is the attended path (WFI-114).
-   ```
-   Agent(model: haiku, run_in_background: true, prompt:
-     "Run this in ONE foreground Bash call: <the command above, with absolute paths>.
-      Quote the TREE line and the SUITE_CMD=, SUITE_LOG= and SUITE_RESULT= lines verbatim.
-      If SUITE_RESULT says 'reused', the suite was not run now: read the counts from the log
-      named in SUITE_REUSED_FROM= and say 'reused from <that log>'.
-      Report: total tests, passed, failed, skipped.
-      If any failed, list each failure with test name and error message.
-      Final response under 1500 characters.")
-   ```
+   **Every exit joins it first** — findings, all-pass, a gate, the merge-blocked path. The one exception is an attended early abort (the user quits mid-walk): say the suite is still running and that the next `/lv-test` reuses its receipt if it passes, and leave it.
 
-   **A reused result is recorded as reused.** In `test-progress.md` it goes under the `TREE` stamp `lv-test-tree.sh` printed for this call, with its totals from the `SUITE_REUSED_FROM=` log and the line `SUITE_RESULT=pass (reused …)` quoted verbatim — never as a run you made.
+   Record the result in `test-progress.md` under step 3a's `TREE` stamp, with `SUITE_CMD=` and `SUITE_RESULT=` quoted verbatim. Report it to the user. **A reused result is recorded as reused**: `SUITE_RESULT=pass (reused …)` quoted as printed, totals from the `SUITE_REUSED_FROM=` log — never as a run you made. Attended, if the suite failed, inform the user — the criteria verdicts stand on their own and the walk was not wasted.
 
-   **Never type the scope flags yourself.** The script appends them through `eval`, which keeps several flags several arguments. Wrapped in one pair of quotes they do not error — the runner takes the lot as a single unrecognised argument, ignores the filter, and runs the **whole suite** while reporting it as the scoped result. Measured on client-a's PLN-007: quoted, `total: 435`; the same flags unquoted, `total: 1`. Nothing in the output distinguishes them (WFI-080), and every "scoped" run was really a full-suite run hammering the rate limiter — a 429 cascade that two verify passes had blamed on daemon contention.
+   **Never type step 3a's scope flags yourself.** The script appends them through `eval`, which keeps several flags several arguments. Wrapped in one pair of quotes they do not error — the runner takes the lot as a single unrecognised argument, ignores the filter, and runs the **whole suite** while reporting it as the scoped result. Measured on client-a's PLN-007: quoted, `total: 435`; the same flags unquoted, `total: 1`. Nothing in the output distinguishes them (WFI-080), and every "scoped" run was really a full-suite run hammering the rate limiter — a 429 cascade that two verify passes had blamed on daemon contention.
 
-   **So check the count, not just the exit code.** If `$E2E_SCOPE` named a handful of tests and the agent reports hundreds, the filter did not apply: fix the command form and re-run before reading anything into the result.
-
-   Report results to user before or during human testing. If e2e tests fail, inform the user but continue — human testing may still proceed.
+   **So check the count, not just the exit code.** If `$E2E_SCOPE` named a handful of tests and the run reports hundreds, the filter did not apply: fix the command form and re-run before reading anything into the result.
 
    **A runner that could not run is not a suite that failed.** Before you read a single number, decide which of the two you are looking at:
 
@@ -377,7 +368,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    `lv-registry-update.sh` now refuses to move a plan out of a terminal state, so this particular regression stops at a refused transition. That is the backstop. The fault it is catching is that you were dispatched at a finished plan at all: re-check step 0's `--state testing` claim before doing anything else.
 5. **Classify state and display criteria:**
 
-   Compare the current `$BUILD` against the build column in test-progress.md (if it exists) to determine which of three states applies. Step 3c has already run, so its results are part of what you compare: list them with their result and `(headless)`, and `[each]` walks only what it left. When step 3c settled every criterion PASS on the current build there is nothing to walk — go straight to the [Completion confirmation](#completion-confirmation):
+   Compare the current `$BUILD` against the build column in test-progress.md (if it exists) to determine which of three states applies. Step 3c has already run, so its results are part of what you compare: list them with their result and `(headless)`, and `[each]` walks only what it left. When step 3c settled every criterion PASS on the current build there is nothing to walk and nothing to ask — join the suite (Testing step 4) and go straight to the [Completion confirmation](#completion-confirmation):
 
    **State A — Fresh start** (no test-progress.md):
    ```
@@ -642,6 +633,8 @@ Commit the log update as part of the normal test-exit commit (findings or comple
 
 ### Completion confirmation
 
+**Join the suite first** ([Testing step 4](#testing)) if you have not — the confirmation quotes its verdict.
+
 Under `LV_UNATTENDED=1` this is **[AUTO] `[c]`omplete** — when every criterion is PASS on the current build, proceed straight to the exit path.
 
 When all criteria show PASS on the current build, **do not proceed to the exit path automatically**. First prompt the user:
@@ -859,6 +852,8 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    ../../scripts/lv-exec.sh lv-post-merge-check.sh --label "post-merge-$PLAN_NAME"
    ```
    It reads `postMergeCheck:` from `levain.yml` — `full` (default: `build_command` then `test_command`, whole and unfiltered) or `build` (build only, the pre-9.8 behavior). **Exit 0 good, 1 the merged tree is broken, 2 nothing is configured to check it with** — 2 is a gap to report, never a pass.
+
+   **When `origin/release` had nothing new, the merge leaves the tree verify already measured**, and the check answers from that receipt in seconds — `SUITE_RESULT=pass (reused …)` (LVI-035). Any change the merge brought in runs the suite for real; that is the case this check exists for.
 
    **The suite may outlast a foreground Bash call** (the cap is 10 minutes). Detach and wait in slices, exactly as `/lv-release` step 7 does — never `run_in_background`:
    ```bash
@@ -1299,5 +1294,6 @@ These are swept into the Levain library and fixed upstream, so one report fixes 
 ```text
 /lv-test                   pick a plan in testing and walk its acceptance criteria
 /lv-test <PLN-ID>          walk that plan: headless Playwright checks every criterion it can,
-                           then you walk only what it left
+                           then you walk only what it left; the suite runs detached
+                           alongside (or is reused from verify's run on the same tree)
 ```
