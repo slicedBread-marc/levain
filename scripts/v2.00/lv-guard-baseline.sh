@@ -256,7 +256,7 @@ def strip_heredocs(text):
         if kind == "shell":
             out.extend(body)
         elif kind == "text":
-            text_bodies.append("\n".join(body))
+            text_bodies.append((first, "\n".join(body)))
     return "\n".join(out), text_bodies
 
 
@@ -458,7 +458,25 @@ for w in words:
         if part and re.fullmatch(r"\.env(\.[\w-]+)?", part) and is_secret(part):
             block("secret-read", f"the command references secret material ({part})")
 
-for body in text_bodies:
+# A body another interpreter reads can run a command only through that
+# language's process API. A python3 heredoc that wrote runbook text naming a
+# repo-delete command into a plan.md was refused as though it ran it, and the
+# worker got past by writing the same script with the Write tool and running
+# it by path, which this hook never sees (a client's LVI-267). So a body with
+# no way to start a process is data, like a data sink's. A body that has one is
+# still matched anywhere, because which string reaches the call is not
+# something a regex can follow. Ruby, perl and php also run backticks.
+SPAWN = re.compile(
+    r"\b(subprocess|popen|pty\.spawn|os\.(system|exec\w*|spawn\w*|posix_spawn\w*)|child_process"
+    r"|exec(Sync|File|FileSync|vp?e?)?\s*\(|spawn(Sync)?\s*\(|system\s*\(|eval\s*\(|shell_exec|passthru"
+    r"|proc_open|Open3|Process\.(start|spawn)|Runtime\.getRuntime|ProcessBuilder|Deno\.(run|Command)"
+    r"|Bun\.spawn|ctypes|cffi|__import__|importlib)|%x[\[({]|\bqx\s*[\[({/]"
+)
+BACKTICK_RUNS = {"ruby", "perl", "php"}
+
+for reader, body in text_bodies:
+    if not SPAWN.search(body) and not (reader in BACKTICK_RUNS and "`" in body):
+        continue
     body_flat = " ".join(body.split())
     for rule, rx, why in RULES:
         if re.search(rx, body_flat):
