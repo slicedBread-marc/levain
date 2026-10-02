@@ -36,6 +36,7 @@ scripts/v*/lv-issue.sh          report a harness fault
 scripts/v*/lv-hook.sh           the extension-hook dispatcher, + hooks.default/
 scripts/v*/lv-rack.sh           the cross-project board
 scripts/v*/lv-direct.sh         steer a coordinated plan (--project), via the target's own harness
+scripts/v*/lv-bug-group.sh      hold a batch of filings off /lv-spec until sealed (--project)
 .claude/skills/lv-dep-notify/   filing: the entry point a human or agent invokes
 .claude/skills/lv-rack/         the board, summarised
 .claude/skills/lv-vision/       the owner's vision skill, or the interview that writes one
@@ -83,6 +84,9 @@ itself. `lv-direct.sh … --project <name>` runs the target's own `lv-direct.sh`
 through the target's `lv-exec.sh`. The directive is recorded as
 `coordinator:<slug>` and committed by the target's harness. The target's own
 workers then apply it ([directives.md](directives.md)).
+`lv-bug-group.sh … --project <name>` is routed the same way: it holds a batch of
+reports this coordinator is still filing off the target's `/lv-spec` until it
+seals them ([intake-groups.md](intake-groups.md)).
 
 Filing is the **terminal action**. Everything downstream of a filed report —
 triage, spec, claiming, registry rows, implementation, verification, testing,

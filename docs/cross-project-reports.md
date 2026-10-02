@@ -305,6 +305,16 @@ pipeline with no second inbox — but conflating the entry points would mean
 announcement to a dependent?" on every invocation, for a distinction that's
 usually obvious to whoever is already typing the request.
 
+## Filing a batch: intake groups
+
+A conversation that files several reports into one project, and corrects some
+of them as it goes, files them with `lv-dep-notify.sh --group <slug>`. The
+target's `/lv-spec` offers no member of an Open group, so nothing is specced
+on a premise a later report reverses; the overseer seals the group when the
+batch is complete (`lv-bug-group.sh --project <name> seal <slug>`), and the
+lead goes to spec carrying the rest. An `--amends` report joins its target's
+open group by itself. See [intake-groups.md](intake-groups.md).
+
 ## Waiting on the report you filed
 
 Filing is terminal — the section above says why — but the plan you filed *for*

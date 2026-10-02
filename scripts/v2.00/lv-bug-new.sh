@@ -18,6 +18,12 @@
 #                                           lv-lane.sh's eligibility check. A human's
 #                                           statement: refused under LV_UNATTENDED=1
 #   --lane-by   <who>                      who declared it (default: git user.name)
+#   --group     <slug>                     file straight into an intake group, opening it
+#                                           if absent (lv-bug-group.sh): held off /lv-spec
+#                                           until the overseer seals it. Refused under
+#                                           LV_UNATTENDED=1. A bug whose --links says
+#                                           "Amends BUG-NNN" joins that bug's Open group
+#                                           without being told (LVI-024)
 #
 # Output is an eval contract:
 #   BUG_ID='BUG-041'
@@ -63,6 +69,7 @@ notes=""
 do_commit=true
 lane="normal"
 lane_by=""
+group=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -80,6 +87,7 @@ while [ $# -gt 0 ]; do
     --no-commit)   do_commit=false; shift ;;
     --lane)        lane="${2:?--lane requires a value}"; shift 2 ;;
     --lane-by)     lane_by="${2:?--lane-by requires a name}"; shift 2 ;;
+    --group)       group="${2:?--group requires a slug}"; shift 2 ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *)  if [ -z "$title" ]; then title="$1"; else
           echo "Error: unexpected argument '$1' — the title is one argument, quote it" >&2; exit 1
@@ -115,6 +123,29 @@ if [ "$lane" = express ] && [ "${LV_UNATTENDED:-}" = "1" ]; then
   exit 1
 fi
 [ -n "$lane_by" ] || lane_by=$(git config user.name 2>/dev/null || whoami)
+
+# An intake group is the overseer's (lv-bug-group.sh): refused before a number
+# is allocated, for the same reason as the express lane above.
+if [ -n "$group" ] && [ "${LV_UNATTENDED:-}" = "1" ]; then
+  echo "Error: --group holds intake for the overseer, and this is an unattended worker (LV_UNATTENDED=1). Nothing was filed." >&2
+  exit 1
+fi
+if [ -n "$group" ] && ! [[ "$group" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+  echo "Error: --group '$group' is not a kebab-case slug. Nothing was filed." >&2
+  exit 1
+fi
+# A correction joins the batch it corrects. Without this, an amender filed
+# after its target was grouped would be the one bug of the batch left
+# offered on its own — the exact failure the group exists to stop (LVI-024).
+if [ -z "$group" ] && [ -n "$links" ] && [ "${LV_UNATTENDED:-}" != "1" ]; then
+  for t in $(printf '%s' "$links" | grep -oE "Amends[[:space:]]+($LV_BUG_RE)-[0-9]+" | grep -oE "($LV_BUG_RE)-[0-9]+" || true); do
+    loc=$(wf_bug_md "$t"); [ -n "$loc" ] || continue
+    g=$(wf_bug_field "${loc#*$'\t'}" Group)
+    if [ -n "$g" ] && [ "$(wf_group_field "$g" Status)" = "Open" ]; then
+      group="$g"; echo "lv-bug-new: amends $t, which is in open intake group $g — joining it" >&2; break
+    fi
+  done
+fi
 
 # Derive the slug from the title when none was given: lowercase, non-alphanumerics
 # to single hyphens, trimmed, capped at 6 words so the folder name stays readable.
@@ -178,6 +209,16 @@ if $do_commit; then
   # otherwise execute that report as shell.
   if ! "$SELF_DIR/lv-commit.sh" "bug($bug_id): $title" --add "$bug_dir" >&2; then
     echo "lv-bug-new: $bug_dir is written but could not be committed — commit it before another worker does" >&2
+  fi
+fi
+
+if [ -n "$group" ]; then
+  if $do_commit; then
+    "$SELF_DIR/lv-bug-group.sh" add "$group" "$bug_id" \
+      --create "opened by filing $bug_id ($source_who)" >&2 \
+      || echo "lv-bug-new: $bug_id is filed but NOT in group $group — it is offered to /lv-spec on its own. lv-bug-group.sh add $group $bug_id" >&2
+  else
+    echo "lv-bug-new: --no-commit — $bug_id is not added to group $group; run lv-bug-group.sh add $group $bug_id once it is committed" >&2
   fi
 fi
 

@@ -81,6 +81,15 @@
 #                            the ID belongs to one project's counter, and
 #                            broadcasting it would name a different artifact
 #                            in each.
+#   --group <slug>          file into an intake group in each target, opening it
+#                            if absent (lv-bug-group.sh, LVI-024). Its members
+#                            are not offered to /lv-spec until the group is
+#                            sealed, so a conversation still filing — and
+#                            correcting what it already filed — is not specced
+#                            one report at a time. Each filing ends with the
+#                            group's state and the command that seals it.
+#                            An --amends report joins its target's open group
+#                            without being told.
 #
 # AMENDING, AND WHY IT IS A FLAG RATHER THAN AN EDIT
 #
@@ -143,6 +152,7 @@ notes=""
 links=""
 amends=""
 lane="normal"
+group=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -150,6 +160,7 @@ while [ $# -gt 0 ]; do
     --links)       links="${2:?--links requires a value}"; shift 2 ;;
     --amends)      amends="${2:?--amends requires a bug ID}"; shift 2 ;;
     --lane)        lane="${2:?--lane requires a value}"; shift 2 ;;
+    --group)       group="${2:?--group requires a slug}"; shift 2 ;;
     --kind)        kind="${2:?--kind requires a value}"; shift 2 ;;
     --severity)    severity="${2:?--severity requires a value}"; shift 2 ;;
     --description) description="${2:?--description requires a value}"; shift 2 ;;
@@ -255,6 +266,11 @@ link_args=()
 [ -n "$links" ] && link_args=(--links "$links")
 lane_args=()
 [ "$lane" = express ] && lane_args=(--lane express --lane-by "$(git config user.name 2>/dev/null || whoami) via $caller_slug")
+group_args=()
+[ -n "$group" ] && group_args=(--group "$group")
+# Who opened or joined the group, as the target's lv-bug-group.sh records it.
+group_from="operator"
+[ "$(wf_cfg role client)" = "coordinator" ] && group_from="coordinator:$caller_slug"
 
 notified=0
 skipped=0
@@ -287,7 +303,7 @@ for i in "${!target_names[@]}"; do
   fi
 
   bug_out=""
-  if ! bug_out=$(cd "$path" && scripts/lv-exec.sh lv-bug-new.sh "$title" \
+  if ! bug_out=$(cd "$path" && LV_GROUP_FROM="$group_from" scripts/lv-exec.sh lv-bug-new.sh "$title" \
       --kind "$kind" \
       --severity "$severity" \
       --source "$source_tag" \
@@ -297,6 +313,7 @@ for i in "${!target_names[@]}"; do
       --actual "${actual:-TBD}" \
       "${link_args[@]+"${link_args[@]}"}" \
       "${lane_args[@]+"${lane_args[@]}"}" \
+      "${group_args[@]+"${group_args[@]}"}" \
       --notes "${kind_note}${notes:+$'\n\n'}${notes}"); then
     echo "SKIPPED $name filing-failed"
     echo "lv-dep-notify: filing in $name failed — see output above" >&2
@@ -314,6 +331,17 @@ for i in "${!target_names[@]}"; do
     else
       echo "lv-dep-notify: $BUG_ID was filed in $name, but back-linking $amends FAILED — $BUG_ID says it amends $amends and $amends does not mention it. Link it in $name before its triage reads only one side." >&2
     fi
+  fi
+
+  # Where the batch stands, every filing: the overseer is the one who seals it,
+  # and a group nobody remembers to seal holds its members forever.
+  group_out=$(cd "$path" && scripts/lv-exec.sh lv-bug-group.sh of "$BUG_ID" 2>/dev/null || true)
+  GROUP_SLUG="" GROUP_STATUS="" GROUP_MEMBERS=""
+  [ -n "$group_out" ] && eval "$group_out"
+  if [ -n "$GROUP_SLUG" ]; then
+    seal_cmd="lv-bug-group.sh seal $GROUP_SLUG"
+    [ "$group_from" != "operator" ] && seal_cmd="lv-bug-group.sh --project $name seal $GROUP_SLUG"
+    echo "$BUG_ID is in $name's intake group $GROUP_SLUG ($GROUP_STATUS: $GROUP_MEMBERS) — held from /lv-spec until: $seal_cmd" >&2
   fi
 
   echo "NOTIFIED $name $BUG_ID $path $BUG_DIR"

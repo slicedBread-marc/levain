@@ -57,6 +57,8 @@ bugs/closed/  → resolved by /lv-deploy when a plan completes
 
    **The express lane — only when the user asks for it in so many words** ("express", "no gates", "just ship it"). Add `--lane express`. It declares that this bug runs to production with no human gate, *if* the plan written for it passes `lv-lane.sh`'s eligibility check at spec. Read out any pre-check warning it prints: the lane stays declared, but a warning is a likely downgrade, and the user may prefer to know now. Never add it on your own judgment that a bug looks small — that judgment is exactly what the declaration records a human making. It is refused under `LV_UNATTENDED=1` (LVI-025).
 
+   **Filing several related bugs at once, or one whose premise is still being discussed: add `--group <slug>`** (one slug for the batch). The bugs are held off `/lv-spec` until the user says the batch is ready, then specced together — otherwise each is specced the moment it lands, and a later correction arrives after its target is already built (LVI-024). A bug whose `--links` says `Amends BUG-NNN` joins that bug's open group by itself. When the user says the batch is complete, and not before: `scripts/lv-exec.sh lv-bug-group.sh seal <slug>`. Refused under `LV_UNATTENDED=1` — grouping is the operator's call.
+
    **Do not hand-write the folder instead.** The counter is the only allocator, and it is only actually the only allocator if using it is easier than not: client-a filed two bugs by hand and pushed its counter into drift (WFI-133).
 3. **Handle attachments** — if the user provides a file path:
    - Copy it into `$BUG_DIR` and append an `## Attachments` section to `$BUG_DIR/bug.md` referencing it relatively: `[filename.ext](./filename.ext)`

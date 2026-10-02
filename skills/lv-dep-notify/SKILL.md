@@ -77,6 +77,7 @@ standing in the target's pipeline beyond the moment the report lands.
      --notes "<deploy reference, migration guide, timeline>" \
      [--links "<ticket, decision record, related artifact over there>"] \
      [--amends <BUG-id>] \
+     [--group <slug>] \
      [--lane express]
    ```
    Omit `--to` to broadcast to every declared dependent; pass it to reach just one. Omitted
@@ -90,6 +91,26 @@ standing in the target's pipeline beyond the moment the report lands.
    ID>`. It needs `--to` whenever more than one target is configured — the ID belongs to one
    project's counter, and the same number means something different in each. If the back-link
    fails, the script says so loudly: relay that, because a one-sided link is worse than none.
+
+   **More than one related report, or one whose premise is still being discussed: `--group
+   <slug>`.** It files into an intake group in the target, opening it if absent, and the
+   target's `/lv-spec` offers no member until the group is sealed. Without it, each report is
+   specced the moment it lands: a client got BUG-041..049 from one conversation, BUG-046
+   reversed the premise of 041 and 043, and 041 was already an active plan built on the old
+   premise before its correction was filed — the operator had to stop the whole daemon
+   (LVI-024). Use one kebab-case slug for the whole batch, with the same `--to`. An `--amends`
+   report joins its target's open group without being told. Every filing prints the group's
+   state and its seal command — relay both.
+
+   **Seal only on the user's word** ("that's the batch", "ready to go") — never because you
+   think the conversation is over:
+   ```bash
+   scripts/lv-exec.sh lv-bug-group.sh --project <name> seal <slug> [--lead BUG-NNN]
+   ```
+   The default lead is the lowest-numbered member that amends no other; pass `--lead` when the
+   user names the one the rest are written against. Your handoff names the seal command, never
+   a hand-sequenced spec order ("run /lv-spec BUG-046, taking 047 with it" is what the group now
+   says for you). Abandoning the batch: `lv-bug-group.sh --project <name> dissolve <slug>`.
 
    **`--lane express` only when the user asked for it.** It declares, in each target, that the
    work runs to production with no human gate if the target's written plan passes the eligibility

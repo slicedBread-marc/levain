@@ -211,6 +211,18 @@ Never resolve a collision by writing into the existing plan's folder or row. cli
 If the user picks a bug BUG-NNN:
 
 1. **Read the bug** — read `bugs/open/BUG-NNN-<slug>/bug.md`
+1b. **Does it carry others?** A worklist row whose detail reads `GROUP(<slug>) +BUG-a,BUG-b — spec together` or `+BUG-a (amending it) — spec together` is not one bug, and neither is a bug whose Links say `Amended by`. Run `eval "$(scripts/lv-exec.sh lv-bug-group.sh of BUG-NNN)"`: `GROUP_STATUS=Sealed` with `GROUP_LEAD=BUG-NNN` means you are the lead of an intake group and `GROUP_OPEN_MEMBERS` is the set you take. Without a group, the set is every open bug whose `Amends` chain ends at this one. A batch filed together, some members correcting others, was offered to you whole so that no member is specced without the corrections to it (a client's LVI-024: BUG-041 became an active plan built on a premise BUG-046 had already reversed).
+   **Read every member before writing anything, amenders before their targets** — an amender changes what its target means. Then decide, per member, how it leaves `bugs/open/` in this pass, and record each decision with its reason in the plan's Design Decisions:
+
+   | The member… | It leaves by |
+   |-|-|
+   | is part of the same change as the lead | folded into this plan: name it in `plan.md`, then `lv-bug-consume.sh BUG-a PLN-NNN-<slug> --folded` ([Bug consumption](#bug-consumption)) |
+   | is separate work that needs this plan first | its own plan with `Deps` on this one — a later `/lv-spec` run; leave it in `bugs/open/` and say so in Design Decisions. **This is the one member that may stay** — and then `consume` below refuses, which is correct: the group stays Sealed until that member is specced |
+   | changes an existing `draft`/`ready` plan | an amendment there (step 2b) |
+   | is reversed or made moot by another member | `lv-bug-close.sh BUG-a --superseded-by BUG-b --note "<why>"` |
+   | names a target whose plan is `active` or later (the row says `target PLN-MMM active`) | a new plan with `Deps PLN-MMM` — never an amendment under a build |
+
+   Unsure whether a member is the same change or separate work? Fold it — one plan reviewed whole is cheaper than two that contradict — and record the assumption. When every member is decided, finish the group in [Bug consumption](#bug-consumption) step 3.
 2. **Check for an already-fixed duplicate — the one shape that auto-closes.** When
    this bug's `Source:` is `agent:lv-verify` (a verify run filed it as a side effect,
    not a human decided it was worth reporting) and its Description/Actual names a
@@ -1041,6 +1053,11 @@ When the plan being created is a fix for a tracked bug:
    **An amendment consumes with `--amends`** ([Plan from bug](#plan-from-bug) step 2b): the bug was filed after the plan by definition, so the filed-after check is replaced by one that plan.md names the bug. It does not write the `**Bug:**` field — that names the bug a plan was drafted from, and step 2 below is for new plans only.
    **A second bug folded into this new plan consumes with `--folded`** — a pair, or a member carried with the bug you were dispatched on. The plan's `**Bug:**` field names the source bug only; plain mode refuses every other bug (check 1), and `--amends` would record a new plan as an amendment (a client's LVI-025). Name the folded bug in `plan.md` first — Context or Design Decisions, saying what the plan takes from it — then `scripts/lv-exec.sh lv-bug-consume.sh BUG-MMM PLN-NNN-<slug> --folded`. Exit 2 means the plan does not name it yet, or it was filed after the plan was written: that one is an amendment (step 2b), not a fold.
 2. **Link back in `plan.md`** — add to the Goal section: `> **Bug:** BUG-NNN — <title>`. Write it as a header field on its own line: `lv-plan-id.sh` reads these fields to recognise a resumed plan, and it reads nothing else (WFI-168).
+3. **Finish the intake group (if you led one — [Plan from bug](#plan-from-bug) step 1b).** Once every member you folded, amended or closed has been committed out of `bugs/open/`:
+   ```bash
+   scripts/lv-exec.sh lv-bug-group.sh consume <group-slug> PLN-NNN
+   ```
+   It commits the group as Consumed. **Exit 2 names the members still open**: fold, amend or close each one you decided to, and run it again. A member you deliberately left for its own plan keeps it at exit 2 — say so in your exit summary and leave the group Sealed; the next `/lv-spec` run picks that member up on its own once the lead is consumed. Never pass a member through by `--force` to make the group close.
 
 ## Rules
 

@@ -255,6 +255,126 @@ brief_is_blocked() {
   esac
 }
 
+# ── Bugs that belong together are offered together (LVI-024) ──────────────
+#
+# One overseer conversation filed a client's BUG-041..049 inside a few hours;
+# BUG-046 reversed the premise of 041 and 043, and 047/048/049 amended
+# 041/043/046. This list offered all nine as independent rows, so a spec
+# worker could take a target without its correction or a correction without
+# its target — BUG-041 became an active plan built on the superseded model
+# before its amendment was even filed. The operator stopped the daemon by hand.
+#
+# Two relations now decide what is offered, both read from the bug headers:
+#
+#   Group   `> **Group:** <slug>` (lv-bug-group.sh). Open group: no member is
+#           offered. Sealed: the lead is offered carrying the members still
+#           open, and the others are withheld while the lead is open or its
+#           spec run holds the claim. Dissolved or Consumed: independent.
+#   Amends  "Amends BUG-NNN" in Links, outside any live group. An amender whose
+#           target is still open is withheld and carried by the target — a
+#           chain resolves to its root. Target already consumed: the amender
+#           is offered alone, its detail naming the target's plan and state, so
+#           /lv-spec amends a draft/ready plan (step 2b) and writes a new plan
+#           with Deps on one already built.
+#
+# Withheld rows say why on stderr, like every other filter here; the detail
+# column of an offered row says what it carries. The dispatcher needs no rule
+# of its own: it dispatches only what this lists, and the claim on the lead's
+# number covers the whole pass.
+pair_ids=" "
+amend_rows=""
+for bug_md in bugs/open/*/bug.md; do
+  [ -f "$bug_md" ] || continue
+  b=$(wf_bug_id "$bug_md" 2>/dev/null); [ -n "$b" ] || continue
+  g=$(wf_bug_field "$bug_md" Group)
+  if [ -n "$g" ]; then
+    case "$(wf_group_field "$g" Status)" in Open|Sealed) continue ;; esac
+  fi
+  pair_ids+="$b "
+  a=$(wf_bug_amends "$bug_md" | paste -sd' ' -)
+  [ -n "$a" ] && amend_rows+="$b"$'\t'"$a"$'\n'
+done
+
+is_pair_bug() { [[ "$pair_ids" == *" $1 "* ]]; }
+is_open_bug() { compgen -G "bugs/open/$1-*/bug.md" >/dev/null || [ -f "bugs/open/$1/bug.md" ]; }
+amends_of()   { printf '%s' "$amend_rows" | awk -F'\t' -v b="$1" '$1 == b { print $2 }'; }
+
+# root_of <id> → the open bug at the end of its Amends chain (itself if none).
+root_of() {
+  local cur="$1" seen=" $1 " nxt t
+  while :; do
+    nxt=""
+    for t in $(amends_of "$cur"); do
+      if is_pair_bug "$t" && [[ "$seen" != *" $t "* ]]; then nxt="$t"; break; fi
+    done
+    [ -n "$nxt" ] || break
+    seen+="$nxt "; cur="$nxt"
+  done
+  printf '%s' "$cur"
+}
+
+carried_by() {   # carried_by <root> → the open bugs whose chain ends there, comma-joined
+  local b
+  for b in $pair_ids; do
+    [ "$b" != "$1" ] && [ "$(root_of "$b")" = "$1" ] && printf '%s\n' "$b"
+  done | paste -sd, -
+}
+
+# intake_skip <bug.md> <id> — exit 0 when withheld (reason already on stderr);
+# otherwise sets intake_note to what the row carries.
+intake_note=""
+intake_skip() {
+  local md="$1" id="$2" g lead carried t loc pid pst m
+  intake_note=""
+  g=$(wf_bug_field "$md" Group)
+  if [ -n "$g" ]; then
+    case "$(wf_group_field "$g" Status)" in
+      Open)
+        not_offered "$id" "held in intake group $g, open since $(wf_group_field "$g" Opened | cut -d' ' -f1); lv-bug-group.sh seal $g"
+        return 0 ;;
+      Sealed)
+        lead=$(wf_group_field "$g" Lead)
+        if [ "$id" = "$lead" ]; then
+          carried=$(for m in $(wf_group_members "$g"); do
+                      [ "$m" != "$id" ] && is_open_bug "$m" && printf '%s\n' "$m"
+                    done | paste -sd, -)
+          intake_note="GROUP($g) ${carried:++$carried — }spec together (lv-bug-group.sh show $g); "
+          return 1
+        fi
+        if [ -n "$lead" ] && { is_open_bug "$lead" || wf_claim_held "$lead"; }; then
+          not_offered "$id" "carried with $lead, the lead of sealed group $g"
+          return 0
+        fi
+        intake_note="GROUP($g) lead ${lead:-—} already specced; "
+        return 1 ;;
+    esac
+  fi
+
+  if [ "$(root_of "$id")" != "$id" ]; then
+    not_offered "$id" "amends $(root_of "$id"), still open — carried with it"
+    return 0
+  fi
+  for t in $(amends_of "$id"); do
+    is_pair_bug "$t" && continue
+    if wf_claim_held "$t"; then
+      not_offered "$id" "amends $t, whose spec run is in flight — carried with it"
+      return 0
+    fi
+    loc=$(wf_bug_md "$t"); [ -n "$loc" ] || continue
+    pid=$(wf_bug_field "${loc#*$'\t'}" Plan | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+    [ -n "$pid" ] || continue
+    pst=$(wf_state_of "$pid")
+    case "$pst" in
+      draft|ready)             intake_note+="amends $t → $pid $pst: amendment (step 2b); " ;;
+      complete|abandoned|—|"") ;;
+      *)                       intake_note+="amends $t → target $pid $pst: new plan with Deps $pid; " ;;
+    esac
+  done
+  carried=$(carried_by "$id")
+  [ -n "$carried" ] && intake_note+="+$carried (amending it) — spec together; "
+  return 1
+}
+
 # --- Open bugs ---
 bugs_found=0
 for bug_md in bugs/open/*/bug.md; do
@@ -283,8 +403,9 @@ for bug_md in bugs/open/*/bug.md; do
     echo "  ($bug_id blocked — $blocked_why)" >&2
     continue
   fi
+  intake_skip "$bug_md" "$bug_id" && continue
   if [ $bugs_found -eq 0 ]; then echo "# bugs"; fi
-  printf "%s\t%s\t%s%s\n" "$bug_id" "$severity" "$(gate_note "$bug_id")" "$title"
+  printf "%s\t%s\t%s%s%s\n" "$bug_id" "$severity" "$(gate_note "$bug_id")" "$intake_note" "$title"
   bugs_found=1
   found=1
 done
@@ -330,8 +451,9 @@ for bug_md in bugs/triaged/*/bug.md; do
     echo "  ($bug_id blocked — $blocked_why)" >&2
     continue
   fi
+  intake_skip "$bug_md" "$bug_id" && continue
   if [ $bugs_found -eq 0 ]; then echo "# bugs"; fi
-  printf "%s\t%s\t%s%s (hand-filed into triaged/, no plan)\n" "$bug_id" "$severity" "$(gate_note "$bug_id")" "$title"
+  printf "%s\t%s\t%s%s%s (hand-filed into triaged/, no plan)\n" "$bug_id" "$severity" "$(gate_note "$bug_id")" "$intake_note" "$title"
   bugs_found=1
   found=1
 done

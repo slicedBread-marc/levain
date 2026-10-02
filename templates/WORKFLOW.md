@@ -35,6 +35,11 @@ Bugs move `bugs/open/` → `bugs/triaged/` → `bugs/closed/`.
 All artifacts share one counter, so a bug becomes a plan with the same number:
 **BUG-094 → PLN-094**.
 
+Bugs filed as one batch can be held off `/lv-spec` in an **intake group** until
+the operator seals it (`lv-bug-group.sh`; file with `--group <slug>`). A sealed
+group goes to spec as its lead, carrying the rest; a bug whose Links say
+`Amends BUG-NNN` is carried by that bug while both are open.
+
 ---
 
 ## Entry points

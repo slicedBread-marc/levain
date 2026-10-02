@@ -357,6 +357,15 @@ render_plans() {
     done < <(wf_registry_rows "$REGISTRY")
   fi
 
+  # Intake groups (LVI-024): a batch held off /lv-spec until the overseer
+  # seals it. On the board so a forgotten one does not quietly starve the
+  # pipeline — its members appear in no other section.
+  local s_groups="" g_slug g_st g_n g_age g_next
+  while IFS=$'\t' read -r g_slug g_st g_n g_age g_next; do
+    [ -n "$g_slug" ] || continue
+    s_groups+="$(item normal "$g_st" "$g_slug" "$g_n, $g_age — $g_next")"$'\n'
+  done < <("$SELF_DIR/lv-bug-group.sh" list 2>/dev/null || true)
+
   printf '\n%s\n' "${B}PLANS${R}"
   section "express lane (lv-lane.sh check <ID>)" "${s_lane%$'\n'}"
   section "needs replanning (/lv-spec)" "${s_replan%$'\n'}"
@@ -369,6 +378,7 @@ render_plans() {
   section "drafts (/lv-spec)" "${s_draft%$'\n'}"
   section "ready to plan (/lv-spec)" "${s_plan%$'\n'}"
   section "ideas — $brainstorms incomplete brainstorm(s) (/lv-brainstorm)" "${s_ideas%$'\n'}"
+  section "intake groups — held from /lv-spec until sealed" "${s_groups%$'\n'}"
   section "bugs" "${s_bugs%$'\n'}"
   section "done, by tag" "$s_done"
   [ "$plans_shown" -gt 0 ] || printf '  %snothing in the pipeline%s\n' "$DIM" "$R"

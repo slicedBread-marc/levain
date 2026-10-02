@@ -494,6 +494,14 @@ specApproval:
 #     buildPaths: []       # extra globs counted as build/deploy surface
 #     contractPaths: []    # globs another repo consumes as a contract
 
+# ─── Intake groups (LVI-024) ─────────────────────────────────────────────
+# A batch of related bugs held off /lv-spec until the overseer seals it
+# (lv-bug-group.sh, docs/intake-groups.md). An Open group older than this many
+# hours is listed by `lv-bug-group.sh list --stale`, which /lv-attend asks
+# about, so a forgotten group does not hold its members forever.
+bugs:
+  groupStaleAfter: 24
+
 # ── Prior work ──────────────────────────────────────────────────────────────
 # Before a builder starts, lv-prior-work.sh looks for a commit already on
 # develop that names this plan (or the bug it consumes) and touches something

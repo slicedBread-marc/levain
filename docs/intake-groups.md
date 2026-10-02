@@ -1,0 +1,126 @@
+# Intake groups: bugs that go to spec together
+
+`lv-bug-group.sh` holds a batch of related bugs off `/lv-spec` until the
+overseer says the batch is complete, then sends it to spec as one pass.
+`lv-list-specable.sh` also pairs a bug with the open bugs that amend it, with
+or without a group.
+
+## Why it exists
+
+One overseer conversation filed nine reports into a client inside a few hours
+(LVI-024). Later reports corrected earlier ones: BUG-046 reversed the premise
+of BUG-041 and BUG-043, and BUG-047/048/049 amended 041/043/046. The spec list
+offered all nine as independent rows. By the time the corrections landed,
+BUG-041 had become PLN-041, `active` on a feature branch and built against the
+superseded model. The operator stopped the whole daemon by hand to hold the
+rest. The handoff that followed ("run /lv-spec BUG-046, taking BUG-047 and
+BUG-048 with it") was a human sequencing a group the harness could not
+represent.
+
+The verbs that already existed did not fit:
+
+| Verb | Why it did not fit |
+|-|-|
+| `Blocked:` (`lv-brief-block.sh`) | One call per bug, no release-all, and it says "external blocker", not "still being written" |
+| `hold` directive (`lv-direct.sh`) | Binds plans, not bugs in `bugs/open/` |
+| `--amends` | Linked both bugs, but nothing read the link |
+| Stopping the daemon | Stops every other piece of work too |
+
+## The record
+
+`bugs/groups/<slug>.md` is tracked on develop and written only by
+`lv-bug-group.sh`. Its header holds Status, Opened, Why, Lead, Sealed, Holds,
+and Consumed or Dissolved. A `## Members` list follows. Each member carries
+`> **Group:** <slug>` in its own header, and that field is what the spec list
+reads.
+
+| Status | What `/lv-spec` is offered |
+|-|-|
+| `Open` | No member. Each one says on stderr that it is held and gives the seal command |
+| `Sealed` | The lead, with the members still open carried in its detail column (`GROUP(<slug>) +BUG-a,BUG-b — spec together`). Other members are withheld while the lead is open or its spec run holds the claim |
+| `Dissolved` | Each member as an independent bug. Their Group field is cleared |
+| `Consumed` | Each remaining member as an independent bug. The lead's plan is recorded |
+
+## Lifecycle
+
+```bash
+lv-bug-group.sh open she-wrote "BUG-046 reshapes 041/043"
+lv-bug-group.sh add  she-wrote BUG-042 BUG-043 BUG-046 BUG-047 BUG-048
+lv-bug-group.sh seal she-wrote [--lead BUG-046]
+# /lv-spec takes the lead, decides every member, then:
+lv-bug-group.sh consume she-wrote PLN-046
+```
+
+You can also file straight into a group: `lv-bug-new.sh --group <slug>` or
+`lv-dep-notify.sh --group <slug>`. Either one opens the group if it does not
+exist. A bug filed with `--links "Amends BUG-NNN"` joins BUG-NNN's Open group
+without being told. Otherwise the correction would be the one member of the
+batch offered on its own.
+
+**The default lead** is the lowest-numbered open member that amends no other
+member. That is the premise the rest are written against. If the members amend
+each other in a ring, the lowest number is the lead. `--lead` overrides the
+default.
+
+**A member already in a plan.** Adding a bug that is already triaged into a
+`draft` or `ready` plan places a `hold` directive on that plan, and seal
+releases it. If the plan is `active` or later, the add is refused (exit 4). A
+built plan changes only through a new plan with `Deps` on it, the same rule
+`lv-direct.sh replan` follows. Leave that bug out of the group. The member that
+changes its premise becomes the new plan.
+
+**Finishing a group.** `consume` is refused (exit 2) while any member is still
+in `bugs/open/`. The spec run that takes the lead decides how each member
+leaves:
+
+- folded into the lead's plan (`lv-bug-consume.sh --folded`)
+- an amendment to a `draft`/`ready` plan (`--amends`)
+- closed as superseded (`lv-bug-close.sh --superseded-by`)
+- left for its own plan with `Deps` on the lead's
+
+In the last case the group stays Sealed, and the member is offered on its own
+once the lead is consumed. See `skills/lv-spec/SKILL.md`, Plan from bug step
+1b.
+
+## Who may write one
+
+`open`, `add`, `remove`, `seal` and `dissolve` belong to the overseer: the
+operator at a terminal in the project, or a coordinator through `--project`.
+`--project` runs the target's own `lv-bug-group.sh` through its own
+`lv-exec.sh`, and the target records the author as `coordinator:<slug>`. Under
+`LV_UNATTENDED=1` these commands refuse (exit 6). A worker that could seal its
+own group could release its own hold.
+
+`consume` belongs to the worker, because `/lv-spec` is what finishes a group.
+`list`, `show` and `of` only read.
+
+## Amendment pairs without a group
+
+Outside any live group, `lv-list-specable.sh` reads `Amends BUG-NNN` in each
+open bug's Links:
+
+- If the target is still open, the amender is withheld and carried by the
+  target (`+BUG-a (amending it) — spec together`). A chain such as 050 → 049 →
+  046 resolves to its root.
+- If the target's spec run holds the claim, the amender is withheld until that
+  run ends.
+- If the target was already consumed, the amender is offered alone. Its detail
+  names the target's plan and state: `amendment (step 2b)` for a `draft` or
+  `ready` plan, and `new plan with Deps PLN-NNN` for one already built.
+
+## Forgotten groups
+
+An Open group holds its members indefinitely, and they appear in no worklist.
+Two places surface it:
+
+- `/lv-tray` lists every unfinished group under "intake groups".
+- `lv-bug-group.sh list --stale` lists Open groups older than
+  `bugs.groupStaleAfter` hours (default 24). `/lv-attend` runs it and asks the
+  human to seal or dissolve each one.
+
+## Not built
+
+The issue also proposed an optional quiet period (`intake.quietPeriod`): don't
+offer a cross-project bug until some time has passed since the newest bug
+from the same source. It would catch a batch filed without `--group`. It is
+not built. File with `--group` instead.

@@ -33,6 +33,8 @@ scripts/lv-exec.sh lv-list-gates.sh
 
 Output is tab-separated: `<id>  <gate>  <opened>  <question>  <context>  <blocking>  <state>  <fit>  <qfit>`.
 
+Then, in the same turn, `scripts/lv-exec.sh lv-bug-group.sh list --stale`. Each line is an **unsealed intake group** older than `bugs.groupStaleAfter` hours (default 24): a batch of bugs held off `/lv-spec` that nobody has said is ready (LVI-024). Nothing else surfaces it — its members appear in no worklist — so list them under the gate table as `<project> group <slug> — N member(s), open <age>` and ask, after the gates: seal it (`lv-bug-group.sh seal <slug>`), or dissolve it (`lv-bug-group.sh dissolve <slug>`) so its members go to `/lv-spec` one by one. Never seal or dissolve without the human's answer — a group is open because someone was still writing it. Exit 1 with no output means there are none; say nothing about it.
+
 `<blocking>` is how many other incomplete plans cannot start until this gate is answered, and the queue is **ordered by it, costliest first** (ties break oldest-first). A gate at the root of a dependency chain holds everything behind it; one blocking nothing costs only the minute it takes to answer. Present them in the order given — do not re-sort by age.
 
 Render it under a heading that names the project, as a numbered table:

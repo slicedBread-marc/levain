@@ -434,6 +434,67 @@ wf_bug_id() {
   printf '%s' "${declared:-$folder}"
 }
 
+# ── Intake groups and amendment pairs (LVI-024) ───────────────────────────
+#
+# Bugs filed as one batch by one conversation, some correcting others, are not
+# independent work: a spec worker that takes one without the rest specs a
+# premise the next one reverses. A client had BUG-041..049 filed inside a few
+# hours, BUG-046 reversing the premise of 041 and 043, and 041 had already
+# become an active plan built on the superseded model before the corrections
+# landed. The operator had to stop the whole daemon to hold the rest.
+#
+# A group is bugs/groups/<slug>.md (lv-bug-group.sh writes it); each member
+# carries `> **Group:** <slug>` in its header. lv-list-specable.sh reads both:
+# an Open group's members are not offered, a Sealed group offers its lead with
+# the rest carried. See docs/intake-groups.md.
+
+# wf_bug_field <bug.md> <Field> → a header field's value, trimmed; empty when
+# the field is absent or holds a placeholder like `_(none)_` or `—`.
+wf_bug_field() {
+  local v
+  v=$(grep -m1 -E "^[ \t]*>?[ \t]*\*\*$2:\*\*" "$1" 2>/dev/null \
+      | sed -E "s/^.*\*\*$2:\*\*[[:space:]]*//; s/[[:space:]]*\$//" || true)
+  case "$v" in ""|"("*|*"(none"*|*_none_*|"—"|"-") return 0 ;; esac
+  printf '%s' "$v"
+}
+
+# wf_bug_md <BUG-ID> → "<stage>\t<path to bug.md>" for open|triaged|closed, or
+# nothing. Matches the folder number, then confirms the declared ID.
+wf_bug_md() {
+  local id="$1" root stage d
+  root="$(wf_develop_root)"
+  for stage in open triaged closed; do
+    for d in "$root"/bugs/$stage/"$id"-*/ "$root"/bugs/$stage/"$id"/; do
+      [ -f "$d/bug.md" ] || continue
+      [ "$(wf_bug_id "$d/bug.md" 2>/dev/null)" = "$id" ] || continue
+      printf '%s\t%s' "$stage" "${d%/}/bug.md"; return 0
+    done
+  done
+}
+
+# wf_bug_amends <bug.md> → the IDs its Links field says it amends, one per
+# line ("Amends BUG-041"; "Amended by" is the other direction and not read).
+wf_bug_amends() {
+  wf_bug_field "$1" Links | grep -oE "Amends[[:space:]]+($LV_BUG_RE)-[0-9]+" \
+    | grep -oE "($LV_BUG_RE)-[0-9]+" || true
+}
+
+wf_group_file() { printf '%s/bugs/groups/%s.md' "$(wf_develop_root)" "$1"; }
+
+# wf_group_field <slug> <Field> → a group header field, or empty.
+wf_group_field() {
+  local f; f="$(wf_group_file "$1")"
+  [ -f "$f" ] || return 0
+  wf_bug_field "$f" "$2"
+}
+
+# wf_group_members <slug> → member IDs, one per line, in the order added.
+wf_group_members() {
+  local f; f="$(wf_group_file "$1")"
+  [ -f "$f" ] || return 0
+  awk -v re="^- ($LV_BUG_RE)-[0-9]+" '/^## Members/{m=1;next} /^## /{m=0} m && $0 ~ re { sub(/^- /,""); sub(/[ \t].*/,""); print }' "$f"
+}
+
 # wf_goal_text <plan.md> — the plan's one-line goal, empty if it has none.
 #
 # The same awk one-liner was pasted into ten scripts, and had already drifted in
