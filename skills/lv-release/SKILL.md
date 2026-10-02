@@ -375,6 +375,8 @@ Set when `LV_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   scripts/lv-exec.sh lv-gate-open.sh RELEASE release-approval "<commit list from step 3>" --skill lv-release
   scripts/lv-exec.sh lv-unclaim.sh RELEASE
   ```
+  The commit list goes into the question as literal text, never as a `$VARIABLE` from an earlier
+  call — `lv-gate-open.sh` refuses an unexpanded one (LVI-023).
   `lv-gate-open.sh` exiting 3 means `release-approval` already has an answer of record — act on
   it (it names the resolution) rather than re-asking, per the standing gate-reopening rule.
 

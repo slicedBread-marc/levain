@@ -103,6 +103,15 @@ asked=$(sed -n "s/^GATE_QUESTION='\(.*\)'$/\1/p" "$CLIENT/.claude/orchestrator/g
 assert_eq "a question that names no tip is told the one it binds to" \
   "ship these? [release at ${after:0:7}]" "$asked"
 
+# A client's LVI-023: the question asked a human to approve "Commits: $COMMIT_LIST".
+rm -f "$CLIENT/.claude/orchestrator/gates/DEPLOY.gate"
+"$SCRIPTS/lv-gate-open.sh" DEPLOY deploy-deferred-criteria 'ship? Commits: $COMMIT_LIST' >/dev/null 2>&1; rc=$?
+assert_eq "a question carrying an unexpanded \$VAR is refused" "1" "$rc"
+assert_eq "…and no gate is written for it" "no" \
+  "$([ -f "$CLIENT/.claude/orchestrator/gates/DEPLOY.gate" ] && echo yes || echo no)"
+"$SCRIPTS/lv-gate-open.sh" DEPLOY deploy-deferred-criteria 'ship? the check said `BASE=$BASE` was unset' >/dev/null 2>&1; rc=$?
+assert_eq "a variable inside a \`code span\` is quoted on purpose, and opens" "0" "$rc"
+
 # ── 2. An approval for a moved batch is refused at close ────────────────────
 echo ""
 echo "2. lv-gate-close.sh refuses an approve for a batch that moved"

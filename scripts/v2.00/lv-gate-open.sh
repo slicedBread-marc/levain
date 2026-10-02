@@ -178,6 +178,26 @@ for text in "$question" "$context"; do
   fi
 done
 
+# ── A literal $NAME in the question is a variable that never expanded ─────
+#
+# The other half of the same bug. Where the port guard above catches a variable
+# that expanded to NOTHING, this catches one that was never expanded at all: the
+# caller put `$COMMIT_LIST` inside single quotes, or wrote the name in place of
+# the value it meant to paste. A client's LVI-023: a deploy-deferred-criteria
+# gate asked a human to approve "Commits: $COMMIT_LIST", with no commit in it.
+# A human cannot answer for a batch the question does not show.
+#
+# Shell-variable spelling only — uppercase, so "$5" and "$x" in prose pass —
+# and outside `code spans`, so a question quoting a command or an error message
+# that names a variable on purpose still opens.
+if printf '%s' "$question" | sed 's/`[^`]*`//g' | grep -qE '\$\{?[A-Z_][A-Z0-9_]*\}?'; then
+  echo "Error: gate question carries an unexpanded shell variable — a human would read the name, not its value:" >&2
+  echo "  $question" >&2
+  echo "  The Bash tool does not carry shell variables between calls, and single quotes never expand." >&2
+  echo "  Paste the VALUE (the commit list, the port, the path) into the question as literal text." >&2
+  exit 1
+fi
+
 # Accept PLN-004 or PLN-004-slug, or the fixed pipeline-stage literals
 # RELEASE / DEPLOY (release and deploy are batches across plans, not one
 # artifact, so they gate under a fixed name rather than a counter-allocated

@@ -183,6 +183,10 @@ Before starting, confirm E2E passed on release:
      "<the check's output> — <commit list from step 3>" --skill lv-deploy $COVERS
    scripts/lv-exec.sh lv-unclaim.sh DEPLOY
    ```
+   **Paste the check's output and step 3's list into the question as literal text.** A
+   `$VARIABLE` set in an earlier Bash call is unset in this one, and inside single quotes it never
+   expands; either way the human is asked to approve a name, so `lv-gate-open.sh` refuses it
+   (LVI-023: "Commits: $COMMIT_LIST").
    `--check` because this is a probe, not the push: the recording form counts against the
    daily `production-push` ceiling and would spend an express-lane plan's one push on a question
    (LVI-025).
@@ -490,6 +494,8 @@ Set when `LV_UNATTENDED=1` — the daemon dispatched this run against the fixed 
   scripts/lv-exec.sh lv-gate-open.sh DEPLOY deploy-approval "<commit list from step 3>" --skill lv-deploy $COVERS
   scripts/lv-exec.sh lv-unclaim.sh DEPLOY
   ```
+  The commit list goes into the question as literal text, never as a `$VARIABLE` from an earlier
+  call — `lv-gate-open.sh` refuses an unexpanded one (LVI-023).
   `lv-gate-open.sh` exiting 3 means `deploy-approval` already has an answer of record — act on it
   rather than re-asking, per the standing gate-reopening rule.
 
