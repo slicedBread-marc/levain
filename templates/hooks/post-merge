@@ -1,0 +1,15 @@
+#!/bin/bash
+# claude-workflow: post-merge hooks
+
+# claude-workflow: derived-file refresh (LVI-032)
+#
+# Rebuilds the git-ignored files the develop checkout serves, from
+# levain.yml's derivedCommand. Main worktree only: a feature worktree's own
+# build makes its copy. Never fails the hook, because a post-merge hook cannot undo
+# what fired it.
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ "$(git rev-parse --git-dir 2>/dev/null)" = "$(git rev-parse --git-common-dir 2>/dev/null)" ] || exit 0
+if [ -x "$ROOT/scripts/lv-exec.sh" ]; then
+    "$ROOT/scripts/lv-exec.sh" lv-derived-refresh.sh --hook post-merge "$@" || true
+fi
+exit 0

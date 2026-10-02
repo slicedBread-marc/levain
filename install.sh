@@ -1084,9 +1084,6 @@ if [ -z "$GIT_COMMON_DIR" ]; then
     esac
 fi
 [ -n "$GIT_COMMON_DIR" ] || GIT_COMMON_DIR="$TARGET_DIR/.git"
-HOOK_SRC="$SCRIPT_DIR/templates/hooks/post-commit"
-HOOK="$GIT_COMMON_DIR/hooks/post-commit"
-
 # And it is a WARNING when it fails, not the end of the install.
 #
 # The other half of WFI-191: the hook is a convenience — it triggers the verify
@@ -1094,33 +1091,45 @@ HOOK="$GIT_COMMON_DIR/hooks/post-commit"
 # block aborted before the dispatcher was ever written, so a recoverable
 # problem with an optional file cost the project every lv-* script. Whatever
 # goes wrong here, the install continues and says what was lost.
-install_post_commit_hook() {
+#
+# post-merge and post-checkout (LVI-032) rebuild the develop checkout's
+# git-ignored derived files from levain.yml's derivedCommand. They are
+# installed the same way, and they are no-ops in a project that sets no
+# derivedCommand.
+install_git_hook() {
+    local name="$1" src="$SCRIPT_DIR/templates/hooks/$1" hook="$GIT_COMMON_DIR/hooks/$1"
     mkdir -p "$GIT_COMMON_DIR/hooks" || return 1
-    if [ ! -f "$HOOK" ]; then
-        cp "$HOOK_SRC" "$HOOK" || return 1
-        chmod +x "$HOOK" || return 1
-        echo -e "${GREEN}  Installed post-commit hook ($HOOK)${NC}"
-    elif ! grep -q "claude-workflow" "$HOOK"; then
+    if [ ! -f "$hook" ]; then
+        cp "$src" "$hook" || return 1
+        chmod +x "$hook" || return 1
+        echo -e "${GREEN}  Installed $name hook ($hook)${NC}"
+    elif ! grep -q "claude-workflow" "$hook"; then
         # Not ours. Keep it — clobbering a project's own hook is not our call.
-        cp "$HOOK" "$HOOK.pre-workflow" || return 1
-        cp "$HOOK_SRC" "$HOOK" || return 1
-        chmod +x "$HOOK" || return 1
-        echo -e "${YELLOW}  Replaced a non-workflow post-commit hook${NC}"
-        echo -e "${YELLOW}  The original is at $HOOK.pre-workflow — merge it back if you need it${NC}"
-    elif cmp -s "$HOOK_SRC" "$HOOK"; then
-        echo -e "${YELLOW}  post-commit hook already up to date — skipping${NC}"
+        cp "$hook" "$hook.pre-workflow" || return 1
+        cp "$src" "$hook" || return 1
+        chmod +x "$hook" || return 1
+        echo -e "${YELLOW}  Replaced a non-workflow $name hook${NC}"
+        echo -e "${YELLOW}  The original is at $hook.pre-workflow — merge it back if you need it${NC}"
+    elif cmp -s "$src" "$hook"; then
+        echo -e "${YELLOW}  $name hook already up to date — skipping${NC}"
     else
-        cp "$HOOK_SRC" "$HOOK" || return 1
-        chmod +x "$HOOK" || return 1
-        echo -e "${GREEN}  Updated post-commit hook ($HOOK)${NC}"
+        cp "$src" "$hook" || return 1
+        chmod +x "$hook" || return 1
+        echo -e "${GREEN}  Updated $name hook ($hook)${NC}"
     fi
     return 0
 }
-if ! install_post_commit_hook; then
-    echo -e "${YELLOW}  Could not install the post-commit hook at $HOOK${NC}"
+if ! install_git_hook post-commit; then
+    echo -e "${YELLOW}  Could not install the post-commit hook at $GIT_COMMON_DIR/hooks/post-commit${NC}"
     echo -e "${YELLOW}  The verify agent will not be triggered automatically in this checkout.${NC}"
     echo -e "${YELLOW}  Continuing — the rest of the harness does not depend on it.${NC}"
 fi
+for _gh in post-merge post-checkout; do
+    if ! install_git_hook "$_gh"; then
+        echo -e "${YELLOW}  Could not install the $_gh hook at $GIT_COMMON_DIR/hooks/$_gh${NC}"
+        echo -e "${YELLOW}  derivedCommand will not rebuild the develop checkout's derived files on merge or checkout.${NC}"
+    fi
+done
 
 # Install the Claude Code session hooks (state rehydration after compaction).
 #

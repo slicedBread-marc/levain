@@ -195,6 +195,8 @@ scripts/lv-exec.sh lv-list-gates.sh       # what is waiting on a human
 | `.git/hooks/post-commit` | commit message starts `implement(` **and HEAD is a `feature/*` branch** | Starts/refreshes the local dev environment |
 | `.claude/on-verify-trigger.sh` | called by the hook above | Shim over `lv-spawn.sh verify` |
 | `.claude/on-implement-commit.sh` | called by the hook above | Docker local-env lifecycle |
+| `.git/hooks/post-merge` | a merge completes in the develop checkout (main worktree) | Runs `derivedCommand` (levain.yml) to rebuild git-ignored derived files, if one is set |
+| `.git/hooks/post-checkout` | a branch switch in the develop checkout moves HEAD | Same as post-merge |
 | `SessionStart` (`compact`/`clear`/`resume`) | Claude Code context is rebuilt | Re-reads pipeline state from `REGISTRY.md` and injects it into the conversation |
 | `PostCompact` | after any compaction | Prints a one-line receipt saying what rehydration found |
 | Orchestrator daemon | `lv-orchestrate.sh --daemon` (manual start) | Sweeps `REGISTRY.md` and dispatches unattended workers by state |

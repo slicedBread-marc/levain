@@ -65,6 +65,19 @@ postMergeCheck: full
 #
 # Leave it out when everything worth keeping is tracked.
 
+# A command that regenerates git-ignored files the develop checkout serves —
+# an index, a nav file, a catalogue built from tracked sources. A plan builds
+# them in its own worktree, and nothing rebuilt develop's copy after the merge,
+# so what the operator opened there was the tree from before it (LVI-032).
+# The harness's post-merge and post-checkout git hooks run it in the develop
+# checkout (main worktree only) through lv-derived-refresh.sh. A failure is
+# reported and logged to .claude/orchestrator/logs/derived.log; it never fails
+# the merge.
+#
+#   derivedCommand: "node brainstorm.ts"
+#
+# Leave it out when the develop checkout serves nothing git does not track.
+
 # External services the E2E suite needs, checked by lv-preflight.sh before
 # /lv-release runs the suite. One name, one check, joined by the FIRST ':'.
 # A check starting http:// or https:// is fetched; anything else is run as a
