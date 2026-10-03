@@ -1140,7 +1140,7 @@ assert_eq "install retires the lv-chrome-test alias in clients" "true" \
 assert_eq "step 3c auto-checks Manual eyes criteria too" "true" \
   "$(grep -q '^3c\. \*\*Auto-check every criterion with headless Playwright\*\*.*#### Manual. criterion tagged .(eyes:blocking)' "$LVT" && echo true || echo false)"
 assert_eq "step 6 commits test-progress.md before asking the gate" "true" \
-  "$(awk '/^6\. \*\*Write .test-progress.md. first/{f=1} f&&/lv-commit.sh/{c=1} f&&/lv-manual-gate.sh <PLN-ID>/{print (c?"true":"false"); exit}' "$LVT")"
+  "$(awk '/^6\. \*\*Collect the suite.*then write .test-progress.md./{f=1} f&&/lv-commit.sh/{c=1} f&&/lv-manual-gate.sh <PLN-ID>/{print (c?"true":"false"); exit}' "$LVT")"
 assert_eq "and the restored-changes commit is guarded on LV_RESTORED" "true" \
   "$(grep -q 'LV_RESTORED:-false' "$LIB_ROOT/skills/lv-test/SKILL.md" && echo true || echo false)"
 
