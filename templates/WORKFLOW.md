@@ -25,11 +25,18 @@ scripts; they hold the `registry` lock and commit the transition with the files
 that justify it.
 
 ```
-draft → ready → active → verify ──[automatic]──→ testing → complete
-          ↑        |
-          |        ├→ active   (fix cycle)
-          └────────┴→ draft    (escalation — needs replanning)
+draft → ready → active → verify ──[automatic]──→ testing ─────────────→ complete
+          ↑        |                                │  ↑
+          |        ├→ active   (fix cycle)          │  └─ accepted (back to ship)
+          └────────┴→ draft    (escalation)         └──→ accept ──→ draft (findings)
 ```
+
+`testing` and `accept` are one stage, **acceptance**, shown as `accept:auto` and
+`accept:manual`. `/lv-test` runs the automated half on every plan and ships it
+when nothing is left. A plan reaches `accept` only when what is left needs a
+person; `/lv-accept` walks them through it, and a pass goes back to `testing`,
+where `/lv-test` ships it. No worker is ever dispatched at `accept`. An express
+lane plan never enters it.
 
 Bugs move `bugs/open/` → `bugs/triaged/` → `bugs/closed/`.
 All artifacts share one counter, so a bug becomes a plan with the same number:
@@ -252,7 +259,7 @@ The orchestrator parks work rather than guessing. These never run unattended:
 |-|-|
 | `spec-approval` | A spec may be *written* by a machine; approving what gets built is a human call. Under `specApproval.mode: verdict` this is replaced by the review's verdict, except for plans tagged in `gateTags` |
 | `spec-stuck` | `verdict` mode only — the review blocked the plan for `maxReviewRounds` rounds running |
-| `manual-test` | Criteria that need human eyes, **and** a diff that renders something to a human. A plan that renders nothing never stops here |
+| `manual-test` | Criteria that need human eyes, **and** a diff that renders something to a human. A plan that renders nothing never stops here. Opened beside the `accept` state; answered by `/lv-accept` |
 | *(express lane)* | Not a gate — the one exception to this table. A human who files a bug or brief with `--lane express` declares it small and safe; if `lv-lane.sh` finds the written plan still is, its `spec-approval`, `manual-test` and one `production-push` are answered with no human. A plan that fails the check is downgraded, with the reasons in its `## Lane` section, and every gate above applies. See `docs/autonomy.md` in the library |
 | `consistency-migration` | A plan contradicts an already-built dependency — that is a migration, not an amendment |
 | `goal-missing` | The goal is quoted in PRs and by the tester — it is not invented |
@@ -321,7 +328,8 @@ Run these from a Claude session in this repo.
 | `/lv-spec` | Turn a brief or bug into a plan |
 | `/lv-consistency` | Check a plan against its dependency closure (automatic when it declares `Deps`) |
 | `/lv-implement` | Build a ready plan |
-| `/lv-test` | Acceptance test: headless Playwright first, a human only for what it left |
+| `/lv-test` | Automated acceptance (`accept:auto`): the suite and headless Playwright on every criterion; ships the plan, or moves it to `accept:manual` |
+| `/lv-accept` | Human acceptance (`accept:manual`): walks you through only what `/lv-test` left |
 | `/lv-release`, `/lv-deploy` | Promote to staging, then production |
 | `/lv-help` | Every skill, one line each. Any skill answers `help` with its usage |
 

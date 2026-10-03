@@ -369,7 +369,7 @@ sel_name=""
 # thing by construction — the alternative is a board with a cell nothing
 # happens on and no way to tell which.
 ROW_LABELS=(daemon running gates attn ideas draft ready active verify testing
-            complete abandoned release deploy registry)
+            accept complete abandoned release deploy registry)
 sel_row=""
 
 # key_eof: set by read_key when stdin is closed rather than merely quiet. Every
@@ -418,7 +418,7 @@ names=(); paths=(); statuses=()
 f_daemon=(); f_running=()
 f_gates=(); f_gates_stuck=(); f_gates_blocked=()
 f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
-f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=()
+f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=()
 # f_ts: when THIS project's numbers were collected, per project rather than
 # per frame. A collect walks every client in turn and a menu action re-fetches
 # exactly one, so "the frame's age" is several different ages — and the column
@@ -454,7 +454,7 @@ fetch_one() {
 
   local tok key val
   local daemon="-" running=0 gates=0 gates_stuck=0 gates_blocked=0
-  local draft=0 ready=0 active=0 verify=0 testing=0 complete=0 abandoned=0 registry="-" attn="" release="-" deploy="-"
+  local draft=0 ready=0 active=0 verify=0 testing=0 accept=0 complete=0 abandoned=0 registry="-" attn="" release="-" deploy="-"
   local ideas=0 ideas_drift=0
   IFS=$'\t' read -ra _toks <<< "$line"
   for tok in "${_toks[@]}"; do
@@ -470,6 +470,8 @@ fetch_one() {
       active)       active="$val" ;;
       verify)       verify="$val" ;;
       testing)      testing="$val" ;;
+      # accept:manual. An older client emits no key; the 0 default stands.
+      accept)       accept="$val" ;;
       complete)     complete="$val" ;;
       abandoned)    abandoned="$val" ;;
       registry)     registry="$val" ;;
@@ -488,10 +490,10 @@ fetch_one() {
   # The collection time is the LAST field, so a record written by an older
   # copy of this script (or read out of a stale snapshot) is simply one field
   # short and defaults, rather than shifting every field along by one.
-  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
     "$status" "$daemon" "$running" "$gates" "$gates_stuck" "$gates_blocked" \
     "$draft" "$ready" "$active" "$verify" "$testing" "$complete" "$abandoned" \
-    "$registry" "$attn" "$release" "$deploy" "$ideas" "$ideas_drift" "$(date +%s)"
+    "$registry" "$attn" "$release" "$deploy" "$ideas" "$ideas_drift" "$accept" "$(date +%s)"
 }
 
 # apply_record <record> <append|index> — write a fetch_one record into the
@@ -511,7 +513,8 @@ apply_record() {
     # mid-upgrade, is two fields short — default rather than leave a hole the
     # render reads as an empty cell.
     f_ideas+=("${f[17]:-0}"); f_ideas_drift+=("${f[18]:-0}")
-    f_ts+=("${f[19]:-0}")
+    f_accept+=("${f[19]:-0}")
+    f_ts+=("${f[20]:-0}")
   else
     local idx="$where"
     statuses[$idx]="${f[0]}"
@@ -521,7 +524,8 @@ apply_record() {
     f_testing[$idx]="${f[10]}"; f_complete[$idx]="${f[11]}"; f_abandoned[$idx]="${f[12]}"
     f_registry[$idx]="${f[13]}"; f_attn[$idx]="${f[14]}"; f_release[$idx]="${f[15]}"; f_deploy[$idx]="${f[16]}"
     f_ideas[$idx]="${f[17]:-0}"; f_ideas_drift[$idx]="${f[18]:-0}"
-    f_ts[$idx]="${f[19]:-0}"
+    f_accept[$idx]="${f[19]:-0}"
+    f_ts[$idx]="${f[20]:-0}"
   fi
 }
 
@@ -531,13 +535,13 @@ apply_record() {
 # naming all twenty fields a second time.
 project_record() {
   local i="$1"
-  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' \
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' \
     "${statuses[$i]}" "${f_daemon[$i]}" "${f_running[$i]}" \
     "${f_gates[$i]}" "${f_gates_stuck[$i]}" "${f_gates_blocked[$i]}" \
     "${f_draft[$i]}" "${f_ready[$i]}" "${f_active[$i]}" "${f_verify[$i]}" \
     "${f_testing[$i]}" "${f_complete[$i]}" "${f_abandoned[$i]}" \
     "${f_registry[$i]}" "${f_attn[$i]}" "${f_release[$i]}" "${f_deploy[$i]}" \
-    "${f_ideas[$i]}" "${f_ideas_drift[$i]}" "${f_ts[$i]:-0}"
+    "${f_ideas[$i]}" "${f_ideas_drift[$i]}" "${f_accept[$i]:-0}" "${f_ts[$i]:-0}"
 }
 
 # refresh_one <index> — re-fetch and overwrite just that project's fields.
@@ -582,7 +586,7 @@ sort_projects_by_activity() {
   local -a o_daemon=() o_running=()
   local -a o_gates=() o_gates_stuck=() o_gates_blocked=()
   local -a o_draft=() o_ready=() o_active=() o_verify=() o_testing=() o_complete=() o_abandoned=()
-  local -a o_registry=() o_attn=() o_release=() o_deploy=() o_ideas=() o_ideas_drift=() o_ts=()
+  local -a o_registry=() o_attn=() o_release=() o_deploy=() o_ideas=() o_ideas_drift=() o_accept=() o_ts=()
   while IFS= read -r idx; do
     o_names+=("${names[$idx]}"); o_paths+=("${paths[$idx]}"); o_statuses+=("${statuses[$idx]}")
     o_daemon+=("${f_daemon[$idx]}"); o_running+=("${f_running[$idx]}")
@@ -591,6 +595,7 @@ sort_projects_by_activity() {
     o_testing+=("${f_testing[$idx]}"); o_complete+=("${f_complete[$idx]}"); o_abandoned+=("${f_abandoned[$idx]}")
     o_registry+=("${f_registry[$idx]}"); o_attn+=("${f_attn[$idx]}"); o_release+=("${f_release[$idx]}"); o_deploy+=("${f_deploy[$idx]}")
     o_ideas+=("${f_ideas[$idx]}"); o_ideas_drift+=("${f_ideas_drift[$idx]}")
+    o_accept+=("${f_accept[$idx]:-0}")
     o_ts+=("${f_ts[$idx]:-0}")
   done <<< "$order"
   names=("${o_names[@]}"); paths=("${o_paths[@]}"); statuses=("${o_statuses[@]}")
@@ -600,6 +605,7 @@ sort_projects_by_activity() {
   f_testing=("${o_testing[@]}"); f_complete=("${o_complete[@]}"); f_abandoned=("${o_abandoned[@]}")
   f_registry=("${o_registry[@]}"); f_attn=("${o_attn[@]}"); f_release=("${o_release[@]}"); f_deploy=("${o_deploy[@]}")
   f_ideas=("${o_ideas[@]}"); f_ideas_drift=("${o_ideas_drift[@]}")
+  f_accept=("${o_accept[@]}")
   f_ts=("${o_ts[@]}")
 }
 
@@ -691,7 +697,8 @@ snapshot_save() {
           draft: .[8], ready: .[9], active: .[10], verify: .[11], testing: .[12],
           complete: .[13], abandoned: .[14], registry: .[15], attn: .[16],
           release: .[17], deploy: .[18], ideas: .[19], ideas_drift: .[20],
-          fetched_at: ((.[21] | tonumber?) // 0)
+          accept: .[21],
+          fetched_at: ((.[22] | tonumber?) // 0)
         }))}' > "$tmp" 2>/dev/null; then
     mv -f "$tmp" "$GRID_SNAPSHOT" 2>/dev/null || rm -f "$tmp"
   else
@@ -715,6 +722,7 @@ snapshot_load() {
       [.name, .path, .status, .daemon, .running, .gates, .gates_stuck, .gates_blocked,
        .draft, .ready, .active, .verify, .testing, .complete, .abandoned,
        .registry, .attn, .release, .deploy, .ideas, .ideas_drift,
+       (.accept // "0"),
        (.fetched_at | tostring)]
       | map(. // "") | join("\u001f")' "$GRID_SNAPSHOT" 2>/dev/null) || return 1
   [ -n "$rows" ] || return 1
@@ -723,7 +731,7 @@ snapshot_load() {
   f_daemon=(); f_running=()
   f_gates=(); f_gates_stuck=(); f_gates_blocked=()
   f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
-  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_ts=()
+  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=()
   local line rec
   while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -898,10 +906,16 @@ sel_cell() {
 # wide grid; the lit row name says which metric you are about to open even
 # when the highlighted column is off at the far right.
 row_label() {
+  # The two acceptance rows read as one stage with two flavours, the same as
+  # /lv-tray's `accept:auto` / `accept:manual` — abbreviated, because the
+  # label column is nine wide. ROW_LABELS keeps the stored state names: they
+  # are the drill vocabulary (`row testing`, `row accept`).
+  local shown="$1"
+  case "$1" in testing) shown="acc:auto" ;; accept) shown="acc:man" ;; esac
   if [ -n "$sel_row" ] && [ "${ROW_LABELS[$sel_row]}" = "$1" ]; then
-    printf '  %s%-9s%s' "$B" "$1" "$R"
+    printf '  %s%-9s%s' "$B" "$shown" "$R"
   else
-    printf '  %-9s' "$1"
+    printf '  %-9s' "$shown"
   fi
 }
 
@@ -910,7 +924,7 @@ collect_all() {
   f_daemon=(); f_running=()
   f_gates=(); f_gates_stuck=(); f_gates_blocked=()
   f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
-  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_ts=()
+  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=()
   collect
   snapshot_save
   refresh_library_count
@@ -953,7 +967,7 @@ finish_refresh() {
   f_daemon=(); f_running=()
   f_gates=(); f_gates_stuck=(); f_gates_blocked=()
   f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
-  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_ts=()
+  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=()
   if [ -f "$refresh_file" ]; then
     local name path rec
     while IFS=$'\x1e' read -r name path rec; do
@@ -1214,6 +1228,7 @@ render_text() {
   row "active" f_active
   row "verify" f_verify
   row "testing" f_testing
+  row "accept" f_accept
   row "complete" f_complete
   row "abandoned" f_abandoned
 
@@ -1941,6 +1956,7 @@ drill_rows_lines() {
       active)   val="${f_active[$i]}" ;;
       verify)   val="${f_verify[$i]}" ;;
       testing)  val="${f_testing[$i]}" ;;
+      accept)   val="${f_accept[$i]:-0}" ;;
       complete) val="${f_complete[$i]}" ;;
       abandoned) val="${f_abandoned[$i]}" ;;
       release)  val="${f_release[$i]}" ;;

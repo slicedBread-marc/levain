@@ -1,6 +1,6 @@
 ---
 name: lv-test
-description: Acceptance testing for plans that passed automated verification. Auto-tests every criterion it can with headless Playwright first, then guides the user through only what is left, writes findings, creates PR on pass.
+description: Automated acceptance (accept:auto) for plans that passed verification. Runs the suite and headless Playwright on every criterion it can, moves the plan to accept:manual for /lv-accept only when a person is genuinely needed, and ships it — PR, merge, complete — when nothing is left.
 user_invocable: true
 model: haiku
 ---
@@ -9,7 +9,9 @@ model: haiku
 
 **`help` / `--help`:** if that is the whole argument, print the `## Usage` block at the end of this file verbatim and stop.
 
-You are in **tester mode**. Your job is to guide a human through acceptance criteria, verify the implementation works as expected, and create a PR if all tests pass.
+You are in **tester mode**: the automated half of acceptance, shown as `accept:auto` (the registry stores it as `testing`). Your job is to settle every criterion a machine can settle, hand the plan to a person **only** when what is left needs one, and ship it when nothing is left.
+
+**You ask no one about a criterion, attended or not.** The human half — `accept:manual`, stored as `accept` — is `/lv-accept`'s, and it exists only for a plan you moved there. An attended run works the same [order of work](#unattended-mode) as an unattended one; it differs only in that the entry questions (a missing goal, a missing sign-in, a host fault) are asked instead of gated, and in what you tell the human at the end. A plan that is already in `accept`, or that sits in `testing` with an open `manual-test` gate (the shape before the split), is not yours: say `run /lv-accept PLN-NNN` and stop.
 
 **You must NEVER edit source code directly.** This skill runs on haiku and is not authorized to make code changes. If you find issues, document them as findings and route back to the builder — never attempt fixes yourself.
 
@@ -31,12 +33,12 @@ Order of work:
 
    Exit 0 is the normal case and includes `already held on your behalf by the dispatcher` — the orchestrator claims a plan before launching you, and that claim names *your* PID. Standing down there is standing down against yourself: it ended ~15s runs reporting a human who did not exist, and parked every plan that reached testing after three no-op dispatches (WFI-073, WFI-075). Only exit 2 means someone else.
 1. If your instructions name a plan, skip the selection menu and work that plan.
-2. **Start the suite detached, then collect it before you ask anything** — [step 3a](#testing) starts it (`lv-suite-run.sh --detach --reuse`, from inside the plan's own worktree, stamped with `lv-test-tree.sh` in the same call) and [Testing step 4](#testing) waits for it with `lv-suite-wait.sh`, looping on exit 3. Under `LV_UNATTENDED=1` the join comes **after** step 3c and step 5 and **before** step 6 — so the suite overlaps the headless criteria, and a gate is never opened with a suite still running behind it. No `&`, no `run_in_background: true`, no backgrounded subagent: a headless run ends the moment you stop producing output, so anything still running is killed unread and the turn is recorded as a worker that accomplished nothing (WFI-114). The detached process plus the wait loop is the only form that survives that. The suite goes through `lv-suite-run.sh`, which redirects stdin from `/dev/null`; **anything else you run that could read stdin gets `< /dev/null` too**: your shell's stdin is not at EOF, so a single test that reads it blocks forever with no failure and no output to say why (WFI-240).
+2. **Start the suite detached, then collect it before you ask anything** — [step 3a](#testing) starts it (`lv-suite-run.sh --detach --reuse`, from inside the plan's own worktree, stamped with `lv-test-tree.sh` in the same call) and [Testing step 4](#testing) waits for it with `lv-suite-wait.sh`, looping on exit 3. In both modes the join comes **after** step 3c and step 5 and **before** step 6 — so the suite overlaps the headless criteria, and a gate is never opened with a suite still running behind it. No `&`, no `run_in_background: true`, no backgrounded subagent: a headless run ends the moment you stop producing output, so anything still running is killed unread and the turn is recorded as a worker that accomplished nothing (WFI-114). The detached process plus the wait loop is the only form that survives that. The suite goes through `lv-suite-run.sh`, which redirects stdin from `/dev/null`; **anything else you run that could read stdin gets `< /dev/null` too**: your shell's stdin is not at EOF, so a single test that reads it blocks forever with no failure and no output to say why (WFI-240).
 3. **Auto-test every criterion you can before anything reaches a human** — `#### Chrome-Assisted` *and* `#### Manual`. [Step 3c](#testing) drives them through headless Playwright: literal DOM/JS assertions, interaction sequences (click/fill/submit/refresh), two-browser sessions, and visual/subjective criteria via a saved screenshot you Read and judge yourself. There is no Chrome extension and no browser mode (LVI-001). The aim is that a human is asked only about what no automated run could settle (LVI-002):
    - **Chrome-Assisted** — every one ends at PASS, FAIL or a recorded reason it could not run. Leaving them at `—` and then gating for "one Manual criterion" misreports what is actually left, and the gate question is the only thing a human reads (WFI-070).
    - **Manual `(eyes:blocking)`, `(eyes:cosmetic)` and untagged** — run the same way: reach the state, screenshot it at the widths the criterion names (both widths when it names none), Read the PNG, judge. A non-browser surface is no different: CLI help text or a generated file is output you can produce and read. A clear PASS or FAIL is recorded like any other result, with Notes saying how you saw it (`headless screenshot 390+1280: …`). Ambiguous — you cannot honestly tell from what you captured — stays at `—` with a note on what was ambiguous, and reaches the gate. So does any reading that disagrees with a prior recorded result (step 3c's disagreement rule).
    - **`(external)`, `(soak)`, `(unbuilt)`** — not auto-tested; step 5 disposes of them.
-4. For every criterion where the mode menu applies, take `[a]` (auto-test) whenever the criterion matches a recurring auto-testable shape. On auto-test FAIL, record it as a Candidate as normal — do **not** fall through to the manual flow.
+4. For a criterion step 3c could not settle that matches a recurring auto-testable shape (`plans/auto-test-log.md`, Realized), run [Auto-test mode](#auto-test-mode). On auto-test FAIL, record it as a Candidate as normal and leave the criterion for `accept:manual`.
 5. Dispose of the criteria that never need a human, whatever remains untested:
    - `(external)` and `(soak)` — defer each and check it off. They cannot be satisfied at gate time by anyone, so they never gate:
      ```bash
@@ -64,8 +66,8 @@ Order of work:
    ```bash
    eval "$(scripts/lv-exec.sh lv-manual-gate.sh <PLN-ID>)"
    ```
+   - **Any criterion recorded FAIL, whatever `GATE` says** → take the **findings** exit and route back to the builder. A FAIL is a result, not a question, and a person cannot un-fail an assertion a run made; scope is not reduced here. **The express lane does not change this.** (A reading that *disagrees* with a prior one is not a FAIL — step 3c leaves it at `—`, and it goes to `accept:manual` below.)
    - `GATE='false'` → **do not stop for a human.** A plan whose diff renders nothing to a human never stops for a human. But `GATE='false'` is a statement about *human eyes*, not about test results, and it does not turn an untested criterion into a PASS:
-     - Any criterion recorded **FAIL** → take the **findings** exit and route back to the builder. Scope is not reduced here and `GATE='false'` does not authorize it. **The express lane does not change this.**
      - `LANE='express'` → a human declared this plan safe to ship unseen, and the lane check still passes on the plan as written (LVI-025). Instead of deferring the untested eyes criteria, move them to the plan's post-ship checklist — the script ticks each one, lists it under `## Post-ship checklist` for a human after it ships, logs the answer as `express`, and commits:
        ```bash
        scripts/lv-exec.sh lv-lane.sh answer <PLN-ID> manual-test
@@ -73,13 +75,21 @@ Order of work:
        Exit `0` → go to the all-pass exit. Exit `1` → the lane downgraded between the gate script and now (the plan changed): ask `lv-manual-gate.sh` again and follow its new answer. Never tick an eyes criterion by hand to get the same effect — the completion guard reads a ticked box as *settled*, and only the lane's own record says why it was.
      - Each remaining untested criterion → defer it with `lv-defer-criterion.sh`, giving `$GATE_REASON`, per [Deferring a criterion](#deferring-a-criterion) — and mind the quoting rule above (WFI-194). A deferral is the form the completion guard can read; a free-text "untested" note in `test-progress.md` is not, and `lv-registry-update.sh` refuses `testing → complete` when an `eyes:blocking` criterion has no PASS, no deferral and no answered gate (client-d WFI-009).
      - Only then take the all-pass exit path (step 4). The **Completion gate** below governs that exit, and this bullet is not an exception to it.
-   - `GATE='true'` → **[GATE]** once, with everything that is left listed together:
+   - `GATE='true'` → **move the plan to `accept:manual`, once, with everything that is left listed together.** Results first (committed above), then the transition, then the gate, then the claim — the [Order of exit](#order-of-exit), unchanged:
      ```bash
+     scripts/lv-exec.sh lv-registry-update.sh PLN-NNN testing accept \
+       --commit "test(PLN-NNN-<slug>): accept:auto done on <sha> — N criteria need a human" \
+       --add plans/PLN-NNN-<slug>/test-progress.md
      scripts/lv-exec.sh lv-gate-open.sh <PLN-ID> manual-test \
-       "N criteria need human eyes: <one-line list>" \
+       "N criteria need human eyes on <sha>: <one-line list>" \
        --context plans/<plan-name>/plan.md --skill lv-test
+     scripts/lv-exec.sh lv-unclaim.sh PLN-NNN-<slug>
      ```
-     Commit whatever results you recorded first, then exit 0. State stays `testing`. The suite was collected before step 6, so nothing is left running; put its `SUITE_RESULT=` line in the question as a second sentence, so the human answering knows the automated half is settled.
+     Tear the container down ([Container cleanup](#container-cleanup)) — `/lv-accept` brings its own up — and exit 0. The suite was collected before step 6, so nothing is left running; put its `SUITE_RESULT=` line in the gate question as a second sentence, so the human answering knows the automated half is settled. Attended, end with one line: `PLN-NNN is in accept:manual — run /lv-accept PLN-NNN`.
+
+     **The row is what parks the plan, not the gate.** The dispatcher never sends a worker at `accept`, so a gate closed early can no longer put a tester into a container a human is using (WFI-070). The gate stands beside it because `/lv-attend`'s queue reads gates.
+
+     **A refused transition is your unfinished work.** `lv-registry-update.sh` asks `lv-manual-gate.sh` itself and refuses `testing → accept` when the record is incomplete (`PROGRESS_INCOMPLETE`), when the express lane holds, or when no human is needed — `accept:manual` holds only what no machine can settle (LVI-040). Read its message, do what it names (usually: back to step 3c), and ask again. Never reach for `LV_ALLOW_ACCEPT=1`; it is a human's override.
 
      **The question states only what you verified.** Name a changed file only if `git diff --name-only <old-build> HEAD` in the worktree lists it; quote `$SURFACE_HIT` and `$GATE_REASON` as the script printed them; never describe what a build "changed" from a commit subject or a guess. A re-ask of a criterion that already has a PASS on an earlier build says which build that was and which surface path changed since: quote `$SURFACE_MOVED_FROM` and `$SURFACE_MOVED`, never `$SURFACE_HIT` — that one is the plan's whole diff against develop and can name a file identical on both builds (LVI-021). If `$SURFACE_MOVED` is empty, the script would have carried the PASS (`MANUAL_CARRIED`), so recheck before asking. A client's LVI-006 re-asked a print check claiming a CSS change the diff did not contain.
 
@@ -89,19 +99,18 @@ Order of work:
 |-|-|-|-|
 | Entry | Plan selection menu | [AUTO] | Use the plan named in your instructions |
 | Step 2 | Goal missing | **[GATE]** | `goal-missing` |
-| Step 7.2 | Mode menu | [AUTO] | `[a]` when the criterion matches a recurring shape, otherwise defer it to the `manual-test` gate |
-| Step 7.3 | "What do you see?" | [AUTO] | Any criterion reaching here, Chrome-Assisted or `#### Manual`, already went through step 3c's headless run and was not settled (not scriptable at all, ambiguous, or a low-confidence disagreement) — leave it at `—` with the recorded reason for step 5/6's gate |
-| Step 7.3 | FAIL classification | [AUTO] | Write the finding and route to spec as normal — that is a state transition, not a question. An `(eyes:cosmetic)` failure files a bug and checks off instead |
-| Step 7.3 | Deferring a criterion | [AUTO] | Defer `(external)` and `(soak)` criteria — that is mechanical. Never defer anything else unattended |
+| Step 4 | A criterion 3c could not settle | [AUTO] | Auto-test it when it matches a recurring shape; otherwise leave it at `—` with the recorded reason, for `accept:manual` |
+| Step 6 | A criterion recorded FAIL | [AUTO] | Write the finding and route to spec as normal — that is a state transition, not a question. An `(eyes:cosmetic)` failure files a bug and checks off instead |
+| Step 5 | Deferring a criterion | [AUTO] | Defer `(external)` and `(soak)` criteria — that is mechanical. Never defer anything else; an `unbuilt` deferral is a human's call, in `/lv-accept` |
 | Testing step 4 | `lv-suite-wait.sh` exits 3 | [AUTO] | Call it again with the same handle. Never end the turn on a running suite |
 | Testing step 4 | Suite verdict is `pass (reused …)` | [AUTO] | Record it as reused under step 3a's `TREE` stamp, totals from `SUITE_REUSED_FROM=`. Do not re-run it to "confirm" |
-| Step 6 | Whether to open `manual-test` | [AUTO] | `lv-manual-gate.sh` decides. Do not second-guess it in either direction |
+| Step 6 | Whether a human is needed (`testing → accept`) | [AUTO] | `lv-manual-gate.sh` decides, and `lv-registry-update.sh` checks it again. Do not second-guess it in either direction |
 | Completion | "All criteria pass — proceed?" | [AUTO] | Proceed when every criterion is PASS on the current build |
 | Exit | `git push` still failing transiently (`lv-retry.sh --tempfail` exit 75) | [AUTO] | No gate. Leave the plan in `testing`, unclaim, exit 0 — the next sweep retries (coordinator WFI-006) |
 | Exit | `git push` refused (protected branch, non-fast-forward, permission) | **[GATE]** | `merge-failed` — question is the git error verbatim |
 | Exit | `gh pr merge` failed | [AUTO] | Already routes to the builder on its own — follow that path, don't gate |
 
-**Never guess.** You have no eyes on the running app beyond what headless Playwright and the test suites report. If a criterion's outcome is not something you established from a test result, a headless run or screenshot you captured on this build, or a build log, it is **not** a PASS — defer it to the `manual-test` gate. Recording an unverified PASS is worse than recording nothing, because it ships. A test result you did not produce yourself, in this plan's stamped tree, is in the same category as a guess — and a FAIL copied out of the bug report that motivated the plan is the shape this actually took (WFI-132). Anything you are about to ask that isn't in the table above is a [GATE] with gate name `needs-input`. **Opening any gate ends the run:** unclaim and exit 0 in the same breath. Do not defer the criteria you just asked about and carry on to `complete` — a client's PLN-006 tester opened `needs-input` about the identity provider, did exactly that three minutes later, and left the question standing a day on a finished plan (LVI-008). **`manual-test` is no exception.** A client's PLN-003 tester opened `manual-test` on an `eyes:blocking` criterion, then 55 seconds later ruled that same criterion PASS itself — "verified on prior build; not affected" — overriding the gate script it had just obeyed, completed the plan, and had its closing `lv-gate-close.sh` refused for want of a `--basis`; the gate stood open on a finished plan (LVI-009). Its question also claimed the new build "adds RunPage route" when the diff touched only `NewSheet.tsx`. Unattended, `lv-registry-update.sh` now refuses `→ complete` while any gate is open, `manual-test` included; attended, `manual-test` is the one exempt, because the human in the session answers it and step 4 closes it after the commit.
+**Never guess.** You have no eyes on the running app beyond what headless Playwright and the test suites report. If a criterion's outcome is not something you established from a test result, a headless run or screenshot you captured on this build, or a build log, it is **not** a PASS — leave it for `accept:manual`. Recording an unverified PASS is worse than recording nothing, because it ships. A test result you did not produce yourself, in this plan's stamped tree, is in the same category as a guess — and a FAIL copied out of the bug report that motivated the plan is the shape this actually took (WFI-132). Anything you are about to ask that isn't in the table above is a [GATE] with gate name `needs-input`. **Opening any gate ends the run:** unclaim and exit 0 in the same breath. Do not defer the criteria you just asked about and carry on to `complete` — a client's PLN-006 tester opened `needs-input` about the identity provider, did exactly that three minutes later, and left the question standing a day on a finished plan (LVI-008). **`manual-test` is no exception.** A client's PLN-003 tester opened `manual-test` on an `eyes:blocking` criterion, then 55 seconds later ruled that same criterion PASS itself — "verified on prior build; not affected" — overriding the gate script it had just obeyed, completed the plan, and had its closing `lv-gate-close.sh` refused for want of a `--basis`; the gate stood open on a finished plan (LVI-009). Its question also claimed the new build "adds RunPage route" when the diff touched only `NewSheet.tsx`. Unattended, `lv-registry-update.sh` now refuses `→ complete` while any gate is open, `manual-test` included. Since the accept split there is nothing to rule on here in the first place: a criterion only a person can settle is settled in `/lv-accept`, and the plan comes back to you with the record already written.
 
 Everything else (creating the PR, writing findings, routing back to the builder) is a normal state transition and proceeds without asking.
 
@@ -109,7 +118,7 @@ The one exception: in [Auto-test mode](#auto-test-mode), a sonnet subagent is au
 
 ## The `browser` argument (retired)
 
-`/lv-test <ID> browser` (or `--browser`) used to drive criteria through the Claude in Chrome extension. It never worked reliably and is gone (LVI-001): headless Playwright ([step 3c](#testing)) is the only automated browser. If you are given the argument, say once "`browser` mode was retired — step 3c drives criteria with headless Playwright" and run as normal. What Playwright genuinely cannot be — real third-party OAuth, a physical device, an installed browser extension, the user's own logged-in profile — goes to the human through the manual flow (step 7.3) — or, unattended, through the `manual-test` gate, with its `needs:` reason.
+`/lv-test <ID> browser` (or `--browser`) used to drive criteria through the Claude in Chrome extension. It never worked reliably and is gone (LVI-001): headless Playwright ([step 3c](#testing)) is the only automated browser. If you are given the argument, say once "`browser` mode was retired — step 3c drives criteria with headless Playwright" and run as normal. What Playwright genuinely cannot be — real third-party OAuth, a physical device, an installed browser extension, the user's own logged-in profile — goes to the human through `accept:manual` (`/lv-accept`), with its `needs:` reason.
 
 ## Entry (simple)
 
@@ -152,7 +161,7 @@ Display the subagent's output verbatim, then:
 Then, for the chosen plan:
 1. `eval "$(scripts/lv-exec.sh lv-plan-info.sh PLN-NNN)"` to get plan details
 2. If `$PLAN_GOAL_MISSING` is `true`: under `LV_UNATTENDED=1` this is a **[GATE]** — open gate `goal-missing` and exit 0. Otherwise ask the user: "This plan has no goal summary. Please provide a one-line goal." Then write their answer as the first line under `## Goal` in `$PLAN_DIR/plan.md`, commit it scoped: `scripts/lv-exec.sh lv-commit.sh "spec(PLN-NNN-<slug>): add missing goal" --add plans/PLN-NNN-<slug>/plan.md` — a bare `git commit` takes the whole shared index (WFI-048/049). Re-run the eval to pick up the goal.
-3. `scripts/lv-exec.sh lv-claim.sh PLN-NNN` — **exit 2 means a live session already holds it.** Stop, say who holds it, and offer another plan. Take it only if the user says the holder is finished or wedged: `lv-claim.sh PLN-NNN --steal` (WFI-146).
+3. `scripts/lv-exec.sh lv-claim.sh PLN-NNN --state testing` — **exit 3 means the plan is not in `testing`**: if it is in `accept`, it is waiting on a human — say `run /lv-accept PLN-NNN` and stop. Ask **before** claiming whether `scripts/lv-exec.sh lv-list-gates.sh PLN-NNN` shows an open `manual-test` gate: that is the pre-split shape of `accept:manual` — say `run /lv-accept PLN-NNN` and stop; `/lv-accept` moves it across. **Exit 2 means a live session already holds it.** Stop, say who holds it, and offer another plan. Take it only if the user says the holder is finished or wedged: `lv-claim.sh PLN-NNN --steal` (WFI-146).
 4. `cd feature-branches/<plan-name>/` — note the **absolute** path it prints; you need it on every later call
 5. Continue to testing
 
@@ -213,7 +222,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    - Read its live directives: `../../scripts/lv-exec.sh lv-direct.sh list PLN-NNN`. A `constraint` directive is binding — a build that contradicts it fails the criterion it touches, whatever the criterion's own wording says, and the finding quotes the directive (`D-n`).
    - **Only present `### Human Test Criteria` items** (combine `#### Chrome-Assisted` and `#### Manual` into a single flat list) — Build & Tests and Code Quality were already handled by the verify agent. **Get that list from `../../scripts/lv-exec.sh lv-manual-lint.sh PLN-NNN --live`, not by assembling it yourself:** its first column is the number to show, to write in test-progress.md's `#` column, and the one an amendment's `replace Chrome-Assisted N` / `Manual N` resolves against. A list built by hand put an amendment's replacement in the replaced criterion's slot, and the next amendment's numbers retired the wrong criterion (a client's LVI-013).
    - **Amendments change that list.** A `#### Human Test Criteria (A-N)` block's `##### Chrome-Assisted` / `##### Manual` criteria are live and are tested like the originals; the originals its heading or `**Supersedes:**` line retires are not tested and get no row. `lv-manual-gate.sh` counts the same live set (LVI-027).
-   - **Nothing reaches the human before step 3c has tried it.** Once the container is up, [step 3c](#testing) runs every Chrome-Assisted criterion and every `#### Manual` eyes or untagged criterion through headless Playwright, attended or not (LVI-002). The human walks only what it left: a FAIL to look at, an ambiguous screenshot, a disagreement with a prior reading, or something Playwright cannot be — real third-party OAuth, a physical device, an installed browser extension, the user's own logged-in profile, or no headless browser installable on this machine at all.
+   - **Nothing reaches a human before step 3c has tried it.** Once the container is up, [step 3c](#testing) runs every Chrome-Assisted criterion and every `#### Manual` eyes or untagged criterion through headless Playwright, attended or not (LVI-002). `/lv-accept` walks only what it left: an ambiguous screenshot, a disagreement with a prior reading, an eyes judgment, or something Playwright cannot be — real third-party OAuth, a physical device, an installed browser extension, the user's own logged-in profile, or no headless browser installable on this machine at all.
 2. **Check for prior test progress** — look for `../../plans/PLN-NNN-<slug>/test-progress.md`. If it exists, read it to get per-criterion results and build identifiers.
 3. **Deploy to local container and capture build identifier** (single bash call — already inside feature branch):
    ```bash
@@ -286,7 +295,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    After editing, restart the container: ../../scripts/lv-exec.sh lv-docker-up.sh
    ```
    When presenting or walking through individual criteria, if a criterion tests behavior that appears controlled by one of these parameters, remind the user which parameter to set and to what value before testing that criterion.
-3c. **Auto-check every criterion with headless Playwright** — every `#### Chrome-Assisted` criterion, and every `#### Manual` criterion tagged `(eyes:blocking)`, `(eyes:cosmetic)` or untagged, that is not already `PASS`/`FAIL` on the current build in `test-progress.md`. `(external)`, `(soak)` and `(unbuilt)` are skipped: no run today can settle them. This runs attended too, before step 5 shows the human anything, so the human's walk starts where automation stopped (LVI-002). There is no other automated browser — the Chrome-extension browser mode was retired (LVI-001). Three tools, pick by what the criterion needs:
+3c. **Auto-check every criterion with headless Playwright** — every `#### Chrome-Assisted` criterion, and every `#### Manual` criterion tagged `(eyes:blocking)`, `(eyes:cosmetic)` or untagged, that is not already `PASS`/`FAIL` on the current build in `test-progress.md`. `(external)`, `(soak)` and `(unbuilt)` are skipped: no run today can settle them. This runs attended too, so `accept:manual` starts where automation stopped (LVI-002). There is no other automated browser — the Chrome-extension browser mode was retired (LVI-001). Three tools, pick by what the criterion needs:
 
    - **Assertion criteria** (element geometry, computed style, cookie attributes, meta tags, console errors, a redirect's resulting URL, text/element presence, state that must survive a refresh) — formulate the JS boolean expression yourself from the criterion text, and the interaction that leads to it (if any) as an `actions-json` array (`click`/`fill`/`press`/`keyboard`/`hover`/`focus`/`mouse`/`selectOption`/`check`/`uncheck`/`waitForSelector`/`wait`/`goto`/`reload`/`download`/`upload`/`clipboard`/`clipboardWrite` — see the script's header comment for the full vocabulary; `press` with no selector is a page-level key such as `Tab`, and CSS selectors pierce open shadow DOM), then run:
      ```bash
@@ -338,19 +347,18 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    - **A sign-in is not a reason a criterion cannot run headlessly when `$TEST_ACCOUNT` gives a recipe.** Put the recipe's `/login` steps at the front of the criterion's `<actions-json>` (or into an `lv-headless-session.sh` context) and run it. "OIDC sign-in cannot be completed headlessly in unattended mode" is not a result: a client's LVI-040 recorded exactly that for all 6 Chrome-Assisted criteria of a plan whose `test_account_note` spelled out the headless `/login` recipe, and a human was asked about work nobody tried. Only a recipe that was *run* and returned `ERROR` is a recorded reason — note the step that failed.
    - **Exit 2 (`ERROR` on stdout, any of the three scripts) is "a recorded reason it could not run", never a FAIL.** Leave the criterion at `—` with that `ERROR` line noted in session memory (it surfaces in test-progress.md's Notes on exit, verbatim: `lv-manual-gate.sh` reads a note with no `ERROR`, no disagreement and no `needs: oauth|device|extension|profile` as a criterion nobody ran) and let it fall through to the criteria loop / gate below like any other untested Chrome-Assisted criterion. A missing headless browser on this machine (no network on first use), a selector that never appears, or a criterion that genuinely needs real third-party OAuth, a physical device, a browser extension, or the user's own logged-in profile are the ordinary cases of this — not defects to work around, and the point at which a human is the right next step, not this step retried differently.
    - **A headless PASS or FAIL that contradicts a result already recorded for this same assertion on a prior build — attended human testing included — is low-confidence, whatever the headless run says.** Do not overwrite the existing record with the automated verdict in either direction. Instead: leave the criterion at `—`, note both readings ("headless: FAIL (scrollWidth 464 > innerWidth 390), prior human PASS on build <sha>"), and let it reach the gate as a named disagreement — the gate question should say what conflicts, not just that a criterion is untested. client-f's PLN-004 criterion 6 is the worked example: a real-device human PASS and a 390px-CSS-viewport headless FAIL on the same "no horizontal scroll" assertion disagreed, and the disagreement — not either individual reading — is what needed a human's eyes (WFI-008). A criterion with no prior recorded result has nothing to disagree with, so an unambiguous headless PASS/FAIL there is not low-confidence merely for being the first result.
-4. **Join the suite section — but not here.** Step 3a started it, detached; this step collects it, and *when* is the point of the split (LVI-034). The human's time, and step 3c's headless runs, overlap the suite instead of following it:
+4. **Join the suite section — but not here.** Step 3a started it, detached; this step collects it, and *when* is the point of the split (LVI-034). Step 3c's headless runs overlap the suite instead of following it:
 
-   - **Attended:** after the criteria walk (steps 5–7), before the [Completion confirmation](#completion-confirmation) or any findings exit.
-   - **Unattended:** after step 3c and the step-5 dispositions, **before** step 6 asks `lv-manual-gate.sh` anything. A gate ends the run, and a run may not end with its suite still going — so the suite is collected first and the gate question can quote its verdict.
+   In both modes: after step 3c and the [order of work](#unattended-mode)'s step-5 dispositions, **before** its step 6 asks `lv-manual-gate.sh` anything. Moving the plan to `accept` ends the run, and a run may not end with its suite still going — so the suite is collected first and the gate question can quote its verdict.
 
    ```bash
    ../../scripts/lv-exec.sh lv-suite-wait.sh <SUITE_HANDLE>    # 0 pass, 1 fail, 3 still running
    ```
    On `3`, call it again with the same handle, as many times as it takes — each call is a foreground command under the cap and keeps the session alive. **`3` is neither a pass nor a failure.** No `run_in_background`, no scheduled wake-up, no "I'll check back": the loop is the only wait that exists, and ending the turn is abandoning the run (WFI-114, WFI-255, WFI-266).
 
-   **Every exit joins it first** — findings, all-pass, a gate, the merge-blocked path. The one exception is an attended early abort (the user quits mid-walk): say the suite is still running and that the next `/lv-test` reuses its receipt if it passes, and leave it.
+   **Every exit joins it first** — findings, all-pass, `accept`, a gate, the merge-blocked path. The one exception is an attended early abort (the user interrupts the run): say the suite is still running and that the next `/lv-test` reuses its receipt if it passes, and leave it.
 
-   Record the result in `test-progress.md` under step 3a's `TREE` stamp, with `SUITE_CMD=` and `SUITE_RESULT=` quoted verbatim. Report it to the user. **A reused result is recorded as reused**: `SUITE_RESULT=pass (reused …)` quoted as printed, totals from the `SUITE_REUSED_FROM=` log — never as a run you made. Attended, if the suite failed, inform the user — the criteria verdicts stand on their own and the walk was not wasted.
+   Record the result in `test-progress.md` under step 3a's `TREE` stamp, with `SUITE_CMD=` and `SUITE_RESULT=` quoted verbatim. Report it to the user. **A reused result is recorded as reused**: `SUITE_RESULT=pass (reused …)` quoted as printed, totals from the `SUITE_REUSED_FROM=` log — never as a run you made.
 
    **Never type step 3a's scope flags yourself.** The script appends them through `eval`, which keeps several flags several arguments. Wrapped in one pair of quotes they do not error — the runner takes the lot as a single unrecognised argument, ignores the filter, and runs the **whole suite** while reporting it as the scoped result. Measured on client-a's PLN-007: quoted, `total: 435`; the same flags unquoted, `total: 1`. Nothing in the output distinguishes them (WFI-080), and every "scoped" run was really a full-suite run hammering the rate limiter — a 429 cascade that two verify passes had blamed on daemon contention.
 
@@ -366,147 +374,21 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    An infrastructure error is **never** a finding and **never** a state transition. Fix the environment and re-run, or file it with `lv-issue.sh` and stop. client-a's PLN-111 (WFI-172): the plan was already `complete`, its worktree removed, so the runner resolved its relative `TestResults/` directory against a deleted working directory and could not write the TOOL. That single writer failure was reported as "29 errors", written up as a finding, and used to move the plan `complete → active`. Re-running the suite on develop gave 871 total, 0 failed. **A count of "errors" with no named test behind it is the signature** — read the message before you believe the number.
 
    `lv-registry-update.sh` now refuses to move a plan out of a terminal state, so this particular regression stops at a refused transition. That is the backstop. The fault it is catching is that you were dispatched at a finished plan at all: re-check step 0's `--state testing` claim before doing anything else.
-5. **Classify state and display criteria:**
+5. **Finish the automated half — the same in both modes.** Run the [order of work](#unattended-mode)'s steps 4–6: auto-test what matches a recurring shape, dispose of `(external)` / `(soak)`, collect the suite, commit `test-progress.md`, and let `lv-manual-gate.sh` decide. Its answer leaves three ways out, and none of them is a question to a person about a criterion:
 
-   Compare the current `$BUILD` against the build column in test-progress.md (if it exists) to determine which of three states applies. Step 3c has already run, so its results are part of what you compare: list them with their result and `(headless)`, and `[each]` walks only what it left. When step 3c settled every criterion PASS on the current build there is nothing to walk and nothing to ask — join the suite (Testing step 4) and go straight to the [Completion confirmation](#completion-confirmation):
+   | What the record says | Exit |
+   |-|-|
+   | Any criterion FAIL | [If findings](#if-findings-failures) |
+   | `GATE='false'`, every criterion PASS on this build or settled by a tick | [If all pass](#if-all-pass) |
+   | `GATE='true'` | `testing → accept`, gate, unclaim — the human half is `/lv-accept`'s |
 
-   **State A — Fresh start** (no test-progress.md):
-   ```
-   Testing: PLN-NNN — <plan title>
-   App is running at http://localhost:$FEATURE_PORT
-   Sign in: $TEST_ACCOUNT                                          ← only if TEST_ACCOUNT is set
-   Login first: http://localhost:$FEATURE_PORT$GUEST_ENTRY_PATH   ← only if GUEST_ENTRY_PATH is set
-   Start here: http://localhost:$FEATURE_PORT/<first criterion's route>
-   Current build: Apr 08 14:32 (a1b2c3d)
-
-   ## Acceptance Criteria
-   1. criterion one
-   2. criterion two
-   ...
-
-   How would you like to test?
-   [**e**ach] - Walk through each criterion individually
-   [**a**ll]  - Pass all criteria (assume they all passed)
-   ```
-
-   **State B — Resume from failure** (test-progress.md exists, some criteria are `—` or `FAIL`):
-
-   Read `../../plans/PLN-NNN-<slug>/findings.md` to get the prior round's findings. Show checked-off items (builder fixed) and unchecked items (still open) as context before the criteria list:
-
-   ```
-   Testing: PLN-NNN — <plan title>
-   App is running at http://localhost:$FEATURE_PORT
-   Sign in: $TEST_ACCOUNT                                          ← only if TEST_ACCOUNT is set
-   Login first: http://localhost:$FEATURE_PORT$GUEST_ENTRY_PATH   ← only if GUEST_ENTRY_PATH is set
-   Start here: http://localhost:$FEATURE_PORT/<resume criterion's route>
-   Current build: Apr 08 14:32 (f4e5d6c)
-
-   ## Prior Round Findings
-   - [x] **Behavior**: Auth not enforced on /play route (fixed by builder)
-   - [ ] **Behavior**: Loading spinner persists after timeout (still open)
-
-   ## Acceptance Criteria
-   1. criterion one — PASS (build Apr 07 09:15 (a1b2c3d))
-   2. criterion two — PASS (build Apr 07 09:15 (a1b2c3d))
-   3. criterion three — FAILED last session
-   4. criterion four — untested
-   ...
-
-   Resuming from #3 (failed on build Apr 07 09:15 (a1b2c3d)).
-   [**e**ach]    - Walk through criteria starting from #3
-   [**a**ll]     - Pass all remaining criteria
-   [**r**estart] - Start over from #1
-   ```
-
-   **State C — Regression sweep** (all criteria show PASS, but some on an older build):
-   ```
-   Testing: PLN-NNN — <plan title>
-   App is running at http://localhost:$FEATURE_PORT
-   Sign in: $TEST_ACCOUNT                                          ← only if TEST_ACCOUNT is set
-   Login first: http://localhost:$FEATURE_PORT$GUEST_ENTRY_PATH   ← only if GUEST_ENTRY_PATH is set
-   Start here: http://localhost:$FEATURE_PORT/<first stale criterion's route>
-   Current build: Apr 08 16:45 (g7h8i9j)
-
-   ## Acceptance Criteria
-   1. criterion one — PASS (build Apr 07 09:15 (a1b2c3d)) ← older build
-   2. criterion two — PASS (build Apr 07 09:15 (a1b2c3d)) ← older build
-   ...
-   8. criterion eight — PASS (build Apr 08 16:45 (g7h8i9j)) ✓ current
-   9. criterion nine — PASS (build Apr 08 16:45 (g7h8i9j)) ✓ current
-
-   All criteria have passed, but #1-7 passed on older builds.
-   Recommend a regression sweep to confirm on current build.
-   [**s**weep] - Retest #1-7 on current build
-   [**a**ll]   - Trust prior results, mark complete
-   [**e**ach]  - Walk through all 9 criteria
-   ```
-
-6. **Mode handling:**
-
-   - **[each]** (fresh): Test all criteria from #1.
-   - **[each]** (resume): Start at the resume point (the "Last failure" criterion). Proceed forward through remaining untested/failed criteria. After the last one, if stale-build passes exist → trigger the regression sweep prompt (State C).
-   - **[sweep]**: Walk through only criteria whose last pass is on an older build. On pass → update build. On fail → real regression, capture as finding.
-   - **[all]**: Stamps the current build on all criteria. Works in all three states.
-   - **[restart]**: Ignore prior progress, test all from #1, overwrite all rows with current build.
-
-6b. **Read auto-test config** (runs once, before entering the criterion loop). This determines whether the per-criterion mode menu is shown. Do NOT skip — if you're about to enter step 7 and haven't run this yet, run it now:
-   ```bash
-   DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
-   CFG="$DEVELOP_ROOT/levain.yml"
-   AUTO_TEST_ENABLED=$(awk '/^  enabled:/{print $2; exit}' "$CFG" 2>/dev/null)
-   ```
-   If `AUTO_TEST_ENABLED=true`, the menu in step 7 is **mandatory** on every criterion (fresh, resume, and sweep). If blank or `false`, skip the menu and go straight to the manual flow.
-
-7. **For each criterion being tested — MANDATORY sequence:**
-
-   **7.1 Display the criterion** (text, route, expected behavior).
-
-   **7.2 Mode menu** — only when `AUTO_TEST_ENABLED=true`. This is a hard gate: you MUST display this menu and wait for the user's response before showing the deeplink or asking "what do you see?". Applies equally to fresh, resume, and sweep flows — never skip because the criterion previously failed or passed.
-
-   **Pattern-based default** — before displaying the menu, check whether the criterion text matches a recurring auto-testable shape from `plans/auto-test-log.md` (Realized section). If it does, present `[a]` as the default (bolded in the menu, and accept an empty response as `[a]`). Recurring shapes:
-   - Cookie attributes (HttpOnly, Secure, SameSite, Path, expiry)
-   - HTML meta tag presence/absence (Referer, CSP, viewport)
-   - "No console errors" / "no X log entries"
-   - Form validation returning a specific status code
-   - Route redirects based on auth state (302 + Location)
-   - Dialog open/close, visible border, field presence after click
-   - Admin table filter / pagination / layout consistency
-   - Element presence on direct URL load vs client-side nav
-
-   Otherwise default to `[m]`.
-
-   Fresh-start example (pattern match):
-   ```
-   [m] manual test   [**a**] auto test   [s] skip   (pattern suggests auto-test)
-   ```
-   Fresh-start example (no match):
-   ```
-   [**m**] manual test   [a] auto test   [s] skip
-   ```
-   - `[a]` (or natural phrasings like "auto", "run auto-test", "automate this", or an empty response when `[a]` is the default) → go to [Auto-test mode](#auto-test-mode). On PASS/EXISTS mark PASS and continue to next criterion. On FAIL fall through to 7.3.
-   - `[s]` → mark SKIP and continue to next criterion.
-   - `[m]` (or empty response when `[m]` is the default) → continue with 7.3.
-
-   **7.3 Manual flow:**
-   - **Prefer deeplinks**: If the criterion mentions a route (e.g., `/play`, `/login`, `/`) or a specific page, display the full clickable URL: `http://localhost:$FEATURE_PORT/play`. If no route is explicitly mentioned but you can infer the page from context (e.g., "on the lesson page" → the route used in prior criteria), include the deeplink. Only fall back to the base URL when no route can be determined.
-   - If the user seems unclear about context (asks "what should I be seeing?" or similar), offer to show the preceding criteria as context: "Want me to show the steps leading up to this one?" Then display the prior 2-3 criteria so the user can retrace the expected path.
-   - **Let the user describe what they see** — accept natural descriptions
-   - Classify their response:
-     - **Pass**: note it and continue
-     - **Fail**: capture description. **First check the criterion's tag** — an `(eyes:cosmetic)` failure files a bug and checks off instead of blocking, per [Manual criterion dispositions](#manual-criterion-dispositions). For everything else, classify:
-       - **ESCALATED** (design): new behavior not in plan, scope addition, UX change
-       - **Behavior** (code fix): bug in specified behavior
-       All findings route to lv-spec (Opus) for review before returning to builder.
-       If unsure: "Is this a new behavior you want added, or something that should work but doesn't?"
-       **Do NOT stop testing.** Ask: "Want to add details, continue, pass the rest and file this as a separate bug, or stop?"
-     - **Skip**: note it and continue. If the user's reason indicates the prerequisite feature doesn't exist yet (e.g. "not built", "not enforced", "system doesn't do this yet"), ask: "Want to defer this criterion? It will be saved to `plans/deferred-criteria.md` so it gets picked up when the prerequisite is built." If yes, go to [Deferring a criterion](#deferring-a-criterion).
-     - **Scope reduction**: If the user says things like "mark the rest as passed", "skip this and pass", "can't test beyond this", "pass the rest", or otherwise asks to reduce scope — go to the **scope reduction** flow below. Do NOT create findings.
+   **A plan that comes back from `/lv-accept`** arrives in `testing` with the human's verdicts committed in `test-progress.md` against this build (Notes `human (/lv-accept)`). Step 3c skips what is already PASS on the current build, so those rows are not re-run and not overwritten, and the gate script counts them: the normal outcome is `GATE='false'` and the ship exit. If it says `true` again, something moved — a `release` merge touched a rendering surface (`SURFACE_MOVED`), or a row was paraphrased — and the plan goes back to `accept` with the question naming it.
 
 ### Auto-test mode
 
-Entered from step 7 when the user picks `[a]`. Active only when `autoTestGrowth.enabled: true` in `levain.yml`.
+Entered from the [order of work](#unattended-mode)'s step 4, and from `/lv-accept` when the human picks `[a]`. Active only when `autoTestGrowth.enabled: true` in `levain.yml`.
 
-**Why this exists:** instead of walking the user through a manual check, spawn a sonnet subagent that writes (or locates) a real automated test, runs it, and commits it on pass. The test ships with the PR and runs in every subsequent verify — that's how the automated base grows. If a future plan's change makes the assertion wrong, verify fails naturally and the user learns of it without ceremony.
+**Why this exists:** instead of walking a person through a manual check, spawn a sonnet subagent that writes (or locates) a real automated test, runs it, and commits it on pass. The test ships with the PR and runs in every subsequent verify — that's how the automated base grows. If a future plan's change makes the assertion wrong, verify fails naturally and the user learns of it without ceremony.
 
 **Read config** (first `[a]` only — cache afterward):
 
@@ -562,12 +444,14 @@ Do NOT modify production code. Tests only. Final response under 800 characters �
 
 **Handle the agent's response:**
 
-Parse the line against the contract: prefix is `EXISTS:`, `PASS:`, or `FAIL:`. For EXISTS/PASS, split the payload on `|` into `<test name>` and `<file path>`. For FAIL, the payload is a single reason string — if it happens to look like a test identifier or contains `|`, reject it and fall through to manual (do NOT log it as a Candidate).
+Parse the line against the contract: prefix is `EXISTS:`, `PASS:`, or `FAIL:`. For EXISTS/PASS, split the payload on `|` into `<test name>` and `<file path>`. For FAIL, the payload is a single reason string — if it happens to look like a test identifier or contains `|`, reject it and treat the criterion as unsettled (do NOT log it as a Candidate).
 
 - **`EXISTS:<name>|<file>`** or **`PASS:<name>|<file>`** — mark the criterion PASS on the current build. Append a row to the **Realized** section of `$DEVELOP_ROOT/$AUTO_TEST_LOG` (create file with headers if absent — see format below) using 5 columns: Plan, Criterion, Test, File, Date. Note the test name alongside the criterion in session memory (it surfaces in the test-progress.md "Notes" column on exit). Continue to the next criterion.
 - **`FAIL:<reason>`** —
-  - If `AUTO_TEST_LOG_CANDIDATES=true`: append a row to the **Candidates** section of `$DEVELOP_ROOT/$AUTO_TEST_LOG` using **exactly 4 columns**: Plan, Criterion, Reason, Date. Do NOT copy the 5-column Realized format. If the reason contains a `|` character, replace it with `/` before writing to preserve the column count. Tell the user: "Auto-test couldn't produce a passing test: `<reason>`. Falling back to manual." Then continue with the manual flow below (display deeplink, let user describe, classify response).
-  - Else: silently fall through to the manual flow.
+  - If `AUTO_TEST_LOG_CANDIDATES=true`: append a row to the **Candidates** section of `$DEVELOP_ROOT/$AUTO_TEST_LOG` using **exactly 4 columns**: Plan, Criterion, Reason, Date. Do NOT copy the 5-column Realized format. If the reason contains a `|` character, replace it with `/` before writing to preserve the column count. Say: "Auto-test couldn't produce a passing test: `<reason>`." Then treat the criterion as unsettled (below).
+  - Else: treat the criterion as unsettled, silently.
+
+  Unsettled means: here, leave it at `—` with the reason for `accept:manual`; in `/lv-accept`, carry on with the human's walk.
 
 Always sanity-check the tree after the agent exits: `git status --short` should be clean except for a possible new committed test. If it's dirty, the agent left junk — `git restore .` and treat as FAIL.
 
@@ -629,36 +513,17 @@ Commit the log update as part of the normal test-exit commit (findings or comple
 
 ### Completion gate
 
-**The skill only proceeds to the "all pass" exit path when every criterion shows PASS with the current build identifier.** This is the single rule that drives the system. If some criteria passed on older builds and the user hasn't retested them via [sweep], [each], or [all], the plan is not complete.
+**The skill only proceeds to the "all pass" exit path when every criterion shows PASS with the current build identifier, or is settled by a tick (deferred, cosmetic-filed, or scoped out by a human in `/lv-accept`).** This is the single rule that drives the system. An earlier build's PASS counts only where `lv-manual-gate.sh` carried it (`MANUAL_CARRIED`); anything else is re-run by step 3c or, failing that, goes to `accept:manual`.
 
 ### Completion confirmation
 
 **Join the suite first** ([Testing step 4](#testing)) if you have not — the confirmation quotes its verdict.
 
-Under `LV_UNATTENDED=1` this is **[AUTO] `[c]`omplete** — when every criterion is PASS on the current build, proceed straight to the exit path.
-
-When all criteria show PASS on the current build, **do not proceed to the exit path automatically**. First prompt the user:
-
-```
-All criteria passed on current build.
-
-Before completing:
-- Any notes or issues to add?
-- Spotted anything that should be filed as a separate bug?
-- Ready to create PR and close out this plan?
-
-[**c**omplete] - Proceed to PR and merge
-[**b**ug]      - File a related bug first, then complete
-[**e**scalate] - Flag a design concern (routes back to planner)
-```
-
-- **[complete]**: proceed to the "If all pass" exit path.
-- **[bug]**: let the user describe the issue, capture it as a note in the completion message, then proceed to the "If all pass" exit path. After completion, remind: "File the bug with `/lv-bug`."
-- **[escalate]**: treat as a finding with ESCALATED severity — proceed to the "If findings" exit path instead.
+**[AUTO] in both modes** — when the [Completion gate](#completion-gate) holds, proceed straight to the exit path. There is no prompt: a person's notes, a related bug, or a design concern belong to `/lv-accept`, where the human is looking at the build. A plan that needed no human was never going to have one here either.
 
 ### Saving test progress
 
-Test progress is written **twice**: once at step 6 before the gate script is asked anything, and again at exit with whatever changed after it. In between, the LLM holds in-memory state.
+Test progress is written **twice**: once at step 6 before the gate script is asked anything, and again at exit with whatever changed after it. In between, the LLM holds in-memory state. `/lv-accept` writes the same file to the same rules — the human's rows carry Notes `human (/lv-accept)`.
 
 The step 6 write is not bookkeeping. `lv-manual-gate.sh` decides whether to stop for a human by reading this file and subtracting every criterion it finds recorded PASS against the build standing in the worktree — that subtraction is the only thing that tells it a Manual criterion has been judged, because a passed criterion's checkbox in `plan.md` stays empty (WFI-013). A gate asked before the file is written is asked about a session whose work it cannot see.
 
@@ -708,30 +573,11 @@ git add plans/auto-test-log.md
 Again, no `plans/deferred-criteria.md` — its writer commits it.
 (Include in the final completion commit.)
 
-**On early abort** (user quits mid-test): save progress like findings exit so the next session can resume. If no criteria were tested this session, do not overwrite the file.
+**On early abort** (the run is interrupted): save progress like findings exit so the next session can resume. If no criteria were tested this session, do not overwrite the file.
 
-### Scope reduction (edge cases filed separately)
+### Scope reduction
 
-**Only a human may reduce scope.** The single trigger is an explicit instruction from the
-user to pass the remaining criteria or reduce scope. Nothing you conclude on your own
-qualifies — not "most criteria pass and the core fix works", and least of all "this criterion
-has failed across multiple fix cycles", which is evidence the fix does not work, not grounds
-to ship it. Repeated failure is a **failure**: take the findings exit and route back to the
-builder. Under `LV_UNATTENDED=1` there is no one to give the instruction, so scope is never
-reduced unattended.
-
-You are a haiku model holding `gh pr merge` over `release`, and every guard in `/lv-deploy`
-rests on `release` containing only validated work. A criterion you passed on your own judgment
-arrives there indistinguishable from one that was tested.
-
-With that explicit instruction, this is a pass, not a failure — use the "If all pass" exit path.
-
-When triggered:
-1. Mark the failing/untestable criteria as **skip** (not fail)
-2. **Use the "If all pass" exit** — create PR, merge to develop, mark complete
-3. After the plan completes, tell the user: "File the remaining edge case with `/lv-bug` so it gets its own plan."
-
-**When NOT to use:** The core behavior specified in the plan doesn't work — that's a real failure.
+**`/lv-test` never reduces scope.** Only a human may, by saying so, and that happens in `/lv-accept` — which files the edge case as a bug and ticks the criterion, so the record says who scoped it out and why. A criterion that has failed across several fix cycles is a failure, not grounds to ship: take the findings exit. You are a haiku model holding `gh pr merge` over `release`, and every guard in `/lv-deploy` rests on `release` containing only validated work.
 
 ---
 
@@ -751,9 +597,9 @@ CRIT
 |-|-|
 | `external` | The criterion is tagged `(external)` — needs a real third-party system, real credentials, or a physical act |
 | `soak` | The criterion is tagged `(soak)` — needs real elapsed calendar time |
-| `unbuilt` | The user skipped it because the prerequisite feature does not exist yet. Ask "Is this related to a specific plan? (e.g. PLN-022, or leave blank)" and pass it as `--prereq`; put what they said is missing in `--note` |
+| `unbuilt` | `/lv-accept` only: the human skipped it because the prerequisite feature does not exist yet. Ask "Is this related to a specific plan? (e.g. PLN-022, or leave blank)" and pass it as `--prereq`; put what they said is missing in `--note` |
 
-`external` and `soak` criteria are deferred **automatically at exit** (see [Manual criterion dispositions](#manual-criterion-dispositions)) — you do not walk a human through them. The `unbuilt` path is the one that needs the user's confirmation first.
+`external` and `soak` criteria are deferred **automatically at exit** (see [Manual criterion dispositions](#manual-criterion-dispositions)) — nobody walks a human through them. The `unbuilt` path is the one that needs a human's confirmation first, which is why only `/lv-accept` takes it.
 
 **The script commits what it wrote, both sides — do not name either path in a commit of your own.** A deferral is one state change with two halves: the DC row, and the `[x] … — deferred as DC-NNN` checkoff in `plan.md`. It used to write both and commit neither, and the exit pathspec below names `deferred-criteria.md` and never the plan's own `plan.md`, so across one 16-plan sweep six checkoffs stayed uncommitted on plans that had already reached `complete` — read from git those plans show the criterion as `[ ]`, which is the "silently dropped" reading the checkoff exists to remove (WFI-144).
 
@@ -920,7 +766,7 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    $PLAN_GOAL
    
    ## Test Results
-   All acceptance criteria passed in human test
+   All acceptance criteria passed — automated, and by a human where one was needed
    
    **Plan:** plans/$PLAN_NAME/
    
@@ -1053,12 +899,12 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    minutes with `GATES: 0`, deferred four `(external)` criteria, and then
    committed a human acceptance test that never occurred, on a plan whose own
    design rationale was "attended, no bypass" (WFI-229). The deferral path
-   itself is sanctioned; asserting a test into git history is not. Under
-   `LV_UNATTENDED=1`, use the wording that matches the route taken:
+   itself is sanctioned; asserting a test into git history is not. In both
+   modes, use the wording that matches the route taken:
 
    | What happened | Commit message |
    |-|-|
-   | A human worked the criteria | `test(PLN-NNN-<slug>): human test passed — complete` |
+   | A human accepted criteria in `/lv-accept` (rows with Notes `human (/lv-accept)`) | `test(PLN-NNN-<slug>): accepted by a human, automated half passed — complete` |
    | Every Manual criterion deferred `(external)` / `(soak)` | `test(PLN-NNN-<slug>): criteria automated or deferred, no human test — complete` |
    | Automated + Chrome-assisted only, no Manual criteria at all | `test(PLN-NNN-<slug>): automated criteria passed, none required a human — complete` |
 
@@ -1066,7 +912,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    criteria ran, deferred or were skipped goes into `progress.md` before step 7
    deletes `test-progress.md`. A completed plan with no such record leaves the
    next reader unable to tell an automated pass from an unworked one.
-   The gate is closed **here**, at the end, not when testing started. `/lv-attend` hands this plan over with the gate still open on purpose: while it is open the orchestrator will not dispatch anything at this plan, which is what keeps an unattended tester out of the worktree a human is using (WFI-070). Closing it is this skill's last act, and it is safe to run when no gate is open.
+   The `lv-gate-close.sh` line is normally a no-op: a plan that went through `accept:manual` had its gate closed by `/lv-accept` on the hand-back. It stays because a pre-split plan can still reach here with one open, and it is safe to run when no gate is open.
 
    **The order of these three lines is the contract — see [Order of exit](#order-of-exit).**
 5. Close linked bugs (if plan Goal has `**Bug:** BUG-NNN`):
@@ -1142,7 +988,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    ever carry one of the two (WFI-144).
 8. Display:
    ```
-   Human test passed
+   Acceptance passed
    PR created: [PR URL]  (or "No PR needed — already on release")
    Feature merged to develop
    Plan moved to complete
@@ -1155,7 +1001,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
 
 1. Write findings to `plans/PLN-NNN-<slug>/findings.md` on develop (from worktree, path is `../../plans/PLN-NNN-<slug>/findings.md`):
    ```markdown
-   ## Human Test — YYYY-MM-DD
+   ## Acceptance — YYYY-MM-DD
    
    - [ ] **Behavior**: Button doesn't respond on mobile
    - [ ] **Design**: Users expect different flow ← ESCALATED
@@ -1190,14 +1036,14 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    ```
    Both routes land on `draft` — `escalated` because the findings need design decisions, `active` because Opus reviews all findings before sending them to the builder. Only the commit message differs.
    - **`escalated`**, message `test(PLN-NNN-<slug>): escalated findings — needs replanning`, display "N escalated findings require design decisions. Run /lv-spec."
-   - **`active`**, message `test(PLN-NNN-<slug>): N findings from human test — routing to spec`, display "N findings written. Run /lv-spec to review and route to builder."
+   - **`active`**, message `test(PLN-NNN-<slug>): N findings from acceptance — routing to spec`, display "N findings written. Run /lv-spec to review and route to builder."
 
    ```bash
    scripts/lv-exec.sh lv-registry-update.sh PLN-NNN testing draft \
      --commit "<message from above>" \
      --add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md \
            plans/auto-test-log.md
-   scripts/lv-exec.sh lv-gate-close.sh PLN-NNN "manual test found N issue(s)" --only manual-test
+   scripts/lv-exec.sh lv-gate-close.sh PLN-NNN "acceptance found N issue(s)" --only manual-test
    scripts/lv-exec.sh lv-unclaim.sh PLN-NNN-<slug>
    ```
    Close the gate on this path too. A findings exit sends the plan to `draft`, and a `manual-test` gate left open there parks it in front of a planner who has nothing to answer.
@@ -1220,7 +1066,7 @@ The reverse order is a check-then-act race, and client-a ran it: an attended ses
 
 While the transition is uncommitted it does not exist to any other session; while the gate or claim is up, no worker can be dispatched regardless of what the registry says. Committing first means there is never an instant where the plan is both unguarded and stale.
 
-**One case needs the gate answered before the transition: the human's answer *is* the evidence.** `testing → complete` refuses while an `eyes:blocking` criterion is unchecked, has no PASS in `test-progress.md`, and its `manual-test` gate is unanswered. When the operator rules the plan complete *over* a FAIL — a spike whose failed criterion is the answer it was run to find — none of the first two can be written honestly; the gate's answer is the only record. Then, and only then, the order is:
+**One case needs the gate answered before the transition: the human's answer *is* the evidence.** It is rare since the accept split — a human's ruling on a criterion is normally made and recorded in `/lv-accept` (a scope-out ticks the box and files a bug) — but a pre-split plan, or an operator completing one by hand, can still reach it. `testing → complete` refuses while an `eyes:blocking` criterion is unchecked, has no PASS in `test-progress.md`, and its `manual-test` gate is unanswered. When the operator rules the plan complete *over* a FAIL — a spike whose failed criterion is the answer it was run to find — none of the first two can be written honestly; the gate's answer is the only record. Then, and only then, the order is:
 
 ```
 (claim still held)
@@ -1260,10 +1106,9 @@ If you hit an error and need to stop early, **destroy the container first** befo
 
 - **Do NOT** use `git add -A` or `git add .` — only stage specific files by name
 - **Do NOT** edit source code — only read the plan and write findings
-- **Do NOT** skip user input — let the user describe what they see
-- **Do NOT** break testing context — write findings immediately, never tell user to switch branches mid-test
-- **Accept natural language** — interpret user descriptions, don't force rigid prompts
-- Severity for human-test findings is either `Behavior` (code fix) or `ESCALATED` (design) — never Critical. Both route to lv-spec (draft) for Opus review.
+- **Do NOT** ask anyone to judge a criterion — that is `/lv-accept`'s, and it only exists for a plan you moved to `accept`
+- **Do NOT** break testing context — write findings immediately, never tell the user to switch branches mid-test
+- Severity for acceptance findings is either `Behavior` (code fix) or `ESCALATED` (design) — never Critical. Both route to lv-spec (draft) for Opus review.
 - Only one testing worktree at a time
 
 ## Notes
@@ -1292,8 +1137,8 @@ These are swept into the Levain library and fixed upstream, so one report fixes 
 ## Usage
 
 ```text
-/lv-test                   pick a plan in testing and walk its acceptance criteria
-/lv-test <PLN-ID>          walk that plan: headless Playwright checks every criterion it can,
-                           then you walk only what it left; the suite runs detached
-                           alongside (or is reused from verify's run on the same tree)
+/lv-test                   pick a plan in testing (accept:auto) and run its automated acceptance
+/lv-test <PLN-ID>          that plan: the suite (detached, or reused from verify's run on the
+                           same tree) and headless Playwright on every criterion it can; ships
+                           it when nothing is left, else moves it to accept:manual for /lv-accept
 ```

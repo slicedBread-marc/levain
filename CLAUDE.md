@@ -190,7 +190,8 @@ The workflow is designed to run across 4 terminal sessions, each with a dedicate
 | T1 | Intake | `/lv-tray`, `/lv-brainstorm`, `/lv-bug` | Sonnet |
 | T2 | Planner | `/lv-spec` | Opus |
 | T3 | Builder | `/lv-implement` | Sonnet |
-| T4 | Tester | `/lv-test` | Haiku |
+| T4 | Tester | `/lv-test` (accept:auto) | Haiku |
+| Operator | Acceptor | `/lv-accept` (accept:manual) | Sonnet |
 | Agent | Verifier | `lv-verify` (auto-triggered) | Sonnet |
 | Agent | Consistency | `lv-consistency` (auto-triggered on `ready` + Deps) | Sonnet |
 | Any | Claims | `/lv-claim` | Haiku |
@@ -249,8 +250,10 @@ Each client also gets a generated `WORKFLOW.md` at its project root (from `templ
 State is tracked in `plans/REGISTRY.md`, not by folder location:
 
 ```
-draft → ready → active → verify ──[agent]──→ testing → complete
-                  ↑          |
+draft → ready → active → verify ──[agent]──→ testing ─────────→ complete
+                  ↑          |                 GATE=true ↓  ↑ accepted
+                  |          |                        accept ──→ draft (findings)
+                  |          |
                   |          ├→ active  (fix cycle)
                   |          └→ draft   (escalation)
                   └→ draft  (implementer escalation)
@@ -262,7 +265,8 @@ draft → ready → active → verify ──[agent]──→ testing → complet
 | `ready` | Spec approved, waiting for builder | T3 (lv-implement) |
 | `active` | Being implemented or in fix cycle | T3 |
 | `verify` | Verify agent running automated checks | (automatic) |
-| `testing` | Passed automated checks, needs human test | T4 (lv-test) |
+| `testing` | `accept:auto` — suite and headless criteria, then ships | T4 (lv-test) |
+| `accept` | `accept:manual` — waiting on a human's eyes (`manual-test` gate open) | Operator (lv-accept) |
 | `complete` | Done | — |
 | `abandoned` | Dropped on purpose — terminal, but not successful | — |
 
@@ -280,7 +284,7 @@ Bugs move through: `bugs/open/` → `bugs/triaged/` → `bugs/closed/`
 
 4. **Verify agent** (automatic) — triggered by REGISTRY state change to `verify`. Checks code, spec completeness, and design soundness. Auto-routes: clean→`testing`, findings→`active`, escalated→`draft`.
 
-5. **T4 (Tester)** runs `/lv-test` — greps REGISTRY for `testing` state. Guides human through acceptance criteria. On pass, merges `release` in, runs `lv-post-merge-check.sh` (the **full suite** by default — `postMergeCheck:` in `levain.yml`) on the merged tree, and creates the PR to release. That check is the only thing between a semantic merge break and `release`: two plans green alone and red together used to be found by `/lv-deploy`, one 20-minute suite at a time, long after both plans were complete (client-a WFI-264).
+5. **T4 (Tester)** runs `/lv-test` — greps REGISTRY for `testing` state. Runs the suite and every criterion a machine can settle, asking no one (`accept:auto`). When `lv-manual-gate.sh` says a human is needed it moves the plan to `accept` and opens a `manual-test` gate; `/lv-accept` walks the operator through what is left and hands the plan back to `testing` (`accept:manual`). On pass, merges `release` in, runs `lv-post-merge-check.sh` (the **full suite** by default — `postMergeCheck:` in `levain.yml`) on the merged tree, and creates the PR to release. That check is the only thing between a semantic merge break and `release`: two plans green alone and red together used to be found by `/lv-deploy`, one 20-minute suite at a time, long after both plans were complete (client-a WFI-264).
 
 6. **Release** — `/lv-release` merges approved PRs into the release branch and runs E2E tests to validate staging.
 

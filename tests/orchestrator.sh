@@ -785,6 +785,22 @@ assert_eq "--json names the gate" "true" \
   "$(printf '%s' "$json" | grep -q '"name": "manual-test"' && echo true || echo false)"
 "$SCRIPT_DIR/lv-gate-close.sh" PLN-032 done >/dev/null 2>&1
 
+# --- drive-one, a plan already in accept (accept:manual) → exit 20, no worker
+# The state itself is the hold: nobody is dispatched to `accept`, even when
+# the gate that normally stands beside it has gone missing.
+registry_add_row PLN-070 parked accept
+: > "$TEST_DIR/stub-env.log"
+rc=0; orch PLN-070 >/dev/null 2>&1 || rc=$?
+assert_eq "drive-one exits 20 on an accept plan" "20" "$rc"
+assert_eq "…and dispatches no worker for it" "0" \
+  "$(grep -c 'artifact=PLN-070' "$TEST_DIR/stub-env.log" | xargs)"
+json=$(orch PLN-070 --json 2>/dev/null || true)
+assert_eq "--json points at /lv-accept" "true" \
+  "$(printf '%s' "$json" | grep -q 'lv-accept PLN-070' && echo true || echo false)"
+plan=$(orch --sweep --dry-run 2>/dev/null)
+assert_eq "a sweep never selects an accept plan" "false" \
+  "$(printf '%s' "$plan" | grep -q 'PLN-070' && echo true || echo false)"
+
 # --- drive-one, worker ran but changed nothing → exit 30
 registry_add_row PLN-033 stalled ready
 rc=0; STUB_MODE=noop orch PLN-033 >/dev/null 2>&1 || rc=$?

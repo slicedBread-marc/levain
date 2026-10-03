@@ -356,7 +356,7 @@ case "$node" in
       running)  row_running ;;
       gates|attn) row_gates ;;
       ideas)    row_ideas ;;
-      draft|ready|active|verify|testing|complete|rolled-back|abandoned)
+      draft|ready|active|verify|testing|accept|complete|rolled-back|abandoned)
                 row_state "$metric" ;;
       release)  row_promotable develop release ;;
       deploy)   row_promotable release main ;;

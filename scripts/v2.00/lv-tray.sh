@@ -185,21 +185,23 @@ gated_note() {
 }
 
 render_plans() {
-  local impl replan drafts verify testable briefs bugs ideas
+  local impl replan drafts verify testable acceptable briefs bugs ideas
   impl=$(run_list lv-list-implementable.sh)
   replan=$(run_list lv-list-replanning.sh)
   drafts=$(run_list lv-list-drafts.sh)
   verify=$(run_list lv-list-verify.sh)
   testable=$(run_list lv-list-testable.sh)
+  acceptable=$(run_list lv-list-acceptable.sh)
   briefs=$(run_list lv-list-briefs.sh)
   bugs=$(run_list lv-list-bugs.sh)
   ideas=$(run_list lv-list-brainstorms.sh)
 
   local s_replan="" s_fix="" s_build="" s_blocked="" s_progress=""
-  local s_verify="" s_test="" s_draft="" s_plan="" s_ideas="" s_bugs=""
+  local s_verify="" s_test="" s_accept="" s_draft="" s_plan="" s_ideas="" s_bugs=""
   # The first of each kind, for NEXT. `*_u` is the first URGENT one: urgency
   # decides who is named first within a level, never which level applies.
   local n_fix="" n_fix_u="" n_fix_n=0 n_replan="" n_test="" n_test_u=""
+  local n_accept="" n_accept_u=""
   local n_build="" n_build_u="" n_draft="" n_plan="" n_verify=""
   local n_progress="" n_blocked=""
   local type name goal prio extra f5 f6 unchecked esc detail
@@ -270,7 +272,7 @@ render_plans() {
   while IFS=$'\037' read -r name _wt _br goal prio f6; do
     [ -n "$name" ] || continue
     split_plan_name "$name"
-    detail="awaiting human acceptance test"
+    detail="automated acceptance (suite + headless criteria)"
     case "$f6" in blocked:*) detail="[blocked by ${f6#blocked:}]" ;; esac
     detail="$detail$(gated_note "$p_id")"
     if [ "$prio" = "urgent" ]; then
@@ -284,6 +286,26 @@ render_plans() {
     [ "$prio" = "urgent" ] && [ -z "$n_test_u" ] && n_test_u="$p_id"
   done <<< "$testable"
   s_test="$t_urgent$t_normal"
+
+  # accept:manual — what the automated half proved needs a person. A `legacy`
+  # row is a plan parked in testing on an open manual-test gate from before
+  # the accept state existed; /lv-accept moves it across on entry.
+  t_urgent=""; t_normal=""
+  local shape
+  while IFS=$'\037' read -r name _wt _br goal prio shape; do
+    [ -n "$name" ] || continue
+    split_plan_name "$name"
+    detail="awaiting human acceptance"
+    [ "$shape" = "legacy" ] && detail="$detail (testing + manual-test gate, pre-split)"
+    if [ "$prio" = "urgent" ]; then
+      t_urgent="$t_urgent$(item urgent "$p_id" "$p_slug" "$detail")"$'\n'
+    else
+      t_normal="$t_normal$(item - "$p_id" "$p_slug" "$detail")"$'\n'
+    fi
+    [ -n "$n_accept" ] || n_accept="$p_id"
+    [ "$prio" = "urgent" ] && [ -z "$n_accept_u" ] && n_accept_u="$p_id"
+  done <<< "$acceptable"
+  s_accept="$t_urgent$t_normal"
 
   # Ready to plan: briefs whose thinking concluded, and open bugs serious
   # enough to plan now. The rest of the bugs are listed under their own head.
@@ -374,7 +396,8 @@ render_plans() {
   section "blocked" "${s_blocked%$'\n'}"
   section "in progress — claimed by a session" "${s_progress%$'\n'}"
   section "verifying" "${s_verify%$'\n'}"
-  section "ready to test (/lv-test)" "${s_test%$'\n'}"
+  section "accept:auto — automated acceptance (/lv-test)" "${s_test%$'\n'}"
+  section "accept:manual — needs you (/lv-accept)" "${s_accept%$'\n'}"
   section "drafts (/lv-spec)" "${s_draft%$'\n'}"
   section "ready to plan (/lv-spec)" "${s_plan%$'\n'}"
   section "ideas — $brainstorms incomplete brainstorm(s) (/lv-brainstorm)" "${s_ideas%$'\n'}"
@@ -395,6 +418,10 @@ render_plans() {
     why="a gate only moves when a human answers it, and it holds up everything behind it"
     [ "$gates_stuck" -gt 0 ] && \
       why="$why. $gates_stuck stuck: those hit their attempt budget and need a human look, not another retry"
+  elif [ -n "$n_accept" ]; then
+    first="${n_accept_u:-$n_accept}"
+    next="Run /lv-accept $first — it is waiting on your eyes."
+    why="the automated half of acceptance is done, and what is left only a person can judge"
   elif [ "$daemon_raw" = "running" ] && \
        [ $((running_n + st_draft + st_ready + st_active + st_verify + st_testing)) -gt 0 ]; then
     next="Nothing needs you — the daemon is driving ($running_n worker(s) running). Check back."
@@ -408,8 +435,8 @@ render_plans() {
     why="escalated findings sent it back to draft; nothing else moves it"
   elif [ -n "$n_test" ]; then
     first="${n_test_u:-$n_test}"
-    next="Run /lv-test for human acceptance testing of $first."
-    why="it is built and verified, and only a human can accept it"
+    next="Run /lv-test for $first (accept:auto — the automated half of acceptance)."
+    why="it is built and verified; acceptance starts with the suite and every criterion a browser can drive"
   elif [ -n "$n_build" ]; then
     first="${n_build_u:-$n_build}"
     next="Run /lv-implement to start $first."
@@ -443,6 +470,7 @@ render_plans() {
   local urgent=""
   if { [ -n "$n_fix_u" ] && [ "$first" = "$n_fix_u" ]; } || \
      { [ -n "$n_test_u" ] && [ "$first" = "$n_test_u" ]; } || \
+     { [ -n "$n_accept_u" ] && [ "$first" = "$n_accept_u" ]; } || \
      { [ -n "$n_build_u" ] && [ "$first" = "$n_build_u" ]; }; then
     urgent="${RED}[URGENT]${R} "
   fi
@@ -551,7 +579,7 @@ render() {
   # because the copy that used to live here had already drifted: `rolled-back`
   # was added to the pipeline and never to the board, so a rolled-back plan was
   # in exactly the accounting hole WFI-009 describes.
-  local st_draft=0 st_ready=0 st_active=0 st_verify=0 st_testing=0
+  local st_draft=0 st_ready=0 st_active=0 st_verify=0 st_testing=0 st_accept=0
   local st_complete=0 st_rolled_back=0 st_abandoned=0
   if [ -f "$REGISTRY" ]; then
     local st n counts var
@@ -650,13 +678,13 @@ render() {
     [ "$release_field" -lt 0 ] 2>/dev/null && release_field="-"
     local deploy_field="$deploy_pending"
     [ "$deploy_field" -lt 0 ] 2>/dev/null && deploy_field="-"
-    printf 'daemon=%s\tenabled=%s\tspawns=%s/%s\trunning=%s\tgates=%s\tgates_stuck=%s\tgates_blocked=%s\tdraft=%s\tready=%s\tactive=%s\tverify=%s\ttesting=%s\tcomplete=%s\trolled_back=%s\tabandoned=%s\tregistry=%s\tattn=%s\trelease_pending=%s\tdeploy_pending=%s\tbrainstorms=%s\tbrainstorms_drift=%s\n' \
+    printf 'daemon=%s\tenabled=%s\tspawns=%s/%s\trunning=%s\tgates=%s\tgates_stuck=%s\tgates_blocked=%s\tdraft=%s\tready=%s\tactive=%s\tverify=%s\ttesting=%s\tcomplete=%s\trolled_back=%s\tabandoned=%s\tregistry=%s\tattn=%s\trelease_pending=%s\tdeploy_pending=%s\tbrainstorms=%s\tbrainstorms_drift=%s\taccept=%s\n' \
       "$daemon_raw" "$enabled" "$budget_used" "$budget_max" \
       "$running_n" "$gates_n" "$gates_stuck" "$gates_blocked" \
       "$st_draft" "$st_ready" "$st_active" "$st_verify" "$st_testing" \
       "$st_complete" "$st_rolled_back" "$st_abandoned" \
       "$registry_field" "$attn" "$release_field" "$deploy_field" \
-      "$brainstorms" "$brainstorms_drift"
+      "$brainstorms" "$brainstorms_drift" "$st_accept"
     return
   fi
 
@@ -759,7 +787,14 @@ render() {
     printf '  %-11s %s\n' "ready" "$st_ready"
     printf '  %-11s %s\n' "active" "$st_active"
     printf '  %-11s %s\n' "verify" "$st_verify"
-    printf '  %-11s %s\n' "testing" "$st_testing"
+    # One stage, two flavours (wf_state_label): the automated half and the
+    # human half of acceptance. Wider than the column — the label is the point.
+    printf '  %-11s %s\n' "$(wf_state_label testing)" "$st_testing"
+    if [ "$st_accept" -gt 0 ] 2>/dev/null; then
+      printf '  %s%-11s %s%s\n' "$YEL" "$(wf_state_label accept)" "$st_accept" "$R"
+    else
+      printf '  %-11s %s\n' "$(wf_state_label accept)" "$st_accept"
+    fi
     printf '  %s%-11s %s%s\n' "$DIM" "complete" "$st_complete" "$R"
     printf '  %s%-11s %s%s\n' "$DIM" "rolled-back" "$st_rolled_back" "$R"
     printf '  %s%-11s %s%s\n' "$DIM" "abandoned" "$st_abandoned" "$R"

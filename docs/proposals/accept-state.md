@@ -1,6 +1,8 @@
 # Proposal: an `accept` state for human acceptance
 
-**Status:** proposal, 2026-10-03. Nothing here is built.
+**Status:** built in workflow 15.0.0 (2026-10-03), phases 1 and 2 together. Where the build
+differs from what follows, the build won, and the paragraph says so. Tests: `tests/accept-state.sh`,
+plus the drive-one case in `tests/orchestrator.sh`.
 **Decided so far:** acceptance is one pipeline stage with two flavours, `accept:auto` and
 `accept:manual` (see [Naming](#naming-one-stage-two-flavours)). A new `/lv-accept` skill owns the
 manual flavour, and the `manual-test` gate stays alongside it.
@@ -163,12 +165,18 @@ unattended run, and that run is cheap: the suite comes back `pass (reused …)` 
 receipt (LVI-035). It also keeps `testing → complete` as the only path to `complete`, so the
 existing completion guard (`lv-registry-update.sh:496`) does not change.
 
-**The hand-back depends on provenance.** For it to settle, an unattended `/lv-test` has to count
-a PASS that a person recorded in `/lv-accept`. It must not count an eyes PASS that an unattended
-run gave itself, which LVI-033 says settles nothing. Today both arrive as a committed row in
-`test-progress.md`. So the row needs a source marker, written by `/lv-accept` and read by
-`wf_test_progress_passes`. Without it, the hand-back loops: `accept → testing → accept`. This is
-the riskiest part of the design, and it is the first thing to test.
+**The hand-back needs no provenance marker** (as built). The worry was that an unattended
+`/lv-test` could not tell a PASS a person recorded in `/lv-accept` from an eyes PASS it gave
+itself. It does not have to. LVI-033 already counts only *committed* PASS rows unattended, and an
+unattended run never commits a PASS on an eyes criterion of its own, so every committed eyes PASS
+is a human's. `/lv-accept` commits its rows before it hands back, and writes `human (/lv-accept)`
+in their Notes, but only for the record and the commit message; nothing parses it.
+
+**A scope-out must leave nothing to re-gate.** `lv-manual-gate.sh` ignores answered gates, so a
+criterion a person waived only in conversation would gate again on the hand-back. `/lv-accept`
+files the rest as a bug (`lv-bug-new.sh --source agent:lv-accept`), ticks the criterion in
+`plan.md` with `— SCOPED OUT by the operator (filed BUG-NNN)`, and records a SKIP row. `/lv-test`
+never reduces scope.
 
 **After a ship-time merge.** If merging `release` into the feature branch moves a
 `renderingSurfaces` path, the existing carry rule (LVI-006) stops the human PASS from carrying.
@@ -195,8 +203,9 @@ old shape of "in `accept`":
 
 - `/lv-accept`'s entry accepts that shape for one major version. It commits `testing → accept`
   first, then proceeds.
-- `lv-registry-audit.sh` lists every plan in that shape and offers the same transition. Per the
-  library's rules, it asks before it writes registry data.
+- `lv-registry-audit.sh` reports every plan in that shape as `PRE-SPLIT` (and an `accept` row
+  with no gate as `UNQUEUED`, a `manual-test` gate on any other state as `STRAY GATE`). It stays
+  report-only; the transition is `/lv-accept`'s.
 - The dispatcher already parks these plans on the open gate, so nothing changes for them until
   someone acts.
 
@@ -211,7 +220,7 @@ old shape of "in `accept`":
 | Surfaces | `lv-tray.sh` (one acceptance row split `auto` / `manual`), `lv-tray-drill.sh`, `lv-rack.sh`. All of them label through `wf_state_label` |
 | Parsers | `lv-orch-lib.sh` `wf_test_progress_passes` (provenance), `lv-manual-gate.sh` |
 | Skills | new `skills/lv-accept/`; `lv-test` (step 6, steps 5–7 removed, attended ending); `lv-attend` (`manual-test` → `/lv-accept`; the leave-it-open rule stays but is no longer what keeps the daemon off); `lv-tray`, `lv-help` |
-| Templates and docs | `templates/WORKFLOW*.md`, `docs/schema.md` (v7), `docs/orchestrator.md` (gates table, state map), `docs/guard-ordering.md`, root `CLAUDE.md` pipeline table and terminal roles |
+| Templates and docs | `templates/WORKFLOW*.md`, `docs/schema.md` (no schema bump — the plan document did not change), `docs/orchestrator.md` (gates table, state map), `docs/guard-ordering.md`, root `CLAUDE.md` pipeline table and terminal roles |
 | Tests | below |
 
 ## Test plan
@@ -242,14 +251,11 @@ old shape of "in `accept`":
 
 ## Open questions
 
-- **Provenance format.** Is it a column in `test-progress.md`'s table, or a marker in the Build
-  cell? The Build cell is already parsed for hex runs, so a column is safer. Either way it is a
-  `test-progress.md` format change, and the reader must accept rows that lack it.
-- **Model.** `/lv-test` is listed as Haiku. `/lv-accept` judges what a person reports and
-  classifies FAILs; Sonnet may be the better fit.
-- **Coordinator view.** `lv-rack` and the coordinator's board read client registries. They must
-  label through `wf_state_label`. Otherwise `accept` shows up across the portfolio as an unknown
-  state, and `testing` shows up under its old name.
+- ~~Provenance format~~ — not needed; see the hand-back above.
+- ~~Model~~ — `/lv-accept` runs on Sonnet.
+- ~~Coordinator view~~ — `lv-rack` reads the new `accept=` key from `lv-tray.sh --fields` (an
+  older client emits none, and 0 stands) and labels the rows `acc:auto` / `acc:man`, because its
+  label column is nine wide.
 - **A full rename, later?** If the labels prove their worth, storing `accept:auto` /
   `accept:manual` (with `:`, never `|`) would close the label-versus-value gap. It would be a
   separate major release with a registry migration that asks the operator before it rewrites

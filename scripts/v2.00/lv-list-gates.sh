@@ -109,13 +109,17 @@ gate_fit() {
     complete|abandoned) printf 'mismatch'; return 0 ;;
   esac
   case "$1" in
-    manual-test)                        want="testing" ;;
+    # The gate stands beside accept:manual — the row is what holds dispatch,
+    # the gate is what the queue reads. `testing` is the shape before the
+    # split (a plan parked in testing with the gate open), still a fit until
+    # /lv-accept or the audit moves it across.
+    manual-test)                        want="accept testing" ;;
     spec-approval|spec-stuck|scope-reduction) want="draft" ;;
     consistency-*)                      want="ready" ;;
     *)                                  printf 'ok'; return 0 ;;
   esac
   [ "$2" = "—" ] && { printf 'ok'; return 0; }
-  if [ "$2" = "$want" ]; then printf 'ok'; else printf 'mismatch'; fi
+  case " $want " in *" $2 "*) printf 'ok' ;; *) printf 'mismatch' ;; esac
 }
 
 # question_fit <gate-id> <fp-at-open> → current | stale

@@ -41,7 +41,8 @@ Three properties worth stating, because they're the reason it's cheap and safe:
 | `ready` with unchecked `Deps` | consistency | sonnet | Nothing else reads across plans |
 | `ready`, `active` | implement | sonnet | Bulk of the work |
 | `verify` | verify | sonnet | Already autonomous before this existed |
-| `testing` | test | haiku | Guided by the plan's criteria |
+| `testing` | test | haiku | `accept:auto` — the suite and the headless criteria; asks no one |
+| `accept` | — (blocked-on-human) | — | `accept:manual` — never dispatched; the operator runs `/lv-accept` |
 | — (`release` has commits `main` doesn't) | release | haiku | Merge/E2E, no judgment once authorized |
 | — (`main` has commits `release` doesn't) | deploy | haiku | Promotion, no judgment once authorized |
 
@@ -353,7 +354,7 @@ artifacts; `/lv-attend` drains the queue.
 | `spec-stuck` | The review blocked the plan for `maxReviewRounds` rounds running. Any mode — the fix loop is the same everywhere |
 | `scope-reduction` | A replan's amendment drops or qualifies a capability the plan's `## Goal` promises. Fires whatever the review verdict says: a reviewer judges whether a plan is sound, and a narrowing is very often sound engineering, but whether a capability the user asked for may be dropped is a product decision no verdict answers |
 | `consistency-migration` | A plan contradicts an **already-built** dependency — an amendment can't fix it |
-| `manual-test` | `lv-manual-gate.sh` says a human is needed: the diff touches a rendering surface **and** unresolved `(eyes:*)` criteria remain |
+| `manual-test` | `lv-manual-gate.sh` says a human is needed: the diff touches a rendering surface **and** unresolved `(eyes:*)` criteria remain. Opened beside `testing → accept`; answered by `/lv-accept`, which hands the plan back to `testing` to ship |
 | `goal-missing` | No concrete goal line; it's quoted in PRs and by the tester, so it isn't invented |
 | `migration` | Pending `MIGRATION-NOTES.md` actions for the plan |
 | `merge-failed` | `git push` was rejected |
@@ -547,7 +548,7 @@ saw no state change, and reported a stall while the real worker ran healthily be
 
 ### Known limitation: a soak-gated tail step blocks the whole plan
 
-`drive` treats a plan as one unit through `active → verify → testing → complete`.
+`drive` treats a plan as one unit through `active → verify → testing [→ accept → testing] → complete`.
 A `(soak)`-tagged *acceptance criterion* has a way out — `lv-defer-criterion.sh`
 lets the plan complete and release with the criterion tracked separately in
 `plans/deferred-criteria.md`. But a plan can also have a soak-gated

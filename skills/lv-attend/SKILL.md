@@ -244,14 +244,15 @@ Then **record in `findings.md` exactly what you edited after the stamp and why**
 
 ### `manual-test`
 
-Automated and Chrome-Assisted criteria already passed; what's left needs human eyes.
+The plan is in `accept:manual` (registry state `accept`): `/lv-test` ran the automated half, and what is left needs human eyes. The gate stands beside the state so it shows in this queue.
 
-1. Hand off to `/lv-test` for this plan — it owns the criteria walkthrough, findings, and PR creation. Do not run acceptance criteria yourself.
-2. **Leave the gate open.** `/lv-test` closes it on its own exit path, pass or fail.
+1. Hand off to `/lv-accept` for this plan — it owns the walk through what is left, findings, and the hand-back to `/lv-test`. Do not run acceptance criteria yourself.
+   A row whose state reads `testing` is the shape from before the accept state existed; `/lv-accept` moves it across on entry, so the handoff is the same.
+2. **Leave the gate open.** `/lv-accept` closes it on its own exit, after its transition, pass or fail.
 
-   Closing it here is what this row used to say, and it is a dispatch signal, not a bookkeeping one: an open gate is the only thing keeping the daemon off a plan a human is testing. client-a closed it on handoff and the daemon spawned an unattended tester onto the same worktree 92 seconds later (WFI-070). That worker destroyed the running container mid-session — `/lv-test`'s own cleanup rule, followed correctly — and overwrote `test-progress.md` with every criterion at `—`, discarding a completed 15/15 e2e run. The same race on the all-pass path merges the PR and removes the worktree out from under the human.
+   It is no longer the only thing keeping the daemon off a plan a human is testing — the `accept` row is, because no worker is ever dispatched at it. It used to be: client-a closed it on handoff and the daemon spawned an unattended tester onto the same worktree 92 seconds later (WFI-070), destroying the running container mid-session and overwriting a completed 15/15 run. Closing it early now only drops the plan out of this queue, which is still wrong, and on a legacy `testing` row it is still the WFI-070 race.
 
-   Say so plainly when you hand off: "The gate stays open until /lv-test finishes — that's what keeps the orchestrator off this plan."
+   Say so plainly when you hand off: "The gate stays open until /lv-accept finishes — the plan is yours to accept."
 
 ### `goal-missing`
 

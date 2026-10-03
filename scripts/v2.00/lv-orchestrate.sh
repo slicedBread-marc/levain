@@ -1274,6 +1274,15 @@ case "$mode" in
           active)         role="implement" ;;
           verify)         role="verify" ;;
           testing)        role="test" ;;
+          # accept:manual — a human's, by construction. No role is ever
+          # dispatched at it: the registry row, not the manual-test gate beside
+          # it, is what keeps a worker out of a container a person is testing
+          # in (WFI-070 was the gate being closed early and a tester spawning
+          # onto the human's worktree 92 seconds later).
+          accept)
+            gate_info=$(gate_line "$pln_id" || true)
+            [ -n "$gate_info" ] || gate_info=$(printf '%s\taccept\t-\tawaiting human acceptance — run /lv-accept %s\t-' "$pln_id" "$pln_id")
+            result="blocked-on-human"; break ;;
           complete)       result="done"; break ;;
           # Terminal like complete, but not successful. Dispatching a worker at
           # a plan someone deliberately dropped is the exact re-dispatch loop

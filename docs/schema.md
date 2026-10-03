@@ -43,6 +43,7 @@ All workflow artifacts (plans, bugs, briefs) carry a `schema_version` field in t
 - **Deferred criteria have a producer** — `plans/deferred-criteria.md` is written by `lv-defer-criterion.sh` when a plan completes with `external` / `soak` criteria outstanding. It was read by `lv-spec` step 1a in v5 but nothing ever created it. The script commits both halves of the deferral together — the DC row and the `[x] … — deferred as DC-NNN` checkoff in that plan's `plan.md` — because a caller's pathspec cannot name a path the script chose (WFI-144). A row is `open` until `--consume DC-NNN PLN-NNN` (a later plan adopted it) or `--satisfy DC-NNN --evidence "…"` (the real use happened and it is true, with no plan involved). Only `--consume` existed at first, so criteria that simply came true had no verb and stayed `open` forever — 40 of them in one project, including ones long since satisfied (WFI-148). Neither verb can fix what a row *says*, so `--amend DC-NNN --criterion "…"` corrects the text in place, keeping the ID that other plans already cite; without it a criterion found incomplete could only be hand-edited in a file that forbids hand-editing, or satisfied and re-deferred under a new number (WFI-158). Deferring text that matches an open row reuses that row rather than adding a second — two rows saying one thing are two work items that are one.
 - **Progress checklist is live** — `progress.md`'s `## Steps` checklist is ticked per step by `lv-progress-tick.sh` and read by `lv-progress-count.sh`. It is the pipeline's forward-progress signal; the orchestrator resets a plan's attempt budget when it climbs.
 - **Consistency section** — `plan.md` gains `## Consistency`, written by the cross-plan consistency pass for plans with declared `Deps`. Machine-owned, and excluded from the review/gate fingerprint for that reason (WFI-151).
+- **The accept state (workflow 15.0.0, no schema bump)** — `accept` is a stored registry state between `testing` and `complete`, entered only from `testing` and only when `lv-manual-gate.sh` says a human is needed (`GATE=true`, progress complete, not an express lane). Displays label the two halves of acceptance: `testing` shows as `accept:auto` (owned by `/lv-test`) and `accept` as `accept:manual` (owned by `/lv-accept`), through `wf_state_label` in `lv-states.sh`. Nothing in the plan document changed, so `schema_version` stays at 6. A legacy plan — `testing` with an open `manual-test` gate — is moved to `accept` by `/lv-accept` on entry and reported as `PRE-SPLIT` by `lv-registry-audit.sh`; no registry is rewritten. See [proposals/accept-state.md](proposals/accept-state.md).
 - **Express lane (workflow 14.22.0, no schema bump)** — a bug, brief or plan header may carry `> **Lane:** express (declared by <who>, <date>)`, and `plan.md` may gain `## Lane` (the eligibility verdict and its reasons) and `## Post-ship checklist` (eyes criteria shipped unseen). All three are written only by `lv-lane.sh` and `lv-bug-new.sh`, and all three are excluded from the review/gate fingerprint (LVI-025). See [autonomy.md](autonomy.md#the-express-lane-one-plan-no-human-gate).
 
 **Registry tracking (workflow v3.2.0, no schema bump).** Nothing in the plan document changed, so `schema_version` stays at 6. What changed is where the registry lives:
@@ -130,7 +131,8 @@ It is **checked, not declared**. Identity is the number, per the ID system above
 | `ready` | Spec approved, waiting for builder | T3 (lv-implement) |
 | `active` | Being implemented or in fix cycle | T3 |
 | `verify` | Verify agent running automated checks | (automatic) |
-| `testing` | Passed automated checks, needs human test | T4 (lv-test) |
+| `testing` | Passed automated checks; shown as `accept:auto` — suite and headless criteria | T4 (lv-test) |
+| `accept` | Shown as `accept:manual` — criteria only a human can judge, `manual-test` gate open | the operator (lv-accept) |
 | `complete` | Done | — |
 | `rolled-back` | Reverted | — |
 | `abandoned` | Dropped on purpose — terminal, not successful | — |
@@ -138,8 +140,10 @@ It is **checked, not declared**. Identity is the number, per the ID system above
 ### State machine
 
 ```
-draft → ready → active → verify ──[agent]──→ testing → complete
-                  ↑          |
+draft → ready → active → verify ──[agent]──→ testing ──────────────→ complete
+                  ↑          |                 │  ↑
+                  |          |      GATE=true  ↓  │ accepted by a human
+                  |          |              accept ──→ draft / active (findings)
                   |          ├→ active  (fix cycle)
                   |          └→ draft   (escalation)
                   └→ draft  (implementer escalation)
@@ -153,12 +157,13 @@ A dependency that is abandoned **will never be satisfied**. `lv-check-deps.sh` r
 
 **States are validated on write.** `lv-registry-update.sh` rejects any value outside the set above. It used to accept anything, so a typo — or a state someone invented under deadline — became a live value in the pipeline's single source of truth, unroutable by the orchestrator and permanently blocking to dependents. Use `lv-abandon.sh <ID> --reason "..."`, which records why in the plan's `progress.md`; the reason is the part that would otherwise be lost.
 
-**Two transitions carry preconditions, checked on write.** The registry is what every other skill trusts, so the two states that make a *claim about work someone else did* verify it rather than take the caller's word:
+**Some transitions carry preconditions, checked on write.** The registry is what every other skill trusts, so the two states that make a *claim about work someone else did* verify it rather than take the caller's word:
 
 | Transition | Refused when | Override |
 |-|-|-|
 | `draft → ready` | `plan.md` records no review verdict — `lv-review-status.sh` reports `REVIEW_LOCATION=none`, or the plan folder does not exist | `LV_ALLOW_UNREVIEWED=1` |
 | `draft → ready` | a `spec-approval` gate is open and unanswered | `LV_ALLOW_UNGATED=1` |
+| `testing → accept` | `lv-manual-gate.sh` gives no verdict, reports `PROGRESS_INCOMPLETE=true` or `LANE=express`, or says `GATE` is not `true` | `LV_ALLOW_ACCEPT=1` |
 | `testing → complete` | an unchecked `eyes:blocking` criterion with no PASS in `test-progress.md` and no answered `manual-test` gate | `LV_ALLOW_UNTESTED=1` |
 | `* → complete` | the Branch column names a branch that still exists and is an ancestor of none of `release`, `main`, `develop` (or their `origin/` counterparts) | `LV_ALLOW_UNMERGED=1` |
 

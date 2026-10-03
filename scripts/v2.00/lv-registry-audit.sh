@@ -32,6 +32,10 @@
 #      unless open findings explain it — that is the fix cycle, and it is noted
 #   7. Live worktree the Branch column does not name (the classifier's evidence
 #      and the filesystem disagree; client-a WFI-219/220/221/224)
+#   8. accept:manual and its manual-test gate out of step — an `accept` row with
+#      no gate (the /lv-attend queue cannot see it), a `testing` row waiting on
+#      a human through the gate alone (the shape before the accept state), or
+#      the gate on any other state (client-a WFI-082)
 #
 # Exit 0 when clean, 1 when anything was found. Reports only — it never edits
 # the registry, because every finding here has more than one correct repair and
@@ -214,6 +218,23 @@ while IFS=' ' read -r id slug state reg_branch; do
 
   wf_state_is_valid "$state" || \
     report "BAD STATE     $id is in state '$state', which is not a workflow state. The orchestrator hard-fails on it. Valid: $LV_STATES"
+
+  # ── 8. accept:manual ⇔ an open manual-test gate ─────────────────────────
+  #
+  # The row holds dispatch; the gate is what /lv-attend's queue reads and
+  # orders. Each without the other is a plan a human is owed and cannot find,
+  # or a question asked about a plan that has moved on.
+  mt_gate=$(wf_gate_field "$(wf_gate_file "$id" 2>/dev/null || true)" GATE_NAME 2>/dev/null || true)
+  if [ "$state" = "accept" ] && [ "$mt_gate" != "manual-test" ]; then
+    report "UNQUEUED      $id is 'accept' (accept:manual) with no open manual-test gate — /lv-attend will not show it."
+    detail "              /lv-accept $id still finds it. To queue it, reopen the gate with the criteria test-progress.md leaves open."
+  elif [ "$state" = "testing" ] && [ "$mt_gate" = "manual-test" ]; then
+    report "PRE-SPLIT     $id waits on a human in 'testing' through an open manual-test gate alone."
+    detail "              /lv-accept $id moves it to 'accept' on entry; or: lv-registry-update.sh $id testing accept"
+  elif [ "$mt_gate" = "manual-test" ] && [ "$state" != "accept" ]; then
+    report "STRAY GATE    $id has an open manual-test gate but is '$state' — nobody tests a plan in that state (client-a WFI-082)."
+    detail "              Close it with the reason once you have checked nothing is waiting on it: lv-gate-close.sh $id \"<why>\" --only manual-test"
+  fi
 
   # ── 7. A live worktree the registry does not name ──────────────────────
   #

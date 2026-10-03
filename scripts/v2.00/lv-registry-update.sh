@@ -51,7 +51,7 @@
 #   lv-registry-update.sh PLN-004 draft ready --note "scope settled against publish-guard"
 #   lv-registry-update.sh PLN-004 verify active --commit "verify(PLN-004): findings" --add plans/PLN-004-slug/findings.md
 #
-# GUARDS. Four transitions verify the claim they make rather than take the
+# GUARDS. Five transitions verify the claim they make rather than take the
 # caller's word for it. Each has its own override, and each override is a
 # sentence a human has to type:
 #
@@ -62,6 +62,12 @@
 #                                               no tick, no record, no gate
 #                                               (client-d WFI-009)
 #   * -> complete       LV_ALLOW_UNMERGED=1     branch merged nowhere (WFI-165)
+#   testing -> accept   LV_ALLOW_ACCEPT=1       nothing left that needs a human,
+#                                               or the tester's record is
+#                                               unfinished (LVI-040)
+#
+# And one shape rule with no override: `accept` is entered from `testing` only,
+# and left only for testing, active, draft or abandoned.
 #
 # Exit 0 on success, 1 on error.
 
@@ -375,6 +381,85 @@ if [ "$to_state" = "complete" ] && [ "${LV_ALLOW_UNGATED:-}" != "1" ]; then
   fi
 fi
 
+# --- Guard: `accept` is entered from `testing` and left for three places ---
+#
+# `accept` is the human half of acceptance (accept:manual), and it has exactly
+# one way in and three ways out. In: from `testing`, when the automated half is
+# finished and what is left needs a person. Out: back to `testing` on a pass, so
+# /lv-test takes its one ship exit (complete is reached from `testing` only —
+# the guard further down); to `active` or `draft` on findings; to `abandoned`.
+# Anything else is a plan skipping a half of acceptance it has not done.
+if [ "$to_state" = "accept" ] && [ "$from_state" != "testing" ]; then
+  echo "Error: refusing $plan_id '$from_state' -> 'accept' — accept is entered from 'testing' only." >&2
+  echo "       accept:manual is what the automated half (/lv-test) leaves for a human; a plan" >&2
+  echo "       that has not been through it has nothing settled for a human to build on." >&2
+  echo "       Nothing was changed." >&2
+  exit 1
+fi
+if [ "$from_state" = "accept" ]; then
+  case "$to_state" in
+    testing|active|draft|abandoned) ;;
+    *)
+      echo "Error: refusing $plan_id 'accept' -> '$to_state'." >&2
+      echo "       From accept a plan goes back to 'testing' on a pass (/lv-test ships it)," >&2
+      echo "       to 'active' or 'draft' on findings, or to 'abandoned'. Nothing was changed." >&2
+      exit 1
+      ;;
+  esac
+fi
+
+# --- Guard: accept:manual is for work no machine can do --------------------
+#
+# The risk in a human-owned state is that it fills with the automated half's
+# unfinished work. A client's LVI-040 is the shape: an unattended tester ran
+# none of six Chrome-Assisted criteria, reported a test-progress.md that never
+# existed, and asked a human about all of them. Under the split that tester
+# would have parked the plan where no worker is ever dispatched again, and the
+# work it skipped would have become a person's afternoon.
+#
+# So `testing -> accept` is not taken on the caller's word. lv-manual-gate.sh is
+# asked here, the same way the tester asked it, and the transition is refused
+# unless:
+#
+#   GATE='true'                a human is needed at all
+#   PROGRESS_INCOMPLETE=false  every Chrome-Assisted criterion has a run or a
+#                              recorded reason — no unfinished tester work
+#   LANE != express            a human declared this plan ships unseen; its open
+#                              eyes criteria go to the post-ship checklist via
+#                              `lv-lane.sh answer PLN manual-test`, not to a person
+#
+# A refusal leaves the plan in `testing`, where the next sweep re-dispatches the
+# tester — which is right, because what is missing is the tester's.
+#
+# LV_ALLOW_ACCEPT=1 overrides, for a human who wants a plan in front of them
+# regardless. It is never a worker's to type.
+if [ "$from_state" = "testing" ] && [ "$to_state" = "accept" ] && [ "${LV_ALLOW_ACCEPT:-}" != "1" ]; then
+  GATE=""
+  GATE_REASON=""
+  PROGRESS_INCOMPLETE=false
+  PROGRESS_MISSING=""
+  LANE=none
+  acc_out=$("$SELF_DIR/lv-manual-gate.sh" "$plan_id" 2>/dev/null) || acc_out=""
+  [ -n "$acc_out" ] && eval "$acc_out"
+  acc_why=""
+  if [ -z "$GATE" ]; then
+    acc_why="lv-manual-gate.sh gave no verdict for $plan_id, so nothing says a human is needed"
+  elif [ "${LANE:-none}" = "express" ]; then
+    acc_why="$plan_id is in the express lane — its open eyes criteria go to the post-ship checklist (lv-lane.sh answer $plan_id manual-test), not to a human"
+  elif [ "${PROGRESS_INCOMPLETE:-false}" = "true" ]; then
+    acc_why="the automated half is unfinished — no run or recorded reason for: ${PROGRESS_MISSING:-see lv-manual-gate.sh --explain}"
+  elif [ "$GATE" != "true" ]; then
+    acc_why="no human is needed (${GATE_REASON:-GATE=false}) — take the ship exit from testing"
+  fi
+  if [ -n "$acc_why" ]; then
+    echo "Error: refusing $plan_id 'testing' -> 'accept' — $acc_why." >&2
+    echo "       accept:manual holds only what no machine can settle (a client's LVI-040)." >&2
+    echo "       The plan stays in 'testing'. Check with: lv-manual-gate.sh $plan_id --explain" >&2
+    echo "       Nothing was changed. LV_ALLOW_ACCEPT=1 overrides (a human's call only)." >&2
+    exit 1
+  fi
+fi
+
 # --- Guard: a human test that nobody performed ---------------------------
 #
 # `testing -> complete` is the transition that asserts the human criteria were
@@ -497,6 +582,7 @@ if [ "$to_state" = "complete" ] && [ "$from_state" != "testing" ] && [ "${LV_ALL
   echo "Error: refusing $plan_id '$from_state' -> 'complete' — complete is only ever reached" >&2
   echo "       from 'testing' (WFI-003). A draft/ready/active plan has no shipped work to" >&2
   echo "       close over." >&2
+  [ "$from_state" = "accept" ] && echo "       From 'accept', hand the plan back to 'testing' — /lv-test takes the ship exit." >&2
   echo "       Nothing was changed. LV_ALLOW_UNMERGED=1 overrides for a plan completed by hand." >&2
   exit 1
 fi

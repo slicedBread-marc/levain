@@ -43,7 +43,7 @@ while IFS= read -r proj; do
 
   # Keep containers for plans still in progress
   case "$state" in
-    testing|verify|active) continue ;;
+    accept|testing|verify|active) continue ;;
   esac
 
   # Plan is complete/draft/missing — tear down

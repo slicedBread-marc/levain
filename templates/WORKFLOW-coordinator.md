@@ -66,7 +66,8 @@ draft → ready → active → verify ──[automatic]──→ testing → com
 | `ready` | Spec approved, waiting for a builder | the builder (`/lv-implement`) |
 | `active` | Being implemented, or in a fix cycle | the builder |
 | `verify` | Automated checks running | nobody — it's an agent |
-| `testing` | Passed automated checks, needs a human | the tester (`/lv-test`) |
+| `testing` | `accept:auto` — automated acceptance: the suite and headless criteria | the tester (`/lv-test`) |
+| `accept` | `accept:manual` — what is left needs a person | a human (`/lv-accept`); no worker is ever dispatched |
 | `complete` | Done | — |
 | `abandoned` | Dropped on purpose | — |
 
