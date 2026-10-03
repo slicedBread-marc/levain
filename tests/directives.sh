@@ -16,6 +16,8 @@
 #   9. A coordinator routes a directive through the target's own lv-exec.sh,
 #      recorded as coordinator:<slug>.
 #  10. Workers are told to load directives and the plan context.
+#  11. A parked production-push that lv-autonomy.sh now authorizes is withdrawn
+#      by the dispatcher — never approved — and one it still refuses stays.
 #
 # Usage: ./tests/directives.sh     Exit 0 if all pass, 1 on any failure.
 
@@ -210,6 +212,34 @@ for s in lv-spec lv-consistency; do
   grep -q 'lv-plan-context.sh' "$LIB_ROOT/skills/$s/SKILL.md" && ok "$s reads the plan context" || bad "$s reads the plan context"
 done
 grep -q 'GATE_PLAN_CONTEXT_STALE' "$LIB_ROOT/skills/lv-attend/SKILL.md" && ok "lv-attend checks a question's context" || bad "lv-attend checks a question's context"
+
+section "11. a push question policy now answers is withdrawn"
+Q="$TEST_DIR/push"
+mkdir -p "$Q/plans" "$Q/scripts" "$Q/.claude/orchestrator/gates/resolved"
+cd "$Q" || exit 1
+git init -q -b develop
+printf 'project_slug: "push"\norchestrator:\n  enabled: true\n  max_spawns_per_hour: 0\nprojectProfile:\n  tier: governed\n' > levain.yml
+printf '.claude/orchestrator/\n' > .gitignore
+cp "$P/scripts/lv-exec.sh" scripts/
+printf '# Plan Registry\n\n| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n\n<!-- Counter: 1 -->\n' > plans/REGISTRY.md
+git add -A >/dev/null; git commit -qm seed
+git branch main; git branch release
+"$S/lv-gate-open.sh" DEPLOY production-push "push main to origin?" >/dev/null 2>&1
+"$S/lv-orchestrate.sh" --sweep >/dev/null 2>&1
+assert_eq "governed with no grant: the question stays" "$([ -f .claude/orchestrator/gates/DEPLOY.gate ] && echo open || echo gone)" "open"
+printf 'project_slug: "push"\norchestrator:\n  enabled: true\n  max_spawns_per_hour: 0\nprojectProfile:\n  tier: pre-launch\n' > levain.yml
+out=$("$S/lv-orchestrate.sh" --sweep --dry-run 2>&1)
+has "a dry run says it would withdraw" "$out" "would WITHDRAW: production-push on DEPLOY"
+assert_eq "and does not" "$([ -f .claude/orchestrator/gates/DEPLOY.gate ] && echo open || echo gone)" "open"
+out=$("$S/lv-orchestrate.sh" --sweep 2>&1)
+assert_eq "pre-launch (LVI-036): withdrawn" "$([ -f .claude/orchestrator/gates/DEPLOY.gate ] && echo open || echo gone)" "gone"
+has "and the sweep says so" "$out" "withdrew production-push on DEPLOY"
+st=$("$S/lv-gate-status.sh" DEPLOY production-push 2>/dev/null)
+assert_eq "a withdrawal is not an answer" "$(field "$st" GATE_ANSWERED)" "false"
+assert_eq "it says it was withdrawn" "$(field "$st" GATE_WITHDRAWN)" "true"
+"$S/lv-promote-approval.sh" push --quiet >/dev/null 2>&1
+assert_eq "and no push approval can be read back from it" "$?" "1"
+assert_eq "the check spent no ceiling" "$(grep -c 'autonomy-use' .claude/orchestrator/events.log 2>/dev/null || true)" "0"
 
 echo
 echo "directives: $PASS passed, $FAIL failed"

@@ -847,6 +847,39 @@ withdraw_moot_approvals() {
   return 0
 }
 
+# ── A parked push question that policy now answers is withdrawn ───────────
+#
+# /lv-deploy step 14 parks `production-push` when lv-autonomy.sh refuses the
+# push. The refusal can lift underneath the open gate — a grant written, the
+# daily ceiling rolled over at UTC midnight, or LVI-036 making a pre-launch
+# push unattended by default — and the gate does not notice: dispatch() skips
+# DEPLOY while any gate is open, so the very run that would now push is never
+# started. Three clients on 14.43.0 sat with such gates after LVI-036
+# shipped, each one a question nobody needed to answer any more.
+#
+# The question is WITHDRAWN, never approved: nothing is recorded as a decision,
+# lv-promote-approval.sh still reads no approval, and the next /lv-deploy asks
+# lv-autonomy.sh for real at step 14 — so if the answer flips back before it
+# runs, the gate simply parks again. `--check` here spends no ceiling. Not
+# while a deploy worker is live: the gate it just opened is its own exit.
+withdraw_moot_push_gates() {
+  [ "$(open_gate_name DEPLOY)" = "production-push" ] || return 0
+  [ "$(role_running deploy)" -eq 0 ] || return 0
+  local why
+  why=$("$SELF_DIR/lv-autonomy.sh" production-push --check 2>&1 >/dev/null) || return 0
+  why=$(printf '%s' "$why" | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g; s/[[:space:]]*$//')
+  if $dry_run; then
+    echo "  would WITHDRAW: production-push on DEPLOY (${why:-authorized})"
+    return 0
+  fi
+  if "$SELF_DIR/lv-gate-close.sh" DEPLOY "withdrawn — the push no longer needs a human: ${why:-lv-autonomy.sh authorizes production-push}. The next /lv-deploy asks again at step 14." \
+       --only production-push --withdraw >/dev/null 2>&1; then
+    echo "$(wf_now)  withdrew production-push on DEPLOY — ${why:-authorized}"
+    skip_clear deploy DEPLOY
+  fi
+  return 0
+}
+
 # sweep() reports its count in SWEPT, not on stdout.
 #
 # It used to `printf '%s' "$spawned"` and be called as `n=$(sweep)`. Everything
@@ -878,6 +911,7 @@ sweep() {
   skip_clear "orchestrator" "—"
 
   withdraw_moot_approvals
+  withdraw_moot_push_gates
 
   for role in $SWEEP_ROLES; do
     cap=$(max_concurrent "$role")
