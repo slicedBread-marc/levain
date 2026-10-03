@@ -1355,10 +1355,19 @@ case "$mode" in
       # /lv-release. Reporting the posture is what lets exit 20 stay a hard
       # stop while still telling the caller where the ceiling actually is.
       # `unattended` is what needs no grant at all since coordinator WFI-006: release
-      # and deploy, minus whatever the project took back with attended_for.
+      # and deploy, minus whatever the project took back with attended_for — plus
+      # production-push while the project is pre-launch and not yet live_from
+      # (LVI-036, the same rule lv-autonomy.sh applies).
       auto_un=""
       auto_att=" $(wf_cfg_list orchestrator.autonomy.attended_for | tr '\n' ' ') "
-      for auto_a in release deploy; do
+      auto_cand="release deploy"
+      auto_live=$(wf_cfg projectProfile.live_from "")
+      case "$auto_live" in null|'~'|Null|NULL) auto_live="" ;; esac
+      if [ "$(wf_cfg projectProfile.tier "")" = pre-launch ] \
+         && { [ -z "$auto_live" ] || [ "$auto_live" \> "${LV_AUTONOMY_TODAY:-$(date -u +%Y-%m-%d)}" ]; }; then
+        auto_cand="$auto_cand production-push"
+      fi
+      for auto_a in $auto_cand; do
         case "$auto_att" in *" $auto_a "*) ;; *) auto_un="${auto_un:+$auto_un }$auto_a" ;; esac
       done
       printf '  "autonomy": { "mode": "%s", "unattended": "%s", "covers": "%s", "expires": "%s" },\n' \

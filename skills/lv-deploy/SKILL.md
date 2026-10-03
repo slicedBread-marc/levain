@@ -431,7 +431,9 @@ Before starting, confirm E2E passed on release:
     scripts/lv-exec.sh lv-autonomy.sh production-push
     ```
     Exit `0` — run `git push origin main` and say, in the completion message, what authorized it
-    — quote the script's line: a standing grant, or **the express lane**, which answers `0` when
+    — quote the script's line: a standing grant; **the pre-launch default**, which answers `0`
+    while `projectProfile.tier` is `pre-launch` and `projectProfile.live_from` is unset or still
+    ahead (LVI-036); or **the express lane**, which answers `0` when
     every code commit in `origin/main..main` belongs to a `complete` plan whose lane still holds,
     once per plan (`lv-lane.sh push-covered`, LVI-025). Anything else — print the manual
     instruction above and stop.
@@ -531,7 +533,7 @@ Set when `LV_UNATTENDED=1` — the daemon dispatched this run against the fixed 
 - **Step 14, unattended — the push.** Ask, in this order, and stop at the first `0`:
   ```bash
   scripts/lv-exec.sh lv-promote-approval.sh push      # a human approved THIS main tip at the gate
-  scripts/lv-exec.sh lv-autonomy.sh production-push   # a standing grant, or the express lane
+  scripts/lv-exec.sh lv-autonomy.sh production-push   # a standing grant, pre-launch (LVI-036), or the express lane
   ```
   Either `0` → `git push origin main` from `release-branches/main`, and say in the completion
   message which one authorized it (quote the script's line). `lv-promote-approval.sh push` also

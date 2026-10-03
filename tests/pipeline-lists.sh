@@ -219,14 +219,16 @@ prof 'projectProfile:
 production_url: "https://example.test"
 manualTestGate:
   blockOnCosmetic: false
-orchestrator:
-  autonomy:
-    mode: standing
-    standing_for:
-      - release
-      - deploy
 '
-has "pre-launch with a production URL wants production-push granted" "$("$SD/lv-profile.sh" --check 2>&1)" "missing 'production-push'"
+assert_eq "pre-launch with a production URL needs no grant (LVI-036)" "0" "$(rc "$SD/lv-profile.sh" --check)"
+prof 'projectProfile:
+  tier: pre-launch
+  live_from: 2026-10-01
+manualTestGate:
+  blockOnCosmetic: false
+'
+has "pre-launch past its live_from is drift"           "$(LV_AUTONOMY_TODAY=2026-10-02 "$SD/lv-profile.sh" --check 2>&1)" "live_from 2026-10-01 has passed"
+assert_eq "a future live_from is not"                  "0" "$(LV_AUTONOMY_TODAY=2026-09-30 rc "$SD/lv-profile.sh" --check)"
 prof 'projectProfile:
   tier: pre-launch
 manualTestGate:

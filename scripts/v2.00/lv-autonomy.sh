@@ -162,6 +162,36 @@ DEFAULT_UNATTENDED="release deploy"
 cfg_attended_for=$(wf_cfg_list orchestrator.autonomy.attended_for | tr '\n' ' ')
 cfg_max_unattended=$(wf_cfg orchestrator.autonomy.max_unattended_per_day 12)
 
+# ── Pre-launch: production-push unattended until the project goes live (LVI-036) ──
+#
+# The one place projectProfile is read as a switch. A project declared
+# `tier: pre-launch` pushes to production by default, bounded by
+# max_unattended_per_day like the two defaults above, for as long as
+# `projectProfile.live_from` is unset or still in the future. From live_from on
+# it behaves as governed: production-push needs a standing grant, the express
+# lane, or a human at its gate.
+#
+# Why a date, when docs/project-profile.md argues against one: the thing it
+# replaced was worse. Unattended pushes for a pre-launch project used to need a
+# standing grant, and a grant must expire — so one client started parking
+# production-push gates on 2026-10-01 while its reason (no users) was still
+# true, and the one live site in the portfolio held a pre-launch grant to
+# December. A grant lapses on a calendar date unrelated to whether users
+# arrived. live_from is the go-live fact itself, set on purpose, and setting it
+# only ever tightens — so an agent may set it, and only a human may clear it.
+#
+# `production-push` under attended_for opts a pre-launch project out of this.
+cfg_tier=$(wf_cfg projectProfile.tier "")
+cfg_live_from=$(wf_cfg projectProfile.live_from "")
+case "$cfg_live_from" in null|'~'|Null|NULL) cfg_live_from="" ;; esac
+
+prelaunch_push=false
+if [ "$cfg_tier" = "pre-launch" ] \
+   && { [ -z "$cfg_live_from" ] || [ "$cfg_live_from" \> "$today" ]; } \
+   && ! in_list production-push "$cfg_attended_for"; then
+  prelaunch_push=true
+fi
+
 # ── --list ─────────────────────────────────────────────────────────────────
 if [ "$mode" = "list" ]; then
   cat <<EOF
@@ -210,10 +240,17 @@ for a in $cfg_for; do
   fi
 done
 
+# production-push is accepted whatever the tier: it opts a pre-launch project
+# out of the default above, and stays harmless once the project goes live.
+# Reporting it then would turn a project's go-live into a malformed grant.
 for a in $cfg_attended_for; do
-  in_list "$a" "$DEFAULT_UNATTENDED" \
-    || note "attended_for lists '$a' — only '$DEFAULT_UNATTENDED' run unattended by default, so it changes nothing"
+  in_list "$a" "$DEFAULT_UNATTENDED production-push" \
+    || note "attended_for lists '$a' — only '$DEFAULT_UNATTENDED' (and production-push while pre-launch) run unattended by default, so it changes nothing"
 done
+
+if [ -n "$cfg_live_from" ] && ! printf '%s' "$cfg_live_from" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+  note "projectProfile.live_from is '$cfg_live_from' — it must be YYYY-MM-DD, or absent while there are no users"
+fi
 
 if [ "$cfg_mode" = "standing" ]; then
   [ -n "$cfg_by" ]  || note "mode is 'standing' but granted_by is empty — a grant needs an author"
@@ -243,6 +280,15 @@ if [ "$mode" = "show" ]; then
     echo "covers:         ${cfg_for:-—}"
     echo "ceiling:        $cfg_max/day for EACH action above, counted separately"
   fi
+  if [ "$cfg_tier" = "pre-launch" ]; then
+    if $prelaunch_push; then
+      echo "pre-launch:     production-push unattended by default until ${cfg_live_from:-live_from is set} (LVI-036)"
+    elif [ -n "$cfg_live_from" ] && ! [ "$cfg_live_from" \> "$today" ]; then
+      echo "pre-launch:     live since $cfg_live_from — production-push is attended, as governed   ← set tier: governed"
+    else
+      echo "pre-launch:     production-push taken back under attended_for"
+    fi
+  fi
   echo "never grantable: $NEVER"
   if [ -n "$problems" ]; then
     echo
@@ -253,6 +299,8 @@ if [ "$mode" = "show" ]; then
   echo
   if [ "$cfg_mode" = "standing" ]; then
     echo "Coherent. Every action above is read by a script."
+  elif $prelaunch_push; then
+    echo "Attended, but pre-launch: release, deploy and production-push run unattended by default."
   else
     echo "Attended: production-push stops for a human. release and deploy run unattended by default (WFI-006)."
   fi
@@ -294,8 +342,12 @@ refuse() {
 }
 
 by_default=false
+default_why="unattended since WFI-006"
 if in_list "$action" "$DEFAULT_UNATTENDED" && ! in_list "$action" "$cfg_attended_for"; then
   by_default=true
+elif [ "$action" = production-push ] && $prelaunch_push; then
+  by_default=true
+  default_why="pre-launch, ${cfg_live_from:+not live until $cfg_live_from}${cfg_live_from:-no live_from}, LVI-036"
 fi
 
 # ── The express lane: a per-plan production push (LVI-025) ─────────────────
@@ -394,9 +446,9 @@ if $by_default; then
   fi
   if $record; then
     wf_event autonomy-use "${artifact:-—}" \
-      "$action authorized by default (unattended since WFI-006) — $((used + 1))/$cfg_max_unattended $action today"
+      "$action authorized by default ($default_why) — $((used + 1))/$cfg_max_unattended $action today"
   fi
-  say "$action authorized — unattended by default ($((used + 1))/$cfg_max_unattended $action today)."
+  say "$action authorized — unattended by default ($default_why; $((used + 1))/$cfg_max_unattended $action today)."
   exit 0
 fi
 

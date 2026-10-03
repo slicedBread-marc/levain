@@ -58,8 +58,14 @@ orchestrator:
     max_unattended_per_day: 12   # per action, default 12
 ```
 
-- `attended_for` accepts only `release` and `deploy`; anything else is reported by
-  `--show` as changing nothing.
+- `attended_for` accepts `release`, `deploy` and `production-push`; anything else is
+  reported by `--show` as changing nothing.
+- **A pre-launch project's `production-push` is unattended by default too** (LVI-036):
+  while `projectProfile.tier` is `pre-launch` and `projectProfile.live_from` is unset or in
+  the future, `lv-autonomy.sh production-push` answers 0 with no grant, logs *authorized by
+  default (pre-launch, …)*, and counts against `max_unattended_per_day`. From `live_from` on
+  the push needs a grant, the express lane, or a person, as below. `production-push` under
+  `attended_for` opts out. See `docs/project-profile.md` → Going live.
 - `max_unattended_per_day` bounds the default the way `max_per_day` bounds a grant: a role
   dispatching in a loop is still stopped, per action, per UTC day.
 - A standing grant still works as before for anything listed under `attended_for`, and is

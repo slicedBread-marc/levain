@@ -4459,6 +4459,48 @@ assert_eq "and neither wrote anything to the event log" "false" \
 assert_ok "so the real question still has its whole budget" \
   env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 
+# LVI-036: a pre-launch project pushes to production unattended until
+# projectProfile.live_from, with no grant to renew — and from live_from on the
+# push is attended, as governed. A client's grant lapsed on a calendar date
+# while it still had no users; this is the fact-triggered replacement.
+AP() { env LV_AUTONOMY_TODAY=2026-10-02 "$SCRIPT_DIR/lv-autonomy.sh" "$@"; }
+rm -f .claude/orchestrator/events.log
+printf 'projectProfile:\n  tier: pre-launch\n' > levain.yml
+assert_ok "pre-launch with no live_from: production-push is authorized by default" \
+  AP production-push --quiet
+assert_eq "and the log says which default, so a push can be traced to it" "true" \
+  "$(grep 'autonomy-use' .claude/orchestrator/events.log \
+     | grep -q 'production-push authorized by default (pre-launch, no live_from' && echo true || echo false)"
+printf 'projectProfile:\n  tier: pre-launch\n  live_from: null\n' > levain.yml
+assert_ok "live_from: null reads as not set" AP production-push --check --quiet
+printf 'projectProfile:\n  tier: pre-launch\n  live_from: 2026-10-20\n' > levain.yml
+assert_ok "a go-live announced in advance still pushes until the day" \
+  AP production-push --check --quiet
+printf 'projectProfile:\n  tier: pre-launch\n  live_from: 2026-10-02\n' > levain.yml
+assert_eq "on live_from itself the push is attended — exit 1" "1" \
+  "$(AP production-push --check --quiet; echo $?)"
+LIVE_SHOW=$(AP --show 2>&1 || true)
+assert_eq "and --show says the tier is out of date" "true" \
+  "$(printf '%s' "$LIVE_SHOW" | grep -q 'set tier: governed' && echo true || echo false)"
+printf 'projectProfile:\n  tier: governed\n' > levain.yml
+assert_eq "governed: no default push" "1" "$(AP production-push --check --quiet; echo $?)"
+printf 'projectProfile:\n  tier: pre-launch\norchestrator:\n  autonomy:\n    attended_for:\n      - production-push\n' > levain.yml
+assert_eq "attended_for: production-push takes the push back" "1" \
+  "$(AP production-push --check --quiet; echo $?)"
+printf 'projectProfile:\n  tier: governed\norchestrator:\n  autonomy:\n    attended_for:\n      - production-push\n' > levain.yml
+assert_ok "and stays coherent once the project is governed — going live is not a malformed grant" \
+  AP --show
+printf 'projectProfile:\n  tier: pre-launch\n  live_from: soon\n' > levain.yml
+assert_eq "a live_from that is not a date is malformed — exit 2" "2" \
+  "$(AP production-push --check --quiet; echo $?)"
+rm -f .claude/orchestrator/events.log
+printf 'projectProfile:\n  tier: pre-launch\norchestrator:\n  autonomy:\n    max_unattended_per_day: 1\n' > levain.yml
+# The ceiling counts today's log lines by their real UTC date, so this one asks
+# on the real date rather than AP's fixed one.
+env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" production-push --quiet >/dev/null 2>&1
+assert_eq "the pre-launch push is bounded by max_unattended_per_day" "1" \
+  "$(env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" production-push --quiet; echo $?)"
+
 [ -n "$AUTONOMY_CFG_BACKUP" ] && printf '%s\n' "$AUTONOMY_CFG_BACKUP" > levain.yml
 rm -f .claude/orchestrator/events.log
 

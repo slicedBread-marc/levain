@@ -7,8 +7,9 @@
 #
 # This script is READ-ONLY. It never writes levain.yml. The tier is
 # a recorded stance — the reason specApproval.mode, manualTestGate, and
-# orchestrator.autonomy are set the way they are — not a runtime switch
-# anything else in the pipeline consults. Applying a tier (or a tier change)
+# orchestrator.autonomy are set the way they are — and a runtime switch in
+# exactly one place: lv-autonomy.sh lets a pre-launch project push to
+# production unattended until projectProfile.live_from (LVI-036). Applying a tier (or a tier change)
 # to those knobs is a deliberate edit, same as any other config change; ask
 # Claude to "apply the <tier> profile" and it edits them by hand, the same
 # way a human would, with the rationale comments intact.
@@ -30,6 +31,9 @@ tier=$(wf_cfg projectProfile.tier "")
 reason=$(wf_cfg projectProfile.reason "")
 set_by=$(wf_cfg projectProfile.set_by "")
 set_on=$(wf_cfg projectProfile.set_on "")
+live_from=$(wf_cfg projectProfile.live_from "")
+case "$live_from" in null|'~'|Null|NULL) live_from="" ;; esac
+today="${LV_AUTONOMY_TODAY:-$(date -u +%Y-%m-%d)}"
 
 if [ -z "$tier" ]; then
   echo "No projectProfile declared in levain.yml." >&2
@@ -42,6 +46,7 @@ case "$mode" in
     echo "tier:   $tier"
     echo "reason: ${reason:-(none recorded)}"
     echo "set by: ${set_by:-?} on ${set_on:-?}"
+    echo "live:   ${live_from:-(not set — no real users)}"
     ;;
 
   --check)
@@ -56,8 +61,6 @@ case "$mode" in
 
     spec_mode=$(wf_cfg specApproval.mode verdict)
     block_cosmetic=$(wf_cfg manualTestGate.blockOnCosmetic true)
-    autonomy_mode=$(wf_cfg orchestrator.autonomy.mode attended)
-    production_url=$(wf_cfg production_url "")
     standing_for=$(wf_cfg_list orchestrator.autonomy.standing_for 2>/dev/null | tr '\n' ',' | sed 's/,$//')
 
     drift=0
@@ -77,23 +80,18 @@ case "$mode" in
       drift=1
     fi
 
-    # A pre-launch project with a real production_url has somewhere to push
-    # to — the recommendation table says "standing, through production-push".
-    # A blank production_url (client-i, client-b) means there is nothing
-    # to be autonomous about yet, so this check stays silent rather than
-    # demanding a grant for a push path that doesn't exist.
-    if [ "$tier" = "pre-launch" ] && [ -n "$production_url" ]; then
-      if [ "$autonomy_mode" != "standing" ]; then
-        echo "DRIFT orchestrator.autonomy.mode: ${autonomy_mode:-(unset)} (tier '$tier' with production_url set recommends standing, through production-push)"
-        drift=1
-      else
-        for want_action in release deploy production-push; do
-          if ! printf '%s' "$standing_for" | tr ',' '\n' | grep -qx "$want_action"; then
-            echo "DRIFT orchestrator.autonomy.standing_for is missing '$want_action' (tier '$tier' with production_url set recommends release, deploy, production-push)"
-            drift=1
-          fi
-        done
-      fi
+    # A pre-launch project no longer needs a standing grant to push: since
+    # LVI-036 lv-autonomy.sh authorizes production-push by default until
+    # live_from. What drifts now is the date itself — a pre-launch tier whose
+    # live_from has passed is a live project still described as having no
+    # users. The push is already attended (lv-autonomy.sh stops the default on
+    # live_from), but every other knob the tier recommends is still loose.
+    if [ -n "$live_from" ] && ! printf '%s' "$live_from" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+      echo "DRIFT projectProfile.live_from: '$live_from' is not YYYY-MM-DD — lv-autonomy.sh refuses every action until it is"
+      drift=1
+    elif [ "$tier" = "pre-launch" ] && [ -n "$live_from" ] && ! [ "$live_from" \> "$today" ]; then
+      echo "DRIFT projectProfile.tier: pre-launch, but live_from $live_from has passed — the project is live; set tier: governed and apply its knobs"
+      drift=1
     fi
 
     [ "$drift" -eq 0 ] && echo "OK — '$tier' tier, no drift ($set_by, $set_on)"

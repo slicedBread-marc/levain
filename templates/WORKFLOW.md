@@ -167,7 +167,9 @@ leaves the machine — a wrong local `main` is undone with `git reset`. A projec
 either gate back by listing it under `orchestrator.autonomy.attended_for`, and then the
 worker opens a `release-approval`/`deploy-approval` gate and stops. `production-push` is
 the step that reaches users: it still needs a standing grant (`covers`) or a person, and
-the sweep never dispatches it.
+the sweep never dispatches it — unless `projectProfile.tier` is `pre-launch` and
+`projectProfile.live_from` is unset or still ahead, when it too runs unattended and
+`unattended` lists it. Setting `live_from` is how a project goes live.
 
 It is a **ceiling report, not a permission**. Exit 20 is still a hard stop whatever it
 says: the field exists so a caller can tell "nobody has authorized anything here" from
