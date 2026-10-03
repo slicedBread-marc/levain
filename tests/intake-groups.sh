@@ -18,6 +18,10 @@
 #      seals it with --project.
 #   9. dissolve releases members; list --stale finds a forgotten group.
 #  10. The skills say how.
+#  11. A bug grouped after its spec run was dispatched (LVI-026): the run
+#      stands down at lv-plan-id.sh (exit 4) or lv-bug-consume.sh (exit 3);
+#      a plan already drafted is held; seal --lead may name a member whose
+#      plan is still in spec, and the rest amend it together.
 #
 # Usage: ./tests/intake-groups.sh     Exit 0 if all pass, 1 on any failure.
 
@@ -206,6 +210,54 @@ has "committed in the target" "$(git log -1 --format=%s)" "bug-group(coord-batch
 assert_eq "a worker in the coordinator is refused" "$?" "6"
 "$S/lv-bug-group.sh" --project proj open x "y" >/dev/null 2>&1
 assert_eq "--project from a project that is not a coordinator is refused" "$?" "6"
+
+section "11. grouped after its spec run was dispatched (LVI-026)"
+bug BUG-070 raced
+bug BUG-071 drafted-first
+bug BUG-072 lead-in-spec triaged "_(none)_" PLN-072-lead-in-spec
+bug BUG-073 amends-lead
+for p in 071-drafted-first 072-lead-in-spec; do
+  mkdir -p "plans/PLN-$p"; printf '# PLN-%s\n\n## Goal\n> **Bug:** BUG-%s\nx\n' "$p" "${p%%-*}" > "plans/PLN-$p/plan.md"
+done
+awk '/^<!-- Counter/ { print "| PLN-071 | drafted-first | draft | — | — | 2026-10-02 | 2.00 | — | — |"; print "| PLN-072 | lead-in-spec | draft | — | — | 2026-10-02 | 2.00 | — | — |"; print ""; } { print }' \
+  plans/REGISTRY.md | awk 'NF || !blank { print } { blank = !NF }' > plans/REGISTRY.tmp && mv plans/REGISTRY.tmp plans/REGISTRY.md
+git add -A >/dev/null; git commit -qm "race seed"
+sleep 300 & holder=$!
+"$S/lv-claim.sh" BUG-070 --pid "$holder" >/dev/null 2>&1
+out=$(G add race BUG-070 BUG-071 BUG-072 BUG-073 --create "BUG-072 leads; the rest amend it" 2>&1); rc=$?
+assert_eq "add a bug a spec run has claimed" "$rc" "0"
+has "add says a spec run holds it and where it stands down" "$out" "BUG-070: a spec run holds its claim"
+has "a plan drafted from an open member is held" "$out" "BUG-071: PLN-071 (draft) held"
+pid_out=$("$S/lv-plan-id.sh" BUG-070 2>/dev/null); rc=$?
+assert_eq "lv-plan-id.sh refuses an Open group's member" "$rc" "4"
+has "with PLAN_ID empty" "$pid_out" "PLAN_ID=''"
+has "and the reason" "$pid_out" "PLAN_ID_HELD='in intake group race, still Open"
+"$S/lv-plan-id.sh" BUG-070 --peek >/dev/null 2>&1
+assert_eq "--peek still answers" "$?" "0"
+"$S/lv-bug-consume.sh" BUG-071 PLN-071-drafted-first >/dev/null 2>&1
+assert_eq "lv-bug-consume.sh refuses an Open group's member" "$?" "3"
+assert_eq "and nothing moved" "$([ -d bugs/open/BUG-071-drafted-first ] && echo open)" "open"
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+"$S/lv-unclaim.sh" BUG-070 >/dev/null 2>&1 || true
+
+G seal race --lead BUG-041 >/dev/null 2>&1
+assert_eq "--lead naming a non-member is refused" "$?" "1"
+out=$(G seal race --lead BUG-072 2>&1); rc=$?
+assert_eq "--lead may name a member whose plan is still in spec" "$rc" "0"
+has "and says the rest amend it" "$out" "lead BUG-072 is PLN-072 (draft, held); /lv-spec amends it with BUG-070, BUG-071, BUG-073"
+has "the lead plan stays held" "$("$S/lv-direct.sh" status PLN-072)" "DIRECTIVE_HOLD='D-"
+assert_eq "the other members' plans are released" "$("$S/lv-direct.sh" status PLN-071 | grep DIRECTIVE_HOLD)" "DIRECTIVE_HOLD=''"
+has "the group names its lead plan" "$(cat bugs/groups/race.md)" "> **Lead plan:** PLN-072"
+has "the lowest open member carries the rest as an amendment" "$(row BUG-070)" "GROUP(race) lead BUG-072 is PLN-072 draft: amend it with this +BUG-071,BUG-073"
+assert_eq "the others are not offered alone" "$(row BUG-073)" ""
+has "and say who carries them" "$(spec_err)" "carried with BUG-070, amending PLN-072"
+"$S/lv-plan-id.sh" BUG-073 >/dev/null 2>&1
+assert_eq "a member is not drafted as a plan of its own while the lead plan is in spec" "$?" "4"
+for b in 070-raced 071-drafted-first 073-amends-lead; do git mv "bugs/open/BUG-$b" "bugs/closed/BUG-$b"; done
+git commit -qm "members amend PLN-072"
+LV_UNATTENDED=1 G consume race PLN-072 >/dev/null 2>&1
+assert_eq "a worker consumes the group" "$?" "0"
+assert_eq "and consume releases the lead plan's hold" "$("$S/lv-direct.sh" status PLN-072 | grep DIRECTIVE_HOLD)" "DIRECTIVE_HOLD=''"
 
 section "10. the skills say how"
 grep -q 'lv-bug-group.sh' "$LIB_ROOT/skills/lv-spec/SKILL.md" && ok "lv-spec consumes a sealed group" || bad "lv-spec consumes a sealed group"

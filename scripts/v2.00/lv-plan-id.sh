@@ -81,7 +81,8 @@
 # PLAN_ID names the number to keep using. Read PLAN_ID, never the source's own
 # number, when creating or committing anything.
 #
-# Exit 0 on success, 1 on bad usage or an unusable registry.
+# Exit 0 on success, 1 on bad usage or an unusable registry, 4 when the source
+# bug's intake group withholds it (PLAN_ID empty, PLAN_ID_HELD says why).
 
 set -euo pipefail
 
@@ -150,6 +151,21 @@ wf_claim_follow() {
 if   [[ "$prefix" =~ ^($LV_PLN_RE)$ ]]; then src_re="$LV_PLN_RE"
 elif [[ "$prefix" =~ ^($LV_BUG_RE)$ ]]; then src_re="$LV_BUG_RE"
 else src_re="$LV_BRF_RE"; fi
+
+# ── A bug grouped after its spec run was dispatched ───────────────────────
+#
+# lv-list-specable.sh withholds intake-group members, but it is read once, at
+# dispatch, and an overseer may group the bug a minute later (LVI-026). This
+# script is asked at step 3 and again just before the folder is written, so it
+# is where the run hears about it. PLAN_ID is emitted EMPTY: the answer is
+# eval'd, and an exit code is lost there, so nothing downstream gets a usable
+# number. --peek still answers — it is a question, not a draft.
+if [ "$src_re" = "$LV_BUG_RE" ] && ! $peek && held=$(wf_group_withholds "$id"); then
+  echo "lv-plan-id: $id is $held. Do not draft it: write nothing, unclaim, and stop." >&2
+  wf_emit PLAN_ID      ""
+  wf_emit PLAN_ID_HELD "$held"
+  exit 4
+fi
 
 # Already a plan: nothing to decide.
 if [ "$src_re" = "$LV_PLN_RE" ]; then

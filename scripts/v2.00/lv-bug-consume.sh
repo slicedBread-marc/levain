@@ -20,6 +20,8 @@
 #              plan.md must already carry the amendment, i.e. name this bug
 #              outside its own `**Bug:**` field. Exit 2 if it does not.
 #
+# Exit 3: the bug is in an intake group still Open (LVI-026) — nothing moved.
+#
 # THE NUMBER IS NOT THE IDENTITY, AND FOR ONE RUN IT WAS NOT EVEN STABLE
 #
 # This used to find its bug by globbing `bugs/open/<id>*/` and nothing else. An
@@ -144,6 +146,23 @@ fi
 
 bug_slug=$(basename "$bug_dir")
 plan_dir="plans/$plan_id"
+
+# An Open intake group holds every member out of spec, in every mode. The spec
+# list withholds them, but a run dispatched before the bug was grouped never
+# re-reads that list (a client's LVI-026: BUG-053 was grouped 48 s after its
+# spec worker spawned, and triaged four minutes later). lv-plan-id.sh stops
+# such a run before it drafts; this is the backstop for one that drafted first.
+if ! $already_triaged && ! $force; then
+  group=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Group:\*\*' "$bug_dir/bug.md" 2>/dev/null \
+          | sed -E 's/^.*\*\*Group:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
+  if [ -n "$group" ] && [ -f "bugs/groups/$group.md" ] \
+     && grep -qE '^[ \t]*>?[ \t]*\*\*Status:\*\*[[:space:]]*Open[[:space:]]*$' "bugs/groups/$group.md"; then
+    echo "Error: $bug_id is in intake group '$group', still Open — it is not specced until the group is sealed." >&2
+    echo "  Nothing was moved. Leave $plan_id as it is, unclaim, and stop: the overseer seals the group" >&2
+    echo "  (lv-bug-group.sh seal $group), and the group's lead carries this bug." >&2
+    exit 3
+  fi
+fi
 
 # ── Is this the bug the plan was drafted from? ────────────────────────────
 #

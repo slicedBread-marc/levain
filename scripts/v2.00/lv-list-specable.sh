@@ -324,7 +324,7 @@ carried_by() {   # carried_by <root> → the open bugs whose chain ends there, c
 # otherwise sets intake_note to what the row carries.
 intake_note=""
 intake_skip() {
-  local md="$1" id="$2" g lead carried t loc pid pst m
+  local md="$1" id="$2" g lead carried t loc pid pst m lplan carrier
   intake_note=""
   g=$(wf_bug_field "$md" Group)
   if [ -n "$g" ]; then
@@ -334,6 +334,23 @@ intake_skip() {
         return 0 ;;
       Sealed)
         lead=$(wf_group_field "$g" Lead)
+        # Sealed onto a lead already in a plan still in spec (LVI-026): the
+        # open members amend that plan, together, in one run — offered as the
+        # lowest-numbered of them carrying the rest.
+        lplan=$(wf_group_field "$g" "Lead plan" | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+        if [ -n "$lplan" ]; then
+          carrier=$(for m in $(wf_group_members "$g"); do is_open_bug "$m" && printf '%s\n' "$m"; done \
+                    | sort -t- -k2,2n | head -1)
+          if [ "$id" != "$carrier" ]; then
+            not_offered "$id" "carried with $carrier, amending $lplan — the lead plan of sealed group $g"
+            return 0
+          fi
+          carried=$(for m in $(wf_group_members "$g"); do
+                      [ "$m" != "$id" ] && is_open_bug "$m" && printf '%s\n' "$m"
+                    done | paste -sd, -)
+          intake_note="GROUP($g) lead $lead is $lplan $(wf_state_of "$lplan"): amend it with this${carried:+ +$carried} — spec together, step 2b (lv-bug-group.sh show $g); "
+          return 1
+        fi
         if [ "$id" = "$lead" ]; then
           carried=$(for m in $(wf_group_members "$g"); do
                       [ "$m" != "$id" ] && is_open_bug "$m" && printf '%s\n' "$m"

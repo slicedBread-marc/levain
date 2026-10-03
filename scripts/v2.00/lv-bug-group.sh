@@ -52,10 +52,14 @@
 #   remove    Take bugs out; a hold placed for them is released.
 #   seal      Status Sealed, lead fixed, holds released. The default lead is
 #             the lowest-numbered open member that amends no other member;
-#             --lead overrides.
+#             --lead overrides, and may name a member already in a plan still
+#             in draft/ready (a spec run that beat the add, LVI-026): that
+#             plan keeps a hold, `Lead plan` names it, and the open members
+#             are offered together as amendments to it.
 #   dissolve  Members fall back to independent; holds released; their Group
 #             field is cleared.
-#   consume   /lv-spec's exit: Status Consumed, naming the lead's plan. Refused
+#   consume   /lv-spec's exit: Status Consumed, naming the lead's plan, any
+#             hold still placed released. Refused
 #             (exit 2) while any member is still in bugs/open — the group's
 #             done-condition is that every member has left it.
 #   list      Groups not yet finished (--all: every group). --stale: only Open
@@ -310,8 +314,18 @@ release_holds() {
   case "$cmd" in
     seal)     why_released="sealed, its members go to /lv-spec together" ;;
     dissolve) why_released="dissolved, its members are independent again" ;;
+    consume)  why_released="consumed, every member is decided" ;;
     *)        why_released="the member was removed from it" ;;
   esac
+  # consume is a worker's, and a worker may not release a hold. This one it
+  # may: the overseer who sealed the group placed it "until the group is
+  # consumed", and consume has just proved that condition — no member is left
+  # in bugs/open. So it is released in the sealer's name, not the worker's.
+  local rel_author="$author" rel_unattended="${LV_UNATTENDED:-0}"
+  if [ "$cmd" = consume ]; then
+    rel_author=$(wf_group_field "$slug" Sealed | sed -nE 's/.* by ([^ ]+).*/\1/p')
+    rel_unattended=0
+  fi
   holds=$(wf_group_field "$slug" Holds)
   [ -n "$holds" ] || return 0
   want=" $* "
@@ -319,7 +333,7 @@ release_holds() {
     pid="${entry%%:*}"
     if [ $# -eq 0 ] || [[ "$want" == *" $pid "* ]]; then
       if wf_plan_held "$pid" >/dev/null 2>&1; then
-        LV_DIRECT_FROM="$author" "$SELF_DIR/lv-direct.sh" add "$pid" --kind release-hold \
+        LV_UNATTENDED="$rel_unattended" LV_DIRECT_FROM="$rel_author" "$SELF_DIR/lv-direct.sh" add "$pid" --kind release-hold \
           --text "Released — intake group $slug: $why_released." >/dev/null 2>&1 \
           && out+="$pid released; " \
           || echo "lv-bug-group: could not release the hold on $pid — lv-direct.sh add $pid --kind release-hold" >&2
@@ -369,7 +383,18 @@ case "$cmd" in
         esac
       fi
       pid=""
-      if [ "$stage" = "triaged" ]; then
+      if [ "$stage" = "open" ]; then
+        # A spec run dispatched before this add can be mid-draft (LVI-026). It
+        # stands down at lv-plan-id.sh's re-check before writing, or at
+        # lv-bug-consume.sh if it drafted first — and a plan it already
+        # registered is held below, so the daemon does not respec it alone.
+        if wf_claim_held "$bug"; then
+          echo "$bug: a spec run holds its claim (PID ${LV_CLAIM_HOLDER_PID:-?}, $((LV_CLAIM_AGE / 60))m) — it stands down before drafting (lv-plan-id.sh exit 4) or at triage (lv-bug-consume.sh exit 3)" >&2
+        fi
+        pid=$(eval "$("$SELF_DIR/lv-plan-id.sh" "$bug" --peek 2>/dev/null)" 2>/dev/null
+              [ "${PLAN_ID_RESUME:-}" = true ] && printf '%s' "${PLAN_ID:-}") || true
+        case "$(wf_state_of "${pid:-x}" 2>/dev/null)" in draft|ready) ;; *) pid="" ;; esac
+      elif [ "$stage" = "triaged" ]; then
         pf=$(wf_bug_field "$md" Plan); pid=$(printf '%s' "$pf" | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
         if [ -n "$pid" ]; then
           pst=$(wf_state_of "$pid")
@@ -437,10 +462,25 @@ case "$cmd" in
     st=$(wf_group_field "$slug" Status)
     [ "$st" = "Open" ] || { echo "lv-bug-group: group '$slug' is $st, not Open — nothing to seal" >&2; exit 1; }
     opens=$(open_members "$slug")
-    if [ -n "$lead" ]; then
-      printf '%s\n' "$opens" | grep -qx "$lead" \
-        || { echo "lv-bug-group: --lead $lead is not a member still in bugs/open (open: $(printf '%s\n' "$opens" | join_csv))" >&2; exit 1; }
-    elif [ -n "$opens" ]; then
+    lead_plan=""
+    if [ -n "$lead" ] && ! printf '%s\n' "$opens" | grep -qx "$lead"; then
+      # A member the operator means as the lead may already be a plan: specced
+      # by a run dispatched before it was grouped (LVI-026). While that plan is
+      # still in spec (draft or ready) it can lead — the rest are carried to it
+      # as amendments, and its hold stays until the group is consumed. Built
+      # (active or later), it cannot: a built plan changes by a new plan.
+      wf_group_members "$slug" | grep -qx "$lead" \
+        || { echo "lv-bug-group: --lead $lead is not a member of '$slug'" >&2; exit 1; }
+      loc=$(wf_bug_md "$lead")
+      [ "${loc%%$'\t'*}" = "triaged" ] \
+        && lead_plan=$(wf_bug_field "${loc#*$'\t'}" Plan | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+      lp_state=$( [ -n "$lead_plan" ] && wf_state_of "$lead_plan" )
+      case "$lp_state" in
+        draft|ready) ;;
+        *) echo "lv-bug-group: --lead $lead is not a member still in bugs/open, nor in a plan still in spec${lead_plan:+ ($lead_plan is '$lp_state')} (open: $(printf '%s\n' "$opens" | join_csv))" >&2
+           exit 1 ;;
+      esac
+    elif [ -z "$lead" ] && [ -n "$opens" ]; then
       # The lowest-numbered open member that amends no other member: the
       # premise the rest are written against. A ring of amendments falls back
       # to the lowest number.
@@ -457,10 +497,32 @@ case "$cmd" in
     set_field "$file" Status Sealed
     set_field "$file" Lead "${lead:-—}"
     set_field "$file" Sealed "$(wf_now) by $author"
-    release_holds
+    if [ -n "$lead_plan" ]; then
+      set_field "$file" "Lead plan" "$lead_plan — the members still open amend it"
+      others=()
+      for entry in $(wf_group_field "$slug" Holds | tr ',' ' '); do
+        [ "${entry%%:*}" = "$lead_plan" ] || others+=("${entry%%:*}")
+      done
+      [ "${#others[@]}" -gt 0 ] && release_holds "${others[@]}"
+      # The lead's plan must not reach a builder before the amendments do.
+      if ! wf_plan_held "$lead_plan" >/dev/null 2>&1; then
+        if LV_DIRECT_FROM="$author" "$SELF_DIR/lv-direct.sh" add "$lead_plan" --kind hold \
+             --text "Held — it leads intake group $slug, whose open members amend it. Released when the group is consumed." >/dev/null 2>&1; then
+          d=$(wf_plan_held "$lead_plan" || true)
+          h=$(wf_group_field "$slug" Holds)
+          set_field "$file" Holds "${h:+$h, }$lead_plan:$d"
+        else
+          echo "lv-bug-group: could not hold $lead_plan — hold it by hand: lv-direct.sh add $lead_plan --kind hold" >&2
+        fi
+      fi
+    else
+      release_holds
+    fi
     commit "bug-group($slug): sealed${lead:+, lead $lead}" "$rel"
     wf_event bug-group "$slug" "sealed by $author${lead:+, lead $lead}"
-    if [ -n "$lead" ]; then
+    if [ -n "$lead_plan" ]; then
+      echo "group $slug sealed — lead $lead is $lead_plan ($lp_state, held); /lv-spec amends it with $(printf '%s\n' "$opens" | join_csv)"
+    elif [ -n "$lead" ]; then
       carried=$(printf '%s\n' "$opens" | grep -vx "$lead" | join_csv)
       echo "group $slug sealed — /lv-spec takes $lead${carried:+, carrying $carried}"
     else
@@ -501,6 +563,7 @@ case "$cmd" in
     fi
     set_field "$file" Status Consumed
     set_field "$file" Consumed "$(wf_now) by $plan"
+    release_holds
     commit "bug-group($slug): consumed by $plan" "$rel"
     wf_event bug-group "$slug" "consumed by $plan"
     echo "group $slug consumed by $plan"

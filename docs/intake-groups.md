@@ -82,6 +82,39 @@ In the last case the group stays Sealed, and the member is offered on its own
 once the lead is consumed. See `skills/lv-spec/SKILL.md`, Plan from bug step
 1b.
 
+## A bug grouped after its spec run started
+
+The spec list is read once, at dispatch. In a client's LVI-026 the daemon
+spawned a spec worker on BUG-053 at 00:47:24Z. A coordinator grouped BUG-053
+48 seconds later, and the worker drafted and triaged PLN-053 at 00:52. The
+overseer had meant BUG-053 to lead the group, and `seal --lead BUG-053` was
+refused because the bug was no longer open.
+
+Three places now read the group again after dispatch:
+
+| Where | What happens |
+|-|-|
+| `lv-plan-id.sh` (asked at spec step 3, and again just before the folder is written) | Exit 4 with `PLAN_ID` empty and `PLAN_ID_HELD` giving the reason. The worker writes nothing, unclaims and stops |
+| `lv-bug-consume.sh` (triage) | Exit 3 for a member of an Open group, in every mode. Nothing moves |
+| `lv-bug-group.sh add` | Says when a spec run holds the bug's claim. If that run has already registered a plan drafted from the bug, the add holds that plan, so the daemon does not respec it alone |
+
+`wf_group_withholds` in `lv-orch-lib.sh` is the rule `lv-plan-id.sh` asks.
+It withholds a member of an Open group, and a member of a Sealed group whose
+lead is still open or claimed. It also withholds every member of a group
+sealed onto a lead plan, because those members amend that plan.
+
+**Sealing onto a lead that was already specced.** `seal --lead` may name a
+member already triaged into a plan still in `draft` or `ready`. That plan
+keeps a hold, and the group records it as `Lead plan`. The holds on other
+members' plans are released. The spec list then offers the lowest-numbered
+open member, carrying the rest:
+`GROUP(<slug>) lead BUG-L is PLN-MMM draft: amend it with this +BUG-a`. That
+run amends PLN-MMM with each member (step 2b) and runs
+`consume <slug> PLN-MMM`. `consume` releases any hold the group still has
+placed, in the sealer's name, because its condition has just been met: no
+member is left in `bugs/open/`. A lead whose plan is `active` or later is
+refused, because a built plan is never amended.
+
 ## Who may write one
 
 `open`, `add`, `remove`, `seal` and `dissolve` belong to the overseer: the

@@ -495,6 +495,43 @@ wf_group_members() {
   awk -v re="^- ($LV_BUG_RE)-[0-9]+" '/^## Members/{m=1;next} /^## /{m=0} m && $0 ~ re { sub(/^- /,""); sub(/[ \t].*/,""); print }' "$f"
 }
 
+# wf_group_withholds <BUG-ID> — 0, with the reason on stdout, when the bug's
+# intake group says it is not to be specced on its own right now: the group is
+# Open, or Sealed under another lead still open or being specced. The rule
+# lv-list-specable.sh applies when it offers work, asked again at the moment a
+# spec run is about to write.
+#
+# The list is read once, at dispatch. A client's LVI-026: the daemon spawned a
+# spec worker on BUG-053 at 00:47:24Z, a coordinator put BUG-053 in an Open
+# group 48 seconds later, and the worker drafted and triaged PLN-053 at
+# 00:52 — nothing it ran after dispatch read the Group field.
+wf_group_withholds() {
+  local loc g lead lplan
+  loc=$(wf_bug_md "$1"); [ -n "$loc" ] || return 1
+  [ "${loc%%$'\t'*}" = "open" ] || return 1
+  g=$(wf_bug_field "${loc#*$'\t'}" Group); [ -n "$g" ] || return 1
+  case "$(wf_group_field "$g" Status)" in
+    Open)
+      printf 'in intake group %s, still Open — its members wait for: lv-bug-group.sh seal %s' "$g" "$g"
+      return 0 ;;
+    Sealed)
+      lead=$(wf_group_field "$g" Lead)
+      [ -n "$lead" ] && [ "$lead" != "$1" ] || return 1
+      lplan=$(wf_group_field "$g" "Lead plan" | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+      case "$( [ -n "$lplan" ] && wf_state_of "$lplan")" in
+        draft|ready)
+          printf 'an amendment to %s, the lead plan of sealed intake group %s (step 2b), not a plan of its own' "$lplan" "$g"
+          return 0 ;;
+      esac
+      loc=$(wf_bug_md "$lead")
+      if [ "${loc%%$'\t'*}" = "open" ] || wf_claim_held "$lead"; then
+        printf 'carried with %s, the lead of sealed intake group %s' "$lead" "$g"
+        return 0
+      fi ;;
+  esac
+  return 1
+}
+
 # wf_goal_text <plan.md> — the plan's one-line goal, empty if it has none.
 #
 # The same awk one-liner was pasted into ten scripts, and had already drifted in
