@@ -412,6 +412,13 @@ plan then opens, which is how they reach the rack. A human may force it:
 scripts/lv-exec.sh lv-lane.sh check PLN-NNN --accept-warnings   # refused under LV_UNATTENDED=1
 ```
 
+When the downgrade opened `spec-approval`, the same acceptance can ride on the answer:
+`/lv-attend` offers **approve express**, which closes the gate with
+`lv-gate-close.sh PLN-NNN "<answer>" --only spec-approval --decision approve --express`. That runs
+the `--accept-warnings` above as the person answering, before the gate is removed, so one answer
+both approves the plan and restores the lane. It is refused unattended, with a `--basis`, on
+any other gate, and for a plan with no declared lane.
+
 That records the exact warnings accepted, keyed per path and term. A warning that appears later —
 a replan that adds a Dockerfile — is not covered, and downgrades again.
 

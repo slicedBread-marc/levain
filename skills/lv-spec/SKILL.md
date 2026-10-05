@@ -847,7 +847,7 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
    | Exit | Meaning | What you do |
    |-|-|-|
    | `0` | Express holds. `answer` has logged the approval as `express` in `events.log` | Take the **Otherwise** transition below — no gate. Say in the commit message `approved by the express lane` |
-   | `1` | Declared, but downgraded. The reasons are now in `plan.md`'s `## Lane` section, committed | Route exactly as below. If you open `spec-approval`, end the question with `Express lane downgraded: <N> reason(s), see ## Lane` — that line is how the downgrade reaches the board and the rack |
+   | `1` | Declared, but downgraded. The reasons are now in `plan.md`'s `## Lane` section, committed | Route exactly as below. If you open `spec-approval`, end the question with `Express lane downgraded: <N> reason(s), see ## Lane — "approve express" accepts them` — that line is how the downgrade reaches the board and the rack, and the human's one answer can restore the lane (`lv-gate-close.sh --express`) |
    | `3` | No lane declared | Route exactly as below |
    | `2` | Usage or a missing plan | Route exactly as below; a lane that cannot be read is the normal lane |
 

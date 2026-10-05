@@ -24,6 +24,9 @@
 #      is an (external)/(soak) criterion of a plan holding the lane; an
 #      unbuilt row or a plan outside the lane still asks.
 #  10. budget prints the configured limits and disqualifiers for /lv-spec.
+#  11. lv-gate-close.sh --express: one attended spec-approval answer approves
+#      the plan and accepts the lane's warnings; refused unattended, without
+#      an approve, and for a plan with no declared lane.
 #
 # Usage: ./tests/express-lane.sh
 # Exit 0 if all pass, 1 on any failure.
@@ -417,6 +420,37 @@ assert_has "…and file limit" "at most 20" "$out"
 assert_has "…and the gating tags" "security" "$out"
 assert_has "…and the criteria rule" "(external) or (soak)" "$out"
 git checkout -q -- levain.yml
+
+# ── 11. One answer approves and restores the lane ─────────────────────────
+echo ""
+echo "11. spec-approval answered 'approve express' accepts the lane's warnings"
+eval "$("$S/lv-bug-new.sh" "Secure the note" --lane express 2>/dev/null)"
+N_GX=${BUG_ID#*-}; PG="PLN-$N_GX"; PDG="plans/$PG-secure"
+small_plan "$PDG" "> **Bug:** $BUG_ID — Secure the note"
+add_row "$PG" secure draft security
+git add -A; git commit -qm "security-tagged lane plan"
+assert_eq "the security tag downgrades it" 1 "$("$S/lv-lane.sh" answer "$PG" spec-approval >/dev/null 2>&1; echo $?)"
+"$S/lv-gate-open.sh" "$PG" spec-approval "Approve $PG? Express lane downgraded: 1 reason(s), see ## Lane" >/dev/null 2>&1
+LV_UNATTENDED=1 "$S/lv-gate-close.sh" "$PG" "approved" --only spec-approval --decision approve --express >/dev/null 2>&1; rc=$?
+assert_eq "--express is refused unattended" refused "$([ "$rc" -ne 0 ] && echo refused || echo "closed ($rc)")"
+LV_UNATTENDED=1 "$S/lv-gate-close.sh" "$PG" "approved" --only spec-approval --decision approve --express --basis verdict >/dev/null 2>&1; rc=$?
+assert_eq "…with a --basis too" refused "$([ "$rc" -ne 0 ] && echo refused || echo "closed ($rc)")"
+assert_has "…and the gate stays open" "spec-approval" "$(ls .claude/orchestrator/gates 2>/dev/null; cat .claude/orchestrator/gates/"$PG"* 2>/dev/null | head -3)"
+out=$("$S/lv-gate-close.sh" "$PG" "approved" --only spec-approval --express 2>&1); rc=$?
+assert_eq "--express without --decision approve is refused" 1 "$rc"
+out=$("$S/lv-gate-close.sh" "$PG" "approved — run it express" --only spec-approval --decision approve --express 2>&1); rc=$?
+assert_eq "an attended approve express closes the gate" 0 "$rc"
+eval "$("$S/lv-lane.sh" status "$PG")"
+assert_eq "…and the lane now holds" express "$LANE"
+assert_has "…accepted by the person answering" "(at spec-approval, approve express) accepted: tag:security" "$(cat .claude/orchestrator/events.log)"
+
+small_plan "plans/PLN-077-nolane" ""
+add_row PLN-077 nolane draft security
+git add -A; git commit -qm "no lane"
+"$S/lv-gate-open.sh" PLN-077 spec-approval "Approve PLN-077?" >/dev/null 2>&1
+out=$("$S/lv-gate-close.sh" PLN-077 "approved" --only spec-approval --decision approve --express 2>&1); rc=$?
+assert_eq "--express on a plan with no declared lane is refused" 1 "$rc"
+assert_has "…saying so" "no declared express lane" "$out"
 
 echo ""
 echo "$PASS passed, $FAIL failed"

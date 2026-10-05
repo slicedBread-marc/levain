@@ -94,6 +94,11 @@
 #                An `approve` on a promotion gate is checked against the ref
 #                ITSELF before it is recorded — see THE BATCH MOVED below.
 #
+# --express     With `--decision approve` on `spec-approval`: also accept every
+#                warning that downgraded the plan's declared express lane, as
+#                the person answering (`lv-lane.sh check --accept-warnings`).
+#                Attended only. See the block just before the gate file is removed.
+#
 # --batch-moved-ok
 #                Record an `approve` against the CURRENT tip even though the
 #                gate was opened against an older one. Only for a caller that
@@ -192,6 +197,7 @@ covers_push=""
 decision=""
 batch_moved_ok=false
 withdraw=false
+express=false
 plan_context_at_open=""
 
 while [ $# -gt 0 ]; do
@@ -209,6 +215,7 @@ while [ $# -gt 0 ]; do
     --resolves) resolves="${2:?--resolves requires a finding substring, or 'all'}"; shift 2 ;;
     --batch-moved-ok) batch_moved_ok=true; shift ;;
     --withdraw) withdraw=true; shift ;;
+    --express) express=true; shift ;;
     -*)      echo "Unknown option: $1" >&2; exit 1 ;;
     *)
       if [ -z "$artifact" ]; then artifact="$1"; else resolution="$1"; fi
@@ -459,6 +466,37 @@ if [ "$decision" = "approve" ] && [ -n "$promote_tip" ]; then
       wf_event gate-close-refused "$id" "$gate_name: approve for ${promote_tip:0:9}, ref now ${now_tip:0:9} — batch moved"
       exit 5
     fi
+  fi
+fi
+
+# ── --express: one answer approves the plan and accepts its lane's warnings ──
+#
+# A plan filed `--lane express` and downgraded by lv-lane.sh check reaches
+# spec-approval because of those reasons. A client's operator approved one
+# (PLN-063), said it should have gone express, and then needed a second step,
+# `lv-lane.sh check --accept-warnings`, before its manual test, push and
+# deferred criteria stopped asking. `--express` is that second step taken inside
+# the answer. It runs before the gate is removed, so a refusal leaves the
+# question open.
+#
+# A human's statement only: refused under LV_UNATTENDED=1 and with any
+# --basis, and only on an `approve` of `spec-approval` for a plan that carries
+# a declared lane. lv-lane.sh itself refuses an unattended accept too.
+if $express; then
+  express_refuse() {
+    echo "lv-gate-close: --express refused — $1. Nothing was closed." >&2
+    exit 1
+  }
+  [ "${LV_UNATTENDED:-}" = "1" ] && express_refuse "accepting a lane's warnings is a human's statement, and this is an unattended worker"
+  [ -z "$basis" ] || express_refuse "it records a human's answer, and --basis $basis names a mechanism"
+  [ "$gate_name" = "spec-approval" ] || express_refuse "it answers spec-approval, and the gate here is '$gate_name'"
+  [ "$decision" = "approve" ] || express_refuse "it is an approval, and needs --decision approve"
+  lane_out=$("$SELF_DIR/lv-lane.sh" status "$id" 2>/dev/null || true)
+  printf '%s\n' "$lane_out" | grep -q "^LANE_DECLARED='.\+'" \
+    || express_refuse "$id carries no declared express lane"
+  if ! "$SELF_DIR/lv-lane.sh" check "$id" --accept-warnings \
+         --by "$(git config user.name 2>/dev/null || whoami) (at spec-approval, approve express)" >&2; then
+    express_refuse "lv-lane.sh check $id --accept-warnings did not clear the lane"
   fi
 fi
 

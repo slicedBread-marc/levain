@@ -158,7 +158,21 @@ The plan is drafted, **already reviewed**, and committed in `draft` state. The o
 
    **A stale verdict is the dangerous one, because it reads as done.** client-a had two plans at this gate whose only reviews were `Blocked` on the pre-amendment draft; the amendment then resolved every finding and nothing re-reviewed it, so plans carrying six resolved Criticals were presented as reviewed and approved (WFI-046).
 2. Then display the plan's Goal, the step count, the Tests table, and the Human Test Criteria split (Chrome-Assisted vs Manual).
-3. Ask: `approve / edit / reject?`
+
+   **Then the express lane, if a human declared one:**
+   ```bash
+   eval "$(scripts/lv-exec.sh lv-lane.sh status <PLN-ID>)"
+   ```
+   `LANE=normal` with `LANE_DECLARED` set means the plan was filed express and the check
+   downgraded it. Show `LANE_REASONS` one per line. This plan is at this gate *because of* those
+   reasons, so the human is deciding two things at once: whether to build it, and whether it
+   still runs with no further gate. A client's operator approved one such plan, said "this should
+   have gone express", and then needed a second step to accept the warnings (PLN-063).
+3. Ask: `approve / edit / reject?`, or, when step 2 found a downgraded lane,
+   `approve express / approve / edit / reject?`. **approve express** accepts every reason listed,
+   so the plan's manual test, its one production push and its deferred `(external)`/`(soak)`
+   criteria are answered by the lane from here. **approve** keeps every later gate. Never pick
+   between them yourself.
 4. On **approve** — **close the gate, then transition, both under a claim.**
 
    `spec-approval` is the one gate whose close is a *precondition* of the transition rather than a record of it, so the usual transition-then-close order is inverted here — for every shape of plan, not for some of them. `lv-registry-update.sh` refuses `draft → ready` while an unanswered `spec-approval` gate is open (client-b WFI-012), and `lv-replan-target.sh --apply` refuses on the same fact for a gating-tagged replan (WFI-021). Between them there is no approve path on which transition-first is possible. The claim is what covers the window the closed gate no longer does — see [`docs/guard-ordering.md` § The one exception](../../docs/guard-ordering.md#the-one-exception-a-gate-that-gates-the-transition-itself) for why that is still race-safe.
@@ -166,11 +180,16 @@ The plan is drafted, **already reviewed**, and committed in `draft` state. The o
    ```bash
    scripts/lv-exec.sh lv-claim.sh <plan-name>
    scripts/lv-exec.sh lv-gate-close.sh <PLN-ID> "approved — <what they said>" \
-     --only spec-approval --decision approve
+     --only spec-approval --decision approve        # add --express for "approve express"
    scripts/lv-exec.sh lv-replan-target.sh <PLN-ID> --apply \
      --note "<what the approval turned on, and why the plan landed where it did>"
    scripts/lv-exec.sh lv-unclaim.sh <plan-name>
    ```
+
+   `--express` runs `lv-lane.sh check <PLN-ID> --accept-warnings` inside the close, recording
+   the warnings as accepted by the person answering. It is refused under `LV_UNATTENDED=1`, on
+   any gate but `spec-approval`, and on a plan with no declared lane. Pass it only when the human
+   chose **approve express** in so many words.
 
    **You do not choose the target state, and there is no table here to pick a row from.** `lv-replan-target.sh` derives it — `no worktree → ready`, `live worktree → active`, `a bounce with nothing left to build → testing` — and `--apply` performs that transition. A brand-new plan has no worktree, so it derives `ready` and the command reduces to the `draft → ready` you would have typed anyway. Without `--commit` the transition still commits, under an auto-generated message; `--note` is what a later reader actually needs.
 
