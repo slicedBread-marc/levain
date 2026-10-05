@@ -18,6 +18,8 @@
 #  10. Workers are told to load directives and the plan context.
 #  11. A parked production-push that lv-autonomy.sh now authorizes is withdrawn
 #      by the dispatcher — never approved — and one it still refuses stays.
+#  12. A deploy-suite-red question is withdrawn once the release tip it failed
+#      on has moved, and stays while it has not (memo, or no memo + gate age).
 #
 # Usage: ./tests/directives.sh     Exit 0 if all pass, 1 on any failure.
 
@@ -240,6 +242,39 @@ assert_eq "it says it was withdrawn" "$(field "$st" GATE_WITHDRAWN)" "true"
 "$S/lv-promote-approval.sh" push --quiet >/dev/null 2>&1
 assert_eq "and no push approval can be read back from it" "$?" "1"
 assert_eq "the check spent no ceiling" "$(grep -c 'autonomy-use' .claude/orchestrator/events.log 2>/dev/null || true)" "0"
+
+section "12. a red-suite question whose tip has moved is withdrawn"
+gate_state() { [ -f .claude/orchestrator/gates/DEPLOY.gate ] && echo open || echo gone; }
+# Land a commit on release without checking it out — the sweep pauses when the
+# main worktree is on release (WFI-135).
+land() { git update-ref refs/heads/release "$(git commit-tree 'release^{tree}' -p release -m "$1")"; }
+"$S/lv-deploy-suite-memo.sh" --fail "UnitTest X failed" >/dev/null 2>&1
+"$S/lv-gate-open.sh" DEPLOY deploy-suite-red "the suite failed on this tip" >/dev/null 2>&1
+"$S/lv-orchestrate.sh" --sweep >/dev/null 2>&1
+assert_eq "same tip as the memo: the question stays" "$(gate_state)" "open"
+land "fix lands on release"
+out=$("$S/lv-orchestrate.sh" --sweep --dry-run 2>&1)
+has "a dry run says it would withdraw" "$out" "would WITHDRAW: deploy-suite-red on DEPLOY"
+assert_eq "and does not" "$(gate_state)" "open"
+out=$("$S/lv-orchestrate.sh" --sweep 2>&1)
+assert_eq "tip moved past the memo: withdrawn" "$(gate_state)" "gone"
+has "and the sweep says so" "$out" "withdrew deploy-suite-red on DEPLOY"
+st=$("$S/lv-gate-status.sh" DEPLOY deploy-suite-red 2>/dev/null)
+assert_eq "a withdrawal is not an answer" "$(field "$st" GATE_ANSWERED)" "false"
+"$S/lv-deploy-suite-memo.sh" --clear >/dev/null 2>&1
+"$S/lv-gate-open.sh" DEPLOY deploy-suite-red "the suite failed on this tip" >/dev/null 2>&1
+"$S/lv-orchestrate.sh" --sweep >/dev/null 2>&1
+assert_eq "no memo, tip older than the question: it stays" "$(gate_state)" "open"
+sleep 1
+GIT_COMMITTER_DATE="$(date -u -v+5S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+5 sec' +%Y-%m-%dT%H:%M:%SZ)" \
+  land "another fix"
+"$S/lv-orchestrate.sh" --sweep >/dev/null 2>&1
+assert_eq "no memo, tip committed after the question: withdrawn" "$(gate_state)" "gone"
+"$S/lv-gate-open.sh" DEPLOY production-push "push main to origin?" >/dev/null 2>&1
+land "unrelated"
+printf 'project_slug: "push"\norchestrator:\n  enabled: true\n  max_spawns_per_hour: 0\nprojectProfile:\n  tier: governed\n' > levain.yml
+"$S/lv-orchestrate.sh" --sweep >/dev/null 2>&1
+assert_eq "another question on DEPLOY is not touched" "$(gate_state)" "open"
 
 echo
 echo "directives: $PASS passed, $FAIL failed"

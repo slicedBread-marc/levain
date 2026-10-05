@@ -880,6 +880,57 @@ withdraw_moot_push_gates() {
   return 0
 }
 
+# ── A red-suite question whose tip has moved is withdrawn ─────────────────
+#
+# /lv-deploy step 2b parks `deploy-suite-red` when the deploy suite failed on
+# this exact `release` tip (lv-deploy-suite-memo.sh). The gate's own question
+# says the batch cannot pass "until something lands on release and moves the
+# tip". The fix then lands through the pipeline like any other plan, and the
+# tip moves. But dispatch() skips DEPLOY while any gate is open, so the deploy
+# that would now pass is never started. A client's DEPLOY sat 46 minutes on
+# such a gate after the fix (its PLN-065) had reached release, and an operator
+# had closed the same gate by hand for the same reason three days before.
+#
+# The tip the question was about is the memo's. Without a memo (cleared, or a
+# client older than it), a release tip committed after the gate opened is
+# taken as moved. WITHDRAWN, never approved: the next /lv-deploy runs the
+# suite on the new tip, and if that is red too it records the tip and parks
+# again — so no loop, since the memo then names the tip in front of it. Not
+# while a deploy worker is live: the gate it just opened is its own exit.
+withdraw_moot_suite_red_gates() {
+  [ "$(open_gate_name DEPLOY)" = "deploy-suite-red" ] || return 0
+  [ "$(role_running deploy)" -eq 0 ] || return 0
+  local gf opened tip tip_at tip_epoch open_epoch memo_tip why=""
+  gf=$(wf_gate_file DEPLOY || true)
+  tip=$(git rev-parse --verify -q refs/remotes/origin/release 2>/dev/null \
+        || git rev-parse --verify -q refs/heads/release 2>/dev/null || true)
+  [ -n "$tip" ] || return 0
+  memo_tip=$("$SELF_DIR/lv-deploy-suite-memo.sh" --show 2>/dev/null | sed -n 's/^MEMO_TIP=//p')
+  if [ -n "$memo_tip" ]; then
+    [ "$memo_tip" != "$tip" ] && why="release moved ${memo_tip:0:9} → ${tip:0:9} since the suite went red"
+  else
+    opened=$(wf_gate_field "$gf" GATE_OPENED)
+    tip_at=$(git log -1 --format=%cI "$tip" 2>/dev/null | sed -E 's/([+-][0-9]{2}):?([0-9]{2})$/\1\2/')
+    if [ -n "$opened" ] && [ -n "$tip_at" ]; then
+      tip_epoch=$(date -j -f '%Y-%m-%dT%H:%M:%S%z' "$tip_at" +%s 2>/dev/null || date -d "$tip_at" +%s 2>/dev/null || echo 0)
+      open_epoch=$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$opened" +%s 2>/dev/null || date -u -d "$opened" +%s 2>/dev/null || echo 0)
+      [ "$tip_epoch" -gt 0 ] && [ "$open_epoch" -gt 0 ] && [ "$tip_epoch" -gt "$open_epoch" ] \
+        && why="release tip ${tip:0:9} was committed after the suite went red"
+    fi
+  fi
+  [ -n "$why" ] || return 0
+  if $dry_run; then
+    echo "  would WITHDRAW: deploy-suite-red on DEPLOY ($why)"
+    return 0
+  fi
+  if "$SELF_DIR/lv-gate-close.sh" DEPLOY "withdrawn — $why; the next /lv-deploy runs the suite on the new tip" \
+       --only deploy-suite-red --withdraw >/dev/null 2>&1; then
+    echo "$(wf_now)  withdrew deploy-suite-red on DEPLOY — $why"
+    skip_clear deploy DEPLOY
+  fi
+  return 0
+}
+
 # sweep() reports its count in SWEPT, not on stdout.
 #
 # It used to `printf '%s' "$spawned"` and be called as `n=$(sweep)`. Everything
@@ -912,6 +963,7 @@ sweep() {
 
   withdraw_moot_approvals
   withdraw_moot_push_gates
+  withdraw_moot_suite_red_gates
 
   for role in $SWEEP_ROLES; do
     cap=$(max_concurrent "$role")
