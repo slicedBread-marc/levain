@@ -949,6 +949,22 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    Exit `0` — go on. Exit `2` — **do not remove the worktree**: the files it
    names exist nowhere else. Report them, leave the worktree and branch in
    place, and finish the rest of the exit; the plan is still complete.
+
+   **And check for source files git never saw.** `lv-registry-update.sh`
+   refuses `active → verify` while one exists, but a fix cycle or a hand edit
+   can add one later. The worktree holds the only copy, and the branch you just
+   merged does not build without it (a client's BUG-065):
+   ```bash
+   scripts/lv-exec.sh lv-ignored-sources.sh PLN-NNN; echo "ignored exit=$?"
+   ```
+   Exit `1` — **do not remove the worktree or delete the branch.** File the
+   paths it lists as a bug, so a clean checkout builds again:
+   ```bash
+   scripts/lv-exec.sh lv-bug-new.sh "PLN-NNN sources are git-ignored — a clean checkout does not build" \
+     --description "<the lines lv-ignored-sources.sh printed>; the copies are in feature-branches/PLN-NNN-<slug>, which was kept"
+   ```
+   Then finish the rest of the exit, and say in the summary that the worktree
+   was kept and why. Exit `0` or `3` — go on.
    ```bash
    git worktree remove feature-branches/PLN-NNN-<slug> --force 2>/dev/null || true
    git branch -d "$CURRENT_BRANCH" 2>/dev/null || true

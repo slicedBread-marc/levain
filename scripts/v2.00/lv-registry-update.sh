@@ -51,7 +51,7 @@
 #   lv-registry-update.sh PLN-004 draft ready --note "scope settled against publish-guard"
 #   lv-registry-update.sh PLN-004 verify active --commit "verify(PLN-004): findings" --add plans/PLN-004-slug/findings.md
 #
-# GUARDS. Five transitions verify the claim they make rather than take the
+# GUARDS. Six transitions verify the claim they make rather than take the
 # caller's word for it. Each has its own override, and each override is a
 # sentence a human has to type:
 #
@@ -65,6 +65,9 @@
 #   testing -> accept   LV_ALLOW_ACCEPT=1       nothing left that needs a human,
 #                                               or the tester's record is
 #                                               unfinished (LVI-040)
+#   active -> verify    LV_ALLOW_IGNORED=1      a file the plan wrote is
+#                                               git-ignored, never committed
+#                                               (lv-ignored-sources.sh)
 #
 # And one shape rule with no override: `accept` is entered from `testing` only,
 # and left only for testing, active, draft or abandoned.
@@ -456,6 +459,35 @@ if [ "$from_state" = "testing" ] && [ "$to_state" = "accept" ] && [ "${LV_ALLOW_
     echo "       accept:manual holds only what no machine can settle (a client's LVI-040)." >&2
     echo "       The plan stays in 'testing'. Check with: lv-manual-gate.sh $plan_id --explain" >&2
     echo "       Nothing was changed. LV_ALLOW_ACCEPT=1 overrides (a human's call only)." >&2
+    exit 1
+  fi
+fi
+
+# --- Guard: source files git will never see -------------------------------
+#
+# `active -> verify` is the builder saying "the work is committed". A client's
+# PLN-063 wrote its new code under a folder the stock .NET `[Dd]ebug/` rule
+# ignores. Verify, test and the post-merge suite all passed in the worktree,
+# where the files were on disk. The release would not build, and removing the
+# worktree deleted the only copy (the client's BUG-065). The builder is the
+# last session that can still add a `.gitignore` negation and commit the files,
+# so the check sits on its exit.
+#
+# lv-ignored-sources.sh exit 3 (no worktree) and 2 (unresolvable) do not block:
+# with nothing on disk there is nothing to lose.
+#
+# LV_ALLOW_IGNORED=1 overrides, for a path the plan names and means git to
+# ignore (a generated file the build writes).
+if [ "$from_state" = "active" ] && [ "$to_state" = "verify" ] && [ "${LV_ALLOW_IGNORED:-}" != "1" ]; then
+  ign_rc=0
+  ign_out=$("$SELF_DIR/lv-ignored-sources.sh" "$plan_id" 2>/dev/null) || ign_rc=$?
+  if [ "$ign_rc" -eq 1 ]; then
+    echo "Error: refusing $plan_id 'active' -> 'verify' — files this plan wrote are git-ignored and were never committed:" >&2
+    printf '%s\n' "$ign_out" | sed 's/^/         /' >&2
+    echo "       Verify and test would pass on the worktree's copy; a clean checkout would not build," >&2
+    echo "       and removing the worktree deletes them (a client's BUG-065)." >&2
+    echo "       Add a scoped negation to .gitignore (e.g. !src/**/Debug/), commit the files, and retry." >&2
+    echo "       Nothing was changed. LV_ALLOW_IGNORED=1 overrides for a path meant to stay ignored." >&2
     exit 1
   fi
 fi

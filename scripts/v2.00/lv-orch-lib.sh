@@ -1057,6 +1057,28 @@ wf_section_body() {
   ' "$file"
 }
 
+# wf_plan_files <plan.md> → one distinct path per line, from the steps'
+# `**Files:**` lines. A bare name after a path on the same line is relative to
+# that path's directory: "create `src/a/x.ts`, `y.ts`" is src/a/x.ts and
+# src/a/y.ts. Read by lv-lane.sh (the size and path checks) and by
+# lv-ignored-sources.sh (a source file git will never see).
+wf_plan_files() {
+  wf_section_body "$1" "Steps" | awk '
+    /\*\*Files:\*\*/ {
+      dir = ""
+      line = $0
+      while (match(line, /`[^`]+`/)) {
+        tok = substr(line, RSTART + 1, RLENGTH - 2)
+        line = substr(line, RSTART + RLENGTH)
+        sub(/^\.\//, "", tok)
+        if (tok ~ /[ \t]/) continue
+        if (index(tok, "/") > 0) { d = tok; sub(/\/[^\/]*$/, "", d); dir = d }
+        else if (dir != "") tok = dir "/" tok
+        if (!(tok in seen)) { seen[tok] = 1; print tok }
+      }
+    }'
+}
+
 # wf_review_result_lines <body> → the real verdict lines in a review body
 #
 # A verdict is any line naming a Result — anywhere in the section AND anywhere

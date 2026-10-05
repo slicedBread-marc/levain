@@ -452,6 +452,22 @@ and must be discarded, not reported.
     workflow files this worktree carries; a bare `-A` commits develop's
     infrastructure onto the feature branch as if the plan had changed it. The
     same exclusions appear on every other `git add` in this skill.
+
+    **Then check that git holds what you wrote.** A file matched by an ignore
+    rule is invisible to `git add -A`, `git status` and the merge, but not to
+    the build you just ran, so every check so far passed on a copy only this
+    worktree has. A client's PLN-063 put its code under `Debug/`, which the stock
+    .NET `[Dd]ebug/` rule ignores. The release would not build, and removing the
+    worktree deleted the only copy (the client's BUG-065).
+    ```bash
+    DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+    $DEVELOP_ROOT/scripts/lv-exec.sh lv-ignored-sources.sh PLN-NNN; echo "ignored exit=$?"
+    ```
+    Exit `1` lists each file with the rule that hides it. Add a negation to
+    `.gitignore` scoped to the source tree (`!src/**/Debug/`, not a deleted
+    rule, because `bin/Debug/` is still build output), then
+    `git add -- .gitignore <the files>` and commit. Run it again until it exits
+    `0` (or `3`, no worktree). Step 25 refuses the transition while it exits `1`.
 23. **Destroy the docker container:**
     ```bash
     DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
@@ -484,7 +500,11 @@ DEVELOP_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
       || { echo "REGISTRY REFUSED THE TRANSITION — do NOT run step 26"; grep "^| PLN-NNN |" plans/REGISTRY.md; }
     ```
 
-    **If that fails, stop here.** The `from_state` guard did not match, which
+    **If it refuses because files are git-ignored**, the error lists them:
+    go back to step 22's ignored-files check, fix and commit in the worktree,
+    and run step 25 again. That one is yours to fix, not a stop.
+
+    **If it fails any other way, stop here.** The `from_state` guard did not match, which
     means the row is not where this path assumed — most often `ready`, because
     a replan left it there while the worktree made the builder take the fix
     path. Anything downstream would announce a transition that never happened,

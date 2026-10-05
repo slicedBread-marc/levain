@@ -245,26 +245,6 @@ sections() {
   for h in "$@"; do wf_section_body "$file" "$h"; done
 }
 
-# plan_files <plan.md> → one distinct path per line, from the steps' Files lines.
-# A bare name after a path on the same line is relative to that path's
-# directory: "create `src/a/x.ts`, `y.ts`" is src/a/x.ts and src/a/y.ts.
-plan_files() {
-  wf_section_body "$1" "Steps" | awk '
-    /\*\*Files:\*\*/ {
-      dir = ""
-      line = $0
-      while (match(line, /`[^`]+`/)) {
-        tok = substr(line, RSTART + 1, RLENGTH - 2)
-        line = substr(line, RSTART + RLENGTH)
-        sub(/^\.\//, "", tok)
-        if (tok ~ /[ \t]/) continue
-        if (index(tok, "/") > 0) { d = tok; sub(/\/[^\/]*$/, "", d); dir = d }
-        else if (dir != "") tok = dir "/" tok
-        if (!(tok in seen)) { seen[tok] = 1; print tok }
-      }
-    }'
-}
-
 plan_step_count() {
   wf_section_body "$1" "Steps" | grep -cE '^###[ \t]+Step' || true
 }
@@ -383,7 +363,7 @@ evaluate_plan() {
   REASONS=()
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/lv-lane.XXXXXX")
   files="$tmp/files"; text="$tmp/text"
-  plan_files "$plan_md" > "$files"
+  wf_plan_files "$plan_md" > "$files"
   sections "$plan_md" "Goal" "Steps" "Design Decisions" > "$text"
 
   max_steps=$(wf_cfg lane.express.maxSteps 5)
