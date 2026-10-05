@@ -346,7 +346,7 @@ It is a per-plan grant, and it is two halves owned by different parties:
 
 | Half | Who | How |
 |-|-|-|
-| Declared | A human, at inception | `lv-bug-new.sh --lane express`, `lv-dep-notify.sh --lane express`, or `lv-lane.sh declare BRF-NNN` for a brief. Writes `> **Lane:** express (declared by <who>, <date>)` and a `lane-declare` line in `events.log`. **Refused under `LV_UNATTENDED=1`.** The plan inherits it from its `Bug:`/`Brief:` header |
+| Declared | A human, at inception | `lv-bug-new.sh --lane express`, `lv-dep-notify.sh --lane express`, or `lv-lane.sh declare BRF-NNN` for a brief (`--lane trusted` / `--trust` for a trusted declaration, below). Writes `> **Lane:** express (declared by <who>, <date>)` and a `lane-declare` line in `events.log`. **Refused under `LV_UNATTENDED=1`.** The plan inherits it from its `Bug:`/`Brief:` header |
 | Checked | `lv-lane.sh`, mechanically, twice | `precheck` on the request text at filing, warning only. `check` on the written plan at spec, before any gate would open — and again by every consumer, so a plan amended after its check is judged as it now reads |
 
 A declaration counts only when `events.log` corroborates it: a `Lane:` field that no
@@ -390,8 +390,24 @@ build surface only, a code span, which is a command the step runs rather than a 
 "never logs the password" is a plan that handles passwords. A text match is a heuristic and
 **errs toward downgrading**. A false positive costs one human gate; a false negative ships unseen.
 
-`projectProfile.tier` is **not** an input. A live app whose profile still reads `pre-launch` is
-precisely the case a risk check must not trust.
+### A trusted declaration, while pre-launch
+
+`projectProfile.tier` is not an input to the check itself. It is an input to one thing: a
+**trusted** declaration (`--lane trusted` when filing, `lv-lane.sh declare <ID> --trust`)
+waives every warning the check finds while the project is pre-launch — `tier: pre-launch` and
+`live_from` absent or in the future, the same rule `production-push` uses (LVI-036). A project
+with no users has nothing for a downgrade to protect, and a client's express request for a
+debug-feedback endpoint waited hours at spec-approval on its own size, a compose file and its
+`security` tag — warnings the person who declared the lane would have waived on sight.
+
+The waived reasons are still found: `## Lane` lists them under **Waived (trusted, pre-launch)**,
+and `lv-lane.sh status` reports `LANE_WAIVED` and `LANE_TRUST`. Trust is read from the
+`lane-declare` event (`… (trusted)`), never the field, and re-read at every check, so setting
+`live_from` ends it for work already in flight (**Trust lapsed**, and the plan downgrades). On a
+project that is not pre-launch a trusted filing declares plain express and says so. The case it
+cannot catch is a live app still reading `pre-launch` with no `live_from` — `lv-profile.sh`
+reports that drift, and setting `live_from` is the fix. Nothing under the never-bypassed list
+changes.
 
 ### A pass, and a fail
 

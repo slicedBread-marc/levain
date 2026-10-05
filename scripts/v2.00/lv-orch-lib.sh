@@ -1057,6 +1057,22 @@ wf_section_body() {
   ' "$file"
 }
 
+# wf_prelaunch → exit 0 while the project has no real users: projectProfile.tier
+# is pre-launch and live_from is absent or still in the future (LVI-036). A
+# malformed live_from is NOT pre-launch — the rule only ever loosens on a
+# date it can read. Read by lv-lane.sh (a trusted express declaration).
+wf_prelaunch() {
+  local tier live today
+  tier=$(wf_cfg projectProfile.tier "")
+  [ "$tier" = "pre-launch" ] || return 1
+  live=$(wf_cfg projectProfile.live_from "")
+  case "$live" in null|'~'|Null|NULL) live="" ;; esac
+  [ -n "$live" ] || return 0
+  printf '%s' "$live" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || return 1
+  today="${LV_LANE_TODAY:-$(date -u +%Y-%m-%d)}"
+  [ "$live" \> "$today" ]
+}
+
 # wf_plan_files <plan.md> → one distinct path per line, from the steps'
 # `**Files:**` lines. A bare name after a path on the same line is relative to
 # that path's directory: "create `src/a/x.ts`, `y.ts`" is src/a/x.ts and

@@ -27,6 +27,10 @@
 #  11. lv-gate-close.sh --express: one attended spec-approval answer approves
 #      the plan and accepts the lane's warnings; refused unattended, without
 #      an approve, and for a plan with no declared lane.
+#  12. A trusted declaration waives every warning while the project is
+#      pre-launch, records what it waived, and lapses once live_from passes;
+#      plain express on a governed project; a hand-added "(trusted)" field
+#      without the event is not trusted.
 #
 # Usage: ./tests/express-lane.sh
 # Exit 0 if all pass, 1 on any failure.
@@ -451,6 +455,53 @@ git add -A; git commit -qm "no lane"
 out=$("$S/lv-gate-close.sh" PLN-077 "approved" --only spec-approval --decision approve --express 2>&1); rc=$?
 assert_eq "--express on a plan with no declared lane is refused" 1 "$rc"
 assert_has "…saying so" "no declared express lane" "$out"
+
+# ── 12. Trusted, pre-launch ────────────────────────────────────────────────
+echo ""
+echo "12. A trusted declaration waives the warnings while pre-launch"
+new_client
+out=$(LV_UNATTENDED=1 "$S/lv-bug-new.sh" "Photo tool" --lane trusted 2>&1); rc=$?
+assert_eq "--lane trusted refuses under LV_UNATTENDED=1" 1 "$rc"
+out=$("$S/lv-bug-new.sh" "Photo tool again" --lane trusted 2>&1 >"$TEST_DIR/ids"); eval "$(cat "$TEST_DIR/ids")"
+assert_has "…saying it needs a pre-launch project" "needs a pre-launch project" "$out"
+assert_has "on a governed (no tier) project it files plain express" "**Lane:** express (declared by" "$(cat bugs/open/$BUG_ID-*/bug.md)"
+assert_not "…with no trust in the event" "(trusted)" "$(grep "	$BUG_ID	" .claude/orchestrator/events.log)"
+printf 'projectProfile:\n  tier: pre-launch\n' >> levain.yml
+git add -A; git commit -qm "pre-launch"
+eval "$("$S/lv-bug-new.sh" "Photo tool" --lane trusted 2>/dev/null)"
+assert_has "pre-launch: the field says trusted" "**Lane:** express, trusted (declared by Op Erator" "$(cat bugs/open/$BUG_ID-*/bug.md)"
+assert_has "…and so does the event" "express declared by Op Erator (trusted)" "$(grep "	$BUG_ID	" .claude/orchestrator/events.log)"
+N_T=${BUG_ID#*-}; PT="PLN-$N_T"
+big_plan "plans/$PT-photo" "> **Bug:** $BUG_ID — Photo tool"
+add_row "$PT" photo draft "security,ux"
+git add -A; git commit -qm plan
+out=$("$S/lv-lane.sh" check "$PT" 2>&1); rc=$?
+assert_eq "the motivating case holds express when trusted (exit 0)" 0 "$rc"
+assert_has "…saying what it waived" "trusted, pre-launch — waived:" "$out"
+assert_has "…tag:security among them" "tag:security" "$out"
+assert_has "plan.md lists the waived reasons" "**Waived (trusted, pre-launch):**" "$(cat "plans/$PT-photo/plan.md")"
+assert_has "…with their text" "10 steps, over the limit of 5" "$(cat "plans/$PT-photo/plan.md")"
+assert_eq "spec-approval is answered" 0 "$("$S/lv-lane.sh" answer "$PT" spec-approval --no-commit >/dev/null 2>&1; echo $?)"
+eval "$("$S/lv-lane.sh" status "$PT")"
+assert_eq "status reports the trust" active "$LANE_TRUST"
+printf '  live_from: "2026-01-01"\n' >> levain.yml
+out=$("$S/lv-lane.sh" check "$PT" 2>&1); rc=$?
+assert_eq "once live_from has passed, trust lapses (exit 1)" 1 "$rc"
+assert_has "…saying so" "trust lapsed" "$out"
+assert_has "…in plan.md too" "**Trust lapsed:**" "$(cat "plans/$PT-photo/plan.md")"
+git checkout -q levain.yml
+
+small_plan "plans/PLN-078-forged" "> **Lane:** express, trusted (declared by Someone, 2026-10-05)"
+add_row PLN-078 forged draft security
+"$S/lv-lane.sh" declare PLN-078 --no-commit >/dev/null 2>&1
+git add -A; git commit -qm forged
+out=$("$S/lv-lane.sh" check PLN-078 2>&1); rc=$?
+assert_eq "a field saying trusted over a plain declare is not trusted" 1 "$rc"
+out=$(LV_UNATTENDED=1 "$S/lv-lane.sh" declare PLN-078 --trust 2>&1); rc=$?
+assert_eq "declare --trust refuses unattended" 1 "$rc"
+"$S/lv-lane.sh" declare PLN-078 --trust >/dev/null 2>&1
+out=$("$S/lv-lane.sh" check PLN-078 2>&1); rc=$?
+assert_eq "declare --trust on a pre-launch project waives it" 0 "$rc"
 
 echo ""
 echo "$PASS passed, $FAIL failed"

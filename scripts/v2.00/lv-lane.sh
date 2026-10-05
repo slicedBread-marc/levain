@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lv-lane.sh — the express lane: small, safe work that runs with no human gate.
 #
-#   lv-lane.sh declare  <BUG|BRF|PLN-NNN> [--by <who>] [--no-commit]
+#   lv-lane.sh declare  <BUG|BRF|PLN-NNN> [--trust] [--by <who>] [--no-commit]
 #   lv-lane.sh declare  <BUG|BRF|PLN-NNN> --clear [--no-commit]
 #   lv-lane.sh precheck <BUG|BRF-NNN>                     warn only, exit 0
 #   lv-lane.sh check    <PLN-NNN> [--accept-warnings [--by <who>]] [--no-commit]
@@ -60,9 +60,20 @@
 # verify finding, the consistency pass, deploy-deferred-criteria for an
 # `unbuilt` row or a plan outside the lane, and the unattended daily ceiling.
 #
-# projectProfile.tier is NOT an input. It is a recorded reason for a project's
-# knobs, and a live app still reading `pre-launch` is exactly the case the lane
-# must not trust.
+# TRUSTED: a declaration made with `--trust` (`--lane trusted` when filing)
+# waives every warning the check finds, while the project is pre-launch —
+# projectProfile.tier pre-launch and live_from absent or in the future
+# (wf_prelaunch, the rule LVI-036 set for production-push). A pre-launch
+# project has no users to protect, so a downgrade there only costs the human
+# who declared the lane an hour of waiting for the gate they already waived:
+# a client's express request for a debug-feedback endpoint stopped at
+# spec-approval on its own size, its compose file and its security tag. The
+# waived reasons are still found, written into `## Lane` as waived, and logged
+# — a reader sees what shipped unseen. Trust is re-read at every check, so
+# setting live_from ends it for work already in flight; a live app still
+# reading `pre-launch` without a live_from is the case it cannot catch, and
+# lv-profile.sh reports that drift. An uncorroborated declaration is never
+# trusted, and nothing above under NEVER BYPASSED changes.
 #
 # WHY THE DECLARATION IS CORROBORATED
 #
@@ -118,6 +129,7 @@ do_commit=true
 accept=false
 spend=false
 quiet=false
+trust=false
 range_args=()
 
 while [ $# -gt 0 ]; do
@@ -126,6 +138,7 @@ while [ $# -gt 0 ]; do
     --clear)           clear=true; shift ;;
     --no-commit)       do_commit=false; shift ;;
     --accept-warnings) accept=true; shift ;;
+    --trust)           trust=true; shift ;;
     --spend)           spend=true; shift ;;
     --quiet)           quiet=true; shift ;;
     --)                shift; range_args=("$@"); break ;;
@@ -216,7 +229,7 @@ last_event() {
 # DECL_OK (true when events.log corroborates it) and DECL_NOTE (why not).
 resolve_declaration() {
   local plan_md="$1" plan_id="$2" src f v ev
-  DECL_ID=""; DECL_TEXT=""; DECL_OK=false; DECL_NOTE=""
+  DECL_ID=""; DECL_TEXT=""; DECL_OK=false; DECL_NOTE=""; DECL_TRUSTED=false
 
   local candidates=("$plan_id")
   while IFS= read -r src; do
@@ -240,6 +253,9 @@ resolve_declaration() {
       DECL_NOTE="$src's lane was cleared ($(printf '%s' "$ev" | cut -f1)) — its Lane field is left over"
     else
       DECL_OK=true
+      # Trust is the event's word, not the field's: the field is text a
+      # worker can write.
+      case "$(printf '%s' "$ev" | cut -f4)" in *"(trusted)"*) DECL_TRUSTED=true ;; esac
     fi
     return 0
   done
@@ -432,10 +448,12 @@ accepted_keys() {
 }
 
 # verdict <PLN> <plan.md> → sets LANE (express|normal|none), LANE_OPEN (the
-# reasons still standing after acceptance), LANE_ACCEPTED (keys accepted).
+# reasons still standing after acceptance), LANE_ACCEPTED (keys accepted),
+# LANE_WAIVED (keys a trusted declaration waived) and LANE_TRUST
+# (none|active|lapsed).
 verdict() {
   local plan_id="$1" plan_md="$2" r k acc
-  LANE=none; LANE_OPEN=(); LANE_ACCEPTED=""
+  LANE=none; LANE_OPEN=(); LANE_ACCEPTED=""; LANE_WAIVED=""; LANE_TRUST=none
   resolve_declaration "$plan_md" "$plan_id"
   [ -n "$DECL_ID" ] || return 0
   evaluate_plan "$plan_id" "$plan_md"
@@ -449,6 +467,15 @@ verdict() {
     if [ -n "$acc" ] && printf '%s\n' "$acc" | grep -qxF -- "$k"; then continue; fi
     LANE_OPEN+=("$r")
   done
+  if $DECL_TRUSTED; then
+    if wf_prelaunch; then
+      LANE_TRUST=active
+      for r in ${LANE_OPEN[@]+"${LANE_OPEN[@]}"}; do LANE_WAIVED="${LANE_WAIVED:+$LANE_WAIVED }${r%%$'\t'*}"; done
+      LANE_OPEN=()
+    else
+      LANE_TRUST=lapsed
+    fi
+  fi
   if [ "${#LANE_OPEN[@]}" -eq 0 ]; then LANE=express; else LANE=normal; fi
 }
 
@@ -467,10 +494,18 @@ write_lane_section() {
   if [ "$LANE" = express ]; then
     local with=""
     [ -z "$LANE_ACCEPTED" ] || with=' with accepted warnings'
+    [ -z "$LANE_WAIVED" ] || with="${with:+$with and} with warnings waived by a trusted declaration"
     body+="> **Checked:** ${today} — **express** — eligible${with}"$'\n'
   else
     body+="> **Checked:** ${today} — **downgraded to the normal lane**; every gate applies"$'\n'
     for r in "${LANE_OPEN[@]}"; do body+="> - ${r#*$'\t'}"$'\n'; done
+    [ "$LANE_TRUST" != lapsed ] || body+="> **Trust lapsed:** declared trusted, but the project is no longer pre-launch (projectProfile) — its warnings count"$'\n'
+  fi
+  if [ -n "$LANE_WAIVED" ]; then
+    body+="> **Waived (trusted, pre-launch):** ${LANE_WAIVED}"$'\n'
+    for r in "${REASONS[@]}"; do
+      case " $LANE_WAIVED " in *" ${r%%$'\t'*} "*) body+="> - ${r#*$'\t'}"$'\n' ;; esac
+    done
   fi
   if [ -n "$LANE_ACCEPTED" ]; then
     body+="> **Accepted warnings:** $(last_event lane-accept "$PLAN_ID" | cut -f4 | sed 's/ accepted: .*//') — ${LANE_ACCEPTED}"$'\n'
@@ -512,8 +547,10 @@ print_verdict() {
   echo "$PLAN_ID: express lane declared on $DECL_ID ($DECL_TEXT)"
   if [ "$LANE" = express ]; then
     echo "  eligible${LANE_ACCEPTED:+ — accepted warnings: $LANE_ACCEPTED}"
+    [ -z "$LANE_WAIVED" ] || echo "  trusted, pre-launch — waived: $LANE_WAIVED"
   else
     for r in "${LANE_OPEN[@]}"; do echo "  ✗ ${r#*$'\t'}"; done
+    [ "$LANE_TRUST" != lapsed ] || echo "  (declared trusted, but the project is no longer pre-launch — trust lapsed)"
     echo "  → downgraded to the normal lane. Every gate applies."
     echo "    A human may force it: lv-lane.sh check $PLAN_ID --accept-warnings"
   fi
@@ -524,7 +561,7 @@ print_verdict() {
 case "$cmd" in
 
 declare)
-  [ -n "$id" ] || { echo "Usage: $0 declare <$LV_BUG|$LV_BRF|$LV_PLN-NNN> [--by <who>] [--clear]" >&2; exit 1; }
+  [ -n "$id" ] || { echo "Usage: $0 declare <$LV_BUG|$LV_BRF|$LV_PLN-NNN> [--trust] [--by <who>] [--clear]" >&2; exit 1; }
   refuse_unattended "Declaring the express lane"
   file=$(artifact_file "$id" || true)
   [ -n "$file" ] || { echo "Error: no artifact file for '$id'" >&2; exit 1; }
@@ -536,10 +573,18 @@ declare)
     exit 0
   fi
   who=$(who_am_i)
-  set_header_field "$file" "> **Lane:** express (declared by $who, $today)"
-  wf_event lane-declare "$id" "express declared by $who"
-  commit_paths "lane($id): express lane declared by $who" "$file"
-  echo "$id: express lane declared by $who."
+  kind=express; tag=""
+  if $trust; then
+    if wf_prelaunch; then
+      kind="express, trusted"; tag=" (trusted)"
+    else
+      echo "$id: --trust ignored — the project is not pre-launch (projectProfile.tier / live_from). Declared plain express." >&2
+    fi
+  fi
+  set_header_field "$file" "> **Lane:** $kind (declared by $who, $today)"
+  wf_event lane-declare "$id" "express declared by $who$tag"
+  commit_paths "lane($id): $kind lane declared by $who" "$file"
+  echo "$id: $kind lane declared by $who."
   if ! [[ "$id" =~ ^($LV_PLN_RE)- ]]; then
     "$0" precheck "$id" || true
   fi
@@ -616,6 +661,8 @@ status)
   wf_emit LANE_DECLARED "$DECL_TEXT"
   wf_emit LANE_REASONS  "$reasons"
   wf_emit LANE_ACCEPTED "$LANE_ACCEPTED"
+  wf_emit LANE_WAIVED   "$LANE_WAIVED"
+  wf_emit LANE_TRUST    "$LANE_TRUST"
   exit 0
   ;;
 

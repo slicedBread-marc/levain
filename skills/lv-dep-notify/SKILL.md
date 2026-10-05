@@ -78,7 +78,7 @@ standing in the target's pipeline beyond the moment the report lands.
      [--links "<ticket, decision record, related artifact over there>"] \
      [--amends <BUG-id>] \
      [--group <slug>] \
-     [--lane express]
+     [--lane express|trusted]
    ```
    Omit `--to` to broadcast to every declared dependent; pass it to reach just one. Omitted
    fields land as `TBD` — never invent them.
@@ -117,6 +117,8 @@ standing in the target's pipeline beyond the moment the report lands.
    check there, and is recorded as declared by the operator "via" this project. The target's
    filing prints a pre-check warning when the request text already suggests a downgrade — relay
    it. Refused under `LV_UNATTENDED=1`: a worker never declares work safe to ship unseen (LVI-025).
+   `--lane trusted` — only when the user also says warnings should not stop it — waives every
+   warning in a target that is pre-launch, and is plain express in one that is not.
 
    **Severity is urgency to act, not how bad the change is in the abstract.** `Critical`/`High`
    for something that breaks a dependent's integration now or on its next deploy; `Low` for a

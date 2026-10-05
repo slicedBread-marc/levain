@@ -73,6 +73,9 @@
 #                            written plan passes the eligibility check there.
 #                            Refused under LV_UNATTENDED=1. Recorded as declared
 #                            by this operator "via <this project's slug>".
+#   --lane trusted          the same, and the target waives the check's
+#                            warnings while IT is pre-launch (lv-lane.sh,
+#                            TRUSTED); plain express in a target that is live.
 #   --amends <BUG-id>       this report CORRECTS one already filed in the
 #                            target. Sets Links on both sides in the target's
 #                            own repo: the new one says "Amends <ID>", the
@@ -192,11 +195,11 @@ case "$kind" in
 esac
 
 case "$lane" in
-  normal|express) ;;
-  *) echo "Error: --lane must be 'express' or 'normal' (got '$lane')" >&2; exit 1 ;;
+  normal|express|trusted) ;;
+  *) echo "Error: --lane must be 'express', 'trusted' or 'normal' (got '$lane')" >&2; exit 1 ;;
 esac
-if [ "$lane" = express ] && [ "${LV_UNATTENDED:-}" = "1" ]; then
-  echo "Error: --lane express is a human's statement, and this is an unattended worker (LV_UNATTENDED=1). Nothing was filed." >&2
+if [ "$lane" != normal ] && [ "${LV_UNATTENDED:-}" = "1" ]; then
+  echo "Error: --lane $lane is a human's statement, and this is an unattended worker (LV_UNATTENDED=1). Nothing was filed." >&2
   exit 1
 fi
 
@@ -265,7 +268,7 @@ esac
 link_args=()
 [ -n "$links" ] && link_args=(--links "$links")
 lane_args=()
-[ "$lane" = express ] && lane_args=(--lane express --lane-by "$(git config user.name 2>/dev/null || whoami) via $caller_slug")
+[ "$lane" != normal ] && lane_args=(--lane "$lane" --lane-by "$(git config user.name 2>/dev/null || whoami) via $caller_slug")
 group_args=()
 [ -n "$group" ] && group_args=(--group "$group")
 # Who opened or joined the group, as the target's lv-bug-group.sh records it.
