@@ -292,7 +292,11 @@ It is the one promotion gate with **no** fall-through to a grant. `lv-gate-close
 `--basis autonomy` on it and the skill never asks `lv-autonomy.sh` there, because a standing
 `deploy` grant is policy written before these criteria existed — and client-c's DC-014 was
 the kind that crash-loops production when it goes unread (WFI-011). A human answers it or
-nothing does.
+nothing does — and the one answer given ahead of time is the express lane's. A plan holds the
+lane with `(external)` or `(soak)` criteria only when a human accepted its `criteria:` warning,
+that is, read those criteria and said they ship and get checked afterwards.
+`lv-lane.sh deferred-covered` lets step 4a skip the gate when every open row is one of those.
+An `unbuilt` row, or a row of a plan out of the lane, still asks.
 
 Until it existed the step had no answer path at all: every unattended dispatch re-ran the
 check, got the same exit 1, and re-opened a gate a human had already answered — WFI-005's loop
@@ -372,7 +376,7 @@ lane:
 | A new third-party dependency, or a dependency manifest touched | paths and text |
 | The `security` tag, or any `specApproval.gateTags` tag | the registry's Tags |
 | A contract shared between repos | text, and `contractPaths` |
-| `(external)` or `(soak)` criteria — they stop the deploy at `deploy-deferred-criteria`, which the lane never answers | `#### Manual` |
+| `(external)` or `(soak)` criteria — they would stop the deploy at `deploy-deferred-criteria`. Accepting this warning is reading them and saying they are checked after the deploy, and the lane then answers that gate for them (`deferred-covered`) | `#### Manual` |
 
 Text is read from `## Goal`, `## Steps` and `## Design Decisions` only, and is judged one
 clause at a time. These do not count: a `**Files:**` line, whose paths the globs already judged;
@@ -394,6 +398,7 @@ precisely the case a risk check must not trust.
 |-|-|-|
 | `spec-approval` (gate tags included, once accepted) | `lv-lane.sh answer PLN spec-approval`, `/lv-spec` step 6 | `draft → ready`, no gate |
 | `manual-test` | `lv-manual-gate.sh` reports `GATE=false`, `LANE=express`; `lv-lane.sh answer PLN manual-test` | open eyes criteria ticked and listed under `## Post-ship checklist` for a human after it ships |
+| `deploy-deferred-criteria` | `lv-lane.sh deferred-covered -- <range>`, `/lv-deploy` step 4a | when every open row in the batch is an `(external)`/`(soak)` criterion of a plan that holds the lane, no gate; the rows stay open in `plans/deferred-criteria.md` for after the deploy |
 | `production-push` | `lv-autonomy.sh production-push`, via `lv-lane.sh push-covered` | one push per plan, when every code commit in `origin/main..main` names a `complete`, lane-cleared plan and no merge resolves code of its own |
 
 **Fail** — the plan downgrades to the normal lane. The reasons go into `plan.md`'s `## Lane`
@@ -409,13 +414,13 @@ a replan that adds a Dockerfile — is not covered, and downgrades again.
 
 ### Never bypassed
 
-The lane answers the three gates above and nothing else. These stand whatever it says:
+The lane answers the four gates above and nothing else. These stand whatever it says:
 
 - a worker's `needs-input` question, `scope-reduction`, `goal-missing`, `stuck`;
 - the permission baseline below;
 - failing tests, a verify finding, a FAIL at test — those route to the builder as always;
 - the cross-plan consistency pass;
-- `deploy-deferred-criteria`;
+- `deploy-deferred-criteria` for an `unbuilt` row, or for any row of a plan outside the lane;
 - `max_unattended_per_day`: an express push counts as a `production-push authorized` line
   against it, like any other unattended action.
 

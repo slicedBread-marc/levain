@@ -164,6 +164,19 @@ Before starting, confirm E2E passed on release:
    the dangerous kind and went unread straight into a production crash-loop (WFI-011) — don't
    let this step become the same silent skip.
 
+   **On exit `1`, ask the express lane first:**
+   ```bash
+   scripts/lv-exec.sh lv-lane.sh deferred-covered -- release --not $BASE; echo "lane exit=$?"
+   ```
+   Exit `0` — every open row is an `(external)` or `(soak)` criterion of a plan whose express
+   lane still holds. A plan only holds the lane with such criteria when a human accepted the
+   `criteria:` warning, so a human has already said these ship and get checked afterwards.
+   Print its output (the criteria stay open in `plans/deferred-criteria.md` for after the
+   deploy), and continue at step 5, attended or not; no gate. Exit `1` (a row the lane does
+   not cover, named on stderr) or `2` — go on below. A client answered this gate twice in one
+   day with "post-deploy iPad walks, accepted unrun" for plans whose lane had already
+   accepted exactly those criteria.
+
    **Under `LV_UNATTENDED=1`, exit `1` is a gate — but read the answer of record first:**
    ```bash
    scripts/lv-exec.sh lv-promote-approval.sh deferred; echo "deferred approval exit=$?"

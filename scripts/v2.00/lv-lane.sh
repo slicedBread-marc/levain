@@ -8,6 +8,7 @@
 #   lv-lane.sh status   <PLN-NNN>                         eval contract, writes nothing
 #   lv-lane.sh answer   <PLN-NNN> spec-approval|manual-test [--no-commit]
 #   lv-lane.sh push-covered [--spend] [--quiet]
+#   lv-lane.sh deferred-covered [--quiet] -- <git log revision args...>
 #
 # WHAT IT IS
 #
@@ -32,7 +33,7 @@
 #   every consumer rather than trusted from a file, so a plan amended after its
 #   check is judged as it now reads.
 #
-# A pass lets three gates be answered for this plan only, each logged as an
+# A pass lets four gates be answered for this plan only, each logged as an
 # `autonomy-use` line starting `express:`:
 #
 #   spec-approval   `answer PLN spec-approval` — /lv-spec routes to ready
@@ -41,16 +42,22 @@
 #   production-push `push-covered` — read by lv-autonomy.sh production-push: a
 #                   one-shot push for a main whose every code commit belongs to a
 #                   lane-cleared plan, counted against max_unattended_per_day
+#   deploy-deferred-criteria
+#                   `deferred-covered` — read by /lv-deploy step 4a: the batch's
+#                   open deferred rows are all (external)/(soak) criteria of
+#                   plans that hold the lane. A plan holds it with such
+#                   criteria only when a human accepted its `criteria:` warning
+#                   — read them and said they are checked after the deploy
 #
 # A fail downgrades the plan to the normal lane: the reasons are written into
 # plan.md's `## Lane` section and every gate behaves as if no lane existed. A
 # human may force it with `check PLN --accept-warnings`, which records the exact
 # warnings accepted; a warning that appears later is not covered by it.
 #
-# NEVER BYPASSED, by construction — the lane answers only the three gates above:
+# NEVER BYPASSED, by construction — the lane answers only the four gates above:
 # a worker's needs-input question, the permission baseline, failing tests or a
-# verify finding, the consistency pass, deploy-deferred-criteria, and the
-# unattended daily ceiling.
+# verify finding, the consistency pass, deploy-deferred-criteria for an
+# `unbuilt` row or a plan outside the lane, and the unattended daily ceiling.
 #
 # projectProfile.tier is NOT an input. It is a recorded reason for a project's
 # knobs, and a live app still reading `pre-launch` is exactly the case the lane
@@ -110,6 +117,7 @@ do_commit=true
 accept=false
 spend=false
 quiet=false
+range_args=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -119,6 +127,7 @@ while [ $# -gt 0 ]; do
     --accept-warnings) accept=true; shift ;;
     --spend)           spend=true; shift ;;
     --quiet)           quiet=true; shift ;;
+    --)                shift; range_args=("$@"); break ;;
     -h|--help)         wf_usage; exit 0 ;;
     -*)                wf_bad_option "$1" ;;
     *)  if [ -z "$id" ]; then id="$1"
@@ -408,7 +417,7 @@ evaluate_plan() {
   eval "$("$SELF_DIR/lv-manual-lint.sh" "$plan_id" --counts 2>/dev/null || true)"
   if [ "${MANUAL_EXTERNAL:-0}" -gt 0 ] || [ "${MANUAL_SOAK:-0}" -gt 0 ]; then
     add_reason "criteria:external=${MANUAL_EXTERNAL:-0},soak=${MANUAL_SOAK:-0}" \
-      "criteria: ${MANUAL_EXTERNAL:-0} (external) and ${MANUAL_SOAK:-0} (soak) — they are deferred at test and stop the deploy at deploy-deferred-criteria, which the lane never answers"
+      "criteria: ${MANUAL_EXTERNAL:-0} (external) and ${MANUAL_SOAK:-0} (soak) — deferred at test, they would stop the deploy at deploy-deferred-criteria; accepting this warning says they are checked after the deploy, and the lane then answers that gate for them"
   fi
   rm -rf "$tmp"
 }
@@ -664,6 +673,46 @@ answer)
   commit_paths "lane($PLAN_ID): manual-test answered by the express lane — $moved criteria to the post-ship checklist" "$PLAN_MD"
   wf_event autonomy-use "$PLAN_ID" "express: manual-test answered by the express lane — $moved criteria moved to the post-ship checklist ($DECL_TEXT)"
   echo "$PLAN_ID: manual-test answered by the express lane — $moved criteria moved to the post-ship checklist."
+  exit 0
+  ;;
+
+deferred-covered)
+  # Does the express lane answer /lv-deploy step 4a's deploy-deferred-criteria
+  # for this batch? Yes only when every open row lv-deferred-check.sh reports is
+  # an (external) or (soak) criterion of a plan whose lane still holds. A client
+  # answered this gate twice in one day, "post-deploy iPad walks, accepted
+  # unrun", for plans whose lane had already accepted exactly those criteria.
+  [ "${#range_args[@]}" -gt 0 ] || { echo "Error: deferred-covered needs -- <git log revision args>" >&2; exit 2; }
+  dc_rc=0
+  rows=$("$SELF_DIR/lv-deferred-check.sh" --range "${range_args[@]}" 2>/dev/null) || dc_rc=$?
+  case "$dc_rc" in
+    0) say "express: no open deferred criteria in the batch — not a lane question"; exit 1 ;;
+    1) ;;
+    *) echo "Error: lv-deferred-check.sh could not read the batch (exit $dc_rc)" >&2; exit 2 ;;
+  esac
+  dc_file="plans/deferred-criteria.md"
+  covered=""
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    dc="${row%% *}"
+    id=$(printf '%s' "$row" | sed -nE 's/^[^ ]+ \(([^)]+)\):.*/\1/p')
+    tag=$(awk -F'|' -v dc="$dc" '{ i = $2; gsub(/^[ \t]+|[ \t]+$/, "", i) } i == dc { t = $4; gsub(/^[ \t]+|[ \t]+$/, "", t); print t; exit }' "$dc_file")
+    case "$tag" in
+      external|soak) ;;
+      *) say "express: $dc ($id) is a '${tag:-unknown}' criterion — the lane covers (external) and (soak) only"; exit 1 ;;
+    esac
+    ( resolve_plan ) >/dev/null 2>&1 || { say "express: $dc names $id, which has no plan.md — not covered"; exit 1; }
+    resolve_plan
+    verdict "$PLAN_ID" "$PLAN_MD"
+    [ "$LANE" = express ] || { say "express: $dc belongs to $PLAN_ID, which is not in the express lane ($LANE) — not covered"; exit 1; }
+    covered+="$row"$'\n'
+  done <<< "$rows"
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    wf_event autonomy-use "$(printf '%s' "$row" | sed -nE 's/^[^ ]+ \(([^)]+)\):.*/\1/p')" \
+      "express: deploy-deferred-criteria answered by the express lane for ${row%% *} — checked after the deploy"
+  done <<< "$covered"
+  printf '%s' "$covered"
   exit 0
   ;;
 

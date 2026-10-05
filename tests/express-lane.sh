@@ -20,6 +20,9 @@
 #   8. "no secrets", "rely on SameSite" and a compose command in a code span
 #      do not downgrade; a real match later in the plan still does; a path on
 #      a Files line is judged once (LVI-034/035).
+#   9. deploy-deferred-criteria is answered when every open row in the batch
+#      is an (external)/(soak) criterion of a plan holding the lane; an
+#      unbuilt row or a plan outside the lane still asks.
 #
 # Usage: ./tests/express-lane.sh
 # Exit 0 if all pass, 1 on any failure.
@@ -359,6 +362,48 @@ LV_ADD='### Step 3: Compose\n- **Files:** modify `docker/docker-compose.househol
 out=$("$S/lv-lane.sh" check "$PT" --no-commit 2>&1)
 assert_eq "a compose file on a Files line is one reason, not two" 1 "$(printf '%s\n' "$out" | grep -c 'build/deploy surface')"
 git checkout -q -- "$PDT/plan.md"
+
+# ── 9. Deferred criteria the lane already accepted ────────────────────────
+echo ""
+echo "9. deploy-deferred-criteria: answered for criteria the lane's acceptance covered"
+eval "$("$S/lv-bug-new.sh" "Walk the sheet" --lane express 2>/dev/null)"
+N_EX=${BUG_ID#*-}; PE="PLN-$N_EX"; PDE="plans/$PE-walk"
+small_plan "$PDE" "> **Bug:** $BUG_ID — Walk the sheet"
+LV_ADD='- [ ] (external) on the real device after the deploy — the walk reaches the trophy' \
+  awk '/^- \[ \] \(eyes:blocking\)/ && !d { print; print ENVIRON["LV_ADD"]; d = 1; next } { print }' "$PDE/plan.md" > "$PDE/plan.md.tmp" && mv "$PDE/plan.md.tmp" "$PDE/plan.md"
+add_row "$PE" walk complete ux
+git add -A; git commit -qm "plan with an external criterion"
+assert_eq "an external criterion downgrades the lane" 1 "$("$S/lv-lane.sh" check "$PE" >/dev/null 2>&1; echo $?)"
+"$S/lv-lane.sh" check "$PE" --accept-warnings >/dev/null 2>&1
+{
+  printf '# Deferred Criteria\n\n| ID | Criterion | Tag | From | Prereq | Note | Added | Status |\n|-|-|-|-|-|-|-|-|\n'
+  printf '| DC-001 | on the real device after the deploy — the walk reaches the trophy | external | %s | — | — | 2026-10-05 | open |\n' "$PE"
+} > plans/deferred-criteria.md
+git add -A; git commit -qm "deferred"
+BASE=$(git rev-parse HEAD)
+git checkout -q -b rel-test
+printf 'walk\n' >> src/app.txt; git add -A; git commit -qm "implement($PE-walk): step 1"
+out=$("$S/lv-lane.sh" deferred-covered -- rel-test --not "$BASE" 2>&1); rc=$?
+assert_eq "an accepted external criterion of a lane plan is covered (exit 0)" 0 "$rc"
+assert_has "…naming the row" "DC-001" "$out"
+assert_has "…logged as an express answer" "express: deploy-deferred-criteria answered by the express lane" "$(cat .claude/orchestrator/events.log)"
+
+printf '| DC-002 | a printer that is not built yet | unbuilt | %s | — | — | 2026-10-05 | open |\n' "$PE" >> plans/deferred-criteria.md
+out=$("$S/lv-lane.sh" deferred-covered -- rel-test --not "$BASE" 2>&1); rc=$?
+assert_eq "an unbuilt row is not covered (exit 1)" 1 "$rc"
+assert_has "…and says which" "DC-002" "$out"
+git checkout -q -- plans/deferred-criteria.md
+
+printf 'big\n' >> src/app.txt; git add -A; git commit -qm "implement(PLN-$N_BIG-photo): step 1"
+printf '| DC-003 | prints true to size | external | PLN-%s | — | — | 2026-10-05 | open |\n' "$N_BIG" >> plans/deferred-criteria.md
+out=$("$S/lv-lane.sh" deferred-covered -- rel-test --not "$BASE" 2>&1); rc=$?
+assert_eq "a row of a plan outside the lane is not covered (exit 1)" 1 "$rc"
+assert_has "…and says which" "PLN-$N_BIG" "$out"
+git checkout -q -- plans/deferred-criteria.md
+assert_eq "no open rows in the batch is not a lane question (exit 1)" 1 \
+  "$("$S/lv-lane.sh" deferred-covered -- "$BASE" --not "$BASE" >/dev/null 2>&1; echo $?)"
+assert_eq "no range is a usage error (exit 2)" 2 "$("$S/lv-lane.sh" deferred-covered >/dev/null 2>&1; echo $?)"
+git checkout -q develop
 
 echo ""
 echo "$PASS passed, $FAIL failed"
