@@ -356,6 +356,9 @@ what the human's filing left behind.
 ### What the check refuses
 
 Configurable under `lane.express` in `levain.yml`; the defaults are the ones below.
+`lv-lane.sh budget` prints them as this project has them, with every disqualifier. `/lv-spec`
+reads it before it writes a plan for a source that carries a declared lane (step 5c), so the
+planner sees the limits while it can still shape the plan, not after.
 
 ```yaml
 lane:

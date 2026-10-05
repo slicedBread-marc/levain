@@ -23,6 +23,7 @@
 #   9. deploy-deferred-criteria is answered when every open row in the batch
 #      is an (external)/(soak) criterion of a plan holding the lane; an
 #      unbuilt row or a plan outside the lane still asks.
+#  10. budget prints the configured limits and disqualifiers for /lv-spec.
 #
 # Usage: ./tests/express-lane.sh
 # Exit 0 if all pass, 1 on any failure.
@@ -404,6 +405,18 @@ assert_eq "no open rows in the batch is not a lane question (exit 1)" 1 \
   "$("$S/lv-lane.sh" deferred-covered -- "$BASE" --not "$BASE" >/dev/null 2>&1; echo $?)"
 assert_eq "no range is a usage error (exit 2)" 2 "$("$S/lv-lane.sh" deferred-covered >/dev/null 2>&1; echo $?)"
 git checkout -q develop
+
+# ── 10. The budget, before the plan is written ─────────────────────────────
+echo ""
+echo "10. budget prints the limits /lv-spec plans against"
+printf 'lane:\n  express:\n    maxSteps: 8\n    maxFiles: 20\n' >> levain.yml
+out=$("$S/lv-lane.sh" budget 2>&1); rc=$?
+assert_eq "budget exits 0" 0 "$rc"
+assert_has "…with the configured step limit" "at most 8" "$out"
+assert_has "…and file limit" "at most 20" "$out"
+assert_has "…and the gating tags" "security" "$out"
+assert_has "…and the criteria rule" "(external) or (soak)" "$out"
+git checkout -q -- levain.yml
 
 echo ""
 echo "$PASS passed, $FAIL failed"

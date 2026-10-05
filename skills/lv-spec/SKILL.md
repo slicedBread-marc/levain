@@ -429,6 +429,28 @@ If the user picks a bug BUG-NNN:
 
    **A better pathspec cannot fix this and it is not the point.** Both workers legitimately name `plans/briefs/INDEX.md`; whoever commits first takes the other's uncommitted edits out of the same file. The fix is the same one the other three took — not being dirty for that long.
 
+5c. **If the source carries an express lane, plan with its limits in front of you.** A human
+   who files with `--lane express` wants the plan to run with no gate, and `lv-lane.sh` judges
+   that against the plan as you write it, once you have finished it, at
+   [Exit — unattended](#exit--unattended) step 6. A client's PLN-063 was written as 6 steps and
+   26 files against a limit of 5 and 15, and its operator learned at spec-approval that the
+   lane they had declared never applied. Read the limits before you write a step:
+   ```bash
+   grep -l '^> \*\*Lane:\*\* express' <the source bug.md or brief> && scripts/lv-exec.sh lv-lane.sh budget
+   ```
+   It prints the step and file limits and every disqualifier. Then:
+   - **Don't pad.** Fold a docs-only step into the step whose change it documents. List a file
+     only when the step edits it; a file you only read belongs under `## Prerequisites`.
+   - **Don't add an optional disqualifier.** If the fix works without touching a compose file,
+     `Program.cs`, a migration or a new package, don't touch it.
+   - **Never reword a step to dodge a match.** A disqualifier the work needs stays. The check is
+     the fail-safe, and writing around it is the one way to ship unseen what a human should have
+     seen.
+   - **If the work does not fit, say so first.** Add a line to `## Design Decisions` that it
+     cannot fit the lane, and name the limit, e.g. `- **Decision:** not express-sized — 8 files
+     across server and client — **Why:** …`. The downgrade at step 6 then reads as expected,
+     and the spec-approval question says why.
+
 6. **Specify everything** — every step must include:
    - Exact file paths to create or modify
    - Class/method/component names and signatures

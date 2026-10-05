@@ -9,6 +9,7 @@
 #   lv-lane.sh answer   <PLN-NNN> spec-approval|manual-test [--no-commit]
 #   lv-lane.sh push-covered [--spend] [--quiet]
 #   lv-lane.sh deferred-covered [--quiet] -- <git log revision args...>
+#   lv-lane.sh budget                                     the limits, for /lv-spec
 #
 # WHAT IT IS
 #
@@ -673,6 +674,35 @@ answer)
   commit_paths "lane($PLAN_ID): manual-test answered by the express lane — $moved criteria to the post-ship checklist" "$PLAN_MD"
   wf_event autonomy-use "$PLAN_ID" "express: manual-test answered by the express lane — $moved criteria moved to the post-ship checklist ($DECL_TEXT)"
   echo "$PLAN_ID: manual-test answered by the express lane — $moved criteria moved to the post-ship checklist."
+  exit 0
+  ;;
+
+budget)
+  # What the check will hold the plan to, printed BEFORE the plan is written.
+  # /lv-spec step 5c reads it when the source carries a declared lane. A
+  # client's PLN-063 was written to 6 steps and 26 files against limits it never
+  # saw, and its operator learned at spec-approval that the declared lane had
+  # never applied.
+  gating=$({ echo security; wf_cfg_list specApproval.gateTags; } | grep . | awk '!seen[$0]++' | tr '\n' ' ' | sed 's/ $//')
+  cat <<B
+Express lane budget — lv-lane.sh check judges the written plan against this:
+
+  steps   at most $(wf_cfg lane.express.maxSteps 5) \`### Step\` headings under ## Steps   (lane.express.maxSteps)
+  files   at most $(wf_cfg lane.express.maxFiles 15) distinct paths on **Files:** lines (lane.express.maxFiles)
+
+Any one of these downgrades it (paths on **Files:** lines, and text in ## Goal, ## Steps, ## Design Decisions):
+  - build/deploy surface: $BUILD_GLOBS $(cfg_globs lane.express.buildPaths)
+  - auth or route policy: $AUTH_GLOBS, or [Authorize], RequireAuthorization, CSP, CORS, OIDC, SameSite, Set-Cookie
+  - secrets: $SECRET_GLOBS, or secrets, API keys, credentials, passwords, connection strings
+  - schema/data migration or persistent data: $MIGRATION_GLOBS, or migration, backfill, alter/create/drop table
+  - a new third-party dependency: $DEP_GLOBS, or npm install, dotnet add package, PackageReference
+  - a contract shared with another repo: $(cfg_globs lane.express.contractPaths)cross-repo, shared contract, public API
+  - a tag in: $gating
+  - (external) or (soak) criteria, unless a human accepts them
+
+Text that plainly does not do the thing ("no secrets", "relies on SameSite", a command in a
+code span) is not counted. Never reword a step to dodge a match: the check is the fail-safe.
+B
   exit 0
   ;;
 
