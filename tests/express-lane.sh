@@ -15,6 +15,8 @@
 #      none of the lane's writes makes the review fingerprint stale.
 #   6. production-push: one push per cleared plan, and nothing else in the
 #      batch — a commit naming no plan, or a plan outside the lane, is refused.
+#   7. On a plan whose last section is ## Amendments (hashed), neither ## Lane
+#      nor ## Post-ship checklist changes the fingerprint (LVI-032/033).
 #
 # Usage: ./tests/express-lane.sh
 # Exit 0 if all pass, 1 on any failure.
@@ -277,6 +279,29 @@ printf 'big\n' >> src/app.txt; git add -A; git commit -qm "implement(PLN-$N_BIG-
 out=$("$S/lv-lane.sh" push-covered 2>&1); rc=$?
 assert_eq "a plan outside the lane is not covered" 1 "$rc"
 git checkout -q develop
+
+# ── 7. A plan that ends in a hashed section ────────────────────────────────
+echo ""
+echo "7. The lane's writes leave the fingerprint alone when ## Amendments is last (LVI-032/033)"
+eval "$("$S/lv-bug-new.sh" "Retitle the sheet" --lane express 2>/dev/null)"
+N_AM=${BUG_ID#*-}; PA="PLN-$N_AM"; PDA="plans/$PA-retitle"
+small_plan "$PDA" "> **Bug:** $BUG_ID — Retitle the sheet"
+printf '\n## Amendments\n> Append-only. Added by /spec when a plan in active/ or beyond needs a design change.\n> Format: `[date] — description of change and why`\n' >> "$PDA/plan.md"
+add_row "$PA" retitle draft "security"
+git add -A; git commit -qm "plan ending in amendments"
+before=$(bash -c "source '$S/lv-orch-lib.sh'; wf_plan_body_fingerprint $PA")
+"$S/lv-lane.sh" answer "$PA" spec-approval >/dev/null 2>&1; rc=$?
+assert_eq "a downgrade appends ## Lane after ## Amendments (exit 1)" 1 "$rc"
+assert_has "…and the section is there" "## Lane" "$(cat "$PDA/plan.md")"
+after=$(bash -c "source '$S/lv-orch-lib.sh'; wf_plan_body_fingerprint $PA")
+assert_eq "…without changing the review fingerprint" "$before" "$after"
+"$S/lv-lane.sh" check "$PA" --accept-warnings >/dev/null 2>&1
+sed -i.bak "s/| $PA | retitle | draft |/| $PA | retitle | testing |/" plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak
+git add -A; git commit -qm testing >/dev/null 2>&1 || true
+"$S/lv-lane.sh" answer "$PA" manual-test >/dev/null 2>&1
+assert_has "the post-ship checklist is appended too" "## Post-ship checklist" "$(cat "$PDA/plan.md")"
+after=$(bash -c "source '$S/lv-orch-lib.sh'; wf_plan_body_fingerprint $PA")
+assert_eq "…and still the fingerprint is unchanged" "$before" "$after"
 
 echo ""
 echo "$PASS passed, $FAIL failed"

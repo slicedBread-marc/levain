@@ -411,6 +411,13 @@ verdict() {
 }
 
 # write_lane_section <plan.md> — replace `## Lane` with the verdict just taken.
+#
+# Appended with no blank line before the heading, and so is `## Post-ship
+# checklist` below. The review fingerprint skips both sections, but a separator
+# line belongs to the section BEFORE the heading — and on a plan that ends in
+# `## Amendments` that section is hashed, so one blank line made every lane
+# check void the review it was checking (LVI-032/033). A blank line already
+# there was hashed when the review was stamped, and stays.
 write_lane_section() {
   local plan_md="$1" body r
   body="## Lane"$'\n'
@@ -432,7 +439,7 @@ write_lane_section() {
              if (inside && !done) { printf "%s", body; done = 1 } }
     inside { next }
     { print }
-    END { if (!done) { print ""; printf "%s", body } }
+    END { if (!done) printf "%s", body }
   ' "$plan_md" > "$plan_md.tmp"
   mv "$plan_md.tmp" "$plan_md"
 }
@@ -613,7 +620,6 @@ answer)
       END {
         if (inside && !done) { printf "%s", list; done = 1 }
         if (!done) {
-          print ""
           print "## Post-ship checklist"
           print "> Criteria this plan shipped without a human seeing them, because the express lane"
           print "> answered its manual test. Check them after it is live; a failure is a new bug."
