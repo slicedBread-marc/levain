@@ -306,20 +306,72 @@ match_globs() {
   done < "$list"
 }
 
-# match_text <category> <label> <regex> <text-file>
+# match_text <category> <label> <regex> <text-file> [nocode]
+#
+# Reports the first match that says the plan DOES the thing. A grep for the
+# first hit read "plain UI, no secrets, cookies or tokens captured" as a plan
+# handling secrets (LVI-034) and "they rely on SameSite=Lax" as a plan changing
+# cookie policy (LVI-035). So each match is judged inside its clause, and these
+# do not count:
+#
+#   - a `**Files:**` line. Paths are judged by match_globs; reading them again
+#     as text listed the same compose file twice under two keys.
+#   - a term governed by a negating determiner: "no", "without", "nor", "zero",
+#     "not any", up to one word before it ("no API keys", "without stored
+#     credentials"). "never" is deliberately NOT one: "never logs the password"
+#     is a plan that handles passwords.
+#   - a clause that says the plan relies on the thing, or leaves it alone:
+#     "rely on", "relies on", "unchanged", "untouched".
+#   - with `nocode`, text inside a code span. Used for the build surface only,
+#     where an edit is a file and a file is on a `**Files:**` line; a code span
+#     elsewhere is a command the step runs (`docker compose -f … exec`), not a
+#     change to the build.
+#
+# Later matches are still read, so a plan that says "no secrets" in its Goal
+# and strips secret values in Step 1 is reported for Step 1. A heuristic, and it
+# still errs toward downgrading: only a match that is plainly not-doing is let
+# through.
 match_text() {
-  local cat="$1" label="$2" re="$3" text="$4" hit term
-  hit=$(grep -inE -m1 -- "$re" "$text" 2>/dev/null || true)
+  local cat="$1" label="$2" re="$3" text="$4" mode="${5:-}" hit term excerpt
+  hit=$(LV_RE="$re" LV_MODE="$mode" awk '
+    BEGIN {
+      re = tolower(ENVIRON["LV_RE"]); nocode = (ENVIRON["LV_MODE"] == "nocode")
+      neg = "(^|[^a-z])(no|without|nor|zero|not any)[ \t]+([a-z0-9-]+[ \t]+)?$"
+      rel = "(^|[^a-z])rel(y|ies|ying|ied)[ \t]+on([^a-z]|$)"
+      kept = "(^|[^a-z])(unchanged|untouched)([^a-z]|$)"
+    }
+    /\*\*Files:\*\*/ { next }
+    {
+      orig = $0; l = tolower($0)
+      if (nocode) {
+        t = l; l = ""
+        while (match(t, /`[^`]*`/)) {
+          pad = ""; for (i = 0; i < RLENGTH; i++) pad = pad " "
+          l = l substr(t, 1, RSTART - 1) pad; t = substr(t, RSTART + RLENGTH)
+        }
+        l = l t
+      }
+      rest = l; off = 0
+      while (match(rest, re) && RLENGTH > 0) {
+        s = off + RSTART; len = RLENGTH
+        off = off + RSTART + RLENGTH - 1; rest = substr(rest, RSTART + RLENGTH)
+        m = substr(l, s, len)
+        lead = match(m, /[a-z0-9.\[]/); if (lead == 0) continue
+        s = s + lead - 1; m = substr(m, lead)
+        sub(/[^a-z0-9.\]]+$/, "", m)
+        before = substr(l, 1, s - 1); sub(/.*([.;:()!?]|—)/, "", before)
+        after = substr(l, s + length(m)); sub(/([.;:()!?]|—).*/, "", after)
+        if (before ~ neg) continue
+        if (before ~ rel) continue
+        if ((before " " after) ~ kept) continue
+        p = s; st = (p > 40) ? p - 40 : 1
+        out = substr(orig, st, 100); gsub(/^[ \t>*-]+/, "", out)
+        printf "%s\t%s%s%s\n", substr(orig, s, length(m)), ((st > 1) ? "…" : ""), out, ((length(orig) > st + 99) ? "…" : "")
+        exit
+      }
+    }' "$text" 2>/dev/null || true)
   [ -n "$hit" ] || return 0
-  term=$(printf '%s' "${hit#*:}" | grep -ioE -m1 -- "$re" | head -1 | sed -E 's/^[^[a-zA-Z.]+//; s/[^]a-zA-Z0-9.]+$//')
-  # The excerpt is centred on the match, so a reader sees WHY it matched
-  # rather than the first 90 characters of a long line.
-  excerpt=$(LV_T="$term" awk '{
-      l = tolower($0); p = index(l, tolower(ENVIRON["LV_T"]))
-      s = (p > 40) ? p - 40 : 1
-      out = substr($0, s, 100); gsub(/^[ \t>*-]+/, "", out)
-      print ((s > 1) ? "…" : "") out ((length($0) > s + 99) ? "…" : "")
-    }' <<< "${hit#*:}")
+  term="${hit%%$'\t'*}"; excerpt="${hit#*$'\t'}"
   add_reason "$cat:$(key_of "$term")" "$label: \"$term\" — $excerpt"
 }
 
@@ -351,7 +403,7 @@ evaluate_plan() {
   fi
 
   match_globs build     "build/deploy surface"         "$BUILD_GLOBS $(cfg_globs lane.express.buildPaths)" "$files"
-  match_text  build     "build/deploy surface"         "$TXT_BUILD" "$text"
+  match_text  build     "build/deploy surface"         "$TXT_BUILD" "$text" nocode
   match_globs auth      "auth or route policy"         "$AUTH_GLOBS" "$files"
   match_text  auth      "auth or route policy"         "$TXT_AUTH" "$text"
   match_globs secrets   "secrets"                      "$SECRET_GLOBS" "$files"
@@ -513,7 +565,7 @@ precheck)
   grep -oE '`[^` ]+`' "$tmp/text" | tr -d '`' | awk '!s[$0]++' > "$tmp/files" || true
   REASONS=()
   match_globs build     "build/deploy surface" "$BUILD_GLOBS $(cfg_globs lane.express.buildPaths)" "$tmp/files"
-  match_text  build     "build/deploy surface" "$TXT_BUILD" "$tmp/text"
+  match_text  build     "build/deploy surface" "$TXT_BUILD" "$tmp/text" nocode
   match_globs auth      "auth or route policy" "$AUTH_GLOBS" "$tmp/files"
   match_text  auth      "auth or route policy" "$TXT_AUTH" "$tmp/text"
   match_text  secrets   "secrets"              "$TXT_SECRET" "$tmp/text"

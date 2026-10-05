@@ -17,6 +17,9 @@
 #      batch — a commit naming no plan, or a plan outside the lane, is refused.
 #   7. On a plan whose last section is ## Amendments (hashed), neither ## Lane
 #      nor ## Post-ship checklist changes the fingerprint (LVI-032/033).
+#   8. "no secrets", "rely on SameSite" and a compose command in a code span
+#      do not downgrade; a real match later in the plan still does; a path on
+#      a Files line is judged once (LVI-034/035).
 #
 # Usage: ./tests/express-lane.sh
 # Exit 0 if all pass, 1 on any failure.
@@ -302,6 +305,60 @@ git add -A; git commit -qm testing >/dev/null 2>&1 || true
 assert_has "the post-ship checklist is appended too" "## Post-ship checklist" "$(cat "$PDA/plan.md")"
 after=$(bash -c "source '$S/lv-orch-lib.sh'; wf_plan_body_fingerprint $PA")
 assert_eq "…and still the fingerprint is unchanged" "$before" "$after"
+
+# ── 8. Text that is plainly not-doing ─────────────────────────────────────
+echo ""
+echo "8. Negated, relied-on and run-only mentions do not downgrade (LVI-034, LVI-035)"
+eval "$("$S/lv-bug-new.sh" "Debug note" --lane express 2>/dev/null)"
+N_TX=${BUG_ID#*-}; PT="PLN-$N_TX"; PDT="plans/$PT-note"
+mkdir -p "$PDT"
+cat > "$PDT/plan.md" <<P
+# Debug note
+
+> **ID:** $PT
+> **schema_version:** 6
+> **Bug:** $BUG_ID — Debug note
+
+## Goal
+A dev aid: plain UI, no secrets, cookies or tokens captured.
+
+## Steps
+
+### Step 1: The note
+- **Files:** modify \`src/App/Pages/note.html\`
+- **What:** the post carries no CSRF field of its own; JSON posts rely on SameSite=Lax as they do today.
+
+### Step 2: Run it
+- **Files:** modify \`tests/App.Tests/NoteTests.cs\`
+- **What:** run it in the container: \`docker compose -f docker/docker-compose.yml exec web dotnet App.dll note\`.
+
+## Design Decisions
+- **Decision:** cookie handling unchanged, SameSite untouched — **Why:** nothing else needs it.
+
+## Review
+> **Result:** Approved
+P
+add_row "$PT" note draft ux
+git add -A; git commit -qm "plan with not-doing text"
+out=$("$S/lv-lane.sh" check "$PT" --no-commit 2>&1); rc=$?
+assert_eq "a plan that only mentions secrets, SameSite and a compose command is eligible" 0 "$rc"
+assert_not "…no secrets reason for \"no secrets\"" "secrets:" "$out"
+assert_not "…no auth reason for \"rely on SameSite\"" "auth or route policy" "$out"
+assert_not "…no build reason for a compose command in a code span" "build/deploy surface" "$out"
+git checkout -q -- "$PDT/plan.md"
+
+LV_ADD='- **What:** **Secret stripping:** the store removes every secret value it is handed.' \
+  awk '/^### Step 2/ && !d { print ENVIRON["LV_ADD"]; print ""; d = 1 } { print }' "$PDT/plan.md" > "$PDT/plan.md.tmp" && mv "$PDT/plan.md.tmp" "$PDT/plan.md"
+out=$("$S/lv-lane.sh" check "$PT" --no-commit 2>&1); rc=$?
+assert_eq "a later real match still downgrades, past the negated one" 1 "$rc"
+assert_has "…reported on the line that does it" "Secret stripping" "$out"
+git checkout -q -- "$PDT/plan.md"
+
+LV_ADD='### Step 3: Compose\n- **Files:** modify `docker/docker-compose.household.yml`\n- **What:** mount the folder.\n' \
+  awk '/^## Design Decisions/ && !d { printf "%s\n", ENVIRON["LV_ADD"]; d = 1 } { print }' "$PDT/plan.md" > "$PDT/plan.md.tmp" && mv "$PDT/plan.md.tmp" "$PDT/plan.md"
+out=$("$S/lv-lane.sh" check "$PT" --no-commit 2>&1)
+assert_eq "a compose file on a Files line is one reason, not two" 1 "$(printf '%s\n' "$out" | grep -c 'build/deploy surface')"
+git checkout -q -- "$PDT/plan.md"
 
 echo ""
 echo "$PASS passed, $FAIL failed"

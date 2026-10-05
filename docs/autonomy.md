@@ -374,9 +374,14 @@ lane:
 | A contract shared between repos | text, and `contractPaths` |
 | `(external)` or `(soak)` criteria — they stop the deploy at `deploy-deferred-criteria`, which the lane never answers | `#### Manual` |
 
-Text is read from `## Goal`, `## Steps` and `## Design Decisions` only. A text match is a
-heuristic and **errs toward downgrading**: "holds no secret" matches `secret`. A false positive
-costs one human gate; a false negative ships unseen.
+Text is read from `## Goal`, `## Steps` and `## Design Decisions` only, and is judged one
+clause at a time. These do not count: a `**Files:**` line, whose paths the globs already judged;
+a term right after "no", "without", "nor", "zero" or "not any" ("no secrets captured"); a clause
+that relies on the thing or leaves it alone ("rely on SameSite=Lax", "unchanged"); and, for the
+build surface only, a code span, which is a command the step runs rather than a file it edits
+(LVI-034/035). A later match that does the thing still counts. "Never" is not a negation here:
+"never logs the password" is a plan that handles passwords. A text match is a heuristic and
+**errs toward downgrading**. A false positive costs one human gate; a false negative ships unseen.
 
 `projectProfile.tier` is **not** an input. A live app whose profile still reads `pre-launch` is
 precisely the case a risk check must not trust.
