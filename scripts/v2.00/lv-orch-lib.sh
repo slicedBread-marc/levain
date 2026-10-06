@@ -479,6 +479,48 @@ wf_bug_amends() {
     | grep -oE "($LV_BUG_RE)-[0-9]+" || true
 }
 
+# wf_brief_blocked <brief.md|bug.md> → the recorded reason it is blocked, exit 0;
+# exit 1 when it is not. lv-brief-block.sh writes and clears the field.
+wf_brief_blocked() {
+  local brief_md="$1" field
+  # `Blocked by:` is read too. lv-brief-block.sh writes `Blocked:`, but a brief
+  # written by hand reaches for the natural phrase — and a client's BRF-008,
+  # headed "Blocked by: ... Do not spec until it is met", was dispatched to an
+  # unattended spec worker because only the tool's spelling counted (LVI-013).
+  field=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Blocked( [Bb]y)?:\*\*' "$brief_md" 2>/dev/null \
+          | sed -E 's/^.*\*\*Blocked( [Bb]y)?:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
+  # A parenthesised value is template prose, not a blocker — the same defence
+  # the Plan: field needs, and for the same reason: a placeholder that reads as
+  # a real value hides work instead of describing it.
+  case "$field" in
+    ""|"("*|*"(none"*|*_none_*|"—") return 1 ;;
+    *) printf '%s' "$field"; return 0 ;;
+  esac
+}
+
+# wf_bug_chain_block <bug-id> → "<id>\t<reason>" for the first OPEN bug further
+# along its Amends chain that is blocked; nothing when none is. The chain is
+# what lv-list-specable.sh carries an amender with, so a block anywhere along
+# it holds the amender too — and only this says so (LVI-027).
+wf_bug_chain_block() {
+  local cur="$1" seen=" $1 " t loc md why nxt
+  while :; do
+    nxt=""
+    for t in $(loc=$(wf_bug_md "$cur"); [ -n "$loc" ] && wf_bug_amends "${loc#*$'\t'}"); do
+      [[ "$seen" == *" $t "* ]] && continue
+      loc=$(wf_bug_md "$t"); [ -n "$loc" ] || continue
+      [ "${loc%%$'\t'*}" = "open" ] || continue
+      md="${loc#*$'\t'}"
+      if why=$(wf_brief_blocked "$md"); then
+        printf '%s\t%s' "$t" "$why"; return 0
+      fi
+      nxt="$t"; break
+    done
+    [ -n "$nxt" ] || return 0
+    seen+="$nxt "; cur="$nxt"
+  done
+}
+
 wf_group_file() { printf '%s/bugs/groups/%s.md' "$(wf_develop_root)" "$1"; }
 
 # wf_group_field <slug> <Field> → a group header field, or empty.

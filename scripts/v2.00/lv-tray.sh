@@ -323,6 +323,13 @@ render_plans() {
     [ -n "$bid" ] || continue
     detail="[$stage]"
     case "$bplan" in *[0-9]*) detail="→ $(printf '%s' "$bplan" | grep -oE "($LV_PLN_RE)-[0-9]+" | head -1) $detail" ;; esac
+    # An open amender whose chain ends at a blocked bug is withheld from
+    # /lv-spec with it, and appears nowhere else (LVI-027).
+    if [ "$stage" = "open" ] && ! printf '%s' "$bplan" | grep -qE "($LV_PLN_RE)-[0-9]+"; then
+      local chain_block
+      chain_block=$(wf_bug_chain_block "$bid" 2>/dev/null || true)
+      [ -n "$chain_block" ] && detail="$detail [waits on ${chain_block%%$'\t'*}, blocked: ${chain_block#*$'\t'}]"
+    fi
     s_bugs="$s_bugs$(item - "$bid" "(${sev:-?})" "${btitle:0:90} $detail")"$'\n'
     if [ "$stage" = "open" ]; then
       case "$sev" in Critical*|High*)

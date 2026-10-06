@@ -238,22 +238,7 @@ fi
 # is bugs/triaged/: a triaged bug with an empty Plan: field is re-offered by
 # design (WFI-249). lv-brief-block.sh writes and clears the field for both
 # kinds.
-brief_is_blocked() {
-  local brief_md="$1" field
-  # `Blocked by:` is read too. lv-brief-block.sh writes `Blocked:`, but a brief
-  # written by hand reaches for the natural phrase — and a client's BRF-008,
-  # headed "Blocked by: ... Do not spec until it is met", was dispatched to an
-  # unattended spec worker because only the tool's spelling counted (LVI-013).
-  field=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Blocked( [Bb]y)?:\*\*' "$brief_md" 2>/dev/null \
-          | sed -E 's/^.*\*\*Blocked( [Bb]y)?:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
-  # A parenthesised value is template prose, not a blocker — the same defence
-  # the Plan: field needs, and for the same reason: a placeholder that reads as
-  # a real value hides work instead of describing it.
-  case "$field" in
-    ""|"("*|*"(none"*|*_none_*|"—") return 1 ;;
-    *) printf '%s' "$field"; return 0 ;;
-  esac
-}
+brief_is_blocked() { wf_brief_blocked "$@"; }   # moved to lv-orch-lib.sh (LVI-027)
 
 # ── Bugs that belong together are offered together (LVI-024) ──────────────
 #
@@ -368,7 +353,17 @@ intake_skip() {
   fi
 
   if [ "$(root_of "$id")" != "$id" ]; then
-    not_offered "$id" "amends $(root_of "$id"), still open — carried with it"
+    # A chain whose end is blocked carries this bug into the same wait, and
+    # "still open" alone hid that: a client's BUG-057 amended 056 amended 030,
+    # 030 was blocked on another bug, and 057 sat unoffered with nothing saying
+    # why (LVI-027). Name the block, and the two ways out.
+    local chain_block
+    chain_block=$(wf_bug_chain_block "$id")
+    if [ -n "$chain_block" ]; then
+      not_offered "$id" "amends $(root_of "$id"), carried with it — and ${chain_block%%$'\t'*} is blocked (${chain_block#*$'\t'}), so this waits on that block. Unblock it, or drop this bug's Amends link to spec it alone"
+    else
+      not_offered "$id" "amends $(root_of "$id"), still open — carried with it"
+    fi
     return 0
   fi
   for t in $(amends_of "$id"); do

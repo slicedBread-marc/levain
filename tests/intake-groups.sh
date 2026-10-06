@@ -114,6 +114,19 @@ has "a chain resolves to its root" "$(row BUG-046)" "BUG-049,BUG-050"
 assert_eq "and the middle of the chain is not offered" "$(row BUG-049)" ""
 rm -rf bugs/open/BUG-050-amend-049
 
+# A client's LVI-027: the chain's end was blocked on another bug, and the
+# amender sat unoffered saying only "still open". The block is named, both in
+# the withheld line and on the board.
+bug BUG-050 amend-049 open "Amends BUG-049"
+sed -i.bak 's/^> \*\*Links:\*\*/> **Blocked:** BUG-023 — needs the photo hand-in first\n&/' bugs/open/BUG-046-she-wrote/bug.md
+rm -f bugs/open/BUG-046-she-wrote/bug.md.bak
+err=$(spec_err)
+has "an amender of a blocked chain names the block" "$err" "BUG-046 is blocked (BUG-023 — needs the photo hand-in first)"
+has "and the way out" "$err" "drop this bug's Amends link"
+has "the board shows the wait" "$("$S/lv-tray.sh" --plans --plain 2>/dev/null)" "waits on BUG-046, blocked: BUG-023"
+git checkout -- bugs/open/BUG-046-she-wrote/bug.md
+rm -rf bugs/open/BUG-050-amend-049
+
 section "2. open, add, seal"
 out=$(G open she-wrote "BUG-046 reshapes 041/043" 2>&1); rc=$?
 assert_eq "open" "$rc" "0"
