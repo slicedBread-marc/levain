@@ -59,7 +59,12 @@ If `LV_UNATTENDED=1` is set, print `lv-accept is attended only — accept:manual
    scripts/lv-exec.sh lv-registry-update.sh PLN-NNN testing accept \
      --commit "accept(PLN-NNN-<slug>): moved into accept:manual (pre-split manual-test gate)"
    ```
-   A refusal means the automated half is unfinished, or a human is not needed at all. In either case it is `/lv-test`'s plan, not yours. Release the claim, tell the human `/lv-test PLN-NNN` is what runs next, and stop. A plan in `testing` **without** that gate is never yours: release the claim and point at `/lv-test`.
+   A refusal means the automated half is unfinished, or a human is not needed at all. In either case it is `/lv-test`'s plan, not yours. **Withdraw the gate first** — it asks a human for the tester's work, and while it stands the plan is parked: no tester is dispatched and you cannot enter, so nothing moves (a client's PLN-061, LVI-030). Quote the refusal's reason:
+   ```bash
+   scripts/lv-exec.sh lv-gate-close.sh PLN-NNN "withdrawn — testing -> accept refused: <reason as printed>" \
+     --only manual-test --withdraw
+   ```
+   Then release the claim, tell the human `/lv-test PLN-NNN` is what runs next, and stop. A plan in `testing` **without** that gate is never yours: release the claim and point at `/lv-test`.
 
 3. `eval "$(scripts/lv-exec.sh lv-plan-info.sh PLN-NNN)"`, then `cd feature-branches/<plan-name>/`. Note the **absolute** path: begin every later Bash call with `cd /abs/path &&`, and assert where you are before observing anything:
    ```bash

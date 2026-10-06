@@ -168,6 +168,16 @@ out=$("$S/lv-registry-update.sh" PLN-041 testing accept 2>&1); rc=$?
 assert_eq "a rendering diff with open eyes criteria is allowed" 0 "$rc"
 assert_eq "…and the row reads accept" accept "$(state_of PLN-041)"
 
+# A client's LVI-031: the tester's testing -> accept was refused, and it
+# opened manual-test anyway, leaving a plan in testing asking a human.
+out=$(LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-043 manual-test "1 criterion needs eyes" --skill lv-test 2>&1); rc=$?
+assert_eq "unattended, manual-test on a testing row is refused" 6 "$rc"
+assert_has "…pointing at the transition first" "testing accept first" "$out"
+assert_eq "…and nothing is queued" "" "$(ls .claude/orchestrator/gates/PLN-043* 2>/dev/null)"
+out=$(LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-041 manual-test "1 criterion needs eyes" --skill lv-test 2>&1); rc=$?
+assert_eq "beside an accept row it opens" 0 "$rc"
+"$S/lv-gate-close.sh" PLN-041 done >/dev/null 2>&1
+
 out=$(LV_ALLOW_ACCEPT=1 "$S/lv-registry-update.sh" PLN-042 testing accept 2>&1); rc=$?
 assert_eq "LV_ALLOW_ACCEPT=1 overrides a refusal" 0 "$rc"
 "$S/lv-registry-update.sh" PLN-042 accept testing >/dev/null 2>&1

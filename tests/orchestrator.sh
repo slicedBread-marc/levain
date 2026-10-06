@@ -740,7 +740,7 @@ case "\${STUB_MODE:-advance}" in
       test)      "\$S/lv-registry-update.sh" "\$id" testing complete >/dev/null 2>&1 ;;
     esac
     ;;
-  gate)  "\$S/lv-gate-open.sh" "\$id" manual-test "2 criteria need eyes" >/dev/null 2>&1 ;;
+  gate)  "\$S/lv-gate-open.sh" "\$id" needs-input "2 criteria need eyes" >/dev/null 2>&1 ;;
   noop)  : ;;
   fail)  exit 7 ;;
 esac
@@ -782,7 +782,7 @@ json=$(STUB_MODE=gate orch PLN-032 --json 2>/dev/null || true)
 assert_eq "--json reports blocked-on-human" "true" \
   "$(printf '%s' "$json" | grep -q '"result": "blocked-on-human"' && echo true || echo false)"
 assert_eq "--json names the gate" "true" \
-  "$(printf '%s' "$json" | grep -q '"name": "manual-test"' && echo true || echo false)"
+  "$(printf '%s' "$json" | grep -q '"name": "needs-input"' && echo true || echo false)"
 "$SCRIPT_DIR/lv-gate-close.sh" PLN-032 done >/dev/null 2>&1
 
 # --- drive-one, a plan already in accept (accept:manual) → exit 20, no worker

@@ -79,17 +79,17 @@ Order of work:
      ```bash
      scripts/lv-exec.sh lv-registry-update.sh PLN-NNN testing accept \
        --commit "test(PLN-NNN-<slug>): accept:auto done on <sha> — N criteria need a human" \
-       --add plans/PLN-NNN-<slug>/test-progress.md
-     scripts/lv-exec.sh lv-gate-open.sh <PLN-ID> manual-test \
+       --add plans/PLN-NNN-<slug>/test-progress.md \
+     && scripts/lv-exec.sh lv-gate-open.sh <PLN-ID> manual-test \
        "N criteria need human eyes on <sha>: <one-line list>" \
-       --context plans/<plan-name>/plan.md --skill lv-test
-     scripts/lv-exec.sh lv-unclaim.sh PLN-NNN-<slug>
+       --context plans/<plan-name>/plan.md --skill lv-test \
+     && scripts/lv-exec.sh lv-unclaim.sh PLN-NNN-<slug>
      ```
      Tear the container down ([Container cleanup](#container-cleanup)) — `/lv-accept` brings its own up — and exit 0. The suite was collected before step 6, so nothing is left running; put its `SUITE_RESULT=` line in the gate question as a second sentence, so the human answering knows the automated half is settled. Attended, end with one line: `PLN-NNN is in accept:manual — run /lv-accept PLN-NNN`.
 
      **The row is what parks the plan, not the gate.** The dispatcher never sends a worker at `accept`, so a gate closed early can no longer put a tester into a container a human is using (WFI-070). The gate stands beside it because `/lv-attend`'s queue reads gates.
 
-     **A refused transition is your unfinished work.** `lv-registry-update.sh` asks `lv-manual-gate.sh` itself and refuses `testing → accept` when the record is incomplete (`PROGRESS_INCOMPLETE`), when the express lane holds, or when no human is needed — `accept:manual` holds only what no machine can settle (LVI-040). Read its message, do what it names (usually: back to step 3c), and ask again. Never reach for `LV_ALLOW_ACCEPT=1`; it is a human's override.
+     **A refused transition is your unfinished work.** `lv-registry-update.sh` asks `lv-manual-gate.sh` itself and refuses `testing → accept` when the record is incomplete (`PROGRESS_INCOMPLETE`), when the express lane holds, or when no human is needed — `accept:manual` holds only what no machine can settle (LVI-040). Read its message, do what it names (usually: back to step 3c), and ask again. Never reach for `LV_ALLOW_ACCEPT=1`; it is a human's override. **Never open `manual-test` on a refused transition** — the `&&` above is why: a gate beside a `testing` row asks a human for work the record says is yours, and `/lv-accept` cannot enter a plan that is not in `accept`. Unattended, `lv-gate-open.sh` refuses it (exit 6). A client's PLN-061 tester did exactly that, after rewriting its rows from the pre-amendment criterion text and then restoring an older build's record over them (LVI-031). Two causes of that refusal are worth knowing by name: a row whose criterion text is not the `lv-manual-lint.sh --live` text, which matches nothing, and a `TREE` stamp or Build cell on another build (`PROGRESS_TREE_STALE`), which settles nothing on this one (LVI-029). Restoring an earlier record never fixes either.
 
      **The question states only what you verified.** Name a changed file only if `git diff --name-only <old-build> HEAD` in the worktree lists it; quote `$SURFACE_HIT` and `$GATE_REASON` as the script printed them; never describe what a build "changed" from a commit subject or a guess. A re-ask of a criterion that already has a PASS on an earlier build says which build that was and which surface path changed since: quote `$SURFACE_MOVED_FROM` and `$SURFACE_MOVED`, never `$SURFACE_HIT` — that one is the plan's whole diff against develop and can name a file identical on both builds (LVI-021). If `$SURFACE_MOVED` is empty, the script would have carried the PASS (`MANUAL_CARRIED`), so recheck before asking. A client's LVI-006 re-asked a print check claiming a CSS change the diff did not contain.
 

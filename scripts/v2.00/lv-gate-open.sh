@@ -77,7 +77,8 @@
 # Exit 0 when a gate is open, 1 on error, 3 when the gate was refused because
 # an answer of record already covers this revision of the plan, and 5 when a
 # DIFFERENT gate is already open on the artifact — which this refuses rather
-# than overwrites, because one file holds one artifact's gate (WFI-025).
+# than overwrites, because one file holds one artifact's gate (WFI-025), and 6
+# when manual-test is asked for on a plan still in `testing` (LVI-031).
 
 set -euo pipefail
 
@@ -216,6 +217,26 @@ fi
 # the same piece of work (WFI-187). When none is open this is the exact name,
 # which is where a new one belongs.
 gate_file=$(wf_gate_file "$id" || true)
+
+# ── manual-test stands beside an `accept` row, never a `testing` one ──────
+#
+# Since the accept split the row is what parks a plan for a human, and the gate
+# only puts it in /lv-attend's queue: /lv-test moves testing -> accept, then
+# opens this. A client's PLN-061 tester had that transition refused — its
+# Chrome-Assisted rows named the pre-amendment criteria — and opened the gate
+# anyway, so a plan sat in `testing` asking a human, /lv-attend sent the human
+# to /lv-accept, and /lv-accept could not enter (LVI-030, LVI-031). A refused
+# transition is the tester's unfinished work, and a gate cannot stand in for
+# it. Unattended only: a human may still open one by hand on a legacy row.
+if [ "${LV_UNATTENDED:-0}" = "1" ] && [ "$gate_name" = "manual-test" ] \
+   && [[ "$id" =~ ^($LV_PLN_RE)-[0-9]+$ ]] \
+   && [ "$(wf_registry_field "$id" state 2>/dev/null || true)" = "testing" ]; then
+  echo "Error: refusing manual-test on $id — it is in 'testing'. The gate goes beside an" >&2
+  echo "  'accept' row: run lv-registry-update.sh $id testing accept first, and if that" >&2
+  echo "  refuses, do what its message names (lv-manual-gate.sh $id --explain) instead of" >&2
+  echo "  asking a human (LVI-031). Nothing was opened." >&2
+  exit 6
+fi
 
 # ── A design question names the decisions it moves with (LVI-033) ──────────
 #
