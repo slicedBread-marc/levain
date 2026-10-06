@@ -431,6 +431,23 @@ eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "every Chrome-Assisted criterion run and every Manual one PASS: no human" "false" "$GATE"
 assert_eq "and nothing Chrome-Assisted is open" "0 0" "$CHROME_UNRECORDED $CHROME_UNTESTED"
 
+# A client's LVI-029: every Chrome-Assisted row was a day and two client-code
+# commits old, the tester ran nothing, and the plan went testing -> accept on
+# the strength of them. A run settles a criterion for the build it was run on.
+sed -i.bak '/photo grid renders/s/('"$ui_sha"')/(1111111)/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "a PASS on another build leaves a Chrome-Assisted criterion unrecorded" "1 true" "$CHROME_UNRECORDED $PROGRESS_INCOMPLETE"
+sed -i.bak '/photo grid renders/s/| (1111111) | PASS |/| Aug 01 09:15 (1111111) | FAIL |/; /photo grid renders/s/(1111111) | PASS/(1111111) | FAIL/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "so does a FAIL on another build" "1" "$CHROME_UNRECORDED"
+sed -i.bak '/photo grid renders/s/(1111111) | FAIL/('"$ui_sha"') | PASS/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+( cd feature-branches/PLN-007-ui && echo t >> src/App/Storage/Replica.cs && git add -A && git commit -qm "storage again" )
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "a PASS carried over a commit that renders nothing still settles it" "0" "$CHROME_UNRECORDED"
+( cd feature-branches/PLN-007-ui && echo y >> src/App/wwwroot/app.js && git add -A && git commit -qm "ui once more" )
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "one that touched a rendering surface does not" "2 true" "$CHROME_UNRECORDED $PROGRESS_INCOMPLETE"
+
 rm -f plans/PLN-007-ui/test-progress.md
 eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_contains "no test-progress.md at all is said out loud" "test-progress.md does not exist" "$GATE_REASON"

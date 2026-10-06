@@ -427,6 +427,8 @@ fi
 #   GATE='true'                a human is needed at all
 #   PROGRESS_INCOMPLETE=false  every Chrome-Assisted criterion has a run or a
 #                              recorded reason — no unfinished tester work
+#   PROGRESS_TREE_STALE=false  test-progress.md's TREE stamp is this build, so
+#                              the suite result under it is too (LVI-029)
 #   LANE != express            a human declared this plan ships unseen; its open
 #                              eyes criteria go to the post-ship checklist via
 #                              `lv-lane.sh answer PLN manual-test`, not to a person
@@ -441,6 +443,8 @@ if [ "$from_state" = "testing" ] && [ "$to_state" = "accept" ] && [ "${LV_ALLOW_
   GATE_REASON=""
   PROGRESS_INCOMPLETE=false
   PROGRESS_MISSING=""
+  PROGRESS_TREE=""
+  PROGRESS_TREE_STALE=false
   LANE=none
   acc_out=$("$SELF_DIR/lv-manual-gate.sh" "$plan_id" 2>/dev/null) || acc_out=""
   [ -n "$acc_out" ] && eval "$acc_out"
@@ -451,6 +455,8 @@ if [ "$from_state" = "testing" ] && [ "$to_state" = "accept" ] && [ "${LV_ALLOW_
     acc_why="$plan_id is in the express lane — its open eyes criteria go to the post-ship checklist (lv-lane.sh answer $plan_id manual-test), not to a human"
   elif [ "${PROGRESS_INCOMPLETE:-false}" = "true" ]; then
     acc_why="the automated half is unfinished — no run or recorded reason for: ${PROGRESS_MISSING:-see lv-manual-gate.sh --explain}"
+  elif [ "${PROGRESS_TREE_STALE:-false}" = "true" ]; then
+    acc_why="the automated half was recorded on another build — test-progress.md's TREE is ${PROGRESS_TREE}, so its suite result is not this build's (LVI-029)"
   elif [ "$GATE" != "true" ]; then
     acc_why="no human is needed (${GATE_REASON:-GATE=false}) — take the ship exit from testing"
   fi

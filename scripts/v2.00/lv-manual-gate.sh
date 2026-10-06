@@ -54,6 +54,9 @@
 #     count in CHROME_UNRECORDED too: a note is not a result (LVI-030)
 #   PROGRESS_INCOMPLETE='true|false' — CHROME_UNRECORDED > 0
 #   PROGRESS_MISSING='<criteria, "; "-joined>' — the unrecorded ones
+#   PROGRESS_TREE — the build test-progress.md's `TREE` stamp names
+#   PROGRESS_TREE_STALE='true|false' — that stamp is not the build here now, so
+#     the suite result recorded under it is another build's (LVI-029)
 #   LANE='express|normal|none' — lv-lane.sh's verdict. Under `express`, open
 #     `#### Manual` eyes criteria do not gate: /lv-test moves them to the plan's
 #     post-ship checklist with `lv-lane.sh answer <PLN> manual-test` (LVI-025).
@@ -301,7 +304,16 @@ eval "$("$(dirname "$0")/lv-manual-lint.sh" "$plan_id" --counts ${resolved_args[
 # row in test-progress.md, and is untested-with-a-reason when its row has
 # Notes. Anything else — no row, no file, a bare `—` — is unrecorded. Matched
 # with the same normalization and 24-character containment rule as the lint.
-chrome_out=$(awk -F'|' -v progress="$progress_md" '
+#
+# A PASS or FAIL settles a criterion only for the build it was recorded on: the
+# build standing here now, or — for a PASS — an earlier one the Manual rules
+# above carried because no rendering surface moved since. A client's PLN-061
+# went testing -> accept on 9a0ef6c with every Chrome-Assisted row from
+# a98b5d2, a day older and two client-code commits behind; the tester had run
+# nothing, and the accept record named a build that was not the one a human
+# was about to look at (LVI-029). With no worktree there is no build to compare
+# against, and any PASS or FAIL counts, as before.
+chrome_out=$(awk -F'|' -v progress="$progress_md" -v sha="$build_sha" -v carried="$resolved_file" '
   function norm(s,   t) {
     t = tolower(s)
     gsub(/[`*_]/, "", t)
@@ -331,6 +343,20 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" '
     }
     return 0
   }
+  # The Build cell names the build in hand: any hex run of 7+ characters that
+  # is a prefix of it, the same rule as wf_test_progress_passes_of.
+  function current(b,   n, i, parts) {
+    if (sha == "") return 1
+    n = split(b, parts, /[^0-9a-fA-F]+/)
+    for (i = 1; i <= n; i++)
+      if (length(parts[i]) >= 7 && index(sha, tolower(parts[i])) == 1) return 1
+    return 0
+  }
+  function settled(k) {
+    if (RES[k] != "PASS" && RES[k] != "FAIL") return 0
+    if (current(BUILD[k])) return 1
+    return RES[k] == "PASS" && (k in CARRIED)
+  }
   function lookup(nt,   k) {
     if (nt in RES) return nt
     for (k in RES)
@@ -342,8 +368,10 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" '
       n = split(row, f, "|")
       if (n < 6) continue
       c = norm(trim(f[3])); if (c == "" || c == "criterion") continue
-      RES[c] = toupper(trim(f[5])); NOTE[c] = trim(f[6])
+      RES[c] = toupper(trim(f[5])); NOTE[c] = trim(f[6]); BUILD[c] = trim(f[4])
     }
+    if (carried != "")
+      while ((getline row < carried) > 0) CARRIED[norm(row)] = 1
   }
   /^####[[:space:]]*Chrome-Assisted/ { in_c = 1; next }
   /^(#|##|###|####)[[:space:]]/ { in_c = 0 }
@@ -351,7 +379,7 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" '
   /^[[:space:]]*-[[:space:]]*\[ \]/ {
     text = $0; sub(/^[[:space:]]*-[[:space:]]*\[ \][[:space:]]*/, "", text)
     k = lookup(norm(text))
-    if (k != "" && (RES[k] == "PASS" || RES[k] == "FAIL")) print "S\t" text
+    if (k != "" && settled(k)) print "S\t" text
     else if (k != "" && reasoned(NOTE[k])) print "R\t" text
     else if (k != "" && NOTE[k] != "") print "E\t" text
     else print "U\t" text
@@ -503,6 +531,22 @@ wf_emit CHROME_UNTESTED      "$chrome_untested"
 wf_emit CHROME_EXCUSED       "$chrome_excused"
 wf_emit PROGRESS_INCOMPLETE  "$([ "$chrome_unrecorded" -gt 0 ] && echo true || echo false)"
 wf_emit PROGRESS_MISSING     "$chrome_missing"
+
+# The build test-progress.md's TREE stamp names, against the build here now.
+# /lv-test writes that stamp from lv-test-tree.sh in the same call that starts
+# the suite, so a stamp on another build means the suite result under it is
+# another build's too (LVI-029). Empty when either side is unknown.
+tree_stamp=""
+if [ -f "$progress_md" ]; then
+  tree_stamp=$(grep -m1 '^TREE ' "$progress_md" 2>/dev/null \
+    | grep -oE ' [0-9a-f]{7,40} \(' | tr -d ' (' || true)
+fi
+tree_stale=false
+if [ -n "$tree_stamp" ] && [ -n "$build_sha" ] && [ "${build_sha#"$tree_stamp"}" = "$build_sha" ]; then
+  tree_stale=true
+fi
+wf_emit PROGRESS_TREE        "$tree_stamp"
+wf_emit PROGRESS_TREE_STALE  "$tree_stale"
 wf_emit LANE                 "$LANE"
 
 if $explain; then

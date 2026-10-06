@@ -152,6 +152,18 @@ out=$("$LANE_STUB/lv-registry-update.sh" PLN-041 testing accept 2>&1); rc=$?
 assert_eq "an express-lane plan is refused even with GATE=true" 1 "$rc"
 assert_has "…sent to the post-ship checklist" "post-ship checklist" "$out"
 
+# A client's LVI-029: the record's TREE was a day-old build, so the suite
+# result under it was too, and the tester had run nothing on this one.
+old41=$(git -C feature-branches/PLN-041-ui rev-parse --short HEAD~1)
+new41=$(git -C feature-branches/PLN-041-ui rev-parse --short HEAD)
+printf 'TREE feature-branches/PLN-041-ui @ feature/PLN-041-ui %s (2026-10-04T16:18:37Z)\n\nSUITE_RESULT=pass\n' "$old41" \
+  > plans/PLN-041-ui/test-progress.md
+out=$("$S/lv-registry-update.sh" PLN-041 testing accept 2>&1); rc=$?
+assert_eq "a record stamped on another build is refused" 1 "$rc"
+assert_has "…naming the stamp" "TREE is $old41" "$out"
+assert_eq "…and stays in testing" testing "$(state_of PLN-041)"
+sed -i.bak "s/ $old41 / $new41 /" plans/PLN-041-ui/test-progress.md && rm -f plans/PLN-041-ui/test-progress.md.bak
+
 out=$("$S/lv-registry-update.sh" PLN-041 testing accept 2>&1); rc=$?
 assert_eq "a rendering diff with open eyes criteria is allowed" 0 "$rc"
 assert_eq "…and the row reads accept" accept "$(state_of PLN-041)"
