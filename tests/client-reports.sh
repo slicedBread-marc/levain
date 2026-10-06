@@ -3254,6 +3254,20 @@ FEOF
 printf -- '- [ ] Step 2: wire the reader\n' >> plans/PLN-911-not-reproducible/progress.md
 assert_eq "an unfinished checklist keeps it with the builder" "active" \
   "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-911)"
+
+# /lv-test writes its findings under `## Acceptance — <date>` and /lv-accept
+# under `## Human Acceptance — <date>`. Only `## Human Test` was read as the
+# tester's, so neither skill's bounce could ever go back to testing (LVI-028).
+sed -i.bak '/^- \[ \] Step 2/d' plans/PLN-911-not-reproducible/progress.md && rm -f plans/PLN-911-not-reproducible/progress.md.bak
+for head in "Acceptance — 2026-10-04" "Acceptance Testing — 2026-10-04" "Human Acceptance — 2026-10-04"; do
+  printf '## %s\n\n- [x] **Behavior**: did not reproduce\n' "$head" > plans/PLN-911-not-reproducible/findings.md
+  assert_eq "a '## $head' bounce goes back to testing" "testing" \
+    "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-911)"
+done
+# An `## Acceptance Criteria` section is not a tester's findings heading.
+printf '## Acceptance Criteria\n\n- [x] something\n' > plans/PLN-911-not-reproducible/findings.md
+assert_eq "an Acceptance Criteria heading is not a tester bounce" "active" \
+  "$("$SCRIPT_DIR/lv-replan-target.sh" PLN-911)"
 git worktree remove --force "$TEST_DIR/wt-911" >/dev/null 2>&1
 
 # ═══════════════════════════════════════════════════════════════════════

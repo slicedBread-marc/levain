@@ -38,7 +38,8 @@
 #
 # It is defined here, and narrowly. All five must hold:
 #   - a live worktree (there is something built to hand back);
-#   - the newest findings section is a `## Human Test` one (the bounce came
+#   - the newest findings section is a tester's — `## Human Test`, `## Acceptance`
+#     or `## Human Acceptance` (the bounce came
 #     from the tester, not from verify — a verify bounce has code to answer);
 #   - every finding in the file is checked off (nothing is outstanding);
 #   - progress.md's `## Steps` checklist is complete, or absent;
@@ -165,6 +166,13 @@ if [ -n "$branch" ] && [ "$branch" != "—" ]; then
   fi
 fi
 
+# The headings a tester's findings section is written under. `## Human Test` is
+# the original spelling; /lv-test writes `## Acceptance — <date>` and
+# /lv-accept `## Human Acceptance — <date>`, and a worker has written
+# `## Acceptance Testing — <date>`. Matching only the first meant no bounce from
+# either skill could ever be answered with `testing` (a client's LVI-028).
+TESTER_HEADS='Human Test|Human Acceptance|Acceptance([ \t]+Testing)?[ \t]*(—|-|$)'
+
 # The bounce-with-nothing-to-build case. Only ever narrows `active` — a plan
 # with no worktree has a whole build ahead of it whatever its findings say.
 if [ "$target" = "active" ]; then
@@ -174,8 +182,8 @@ if [ "$target" = "active" ]; then
   plan_md="$plan_dir/plan.md"
   if [ -f "$findings" ] \
      && ! grep -q '^- \[ \]' "$findings" \
-     && [ "$(grep -E '^## (Human Test|Verify|Implement|Consistency)' "$findings" \
-             | tail -1 | grep -c '^## Human Test')" = "1" ]; then
+     && [ "$(grep -E "^## ($TESTER_HEADS|Verify|Implement|Consistency)" "$findings" \
+             | tail -1 | grep -cE "^## ($TESTER_HEADS)")" = "1" ]; then
     steps_open=0
     if [ -f "$progress" ]; then
       steps_open=$(awk '
