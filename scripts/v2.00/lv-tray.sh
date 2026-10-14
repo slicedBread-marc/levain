@@ -562,12 +562,25 @@ render() {
   # mid-release fixing exactly what that gate reported. The claim was already
   # there; nothing read it. Tokens match attn's: RELEASE/DEPLOY, else the bare
   # number. wf_claim_live reaps a dead owner's claim, as lv-claim.sh --list does.
-  local claims="" cd_ tok
+  #
+  # A worker re-claims under its OWN pid — the `claude -p` that lv-spawn's
+  # pidfile process launched — so the holder is checked up its ancestry, not
+  # just against the pidfile. Comparing the pid alone drew every daemon release
+  # on the portfolio as attended work.
+  local claims="" cd_ tok hp depth daemon_held
   for cd_ in "$ORCH/claims"/*/; do
     cd_="${cd_%/}"
     [ -f "$cd_/.wf-claim" ] || continue
     wf_claim_live "$cd_" || continue
-    case "$worker_pids" in *" ${LV_CLAIM_HOLDER_PID:-x} "*) continue ;; esac
+    hp="${LV_CLAIM_HOLDER_PID:-}" daemon_held=false
+    if [ "$worker_pids" != " " ]; then
+      for depth in 1 2 3 4 5 6; do
+        [ -n "$hp" ] && [ "$hp" -gt 1 ] 2>/dev/null || break
+        case "$worker_pids" in *" $hp "*) daemon_held=true; break ;; esac
+        hp=$(ps -o ppid= -p "$hp" 2>/dev/null | tr -d ' ')
+      done
+    fi
+    $daemon_held && continue
     tok=$(basename "$cd_")
     case "$tok" in RELEASE|DEPLOY) ;; *[!0-9]*|'') continue ;; esac
     claims="${claims:+$claims,}$tok"
