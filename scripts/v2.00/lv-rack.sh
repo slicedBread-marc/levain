@@ -324,11 +324,11 @@ while [ $# -gt 0 ]; do
 done
 
 if $plain || [ ! -t 1 ]; then
-  B=""; DIM=""; R=""; GRN=""; YEL=""; RED=""; REV=""
+  B=""; DIM=""; R=""; GRN=""; YEL=""; RED=""; CYN=""; REV=""
   AGE0=""; AGE1=""; AGE2=""
 else
   B=$'\033[1m'; DIM=$'\033[2m'; R=$'\033[0m'
-  GRN=$'\033[32m'; YEL=$'\033[33m'; RED=$'\033[31m'; REV=$'\033[7m'
+  GRN=$'\033[32m'; YEL=$'\033[33m'; RED=$'\033[31m'; CYN=$'\033[36m'; REV=$'\033[7m'
   # The three ages of a number: just-collected, going stale, and old enough
   # that a refresh is already due or in flight. Bright white → white → bright
   # black, which every 256-colour terminal renders as a genuine descent into
@@ -418,7 +418,7 @@ names=(); paths=(); statuses=()
 f_daemon=(); f_running=()
 f_gates=(); f_gates_stuck=(); f_gates_blocked=()
 f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
-f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=()
+f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_claims=()
 # f_ts: when THIS project's numbers were collected, per project rather than
 # per frame. A collect walks every client in turn and a menu action re-fetches
 # exactly one, so "the frame's age" is several different ages — and the column
@@ -455,7 +455,7 @@ fetch_one() {
   local tok key val
   local daemon="-" running=0 gates=0 gates_stuck=0 gates_blocked=0
   local draft=0 ready=0 active=0 verify=0 testing=0 accept=0 complete=0 abandoned=0 registry="-" attn="" release="-" deploy="-"
-  local ideas=0 ideas_drift=0
+  local ideas=0 ideas_drift=0 claims=""
   IFS=$'\t' read -ra _toks <<< "$line"
   for tok in "${_toks[@]}"; do
     key="${tok%%=*}"; val="${tok#*=}"
@@ -485,15 +485,20 @@ fetch_one() {
       # zeros rather than a broken grid.
       brainstorms)       ideas="$val" ;;
       brainstorms_drift) ideas_drift="$val" ;;
+      # Live claims held by an attended session (lv-tray.sh). An older client
+      # emits no key; empty stands in and the board shows no work in hand.
+      claims)       claims="$val" ;;
     esac
   done
   # The collection time is the LAST field, so a record written by an older
   # copy of this script (or read out of a stale snapshot) is simply one field
-  # short and defaults, rather than shifting every field along by one.
-  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+  # short and defaults, rather than shifting every field along by one. Claims
+  # ride AFTER it for the same reason: a record without them is one field
+  # short, and the timestamp stays where every older reader looks for it.
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
     "$status" "$daemon" "$running" "$gates" "$gates_stuck" "$gates_blocked" \
     "$draft" "$ready" "$active" "$verify" "$testing" "$complete" "$abandoned" \
-    "$registry" "$attn" "$release" "$deploy" "$ideas" "$ideas_drift" "$accept" "$(date +%s)"
+    "$registry" "$attn" "$release" "$deploy" "$ideas" "$ideas_drift" "$accept" "$(date +%s)" "$claims"
 }
 
 # apply_record <record> <append|index> — write a fetch_one record into the
@@ -515,6 +520,7 @@ apply_record() {
     f_ideas+=("${f[17]:-0}"); f_ideas_drift+=("${f[18]:-0}")
     f_accept+=("${f[19]:-0}")
     f_ts+=("${f[20]:-0}")
+    f_claims+=("${f[21]:-}")
   else
     local idx="$where"
     statuses[$idx]="${f[0]}"
@@ -526,7 +532,24 @@ apply_record() {
     f_ideas[$idx]="${f[17]:-0}"; f_ideas_drift[$idx]="${f[18]:-0}"
     f_accept[$idx]="${f[19]:-0}"
     f_ts[$idx]="${f[20]:-0}"
+    f_claims[$idx]="${f[21]:-}"
   fi
+}
+
+# gate_in_hand <attn-token> <claims> — 0 when a session is working the gate
+# right now. A plan's gate is in hand when its number is claimed. RELEASE and
+# DEPLOY are one promotion: a deploy gate ("the release tip failed the deploy
+# suite") is answered by a new /lv-release as much as by /lv-deploy, so a claim
+# on either puts a gate on either in hand.
+gate_in_hand() {
+  local tok="${1%\~}" claims=",${2:-},"
+  tok="${tok%!}"
+  [ "$claims" = ",," ] && return 1
+  case "$tok" in
+    RELEASE|DEPLOY) [[ "$claims" == *,RELEASE,* || "$claims" == *,DEPLOY,* ]] ;;
+    ''|*[!0-9]*) return 1 ;;
+    *) [[ "$claims" == *",$((10#$tok)),"* ]] ;;
+  esac
 }
 
 # project_record <index> — the arrays turned back into one fetch_one record.
@@ -535,13 +558,13 @@ apply_record() {
 # naming all twenty fields a second time.
 project_record() {
   local i="$1"
-  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' \
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' \
     "${statuses[$i]}" "${f_daemon[$i]}" "${f_running[$i]}" \
     "${f_gates[$i]}" "${f_gates_stuck[$i]}" "${f_gates_blocked[$i]}" \
     "${f_draft[$i]}" "${f_ready[$i]}" "${f_active[$i]}" "${f_verify[$i]}" \
     "${f_testing[$i]}" "${f_complete[$i]}" "${f_abandoned[$i]}" \
     "${f_registry[$i]}" "${f_attn[$i]}" "${f_release[$i]}" "${f_deploy[$i]}" \
-    "${f_ideas[$i]}" "${f_ideas_drift[$i]}" "${f_accept[$i]:-0}" "${f_ts[$i]:-0}"
+    "${f_ideas[$i]}" "${f_ideas_drift[$i]}" "${f_accept[$i]:-0}" "${f_ts[$i]:-0}" "${f_claims[$i]:-}"
 }
 
 # refresh_one <index> — re-fetch and overwrite just that project's fields.
@@ -586,7 +609,7 @@ sort_projects_by_activity() {
   local -a o_daemon=() o_running=()
   local -a o_gates=() o_gates_stuck=() o_gates_blocked=()
   local -a o_draft=() o_ready=() o_active=() o_verify=() o_testing=() o_complete=() o_abandoned=()
-  local -a o_registry=() o_attn=() o_release=() o_deploy=() o_ideas=() o_ideas_drift=() o_accept=() o_ts=()
+  local -a o_registry=() o_attn=() o_release=() o_deploy=() o_ideas=() o_ideas_drift=() o_accept=() o_ts=() o_claims=()
   while IFS= read -r idx; do
     o_names+=("${names[$idx]}"); o_paths+=("${paths[$idx]}"); o_statuses+=("${statuses[$idx]}")
     o_daemon+=("${f_daemon[$idx]}"); o_running+=("${f_running[$idx]}")
@@ -597,6 +620,7 @@ sort_projects_by_activity() {
     o_ideas+=("${f_ideas[$idx]}"); o_ideas_drift+=("${f_ideas_drift[$idx]}")
     o_accept+=("${f_accept[$idx]:-0}")
     o_ts+=("${f_ts[$idx]:-0}")
+    o_claims+=("${f_claims[$idx]:-}")
   done <<< "$order"
   names=("${o_names[@]}"); paths=("${o_paths[@]}"); statuses=("${o_statuses[@]}")
   f_daemon=("${o_daemon[@]}"); f_running=("${o_running[@]}")
@@ -607,6 +631,7 @@ sort_projects_by_activity() {
   f_ideas=("${o_ideas[@]}"); f_ideas_drift=("${o_ideas_drift[@]}")
   f_accept=("${o_accept[@]}")
   f_ts=("${o_ts[@]}")
+  f_claims=("${o_claims[@]}")
 }
 
 # fit_cols — MAX_COLS from the terminal width: the 11-column row label, then
@@ -698,7 +723,8 @@ snapshot_save() {
           complete: .[13], abandoned: .[14], registry: .[15], attn: .[16],
           release: .[17], deploy: .[18], ideas: .[19], ideas_drift: .[20],
           accept: .[21],
-          fetched_at: ((.[22] | tonumber?) // 0)
+          fetched_at: ((.[22] | tonumber?) // 0),
+          claims: (.[23] // "")
         }))}' > "$tmp" 2>/dev/null; then
     mv -f "$tmp" "$GRID_SNAPSHOT" 2>/dev/null || rm -f "$tmp"
   else
@@ -723,7 +749,8 @@ snapshot_load() {
        .draft, .ready, .active, .verify, .testing, .complete, .abandoned,
        .registry, .attn, .release, .deploy, .ideas, .ideas_drift,
        (.accept // "0"),
-       (.fetched_at | tostring)]
+       (.fetched_at | tostring),
+       (.claims // "")]
       | map(. // "") | join("\u001f")' "$GRID_SNAPSHOT" 2>/dev/null) || return 1
   [ -n "$rows" ] || return 1
 
@@ -731,7 +758,7 @@ snapshot_load() {
   f_daemon=(); f_running=()
   f_gates=(); f_gates_stuck=(); f_gates_blocked=()
   f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
-  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=()
+  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=(); f_claims=()
   local line rec
   while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -924,7 +951,7 @@ collect_all() {
   f_daemon=(); f_running=()
   f_gates=(); f_gates_stuck=(); f_gates_blocked=()
   f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
-  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=()
+  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=(); f_claims=()
   collect
   snapshot_save
   refresh_library_count
@@ -967,7 +994,7 @@ finish_refresh() {
   f_daemon=(); f_running=()
   f_gates=(); f_gates_stuck=(); f_gates_blocked=()
   f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
-  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=()
+  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=(); f_claims=()
   if [ -f "$refresh_file" ]; then
     local name path rec
     while IFS=$'\x1e' read -r name path rec; do
@@ -1097,7 +1124,7 @@ render_text() {
     fi
     local raw="${f_attn[$i]}"
     local -a ids; IFS=',' read -ra ids <<< "$raw"
-    local total="${#ids[@]}" shown="" k tok
+    local total="${#ids[@]}" shown="" k tok in_hand=0
     local shown_count=$total; [ "$shown_count" -gt 2 ] && shown_count=2
     for ((k = 0; k < shown_count; k++)); do
       tok="${ids[$k]%\~}"; tok="${tok%!}"
@@ -1110,6 +1137,11 @@ render_text() {
         RELEASE|DEPLOY) ;;
         *) [ "$shown_count" -eq 1 ] && tok="$LV_PLN-$tok" ;;
       esac
+      # `*` is in hand: a session holds this gate's claim right now, so it
+      # is being answered, not waiting. See gate_in_hand.
+      if gate_in_hand "${ids[$k]}" "${f_claims[$i]:-}"; then
+        tok="$tok*"; in_hand=$((in_hand + 1))
+      fi
       [ -n "$shown" ] && shown="$shown, $tok" || shown="$tok"
     done
     [ "$total" -gt 2 ] && shown="$shown (+$((total - 2)))"
@@ -1118,7 +1150,9 @@ render_text() {
     # not just coloured, because red already means stuck.
     [[ "$raw" == *\~* ]] && shown="$shown ~"
     f_attn_disp[$i]="$shown"
-    if [[ "$raw" == *!* || "$raw" == *\~* ]]; then f_attn_color[$i]="$RED"; else f_attn_color[$i]="$YEL"; fi
+    if [[ "$raw" == *!* || "$raw" == *\~* ]]; then f_attn_color[$i]="$RED"
+    elif [ "$in_hand" -eq "$total" ]; then f_attn_color[$i]="$CYN"
+    else f_attn_color[$i]="$YEL"; fi
     [ "${#shown}" -gt "$cw" ] && cw="${#shown}"
   done
   cw=$((cw + 1))
@@ -1169,7 +1203,27 @@ render_text() {
     esac
   done
   row "daemon" f_daemon_disp
-  row "running" f_running
+
+  # RUNNING: the daemon's workers, then — in cyan — what attended sessions
+  # hold claims on (`0 +RELEASE`). Without the second half a human mid-
+  # /lv-release left the column reading idle beside a gate that their own
+  # session was answering.
+  row_label "running"
+  for ((i = win_start; i < win_end; i++)); do
+    local rsel=""; sel_cell "running" "$i" && rsel="$REV"
+    local rn="${f_running[$i]}" rc="${f_claims[$i]:-}"
+    if [ "${statuses[$i]}" != "ok" ]; then
+      cell "$cw" "$rn" "${DIM}${rsel}"
+    elif [ -n "$rc" ]; then
+      local -a cl; IFS=',' read -ra cl <<< "$rc"
+      local ctxt="+${cl[0]}"
+      [ "${#cl[@]}" -gt 1 ] && ctxt="$ctxt +$((${#cl[@]} - 1))"
+      cell "$cw" "$rn $ctxt" "${CYN}${rsel}"
+    else
+      cell "$cw" "$rn" "${col_age[$i]}${rsel}"
+    fi
+  done
+  printf '\n'
 
   # GATES gets its own logic: stuck count in red, otherwise dim/plain.
   row_label "gates"

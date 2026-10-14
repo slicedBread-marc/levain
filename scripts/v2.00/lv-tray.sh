@@ -37,7 +37,10 @@
 #                 release_pending=<plans complete on develop but not yet
 #                 carried through /lv-release, or `-` with no release
 #                 branch>, and deploy_pending=<plans on release but not
-#                 main, or `-` if this project has no release/main split>.
+#                 main, or `-` if this project has no release/main split>,
+#                 and claims=<live claims held by a session that is not a
+#                 daemon worker — RELEASE, DEPLOY or a bare number — so an
+#                 attended /lv-release reads as work in progress>.
 #   --plans       the full view plus the plan-by-plan picture (PLANS: each
 #                 plan by what it is waiting for, bugs, done-by-tag) and one
 #                 ranked NEXT action — what /lv-tray shows. Ignored by
@@ -518,7 +521,7 @@ render() {
   local budget_used; budget_used=$(cat "$ORCH/spawns-$(date +%Y%m%d%H)" 2>/dev/null || echo 0)
   local budget_max;  budget_max=$(wf_cfg orchestrator.max_spawns_per_hour 20)
 
-  local running_n=0 pf pid base role artifact age running_roles=""
+  local running_n=0 pf pid base role artifact age running_roles="" worker_pids=" "
   local -a running_lines=()
   for pf in "$ORCH/logs"/*.pid; do
     [ -f "$pf" ] || continue
@@ -548,6 +551,26 @@ render() {
       "$CYN" "$role" "$R" "$artifact" "$(wf_human_age "$age")" "$DIM" "$pid" "$R")")
     running_n=$((running_n + 1))
     running_roles="$running_roles $role:$artifact "
+    worker_pids="$worker_pids$pid "
+  done
+
+  # ── Attended claims ─────────────────────────────────────────────────
+  # Work a human session is doing right now: a live claim whose holder is not
+  # one of the daemon's workers above. `running` counts only those workers, so
+  # an attended /lv-release or /lv-deploy was invisible on the board — a client
+  # board showed a DEPLOY gate "waiting on a human" while a human session was
+  # mid-release fixing exactly what that gate reported. The claim was already
+  # there; nothing read it. Tokens match attn's: RELEASE/DEPLOY, else the bare
+  # number. wf_claim_live reaps a dead owner's claim, as lv-claim.sh --list does.
+  local claims="" cd_ tok
+  for cd_ in "$ORCH/claims"/*/; do
+    cd_="${cd_%/}"
+    [ -f "$cd_/.wf-claim" ] || continue
+    wf_claim_live "$cd_" || continue
+    case "$worker_pids" in *" ${LV_CLAIM_HOLDER_PID:-x} "*) continue ;; esac
+    tok=$(basename "$cd_")
+    case "$tok" in RELEASE|DEPLOY) ;; *[!0-9]*|'') continue ;; esac
+    claims="${claims:+$claims,}$tok"
   done
 
   local gates; gates=$("$SELF_DIR/lv-list-gates.sh" 2>/dev/null || true)
@@ -685,13 +708,13 @@ render() {
     [ "$release_field" -lt 0 ] 2>/dev/null && release_field="-"
     local deploy_field="$deploy_pending"
     [ "$deploy_field" -lt 0 ] 2>/dev/null && deploy_field="-"
-    printf 'daemon=%s\tenabled=%s\tspawns=%s/%s\trunning=%s\tgates=%s\tgates_stuck=%s\tgates_blocked=%s\tdraft=%s\tready=%s\tactive=%s\tverify=%s\ttesting=%s\tcomplete=%s\trolled_back=%s\tabandoned=%s\tregistry=%s\tattn=%s\trelease_pending=%s\tdeploy_pending=%s\tbrainstorms=%s\tbrainstorms_drift=%s\taccept=%s\n' \
+    printf 'daemon=%s\tenabled=%s\tspawns=%s/%s\trunning=%s\tgates=%s\tgates_stuck=%s\tgates_blocked=%s\tdraft=%s\tready=%s\tactive=%s\tverify=%s\ttesting=%s\tcomplete=%s\trolled_back=%s\tabandoned=%s\tregistry=%s\tattn=%s\trelease_pending=%s\tdeploy_pending=%s\tbrainstorms=%s\tbrainstorms_drift=%s\taccept=%s\tclaims=%s\n' \
       "$daemon_raw" "$enabled" "$budget_used" "$budget_max" \
       "$running_n" "$gates_n" "$gates_stuck" "$gates_blocked" \
       "$st_draft" "$st_ready" "$st_active" "$st_verify" "$st_testing" \
       "$st_complete" "$st_rolled_back" "$st_abandoned" \
       "$registry_field" "$attn" "$release_field" "$deploy_field" \
-      "$brainstorms" "$brainstorms_drift" "$st_accept"
+      "$brainstorms" "$brainstorms_drift" "$st_accept" "$claims"
     return
   fi
 
