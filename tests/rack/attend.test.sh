@@ -68,6 +68,7 @@ seed() {
   f_registry=("clean"); f_attn=(""); f_release=("-"); f_deploy=("-")
   f_ideas=("0"); f_ideas_drift=("0"); f_ts=("$(date +%s)")
   rm -rf "$LV_BOARD_CACHE"; : > "$ATTEND_LOG"
+  to_main=false
 }
 
 echo "lv-rack attend key"

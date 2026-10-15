@@ -81,7 +81,7 @@
 # `project-a / running` lists the three live workers, one of those opens
 # its plan, its files and its logs, and a log opens in a pager that can
 # FOLLOW a worker still writing it. Esc bubbles back up one level at a time,
-# q returns to the board. `a` is the old project action menu, still one
+# m returns to the board in one key from any depth. `a` is the old project action menu, still one
 # keypress away, and `d` starts or stops the highlighted project's daemon
 # outright — Enter used to open that menu before the drill-down took the key,
 # so the toggle keeps a key of its own rather than living two levels down.
@@ -405,11 +405,17 @@ shown_n=0
 refresh_pid=""
 refresh_file=""
 refreshing=false
-# Set by skill_session when a Claude session hands the terminal back. Every
-# level it can be started from (a drill level, the project menu, the picker)
-# unwinds on it, and resume_board turns it into a fresh collect: the session
-# moved plans, so the level it was opened from is stale — usually emptied.
+# Set by skill_session when a Claude session hands the terminal back, along
+# with to_main below, so every level it can be started from unwinds; then
+# resume_board turns it into a fresh collect: the session moved plans, so the
+# level it was opened from is stale — usually emptied.
 back_to_board=false
+# Set by `m` on any screen below the board, and by skill_session. Every level
+# returns at once on it instead of one level up, which is Esc's job; the board
+# (or, without --watch, the picker) is where it stops and is cleared. q quits,
+# and only on the main screen: it used to mean "back to the board" one level
+# down and "quit" on the board itself.
+to_main=false
 spin_i=0
 SPIN_FRAMES=("⏳" "⌛")
 IDLE_GLYPH="·"
@@ -1546,7 +1552,7 @@ render_frame() {
     # The legend is the three shades themselves, drawn in the shades they
     # name: "fresh → aging → stale" spelled out in white, grey and dark grey
     # explains the tint in less space than a sentence about it would.
-    new_lines+=("$(printf '%s%ss poll — %sfresh%s %s→ aging%s %s→ stale%s%s — arrows move the cell, enter opens it, d %s %s, a acts on it, 1-%d project, m all %d, s/R all daemons, q quit%s' \
+    new_lines+=("$(printf '%s%ss poll — %sfresh%s %s→ aging%s %s→ stale%s%s — arrows move the cell, enter opens it, d %s %s, a acts on it, 1-%d project, m all %d, s/R all daemons, z on/dormant, q quit%s' \
       "$DIM" "$watch_secs" \
       "$AGE0" "$R" "$AGE1" "$R" "$AGE2" "$R" "$DIM" \
       "$([ "${f_daemon[$sel_idx]}" = "running" ] && echo "stops" || echo "starts")" \
@@ -1837,10 +1843,10 @@ view_file() {
       if $follow; then
         printf 'following — any key stops   %s-%s of %s' "$((top + 1))" "$((top + h))" "$total"
       elif [ "$followable" = "yes" ]; then
-        printf '↑/↓ scroll, g top, G end, f follow, d daemon, esc back   %s-%s of %s' \
+        printf '↑/↓ scroll, g top, G end, f follow, d daemon, esc back, m main   %s-%s of %s' \
           "$((top + 1))" "$((top + h))" "$total"
       else
-        printf '↑/↓ scroll, g top, G end, d daemon, esc back   %s-%s of %s' \
+        printf '↑/↓ scroll, g top, G end, d daemon, esc back, m main   %s-%s of %s' \
           "$((top + 1))" "$((top + h))" "$total"
       fi
       printf '%s\n' "$R"
@@ -1883,8 +1889,8 @@ view_file() {
               repaint=true
             fi ;;
       ''|$'\n') repaint=true ;;
-      q|Q) return ;;
-      *) board_action_key "$key" "$ppath" && repaint=true ;;
+      m|M) to_main=true; return ;;
+      *) board_action_key "$key" "$ppath" && repaint=true; $to_main && return ;;
     esac
   done
 }
@@ -2154,7 +2160,7 @@ drill_browse() {
         fi
         stage=$(level_stage "$argv")
         $is_rows && [ -z "$stage" ] && [ "$n" -gt 0 ] && stage=$(level_stage "${d_targ[$sel]:-}")
-        printf '\n%s↑/↓ move, enter open, esc back, r refresh, t %s, d daemon, a actions, q board%s\n' \
+        printf '\n%s↑/↓ move, enter open, esc back, r refresh, t %s, d daemon, a actions, m main%s\n' \
           "$DIM" "$([ -n "$stage" ] && echo "/lv-$stage" || echo attend)" "$R"
         redraw=false
         age_sig=$(age_bucket "$level_ts")
@@ -2212,9 +2218,9 @@ drill_browse() {
           node_job_cancel
           unset 'st_title[$depth]' 'st_argv[$depth]' 'st_sel[$depth]'
           break ;;
-        q|Q)
+        m|M)
           node_job_cancel
-          st_title=(); st_argv=(); st_sel=()
+          to_main=true
           break ;;
         ''|$'\n'|$'\x1b[C')
           [ "$n" -gt 0 ] || { redraw=true; continue; }
@@ -2260,10 +2266,12 @@ drill_browse() {
             break
           fi ;;
       esac
+      # m in a log opened from here, or in the project menu (a).
+      if $to_main; then node_job_cancel; break; fi
     done
-    # A Claude session ran from here, directly (t) or from the project menu
-    # (a): leave every level, not just this one, and let the board refresh.
-    if $back_to_board; then st_title=(); st_argv=(); st_sel=(); fi
+    # m, or a Claude session run from here, directly (t) or from the project
+    # menu (a): leave every level, not just this one.
+    if $to_main; then st_title=(); st_argv=(); st_sel=(); fi
   done
   node_job_cancel
   rm -f "$body_file"
@@ -2328,11 +2336,11 @@ project_menu() {
     printf '%s%s%s  %s%s%s\n' "$B" "${names[$i]}" "$R" "$DIM" "${paths[$i]}" "$R"
     if [ "${statuses[$i]}" != "ok" ]; then
       printf '  status: %s — orchestrator unreachable\n' "${statuses[$i]}"
-      printf '  b) back\n'
+      printf '  b) back   m) main\n'
       read_key key
       $key_eof && return
       [ "$key_rc" -eq 0 ] || continue
-      case "$key" in ''|b|B|$'\x1b') return ;; esac
+      case "$key" in ''|b|B|$'\x1b') return ;; m|M) to_main=true; return ;; esac
       continue
     fi
 
@@ -2347,7 +2355,7 @@ project_menu() {
         printf '    %d) %s\n' "$(( (a + 1) % 10 ))" "${actions[$a]}"
       fi
     done
-    printf '  b) back\n\n  arrows + enter, a digit, or b   %s(d daemon, s stop all, R resume — same keys as the board)%s\n' \
+    printf '  b) back   m) main\n\n  arrows + enter, a digit, b or m   %s(d daemon, s stop all, R resume — same keys as the board)%s\n' \
       "$DIM" "$R"
 
     read_key key
@@ -2361,7 +2369,7 @@ project_menu() {
         # action that must NOT be followed by a "press any key" prompt on
         # top of the menu it already redrew.
         pm_action "$i" "$sub"
-        $back_to_board && return
+        $to_main && return
         # 5, 8 and 9 hand the screen to something that ends on its own prompt.
         case "$sub" in 5|8|9) continue ;; esac
         printf '\n  (press any key to continue) '; read_key key ;;
@@ -2370,10 +2378,11 @@ project_menu() {
         local pick=$(( key == 0 ? 9 : key - 1 ))
         [ "$pick" -lt "$n_actions" ] || continue
         pm_action "$i" "$pick"
-        $back_to_board && return
+        $to_main && return
         case "$pick" in 5|8|9) continue ;; esac
         printf '\n  (press any key to continue) '; read_key key ;;
       b|B|$'\x1b') return ;;
+      m|M) to_main=true; return ;;
       # The board's own action letters, on the numbered actions that already do
       # the same thing: `d` is action 1, `s`/`R` are 7 and 8. `a` is not one of
       # them — this IS the action menu — so it falls through to nothing rather
@@ -2434,7 +2443,7 @@ skill_session() {
     ( cd "$path" && "$cmd" "/$skill${arg:+ $arg}" ) || true
   fi
   printf '\n  (press any key to return to the board) '; read_key k
-  back_to_board=true
+  back_to_board=true; to_main=true
 }
 
 # attend_session <path> [<ID>] — skill_session on /lv-attend.
@@ -2476,21 +2485,28 @@ board_action_key() {
 menu_loop() {
   local choice i
   while true; do
-    printf '\n%sselect a project%s (1-%d), %sr%s refresh, %ss%s stop all daemons, %sR%s resume, %sz%s on/dormant, %sU%s deploy library, %sW%s sweep library, %sq%s quit:\n' \
-      "$B" "$R" "${#names[@]}" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
+    printf '\n%sselect a project%s (1-%d), %sr%s refresh, %ss%s stop all daemons, %sR%s resume, %sz%s on/dormant, %sU%s deploy library, %sW%s sweep library, %s%s%s %s:\n' \
+      "$B" "$R" "${#names[@]}" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" \
+      "$B" "$($watch_mode && echo m || echo q)" "$R" "$($watch_mode && echo main || echo quit)"
     for i in "${!names[@]}"; do
       printf '  %d) %s\n' "$((i + 1))" "${names[$i]}"
     done
     printf '> '
     IFS= read -r choice || break
     case "$choice" in
-      ''|q|Q) break ;;
+      '') break ;;
+      # Under --watch this picker is a screen below the board, so it leaves
+      # on m like the rest; without --watch it IS the main screen, and q quits.
+      m|M) $watch_mode && break; echo "  not a valid choice" ;;
+      q|Q) $watch_mode && { echo "  not a valid choice"; continue; }; break ;;
       r) printf '\033[2J\033[H'; render ;;
       s) suspend_all; printf '\n  (press enter to continue) '; IFS= read -r _
          printf '\033[2J\033[H'; render ;;
       R) resume_suspended; printf '\n  (press enter to continue) '; IFS= read -r _
          printf '\033[2J\033[H'; render ;;
-      z) dormant_screen; printf '\033[2J\033[H'; render ;;
+      z) dormant_screen
+         if $to_main; then $watch_mode && break; to_main=false; fi
+         printf '\033[2J\033[H'; render ;;
       U) printf '\033[2J\033[H'; deploy_library; printf '\n  (press enter to continue) '; IFS= read -r _
          printf '\033[2J\033[H'; render ;;
       W) printf '\033[2J\033[H'; sweep_library; printf '\n  (press enter to continue) '; IFS= read -r _
@@ -2498,12 +2514,12 @@ menu_loop() {
       *)
         if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#names[@]}" ]; then
           project_menu "$((choice - 1))"
-          # Under --watch the board is the main screen, so a finished Claude
-          # session goes back to it; without --watch this picker is the main
-          # screen, and render below already collects fresh.
-          if $back_to_board; then
+          # Under --watch the board is the main screen, so m and a finished
+          # Claude session go back to it; without --watch this picker is the
+          # main screen, and render below already collects fresh.
+          if $to_main; then
             $watch_mode && break
-            back_to_board=false
+            to_main=false; back_to_board=false
           fi
           printf '\033[2J\033[H'; render
         else
@@ -2554,6 +2570,7 @@ reload_now() {
 # is dropped (as reload_now does) and next_refresh_at=0 starts a new one on
 # the first tick, behind the repainted grid.
 resume_board() {
+  to_main=false
   if $back_to_board; then
     back_to_board=false
     if [ -n "$refresh_pid" ]; then
@@ -2651,7 +2668,7 @@ list_dormant() {
 }
 
 # dormant_screen — the list behind `z`: every registered project, Up/Down to
-# move, Space or Enter to toggle, q or Esc to leave. Returns 0 when something
+# move, Space or Enter to toggle, Esc to leave, m for the main screen. Returns 0 when something
 # changed, so the caller knows the grid's column set is now wrong.
 dormant_screen() {
   local -a ps=(); local p key sel=0 changed=1 msg="" k st c
@@ -2662,7 +2679,7 @@ dormant_screen() {
     return 1
   fi
   while true; do
-    printf '\033[2J\033[H%sPROJECTS ON THE BOARD%s  %s↑↓ move · space toggle · q back%s\n\n' "$B" "$R" "$DIM" "$R"
+    printf '\033[2J\033[H%sPROJECTS ON THE BOARD%s  %s↑↓ move · space toggle · esc back · m main%s\n\n' "$B" "$R" "$DIM" "$R"
     for k in "${!ps[@]}"; do
       st=$(dormant_state "${ps[$k]}")
       case "$st" in on) c="$GRN" ;; dormant) c="$DIM" ;; *) c="$YEL" ;; esac
@@ -2681,7 +2698,8 @@ dormant_screen() {
         if is_dormant "$p"; then msg=$(set_dormant "$p" off); else msg=$(set_dormant "$p" on); fi
         # set_dormant's refusal is an answer, not a change.
         [ "$(dormant_state "$p")" = "always on" ] || changed=0 ;;
-      q|Q|$'\x1b') break ;;
+      $'\x1b') break ;;
+      m|M) to_main=true; break ;;
     esac
   done
   return "$changed"
