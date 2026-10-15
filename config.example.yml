@@ -588,7 +588,10 @@ priorWork:
 # never run unattended — they park as gates and wait for /lv-attend.
 orchestrator:
   # OFF by default. Run --sweep --dry-run a few times before turning this on:
-  # workers run with --dangerously-skip-permissions.
+  # workers run with --dangerously-skip-permissions. While this is false,
+  # `lv-orchestrate.sh --daemon` refuses to start ("lv-orchestrate: disabled").
+  # Turning it on is the owner's grant (install/attended.md): copying another
+  # project's levain.yml does not carry that grant over.
   enabled: false
 
   # Seconds between daemon sweeps.

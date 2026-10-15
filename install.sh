@@ -1602,10 +1602,24 @@ echo ""
 # so it cannot drift the way the hand-written list here did.
 bash "$SCRIPT_DIR/scripts/v2.00/lv-skills.sh" --dir "$TARGET_DIR/.claude/skills" || true
 echo ""
+# Report the project's actual orchestrator state, not the template's default.
+# A project stood up by copying another's levain.yml, or by skipping
+# install/attended.md, otherwise learns it is off only when --daemon refuses.
+ORCH_ENABLED=$(awk '
+    /^orchestrator:/ { in_block = 1; next }
+    in_block && /^[^[:space:]#]/ { in_block = 0 }
+    in_block && /^  enabled:/ { v = $2; gsub(/["'\'']/, "", v); print v; exit }
+' "$CONFIG_FILE")
 echo "Orchestrated mode:"
-echo "  The orchestrator ships DISABLED. Preview it before enabling:"
-echo "    scripts/lv-exec.sh lv-orchestrate.sh --sweep --dry-run"
-echo "  Then set orchestrator.enabled: true in levain.yml."
+if [ "$ORCH_ENABLED" = "true" ]; then
+    echo -e "  ${GREEN}orchestrator.enabled: true${NC} — start the daemon in a terminal of its own:"
+    echo "    scripts/lv-exec.sh lv-orchestrate.sh --daemon"
+else
+    echo -e "  ${YELLOW}orchestrator.enabled is not true in levain.yml — the daemon will refuse to start.${NC}"
+    echo "  It ships off on purpose: workers run with --dangerously-skip-permissions."
+    echo "  Ask the owner whether to turn it on (install/attended.md). Preview first:"
+    echo "    scripts/lv-exec.sh lv-orchestrate.sh --sweep --dry-run"
+fi
 echo ""
 echo "Start with your first idea: /lv-brainstorm <what you want to build or fix>"
 echo "  /lv-tray shows the pipeline and the next action; /lv-help lists every skill."

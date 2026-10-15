@@ -22,6 +22,13 @@ and where to find its value. Read the whole file. The user should never have to 
 3. **Write** `levain.yml` at the project root: keys you know get their values, keys
    that do not apply keep the example's default, and the orchestrator block stays exactly as
    shipped (`enabled: false`). Show the user the values you chose, not the whole file.
+   **This holds when the file is copied from another project too:** reset `enabled` to `false`
+   and drop any `autonomy:` block, because both are the other owner's grant, not this one's.
+4. **Ask whether a daemon will run here.** While `enabled` is `false`, `lv-orchestrate.sh --daemon`
+   refuses to start, and only the installer's closing lines mention it. If the owner wants one,
+   finish this rung and go straight to `install/attended.md`, which asks for the grant. If not,
+   tell them the daemon stays off until they climb that rung. Either way, the owner hears it now,
+   not from the refusal.
 
 ## 2. Install
 
