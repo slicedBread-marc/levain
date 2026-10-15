@@ -127,5 +127,42 @@ printf 't \x1b' >> "$FIX/keys"
 drill_browse 0 "rows" "@rows" < "$FIX/keys" > /dev/null 2>&1
 says "t on the rows level's release row starts the release skill" "$ATTEND_LOG" "|/wf-release"
 
+# 8. When the session exits, the board is the screen it returns to: every
+# drill level unwinds, rather than repainting the level it was opened from
+# (which the session has usually just emptied). Redirected, not piped, so
+# drill_browse runs in this shell and the flag it leaves is visible here.
+seed; back_to_board=false
+printf '\nt ' > "$FIX/keys"
+drill_browse 0 "gates" "row gates" < "$FIX/keys" > "$FIX/unwind.txt" 2>&1
+if sed -n '/return to the board/,$p' "$FIX/unwind.txt" | tail -n +2 | grep -q "›"; then
+  bad "after the session no drill level is repainted"
+else ok "after the session no drill level is repainted"; fi
+if $back_to_board; then ok "and the board is told to come back fresh"
+else bad "and the board is told to come back fresh"; fi
+
+# 9. The same from the project menu: /lv-release (9) returns to the board,
+# not to the menu it was started from.
+seed; back_to_board=false
+printf '9 ' > "$FIX/keys"
+project_menu 0 < "$FIX/keys" > "$FIX/pm.txt" 2>&1
+says "the project menu's 9 starts /lv-release" "$ATTEND_LOG" "/wf-release"
+if sed -n '/return to the board/,$p' "$FIX/pm.txt" | grep -q "b) back"; then
+  bad "after the session the project menu is not repainted"
+else ok "after the session the project menu is not repainted"; fi
+
+# 10. resume_board turns the flag into a fresh collect: a refresh in flight
+# from before the session is dropped and the next tick starts a new one.
+seed
+compute_shown() { :; }; render_frame() { :; }
+sleep 30 & refresh_pid=$!; refresh_file="$FIX/inflight"; : > "$refresh_file"
+refreshing=true; back_to_board=true; next_refresh_at=999
+stale_pid=$refresh_pid
+resume_board > /dev/null
+if kill -0 "$stale_pid" 2>/dev/null; then bad "the stale in-flight refresh is dropped"; kill "$stale_pid"
+else ok "the stale in-flight refresh is dropped"; fi
+if ! $refreshing && ! $back_to_board && [ "$next_refresh_at" -eq 0 ]; then
+  ok "and a new refresh is due on the next tick"
+else bad "and a new refresh is due on the next tick (refreshing=$refreshing back=$back_to_board next=$next_refresh_at)"; fi
+
 [ "$fails" -eq 0 ] && { echo "all passed"; exit 0; }
 echo "$fails failed"; exit 1

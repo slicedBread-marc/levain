@@ -405,6 +405,11 @@ shown_n=0
 refresh_pid=""
 refresh_file=""
 refreshing=false
+# Set by skill_session when a Claude session hands the terminal back. Every
+# level it can be started from (a drill level, the project menu, the picker)
+# unwinds on it, and resume_board turns it into a fresh collect: the session
+# moved plans, so the level it was opened from is stale — usually emptied.
+back_to_board=false
 spin_i=0
 SPIN_FRAMES=("⏳" "⌛")
 IDLE_GLYPH="·"
@@ -2256,6 +2261,9 @@ drill_browse() {
           fi ;;
       esac
     done
+    # A Claude session ran from here, directly (t) or from the project menu
+    # (a): leave every level, not just this one, and let the board refresh.
+    if $back_to_board; then st_title=(); st_argv=(); st_sel=(); fi
   done
   node_job_cancel
   rm -f "$body_file"
@@ -2353,6 +2361,7 @@ project_menu() {
         # action that must NOT be followed by a "press any key" prompt on
         # top of the menu it already redrew.
         pm_action "$i" "$sub"
+        $back_to_board && return
         # 5, 8 and 9 hand the screen to something that ends on its own prompt.
         case "$sub" in 5|8|9) continue ;; esac
         printf '\n  (press any key to continue) '; read_key key ;;
@@ -2361,6 +2370,7 @@ project_menu() {
         local pick=$(( key == 0 ? 9 : key - 1 ))
         [ "$pick" -lt "$n_actions" ] || continue
         pm_action "$i" "$pick"
+        $back_to_board && return
         case "$pick" in 5|8|9) continue ;; esac
         printf '\n  (press any key to continue) '; read_key key ;;
       b|B|$'\x1b') return ;;
@@ -2424,6 +2434,7 @@ skill_session() {
     ( cd "$path" && "$cmd" "/$skill${arg:+ $arg}" ) || true
   fi
   printf '\n  (press any key to return to the board) '; read_key k
+  back_to_board=true
 }
 
 # attend_session <path> [<ID>] — skill_session on /lv-attend.
@@ -2487,6 +2498,13 @@ menu_loop() {
       *)
         if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#names[@]}" ]; then
           project_menu "$((choice - 1))"
+          # Under --watch the board is the main screen, so a finished Claude
+          # session goes back to it; without --watch this picker is the main
+          # screen, and render below already collects fresh.
+          if $back_to_board; then
+            $watch_mode && break
+            back_to_board=false
+          fi
           printf '\033[2J\033[H'; render
         else
           echo "  not a valid choice"
@@ -2530,7 +2548,21 @@ reload_now() {
 # refreshed it already. The cases that genuinely need fresh numbers before
 # continuing (a menu action that just changed something) call refresh_one for
 # the one project they touched, which is immediate and exact.
+#
+# Back from a Claude session it is a real refresh, not just a request: a
+# collect already in flight started before the session moved anything, so it
+# is dropped (as reload_now does) and next_refresh_at=0 starts a new one on
+# the first tick, behind the repainted grid.
 resume_board() {
+  if $back_to_board; then
+    back_to_board=false
+    if [ -n "$refresh_pid" ]; then
+      kill "$refresh_pid" 2>/dev/null
+      wait "$refresh_pid" 2>/dev/null
+      [ -n "$refresh_file" ] && rm -f "$refresh_file"
+      refresh_pid=""; refresh_file=""; refreshing=false
+    fi
+  fi
   printf '\033[2J\033[?25l'
   prev_lines=()
   compute_shown
