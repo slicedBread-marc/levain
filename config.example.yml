@@ -209,6 +209,28 @@ local_start_command: ""
 local_deploy_command: ""
 local_stop_command: ""
 
+# ── Services: what this project runs on the operator's machine (lv-services.sh) ──
+# The long-running things the operator starts by hand: a container and its tunnel, a worker
+# watching a folder, a dev stack. Declared here, they are listed, started and stopped from the
+# coordinator's rack (`v`, or lv-rack.sh --services) with the checkout each one runs from.
+# Optional; leave it out and nothing changes.
+#   services:
+#     web:
+#       label: "Web + tunnel"
+#       start: "tools/run-web.sh up"     # run from the chosen checkout
+#       stop: "tools/run-web.sh down"    # or "signal": TERM to each running beacon's pid
+#       window: true                     # start in a new Terminal window (it reads keys)
+#       checkout: main                   # main (default) | any — any lets the rack start it from a worktree
+#       health: "http://127.0.0.1:8080/health"   # up while it answers 200-499
+#       compose: "myapp-dev"             # or: up while this compose project has containers
+#       heartbeat: 120                   # a beacon not refreshed for this long shows stale
+#       needs: "web"                     # ids that must be up before this one starts
+#   services_console: "tools/board.sh"   # the project's own board, opened by `o`
+# A launcher announces itself, so the rack can say which checkout it runs from and a worktree
+# it runs from is not removed under it:
+#   scripts/lv-exec.sh lv-services.sh beacon up <id> --pid $$ || true      # or --detached
+#   trap 'scripts/lv-exec.sh lv-services.sh beacon down <id> --pid $$ || true' EXIT
+
 # Tiered test gating (BRF-080).
 # lv-verify reads testScopes to build a test-filter expression for feature-branch
 # runs; lv-release runs the full suite with no filter (aggregation guarantee).

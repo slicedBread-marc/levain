@@ -10,6 +10,7 @@
 #   lv-rack.sh --dormant         list every project, on or dormant
 #   lv-rack.sh --sleep <name>    make a project dormant: no column, no scan
 #   lv-rack.sh --wake <name>     put a dormant project back on the board
+#   lv-rack.sh --services        every project's services: state, checkout, how long up
 #
 # --watch repaints only the rows that changed, not the whole screen — no
 # flicker.
@@ -301,7 +302,7 @@ include_dormant=false
 # portfolio and a resize is picked up on the next refresh.
 MAX_COLS=4
 
-usage() { sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
+usage() { sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -315,6 +316,7 @@ while [ $# -gt 0 ]; do
     --resume) mode="resume"; shift ;;
     --list-daemons) mode="list-daemons"; shift ;;
     --dormant) mode="dormant"; shift ;;
+    --services) mode="services"; shift ;;
     --sleep|--wake)
       [ -n "${2:-}" ] || { echo "lv-rack: $1 needs a project name" >&2; usage 1; }
       mode="${1#--}"; mode_arg="$2"; shift 2 ;;
@@ -1552,7 +1554,7 @@ render_frame() {
     # The legend is the three shades themselves, drawn in the shades they
     # name: "fresh → aging → stale" spelled out in white, grey and dark grey
     # explains the tint in less space than a sentence about it would.
-    new_lines+=("$(printf '%s%ss poll — %sfresh%s %s→ aging%s %s→ stale%s%s — arrows move the cell, enter opens it, d %s %s, a acts on it, 1-%d project, m all %d, s/R all daemons, z on/dormant, q quit%s' \
+    new_lines+=("$(printf '%s%ss poll — %sfresh%s %s→ aging%s %s→ stale%s%s — arrows move the cell, enter opens it, d %s %s, a acts on it, 1-%d project, m all %d, s/R all daemons, z on/dormant, v services, q quit%s' \
       "$DIM" "$watch_secs" \
       "$AGE0" "$R" "$AGE1" "$R" "$AGE2" "$R" "$DIM" \
       "$([ "${f_daemon[$sel_idx]}" = "running" ] && echo "stops" || echo "starts")" \
@@ -2485,8 +2487,8 @@ board_action_key() {
 menu_loop() {
   local choice i
   while true; do
-    printf '\n%sselect a project%s (1-%d), %sr%s refresh, %ss%s stop all daemons, %sR%s resume, %sz%s on/dormant, %sU%s deploy library, %sW%s sweep library, %s%s%s %s:\n' \
-      "$B" "$R" "${#names[@]}" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" \
+    printf '\n%sselect a project%s (1-%d), %sr%s refresh, %ss%s stop all daemons, %sR%s resume, %sz%s on/dormant, %sv%s services, %sU%s deploy library, %sW%s sweep library, %s%s%s %s:\n' \
+      "$B" "$R" "${#names[@]}" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" \
       "$B" "$($watch_mode && echo m || echo q)" "$R" "$($watch_mode && echo main || echo quit)"
     for i in "${!names[@]}"; do
       printf '  %d) %s\n' "$((i + 1))" "${names[$i]}"
@@ -2505,6 +2507,9 @@ menu_loop() {
       R) resume_suspended; printf '\n  (press enter to continue) '; IFS= read -r _
          printf '\033[2J\033[H'; render ;;
       z) dormant_screen
+         if $to_main; then $watch_mode && break; to_main=false; fi
+         printf '\033[2J\033[H'; render ;;
+      v) services_screen
          if $to_main; then $watch_mode && break; to_main=false; fi
          printf '\033[2J\033[H'; render ;;
       U) printf '\033[2J\033[H'; deploy_library; printf '\n  (press enter to continue) '; IFS= read -r _
@@ -2705,6 +2710,124 @@ dormant_screen() {
   return "$changed"
 }
 
+# ── Services: what each project runs on this machine ────────────────────
+#
+# A project declares its long-running things (a web container and its tunnel, a worker
+# watching a folder) under `services:` in levain.yml, and its launchers leave a beacon while
+# they run (lv-services.sh). `v` on the board, or --services, lists every project's, with the
+# checkout each one runs from: a worker started from a feature worktree shows as that branch,
+# flagged, instead of as nothing. Like the grid, every fact comes from one call to the
+# project's own `lv-services.sh status`; this file knows no service by name.
+
+sv_reset() { SV_P=(); SV_NAME=(); SV_ID=(); SV_STATE=(); SV_DETAIL=(); SV_CO=(); SV_BRANCH=(); SV_COMMIT=(); SV_SINCE=(); SV_FLAGS=(); }
+
+sv_collect() {
+  local p out id st de co br cm si pid fl
+  sv_reset
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    has_harness "$p" || continue
+    out=$(cd "$p" && hx lv-services.sh status 2>/dev/null) || continue
+    while IFS=$'\t' read -r id st de co br cm si pid fl; do
+      [ -n "$id" ] || continue
+      SV_P+=("$p"); SV_NAME+=("$(basename "$p")"); SV_ID+=("$id"); SV_STATE+=("$st"); SV_DETAIL+=("$de")
+      SV_CO+=("$co"); SV_BRANCH+=("$br"); SV_COMMIT+=("$cm"); SV_SINCE+=("$si"); SV_FLAGS+=("$fl")
+    done <<< "$out"
+  done <<< "$(each_project)"
+}
+
+sv_age() {
+  local s="$1"
+  case "$s" in ''|-) echo - ;; *)
+    if [ "$s" -lt 60 ]; then echo "${s}s"; elif [ "$s" -lt 3600 ]; then echo "$((s / 60))m"
+    elif [ "$s" -lt 86400 ]; then echo "$((s / 3600))h"; else echo "$((s / 86400))d"; fi ;;
+  esac
+}
+
+# sv_where <i> — main @commit, or the branch it runs from, flagged.
+sv_where() {
+  local i="$1" fl="${SV_FLAGS[$1]}" w behind=""
+  [ "${SV_CO[$i]}" = - ] && { echo -; return; }
+  case ",$fl," in *,offmain,*) w="${SV_BRANCH[$i]#feature/} ⚠" ;; *) w="main @${SV_COMMIT[$i]}" ;; esac
+  case ",$fl," in *,behind=*) behind="${fl##*behind=}"; behind="${behind%%,*}"; w="$w, behind $behind" ;; esac
+  echo "$w"
+}
+
+sv_color() {
+  case "$1" in up) printf '%s' "$GRN" ;; stale) printf '%s' "$YEL" ;; *) printf '%s' "$DIM" ;; esac
+}
+
+sv_line() { # sv_line <i> <selected:true|false>
+  local i="$1" c state
+  c=$(sv_color "${SV_STATE[$i]}")
+  state="${SV_STATE[$i]} ${SV_DETAIL[$i]}"; [ "${SV_DETAIL[$i]}" = - ] && state="${SV_STATE[$i]}"
+  if $2; then printf '  %s> %-16s %-12s%s %s%-14s%s %-34s %s\n' "$REV" "${SV_NAME[$i]}" "${SV_ID[$i]}" "$R" "$c" "$state" "$R" "$(sv_where "$i")" "$(sv_age "${SV_SINCE[$i]}")"
+  else printf '    %-16s %-12s %s%-14s%s %-34s %s\n' "${SV_NAME[$i]}" "${SV_ID[$i]}" "$c" "$state" "$R" "$(sv_where "$i")" "$(sv_age "${SV_SINCE[$i]}")"; fi
+}
+
+sv_table() {
+  local i
+  if [ "${#SV_ID[@]}" -eq 0 ]; then
+    printf '  %sno project declares services: in levain.yml%s\n' "$DIM" "$R"; return 0
+  fi
+  printf '    %s%-16s %-12s %-14s %-34s %s%s\n' "$B" PROJECT SERVICE STATE CHECKOUT SINCE "$R"
+  for i in "${!SV_ID[@]}"; do sv_line "$i" false; done
+}
+
+# sv_run <i> <lv-services args...> — one action, in that project, then wait for a key.
+sv_run() {
+  local i="$1" k; shift
+  printf '\033[2J\033[H'
+  (cd "${SV_P[$i]}" && hx lv-services.sh "$@") || true
+  printf '\n  (press any key to continue) '; read_key k
+}
+
+# sv_pick_worktree <i> — choose a checkout, then start from it.
+sv_pick_worktree() {
+  local i="$1" line n choice; local -a wts=()
+  while IFS= read -r line; do [ -n "$line" ] && wts+=("$line"); done \
+    <<< "$(cd "${SV_P[$i]}" && hx lv-services.sh worktrees 2>/dev/null)"
+  printf '\033[2J\033[H%sSTART %s / %s FROM%s\n\n' "$B" "${SV_NAME[$i]}" "${SV_ID[$i]}" "$R"
+  for n in "${!wts[@]}"; do printf '  %d) %-28s %s\n' "$((n + 1))" "${wts[$n]#*$'\t'}" "${wts[$n]%%$'\t'*}"; done
+  printf '\n  number, or enter to cancel: '
+  printf '\033[?25h'; IFS= read -r choice || return 0
+  [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#wts[@]}" ] || return 0
+  sv_run "$i" start "${SV_ID[$i]}" --checkout "${wts[$((choice - 1))]%%$'\t'*}"
+}
+
+# services_screen — the list behind `v`. ↑↓ move, u start from main, w start from a worktree,
+# x stop, o the project's own console, r refresh, esc back, m main.
+services_screen() {
+  local key sel=0 i n
+  printf '\033[2J\033[H  %scollecting services…%s\n' "$DIM" "$R"
+  sv_collect
+  while true; do
+    n="${#SV_ID[@]}"
+    printf '\033[2J\033[H%sSERVICES%s  %s↑↓ move · u start · w start from a worktree · x stop · o console · r refresh · esc back · m main%s\n\n' "$B" "$R" "$DIM" "$R"
+    if [ "$n" -eq 0 ]; then
+      printf '  %sno project declares services: in levain.yml%s\n' "$DIM" "$R"
+    else
+      printf '    %s%-16s %-12s %-14s %-34s %s%s\n' "$B" PROJECT SERVICE STATE CHECKOUT SINCE "$R"
+      [ "$sel" -lt "$n" ] || sel=0
+      for i in "${!SV_ID[@]}"; do if [ "$i" -eq "$sel" ]; then sv_line "$i" true; else sv_line "$i" false; fi; done
+    fi
+    read_key key
+    $key_eof && break
+    case "$key" in
+      $'\x1b[A'|k) [ "$n" -gt 0 ] && sel=$(( (sel - 1 + n) % n )) ;;
+      $'\x1b[B'|j) [ "$n" -gt 0 ] && sel=$(( (sel + 1) % n )) ;;
+      u|U) [ "$n" -gt 0 ] && { sv_run "$sel" start "${SV_ID[$sel]}"; sv_collect; } ;;
+      w|W) [ "$n" -gt 0 ] && { sv_pick_worktree "$sel"; sv_collect; } ;;
+      x|X) [ "$n" -gt 0 ] && { sv_run "$sel" stop "${SV_ID[$sel]}"; sv_collect; } ;;
+      o|O) [ "$n" -gt 0 ] && sv_run "$sel" console ;;
+      r) printf '\033[2J\033[H  %scollecting services…%s\n' "$DIM" "$R"; sv_collect ;;
+      $'\x1b') break ;;
+      m|M) to_main=true; break ;;
+    esac
+  done
+  return 0
+}
+
 # daemon_alive <project_path> — is that client's orchestrator daemon live?
 # Reads the pidfile rather than asking lv-tray.sh --fields, because this has
 # to stay truthful for a client whose harness is broken, half-deployed, or too
@@ -2856,6 +2979,7 @@ case "$mode" in
   resume)       resume_suspended; exit $? ;;
   list-daemons) list_daemons; exit $? ;;
   dormant)      list_dormant; exit 0 ;;
+  services)     sv_collect; sv_table; exit 0 ;;
   sleep|wake)
     target=$(resolve_project "$mode_arg") || { echo "lv-rack: '$mode_arg' is not in the project registry" >&2; exit 1; }
     if [ "$mode" = sleep ]; then set_dormant "$target" on; else set_dormant "$target" off; fi
@@ -3013,6 +3137,12 @@ if $watch_mode; then
         # A change alters which columns exist, so refresh at once rather than
         # at the next interval; the old columns stay until it lands.
         dormant_screen && next_refresh_at=0
+        resume_board
+        age_sig=$(age_signature)
+        ;;
+      v|V)                              # every project's services, and where each runs from
+        printf '\033[?25h'
+        services_screen
         resume_board
         age_sig=$(age_signature)
         ;;

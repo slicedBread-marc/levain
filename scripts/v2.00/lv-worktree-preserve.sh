@@ -36,7 +36,8 @@
 #          worktree may be removed.
 # Exit 1 — usage error.
 # Exit 2 — a conflict or a failed copy. Do NOT remove the worktree; the files
-#          named on stderr exist nowhere else.
+#          named on stderr exist nowhere else. Also exit 2 when a service
+#          (lv-services.sh) is running from the worktree: stop it first.
 
 set -uo pipefail
 
@@ -46,7 +47,7 @@ source "$SELF_DIR/lv-orch-lib.sh"
 
 wt="${1:-}"
 if [ -z "$wt" ] || [ "$wt" = "-h" ] || [ "$wt" = "--help" ]; then
-  sed -n '2,38p' "$0" >&2
+  sed -n '2,40p' "$0" >&2
   [ -n "$wt" ] && exit 0 || exit 1
 fi
 if [ ! -d "$wt" ]; then
@@ -57,6 +58,14 @@ if [ ! -d "$wt" ]; then
 fi
 wt="$(cd "$wt" && pwd -P)"
 root="$(cd "$(wf_develop_root)" && pwd -P)"
+
+# A service started from this worktree (lv-services.sh) keeps running after the removal, against
+# a directory that is gone. pgrep on the path misses it: the launcher runs as `tools/x.sh`, by a
+# relative path. Its beacon names the checkout, so ask that instead, before anything else.
+if [ -x "$SELF_DIR/lv-services.sh" ] && ! "$SELF_DIR/lv-services.sh" guard "$wt"; then
+  echo "  Do not remove $wt — stop the service above (lv-rack, v) first, then re-run." >&2
+  exit 2
+fi
 
 paths=()
 while IFS= read -r p; do [ -n "$p" ] && paths+=("$p"); done < <(wf_cfg_list preserveIgnored)

@@ -919,6 +919,46 @@ wf_cfg_list() {
   ' "$cfg"
 }
 
+# wf_cfg_keys <dotted.path>
+# The immediate child keys of a mapping, one per line, in file order:
+#
+#   services:
+#     web:            →  web
+#       start: …         worker
+#     worker:
+#
+# For config keyed by a name the library cannot know in advance (services:,
+# lv-services.sh). Same limits as wf_cfg: no yq, 2-space indentation. Prints
+# nothing when the key is absent or holds a scalar.
+wf_cfg_keys() {
+  local path="$1" cfg
+  lv_config_into cfg "$(wf_develop_root)"
+  [ -f "$cfg" ] || return 0
+
+  awk -v path="$path" '
+    BEGIN { n = split(path, want, "."); level = 0; collecting = 0 }
+    {
+      line = $0; sub(/\r$/, "", line)
+      probe = line; sub(/^[ ]*/, "", probe)
+      if (probe ~ /^#/ || probe == "") next
+      match(line, /^[ ]*/); indent = RLENGTH / 2
+      key = probe; sub(/:.*/, "", key); gsub(/[ \t]/, "", key)
+
+      if (collecting) {
+        if (indent < n) exit
+        if (indent == n && probe !~ /^- /) print key
+        next
+      }
+
+      if (indent > level) next
+      if (indent < level) level = indent
+      if (key != want[level + 1]) next
+      if (level == n - 1) { collecting = 1; next }
+      level++
+    }
+  ' "$cfg"
+}
+
 # ── Output ────────────────────────────────────────────────────────────────
 
 # Single-quoted so `eval` survives spaces, semicolons, backticks — the same

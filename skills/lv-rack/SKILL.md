@@ -36,10 +36,15 @@ pack, else the library's `deployments.txt`, else this coordinator's `coordinates
 
 **`daemons`:** run `scripts/lv-exec.sh lv-rack.sh --list-daemons` and list them.
 
+**`services`:** run `scripts/lv-exec.sh lv-rack.sh --services --plain` and show the table: every
+project's declared `services:`, up or down, and the checkout each runs from. A row flagged `⚠` runs
+from a branch other than main. Starting and stopping a service is the owner's, from `v` on the live
+board: the launchers read keys in the owner's own terminal, and `lv-services.sh` refuses under an agent.
+
 **The live board is a terminal program.** Its drill-down, daemon toggles (`d`), stop/resume of
 every daemon (`s`/`R`), attend (`t` — on the release or deploy row it starts `/lv-release` or
-`/lv-deploy` instead), the dormant-project toggle (`z`), the library deploy (`U`) and the blind library sweep (`W`)
-need a real terminal, so point the owner at
+`/lv-deploy` instead), the dormant-project toggle (`z`), the services view (`v`), the library deploy (`U`)
+and the blind library sweep (`W`) need a real terminal, so point the owner at
 `! scripts/lv-exec.sh lv-rack.sh --watch` rather than running it here. `--stop-all` and
 `--resume` change what every project is doing unattended: run them only when asked.
 

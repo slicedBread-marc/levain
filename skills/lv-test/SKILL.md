@@ -947,8 +947,11 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    scripts/lv-exec.sh lv-worktree-preserve.sh feature-branches/PLN-NNN-<slug>; echo "preserve exit=$?"
    ```
    Exit `0` — go on. Exit `2` — **do not remove the worktree**: the files it
-   names exist nowhere else. Report them, leave the worktree and branch in
-   place, and finish the rest of the exit; the plan is still complete.
+   names exist nowhere else, or a service the operator started from this
+   worktree is still running there (it names the service and pid). Report
+   them, leave the worktree and branch in place, and finish the rest of the
+   exit; the plan is still complete. Never stop the operator's service
+   yourself.
 
    **And check for source files git never saw.** `lv-registry-update.sh`
    refuses `active → verify` while one exists, but a fix cycle or a hand edit
