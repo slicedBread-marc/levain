@@ -608,6 +608,19 @@ printf '\n> **Checked:** 2026-08-02 — closure: PLN-004\n' >> plans/PLN-013-don
 git add -A >/dev/null && git commit -qm "consistency: re-checked" >/dev/null
 assert_exit "a fresh entry settles it" 1 "$SCRIPT_DIR/lv-list-consistency.sh" PLN-013
 
+# A client's LVI-001..007: `## Lane` writes its own `> **Checked:**` line, and
+# below `## Consistency` it was read as the pass, dated to the lane commit.
+printf '\n## Lane\n> **Checked:** 2026-08-03 — downgraded to the normal lane\n' >> plans/PLN-013-done/plan.md
+git add -A >/dev/null && git commit -qm "lane: downgraded" >/dev/null
+printf '\n### A-2 (BUG-100): the CLI prints its version\n' >> plans/PLN-004-cli/plan.md
+git add -A >/dev/null && git commit -qm "spec: amend PLN-004 again" >/dev/null
+python3 - plans/PLN-013-done/plan.md <<'PY'
+import sys; p=sys.argv[1]; s=open(p).read()
+s=s.replace("\n## Lane\n", "\n> **Checked:** 2026-08-04 — closure: PLN-004\n\n## Lane\n", 1); open(p,"w").write(s)
+PY
+git add -A >/dev/null && git commit -qm "consistency: re-checked after A-2" >/dev/null
+assert_exit "a Lane section's Checked line below it is not the pass" 1 "$SCRIPT_DIR/lv-list-consistency.sh" PLN-013
+
 # ── config reads ───────────────────────────────────────────────────────
 section "lv-config-get"
 

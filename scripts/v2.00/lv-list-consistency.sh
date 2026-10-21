@@ -114,7 +114,12 @@ while IFS=$'\037' read -r id slug state _priority _branch _updated _wf _tags dep
 
   # Already checked at its current revision. A real ISO date only — the
   # template's `YYYY-MM-DD` placeholder is not a pass that ran.
-  checked=$(grep -E '^> \*\*Checked:\*\* *[0-9]{4}-[0-9]{2}-[0-9]{2}' "$plan_file" 2>/dev/null | tail -1 || true)
+  # From `## Consistency` only: `## Lane` writes its own `> **Checked:**` line
+  # when a plan is downgraded, and taking the file's last one dated the pass
+  # to the lane commit, so every downgraded plan amended after it was
+  # re-dispatched forever (a client's LVI-001..007).
+  checked=$(awk '/^## /{ inside = ($0 ~ /^## Consistency([ \t]|$)/) } inside' "$plan_file" 2>/dev/null \
+    | grep -E '^> \*\*Checked:\*\* *[0-9]{4}-[0-9]{2}-[0-9]{2}' | tail -1 || true)
   if [ -n "$checked" ]; then
     stale=$(closure_moved "$id" "$plan_file" "$checked")
     [ -n "$stale" ] || continue
