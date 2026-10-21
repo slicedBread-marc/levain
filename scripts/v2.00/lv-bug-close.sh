@@ -4,6 +4,8 @@
 # lv-bug-close.sh <bug-id> --superseded-by <ID> [--note <text>] [--no-commit]
 # lv-bug-close.sh <bug-id> --fixed-in <sha> [--note <text>] [--no-commit]
 # lv-bug-close.sh <bug-id> --wont-fix [--note <text>] [--no-commit]
+#   --force on any form but the plan close: close even while a live session
+#   other than this one holds the bug's claim.
 #
 # Moves a bug to closed and marks it as resolved.
 # Updates bug.md Status to Closed with date and the reason: the fixing plan,
@@ -127,10 +129,12 @@ fixed_in=""
 wont_fix=false
 close_note_extra=""
 do_commit=true
+force=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-commit)    do_commit=false; shift ;;
+    --force)        force=true; shift ;;
     --duplicate-of) duplicate_of="${2:?--duplicate-of requires an artifact ID}"; shift 2 ;;
     --superseded-by) superseded_by="${2:?--superseded-by requires an artifact ID}"; shift 2 ;;
     --fixed-in)     fixed_in="${2:?--fixed-in requires a commit sha}"; shift 2 ;;
@@ -160,6 +164,22 @@ if [ -z "$bug_id" ] || [ "$reasons" -eq 0 ]; then
   echo "       $0 <bug-id> --superseded-by <ID> [--note <text>] [--no-commit]" >&2
   echo "       $0 <bug-id> --fixed-in <sha> [--note <text>] [--no-commit]" >&2
   echo "       $0 <bug-id> --wont-fix [--note <text>] [--no-commit]" >&2
+  exit 1
+fi
+
+# ── Not underneath a live worker ──────────────────────────────────────────
+#
+# A triage close (won't-fix, duplicate, superseded, fixed-in) on a bug a spec
+# worker is drafting from: the worker was never told, wrote and committed the
+# plan and its REGISTRY row, and found out only when lv-bug-consume.sh could not
+# find the bug (a client's LVI-020). The worker's claim is on the number, so it
+# is checkable here. A close BY its plan is the pipeline finishing the bug and
+# is not refused. --force is for a holder you know is wedged.
+if [ -z "$plan_name" ] && ! $force && claim_dir=$(wf_claim_dir "$bug_id") \
+   && wf_claim_live "$claim_dir" && ! wf_claim_mine "$claim_dir"; then
+  echo "Error: $bug_id is claimed by a live session (PID ${LV_CLAIM_HOLDER_PID:-?}) — probably a spec worker drafting from it." >&2
+  echo "       Closing it now leaves that worker writing a plan for a bug that is gone. Wait for it to" >&2
+  echo "       finish (then close or abandon its plan), or pass --force if you know it is wedged." >&2
   exit 1
 fi
 

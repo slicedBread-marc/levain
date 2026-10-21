@@ -3875,6 +3875,24 @@ assert_fails "a bug that exists nowhere is still an error" \
 assert_fails "and a plan and a duplicate are mutually exclusive" \
   "$SCRIPT_DIR/lv-bug-close.sh" BUG-942 PLN-942-fix --duplicate-of BRF-944
 
+# client LVI-020: a triage close (--wont-fix / --duplicate-of) moved a bug a
+# spec worker was drafting from, so the worker's plan lost its source.
+mkdir -p bugs/open/BUG-945-held
+printf '# BUG-945 — held\n\n> **Status:** Open\n\n## Description\nx\n' \
+  > bugs/open/BUG-945-held/bug.md
+"$SCRIPT_DIR/lv-commit.sh" "seed held bug" --add bugs >/dev/null 2>&1
+sleep 300 & holder=$!
+"$SCRIPT_DIR/lv-claim.sh" BUG-945 --pid "$holder" >/dev/null 2>&1
+out=$("$SCRIPT_DIR/lv-bug-close.sh" BUG-945 --wont-fix 2>&1)
+assert_eq "a triage close of a bug a live worker holds is refused" "1" "$?"
+assert_eq "and the bug stays open" "true" \
+  "$([ -f bugs/open/BUG-945-held/bug.md ] && echo true || echo false)"
+assert_eq "naming the holder" "true" \
+  "$(printf '%s' "$out" | grep -q "PID $holder" && echo true || echo false)"
+"$SCRIPT_DIR/lv-bug-close.sh" BUG-945 --wont-fix --force >/dev/null 2>&1
+assert_eq "--force closes it anyway" "0" "$?"
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+
 # ═══════════════════════════════════════════════════════════════════════
 section "A new registry row is committed where it is written (client-a WFI-140)"
 
