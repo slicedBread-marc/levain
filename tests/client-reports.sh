@@ -6314,6 +6314,15 @@ assert_eq "and the ref was not touched" "true" \
 assert_eq "diverged refs are refused with their own code" "3" \
   "$( (cd "$SYNC" && ./scripts/lv-release-sync.sh) >/dev/null 2>&1; echo $? )"
 
+# A client's LVI-019: no local release at all, origin/release far ahead.
+(cd "$SYNC" && git checkout -q develop && git branch -q -D release) >/dev/null 2>&1
+assert_eq "no local release under --check says it would create one" "2" \
+  "$( (cd "$SYNC" && ./scripts/lv-release-sync.sh --check) >/dev/null 2>&1; echo $? )"
+assert_eq "no local release beside origin/release is created, not 'nothing to promote'" "0" \
+  "$( (cd "$SYNC" && ./scripts/lv-release-sync.sh) >/dev/null 2>&1; echo $? )"
+assert_eq "…at origin/release" "true" \
+  "$(cd "$SYNC" && [ "$(git rev-parse release)" = "$(git rev-parse origin/release)" ] && echo true || echo false)"
+
 assert_eq "/lv-deploy checks the ref before reading it as a validated batch" "true" \
   "$(grep -q 'lv-release-sync.sh' "$LIB_ROOT/skills/lv-deploy/SKILL.md" && echo true || echo false)"
 

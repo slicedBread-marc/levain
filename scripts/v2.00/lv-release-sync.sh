@@ -105,8 +105,21 @@ fi
 local_sha=$(git_in rev-parse --verify --quiet release 2>/dev/null || true)
 remote_sha=$(git_in rev-parse --verify --quiet origin/release 2>/dev/null || true)
 
+if [ -z "$local_sha" ] && [ -n "$remote_sha" ]; then
+  # A clone that never checked release out has only the remote ref. That is
+  # the batch, not its absence: a client's deploy read "nothing to promote"
+  # over an origin/release 565 commits ahead of main (a client's LVI-019).
+  # Nothing local exists to lose, so this is the fast-forward from nothing.
+  if $check_only; then
+    echo "no local release; would create it at origin/release ($(git_in rev-parse --short "$remote_sha")) before promoting"
+    exit 2
+  fi
+  git_in branch --track release origin/release >/dev/null
+  echo "created local release at origin/release ($(git_in rev-parse --short "$remote_sha")) — safe to promote"
+  exit 0
+fi
 if [ -z "$local_sha" ]; then
-  echo "lv-release-sync: no local 'release' branch — nothing to promote." >&2
+  echo "lv-release-sync: no 'release' branch, local or on origin — nothing to promote." >&2
   exit 1
 fi
 if [ -z "$remote_sha" ]; then
