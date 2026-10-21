@@ -96,6 +96,23 @@ assert_eq "exit 0 once committed" 0 "$rc"
 out=$("$S/lv-registry-update.sh" "$P" active verify 2>&1); rc=$?
 assert_eq "the transition goes through" 0 "$rc"
 assert_has "…and the row moved" "| $P | $SLUG | verify |" "$(cat plans/REGISTRY.md)"
+
+echo ""
+echo "4. A registry Branch of — still finds the plan's worktree"
+sed -i.bak "s#| $P | $SLUG | verify | — | $BR |#| $P | $SLUG | verify | — | — |#" plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak
+assert_has "the Branch column reads —" "| $P | $SLUG | verify | — | — |" "$(cat plans/REGISTRY.md)"
+assert_eq "exit 0, not 3: feature/<plan> is checked" 0 "$("$S/lv-ignored-sources.sh" "$P" >/dev/null 2>&1; echo $?)"
+assert_eq "…by its full name too" 0 "$("$S/lv-ignored-sources.sh" "$P-$SLUG" >/dev/null 2>&1; echo $?)"
+
+echo ""
+echo "5. The harness's own files are never the plan's"
+( cd "$WT" && mkdir -p scripts && printf 'scripts/lv-exec.sh\n' >> .gitignore && printf 'x\n' > scripts/lv-exec.sh \
+  && printf 'x\n' > scripts/build.sh && git add .gitignore scripts/build.sh && git commit -qm "build script" )
+printf '%s\n' '- **Files:** create `scripts/build.sh`.' >> "plans/$P-$SLUG/plan.md"
+out=$("$S/lv-ignored-sources.sh" "$P" 2>&1); rc=$?
+assert_eq "exit 0 beside an ignored scripts/lv-exec.sh" 0 "$rc"
+assert_not "…which is not listed" "lv-exec.sh" "$out"
+
 git worktree remove --force "$WT"
 assert_eq "no worktree is exit 3" 3 "$("$S/lv-ignored-sources.sh" "$P" >/dev/null 2>&1; echo $?)"
 assert_eq "not a plan ID is exit 2" 2 "$("$S/lv-ignored-sources.sh" nonsense >/dev/null 2>&1; echo $?)"

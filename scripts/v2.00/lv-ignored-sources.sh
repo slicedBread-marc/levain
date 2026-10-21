@@ -64,8 +64,12 @@ plan_md="$root/plans/${plan_id}-${slug}/plan.md"
 
 if [ -z "$wt" ]; then
   branch=$(wf_registry_field "$plan_id" branch "$root/plans/REGISTRY.md")
-  case "$branch" in ""|"—"|"-") branch="" ;; esac
-  [ -n "$branch" ] && wt=$(cd "$root" && wf_worktree_for_branch "$branch")
+  # The Branch column is often "—" even while the worktree is live, so fall
+  # back to the branch every plan is cut on, as lv-list-completable.sh does.
+  # Exit 3 on a worktree that exists sent eleven reports' worth of /lv-test
+  # runs into removal unchecked.
+  case "$branch" in ""|"—"|"-") branch="feature/${plan_id}-${slug}" ;; esac
+  wt=$(cd "$root" && wf_worktree_for_branch "$branch")
 fi
 if [ -z "$wt" ] || [ ! -d "$wt" ]; then
   echo "lv-ignored-sources: $plan_id has no worktree — nothing to check" >&2
@@ -80,14 +84,25 @@ exts=$(printf '%s\n' "$files" | awk -F/ '{ n = $NF; i = match(n, /\.[^.]+$/); if
 found=$(
   cd "$wt" || exit 0
   ignored() { ! git ls-files --error-unmatch -- "$1" >/dev/null 2>&1 && git check-ignore -q -- "$1" 2>/dev/null; }
+  # What the harness itself installs into a worktree is ignored by design and
+  # was never the plan's to write (scripts/lv-exec.sh beside a plan's
+  # scripts/*.sh read as a lost source and refused active -> verify).
+  harness() {
+    case "$1" in
+      (scripts/lv-exec.sh|scripts/wf-exec.sh|scripts/version-map.txt|scripts/current|scripts/v[0-9]*/*|scripts/gen/*) return 0 ;;
+      (.claude/workflow.md|.claude/workflow-*|.claude/skills/lv-*|.plan-ref) return 0 ;;
+    esac
+    return 1
+  }
   printf '%s\n' "$files" | while IFS= read -r p; do
     [ -n "$p" ] || continue
-    if [ -f "$p" ] && ignored "$p"; then printf '%s\n' "$p"; fi
+    if [ -f "$p" ] && ! harness "$p" && ignored "$p"; then printf '%s\n' "$p"; fi
     d="${p%/*}"
     [ "$d" != "$p" ] && [ -d "$d" ] && [ -n "$exts" ] || continue
     git ls-files --others --ignored --exclude-standard -- "$d" 2>/dev/null \
       | awk -v d="$d/" 'index($0, d) == 1 && index(substr($0, length(d) + 1), "/") == 0' \
       | while IFS= read -r f; do
+          harness "$f" && continue
           [ "${f##*.}" != "$f" ] && printf '%s\n' "$exts" | grep -qxF ".${f##*.}" && printf '%s\n' "$f"
         done
   done | sort -u
