@@ -78,6 +78,22 @@ if git rev-parse --verify --quiet origin/release >/dev/null 2>&1; then
 fi
 
 if [ -n "$(git rev-list main..release -1 2>/dev/null)" ]; then
+  # A tip the deploy suite already failed, whose deploy-suite-red question a
+  # human has since answered, is not a candidate. The answer ("routed to a
+  # bug — the memo clears when release moves") is a wait, and a dispatch
+  # could only read the memo and open the identical question again: a
+  # client's DEPLOY did so 80 seconds after it was closed (LVI-041). The
+  # first re-dispatch after a failure still runs, because it is what asks.
+  if ! "$SELF_DIR/lv-deploy-suite-memo.sh" --check >/dev/null 2>&1; then
+    memo_at=$(sed -n 's/^at=//p' "$(wf_orch_dir)/deploy-suite-failed" 2>/dev/null || true)
+    red_rec=$(wf_gate_resolved_file DEPLOY deploy-suite-red 2>/dev/null || true)
+    if [ -n "$memo_at" ] && [ -n "$red_rec" ] && [ -f "$red_rec" ] \
+       && [ "$(wf_gate_field "$red_rec" GATE_WITHDRAWN)" != "true" ] \
+       && [[ ! "$(wf_gate_field "$red_rec" GATE_RESOLVED)" < "$memo_at" ]]; then
+      echo "lv-list-deploy: release's tip already failed the deploy suite and its question was answered — waiting for release to move" >&2
+      exit 1
+    fi
+  fi
   echo "DEPLOY"
   exit 0
 fi

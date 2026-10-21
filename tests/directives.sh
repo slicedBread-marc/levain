@@ -293,6 +293,23 @@ land "unrelated"
 "$S/lv-orchestrate.sh" --sweep >/dev/null 2>&1
 assert_eq "another question on DEPLOY is not touched" "$(gate_state)" "open"
 
+section "12b. an answered red-suite question holds DEPLOY off the same tip"
+# A client's LVI-041: deploy-suite-red closed as "routed to a bug — the memo
+# clears when release moves", and DEPLOY was dispatched again 80s later on the
+# same tip, read the memo, and opened the identical question.
+rm -f .claude/orchestrator/gates/DEPLOY.gate   # section 12's push question, not this one's
+"$S/lv-deploy-suite-memo.sh" --fail "UnitTest Y failed" >/dev/null 2>&1
+"$S/lv-list-deploy.sh" >/dev/null 2>&1
+assert_eq "a fresh failure is still a candidate — that dispatch is what asks" "$?" "0"
+"$S/lv-gate-open.sh" DEPLOY deploy-suite-red "the suite failed on this tip" >/dev/null 2>&1
+"$S/lv-gate-close.sh" DEPLOY "routed to BUG-1; memo clears when release moves" --only deploy-suite-red >/dev/null 2>&1
+"$S/lv-list-deploy.sh" >/dev/null 2>&1
+assert_eq "answered, same tip: not a candidate" "$?" "1"
+land "the fix lands on release"
+"$S/lv-list-deploy.sh" >/dev/null 2>&1
+assert_eq "release moved: a candidate again" "$?" "0"
+"$S/lv-deploy-suite-memo.sh" --clear >/dev/null 2>&1
+
 section "13. an answer with no open gate is not recorded, and says so"
 out=$("$S/lv-gate-close.sh" PLN-077 "approved" --decision approve 2>&1); rc=$?
 assert_eq "a --decision with no gate open fails (a client's LVI-003)" "$rc" "6"
