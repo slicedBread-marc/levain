@@ -222,7 +222,9 @@ local_stop_command: ""
 #       window: true                     # start in a new Terminal window (it reads keys)
 #       checkout: main                   # main (default) | any — any lets the rack start it from a worktree
 #       health: "http://127.0.0.1:8080/health"   # up while it answers 200-499
-#       compose: "myapp-dev"             # or: up while this compose project has containers
+#       compose: "myapp-dev"             # or: up while this compose project has containers;
+#                                        # "myapp-dev/cloudflared" narrows it to one compose service.
+#                                        # Not a URL behind a login wall: Access answers 302 regardless
 #       heartbeat: 120                   # a beacon not refreshed for this long shows stale
 #       needs: "web"                     # ids that must be up before this one starts
 #   services_console: "tools/board.sh"   # the project's own board, opened by `o`

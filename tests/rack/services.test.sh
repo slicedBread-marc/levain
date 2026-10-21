@@ -109,6 +109,14 @@ out=$(svc "$P" start web --checkout "$FEAT" 2>&1); ck "a main-only service refus
 out=$(svc "$P" start web --checkout "$FIX" 2>&1); ck "a path that is no worktree is refused" "$?" "3"
 out=$(svc "$P" start gated 2>&1); ck "an unmet need is refused" "$?" "5"
 out=$(svc "$P" start probe 2>&1); ck "a status-only service has nothing to start" "$?" "7"
+out=$(svc "$P" stop probe 2>&1); ck "a status-only service has nothing to stop" "$?" "7"
+has "and says it is status-only" "$out" "status-only"
+mkdir -p "$FIX/bin"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" > "%s/docker-args"; echo c1\n' "$FIX" > "$FIX/bin/docker"; chmod +x "$FIX/bin/docker"
+sed -i.bak 's|compose: "alpha-nothing-runs-here"|compose: "alpha-hh/cloudflared"|' "$P/levain.yml"; rm -f "$P/levain.yml.bak"
+ck "compose: project/service probes one container" "$(PATH="$FIX/bin:$PATH" svc "$P" status | awk -F'\t' '$1=="probe"{print $2}')" "up"
+has "filtered by the compose service" "$(cat "$FIX/docker-args")" "com.docker.compose.service=cloudflared"
+sed -i.bak 's|compose: "alpha-hh/cloudflared"|compose: "alpha-nothing-runs-here"|' "$P/levain.yml"; rm -f "$P/levain.yml.bak"
 svc "$P" start web >/dev/null 2>&1
 ck "an inline start runs from main's worktree" "$(cat "$MAIN/started.txt" 2>/dev/null)" "web-up"
 svc "$P" stop worker >/dev/null 2>&1

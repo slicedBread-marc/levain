@@ -30,13 +30,15 @@
 #       window: true                     # start in a new Terminal window (it reads keys)
 #       checkout: main                   # main (the default) | any
 #       health: "http://127.0.0.1:8080/health"   # up while it answers 200-499
-#       compose: "myapp-web"             # or: up while this compose project has containers
+#       compose: "myapp-web"             # or: up while this compose project has containers;
+#                                        # "myapp-web/cloudflared" narrows it to one compose service
 #       heartbeat: 120                   # a beacon not refreshed for this long is stale
 #       needs: "web"                     # ids that must be up before this one starts
 #   services_console: "tools/board.sh"   # the project's own board, for what the rack does not do
 #
 # A service with no start: is status-only. With no health: or compose:, a service is up while
-# a beacon names a live pid.
+# a beacon names a live pid. A URL behind a login wall (Cloudflare Access) answers 302 whether
+# or not anything runs behind it, so probe what serves it (compose: project/service) instead.
 #
 # ── THE BEACON ─────────────────────────────────────────────────────────────
 #
@@ -196,7 +198,9 @@ probe() {
     P_DETAIL="$code"
     if [ "$code" -ge 200 ] 2>/dev/null && [ "$code" -lt 500 ]; then P_STATE=up; else P_STATE=down; fi
   elif [ -n "$compose" ]; then
-    n=$(docker ps -q --filter "label=com.docker.compose.project=$compose" 2>/dev/null | wc -l | tr -d ' ')
+    local -a filt=(--filter "label=com.docker.compose.project=${compose%%/*}")
+    case "$compose" in */*) filt+=(--filter "label=com.docker.compose.service=${compose#*/}") ;; esac
+    n=$(docker ps -q "${filt[@]}" 2>/dev/null | wc -l | tr -d ' ')
     P_DETAIL="$n containers"
     if [ "${n:-0}" -gt 0 ]; then P_STATE=up; else P_STATE=down; fi
   fi
@@ -306,6 +310,9 @@ stop() {
   refuse_agent "stop"
   has_svc "$id" || die 7 "no service '$id' in levain.yml services:"
   cmd=$(svc "$id" stop)
+  # Status-only: nothing here started it, so nothing here stops it (a tunnel sidecar goes
+  # down with the service whose launcher brought it up).
+  [ -n "$cmd" ] || [ -n "$(svc "$id" start)" ] || die 7 "$id is status-only (no start: or stop:) — stop whatever starts it"
   if [ -z "$cmd" ] || [ "$cmd" = signal ]; then
     while IFS= read -r f; do
       [ -n "$f" ] || continue
