@@ -1197,7 +1197,14 @@ wf_plan_files() {
         sub(/^\.\//, "", tok)
         if (tok ~ /[ \t]/) continue
         if (index(tok, "/") > 0) { d = tok; sub(/\/[^\/]*$/, "", d); dir = d }
-        else if (dir != "") tok = dir "/" tok
+        else {
+          # A bare token is a file only if it is shaped like one. A Files line
+          # also quotes the code it touches (`sealed`, `IDisposable`,
+          # `CookieSecurePolicy.Always`), and each was listed as a path under
+          # the step folder, for the lane to warn about (client LVI-044).
+          if (tok !~ /\.[a-z][a-z0-9]*$/ && tok !~ /^\./ && tok !~ /^(Dockerfile|Makefile|Procfile|Gemfile|Rakefile)$/) continue
+          if (dir != "") tok = dir "/" tok
+        }
         if (!(tok in seen)) { seen[tok] = 1; print tok }
       }
     }'

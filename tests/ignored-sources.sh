@@ -81,6 +81,19 @@ assert_not "not build output under bin/" "bin/Debug" "$out"
 assert_not "not a root .env" ".env" "$out"
 
 echo ""
+echo "1b. A Files line's quoted code is not a file (a client's LVI-044)"
+printf '## Steps\n\n### Step 1\n- **Files:** create `tests/X.Tests/Auth/DevLoginFlowTests.cs` (a `sealed` class, `IDisposable`, namespace `X.Tests.Auth.Dev`, `CookieSecurePolicy.Always`), `Helper.cs`, `Dockerfile`, `.env.example`.\n' > "$TEST_DIR/files-plan.md"
+listed=$(bash -c 'source "$1/lv-orch-lib.sh"; wf_plan_files "$2"' _ "$S" "$TEST_DIR/files-plan.md")
+assert_has "the path is listed" "tests/X.Tests/Auth/DevLoginFlowTests.cs" "$listed"
+assert_has "a bare file name beside it too" "tests/X.Tests/Auth/Helper.cs" "$listed"
+assert_has "…and an extensionless Dockerfile" "tests/X.Tests/Auth/Dockerfile" "$listed"
+assert_has "…and a dotfile" "tests/X.Tests/Auth/.env.example" "$listed"
+assert_not "a keyword is not" "/sealed" "$listed"
+assert_not "a type name is not" "/IDisposable" "$listed"
+assert_not "a namespace is not" "X.Tests.Auth.Dev" "$listed"
+assert_not "an enum value is not" "CookieSecurePolicy.Always" "$listed"
+
+echo ""
 echo "2. active -> verify is refused while they are"
 out=$("$S/lv-registry-update.sh" "$P" active verify 2>&1); rc=$?
 assert_eq "the transition is refused" 1 "$rc"
