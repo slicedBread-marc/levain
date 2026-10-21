@@ -286,6 +286,13 @@ land "unrelated"
 "$S/lv-orchestrate.sh" --sweep >/dev/null 2>&1
 assert_eq "another question on DEPLOY is not touched" "$(gate_state)" "open"
 
+section "13. an answer with no open gate is not recorded, and says so"
+out=$("$S/lv-gate-close.sh" PLN-077 "approved" --decision approve 2>&1); rc=$?
+assert_eq "a --decision with no gate open fails (a client's LVI-003)" "$rc" "6"
+has "…saying it was not recorded" "$out" "NOT recorded"
+out=$("$S/lv-gate-close.sh" PLN-077 "nothing to close" 2>&1); rc=$?
+assert_eq "without a decision it stays a no-op" "$rc" "0"
+
 echo
 echo "directives: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

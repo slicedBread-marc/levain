@@ -177,7 +177,8 @@
 #
 # Exit 0 on success (idempotent), 1 on usage error,
 #        4 when an unattended close has no acceptable basis,
-#        5 when an `approve` names a batch the source ref has moved past.
+#        5 when an `approve` names a batch the source ref has moved past,
+#        6 when a --decision is given and no gate is open to take it.
 
 set -euo pipefail
 
@@ -254,6 +255,19 @@ fi
 gate_file=$(wf_gate_file "$id" || true)
 
 if [ ! -f "$gate_file" ] && [ -z "$forced_gate" ]; then
+  # A human's answer with nowhere to go is not a no-op: it is lost. A client's
+  # attend session closed a spec-approval the harness had withdrawn minutes
+  # earlier, got exit 0, and the next step refused with "spec-approval is
+  # unanswered" (a client's LVI-003). Say so, and fail.
+  if [ -n "$decision" ]; then
+    echo "Error: $id has no open gate, so this --decision $decision was NOT recorded." >&2
+    last=$(ls -t "$(wf_orch_dir)/gates/resolved/"*"$id"* 2>/dev/null | head -1 || true)
+    if [ -n "$last" ]; then
+      echo "       Its last question ($(wf_gate_field "$last" GATE_NAME)) was closed: $(wf_gate_field "$last" GATE_RESOLUTION | cut -c1-200)" >&2
+    fi
+    echo "       Re-read what the harness is asking now (lv-gate-status.sh $id) and put that to the human." >&2
+    exit 6
+  fi
   # Includes --withdraw: a question already gone has nothing left to withdraw.
   echo "$id: no open gate"
   exit 0
