@@ -341,6 +341,21 @@ else
   assert_eq "a command that dies exits 1"               "1" "$RC"
   has "and shows its log"                               "$(cat "$TEST_DIR/stage.err")" "boom-from-app"
 
+  # A client's LVI-037/039/041: `eval "$(lv-docker-up.sh)" && …` went on past a
+  # failed start, because eval's status was the last KEY=value's.
+  ev=$(eval "$("$SD/lv-docker-up.sh" 2>/dev/null)"; echo $?)
+  assert_eq "the eval form fails with it"                "1" "$ev"
+
+  # …and the port was held by another project's leftover server.
+  printf 'project_slug: "demo"\nlocal_start_command: "cd www && exec python3 -m http.server $FEATURE_PORT --bind 127.0.0.1"\n' > levain.yml
+  ( cd www && exec python3 -m http.server $((8100 + n)) --bind 127.0.0.1 ) >/dev/null 2>&1 &
+  squatter=$!
+  for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$((8100 + n))/health" >/dev/null 2>&1 && break; sleep 0.1; done
+  stage lv-docker-up.sh
+  assert_eq "a port someone else holds exits 1"         "1" "$RC"
+  has "and names the holder"                            "$(cat "$TEST_DIR/stage.err")" "PID $squatter"
+  kill "$squatter" 2>/dev/null; wait "$squatter" 2>/dev/null; sleep 0.2
+
   printf 'project_slug: "demo"\nlocal_start_command: "docker compose -f docker/docker-compose.yml up -d"\n' > levain.yml
   stage lv-docker-up.sh
   assert_eq "a compose command with no compose file exits 3" "3" "$RC"

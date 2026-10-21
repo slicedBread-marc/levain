@@ -45,6 +45,36 @@ eval "$("$SCRIPT_DIR/lv-plan-port.sh" "$plan_folder")"
 echo "FEATURE_PORT=$FEATURE_PORT"
 echo "COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME"
 
+# `eval "$(lv-docker-up.sh)" && …` takes eval's status, which is the status of
+# the last line it evaluated: an `X=value` that always succeeds. So a failed
+# start read as up, and the chain went on to test nothing (a client's
+# LVI-037/039/041). On any failure the last line on stdout is `(exit N)`,
+# which makes the eval itself fail with this script's code.
+trap 'rc=$?; [ "$rc" -eq 0 ] || echo "(exit $rc)"; exit "$rc"' EXIT
+
+# port_holder — who is listening on FEATURE_PORT, or nothing. The port is
+# 8100 + the plan's number in every project, so another project's plan of the
+# same number (or a server it left running) can hold it. Compose then fails
+# with "Ports are not available", and a native start answers /health from
+# the wrong app. Name the holder rather than leave the tester to guess.
+port_holder() {
+  command -v lsof >/dev/null 2>&1 || return 0
+  local pid cmd cwd
+  for pid in $(lsof -nP -iTCP:"$FEATURE_PORT" -sTCP:LISTEN -t 2>/dev/null | sort -u | head -3); do
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null | cut -c1-100)
+    cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+    printf 'PID %s: %s%s\n' "$pid" "$cmd" "${cwd:+ (in $cwd)}"
+  done
+}
+port_refuse() {
+  echo "lv-docker-up: port $FEATURE_PORT is already in use, so this plan's app cannot start on it:" >&2
+  printf '%s\n' "$1" | sed 's/^/      /' >&2
+  echo "      The port is 8100 + the plan number in every project, so another project's plan" >&2
+  echo "      of the same number collides. Stop that process if it is a leftover; it is not" >&2
+  echo "      this plan's to kill if it belongs to another project's live work." >&2
+  exit 1
+}
+
 # ASP.NET Core (and similar) host filtering rejects any request whose Host
 # header isn't in AllowedHosts — the tunnel origin and a LAN IP alike, since
 # neither is 'localhost' nor a production hostname. A tunnel is pointless if
@@ -83,6 +113,8 @@ if [ ! -f docker/docker-compose.yml ]; then
   esac
   # A restart (after an edit) replaces the previous run, never stacks on it.
   "$SCRIPT_DIR/lv-docker-down.sh" "$plan_folder" --native-only >/dev/null 2>&1 || true
+  holder=$(port_holder)
+  [ -z "$holder" ] || port_refuse "$holder"
   app_log="${TMPDIR:-/tmp}/lv-app-$COMPOSE_PROJECT_NAME.log"
   : > "$app_log"
   echo "lv-docker-up: no compose file — starting natively: $start_cmd" >&2
@@ -126,6 +158,13 @@ fi
 # the default keeps a client that has never set it self-healing from day one.
 max_attempts=$(wf_cfg dockerRetry.maxAttempts 2)
 attempt=1
+# Our own containers from an earlier run hold the port legitimately: compose
+# replaces them. Anything else holding it makes `up` fail on the bind.
+if [ -f docker/docker-compose.yml ] \
+   && [ -z "$(docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" 2>/dev/null)" ]; then
+  holder=$(port_holder)
+  [ -z "$holder" ] || port_refuse "$holder"
+fi
 while [ -f docker/docker-compose.yml ]; do
   if compose_out=$(FEATURE_PORT=$FEATURE_PORT FEATURE_ALLOWED_HOSTS=$FEATURE_ALLOWED_HOSTS docker compose \
        -f docker/docker-compose.yml \
