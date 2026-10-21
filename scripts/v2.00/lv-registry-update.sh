@@ -431,7 +431,10 @@ fi
 #                              the suite result under it is too (LVI-029)
 #   LANE != express            a human declared this plan ships unseen; its open
 #                              eyes criteria go to the post-ship checklist via
-#                              `lv-lane.sh answer PLN manual-test`, not to a person
+#                              `lv-lane.sh answer PLN manual-test`, not to a person.
+#                              Not when a Chrome-Assisted criterion is untested:
+#                              the lane answers eyes criteria only, so that one
+#                              had no route anywhere (clients' LVI-009/018/040)
 #
 # A refusal leaves the plan in `testing`, where the next sweep re-dispatches the
 # tester — which is right, because what is missing is the tester's.
@@ -451,7 +454,7 @@ if [ "$from_state" = "testing" ] && [ "$to_state" = "accept" ] && [ "${LV_ALLOW_
   acc_why=""
   if [ -z "$GATE" ]; then
     acc_why="lv-manual-gate.sh gave no verdict for $plan_id, so nothing says a human is needed"
-  elif [ "${LANE:-none}" = "express" ]; then
+  elif [ "${LANE:-none}" = "express" ] && [ "${CHROME_UNTESTED:-0}" -eq 0 ]; then
     acc_why="$plan_id is in the express lane — its open eyes criteria go to the post-ship checklist (lv-lane.sh answer $plan_id manual-test), not to a human"
   elif [ "${PROGRESS_INCOMPLETE:-false}" = "true" ]; then
     acc_why="the automated half is unfinished — no run or recorded reason for: ${PROGRESS_MISSING:-see lv-manual-gate.sh --explain}"

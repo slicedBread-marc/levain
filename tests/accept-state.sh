@@ -152,6 +152,18 @@ out=$("$LANE_STUB/lv-registry-update.sh" PLN-041 testing accept 2>&1); rc=$?
 assert_eq "an express-lane plan is refused even with GATE=true" 1 "$rc"
 assert_has "…sent to the post-ship checklist" "post-ship checklist" "$out"
 
+# Clients' LVI-009/018/040: the lane answers eyes criteria only, so an untested
+# Chrome-Assisted criterion under it had no route to anyone.
+cat > "$LANE_STUB/lv-manual-gate.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "GATE='true'"; echo "PROGRESS_INCOMPLETE='false'"; echo "LANE='express'"; echo "CHROME_UNTESTED='1'"
+STUB
+out=$("$LANE_STUB/lv-registry-update.sh" PLN-041 testing accept 2>&1); rc=$?
+assert_eq "an express-lane plan with an untested Chrome-Assisted criterion is allowed" 0 "$rc"
+assert_eq "…and the row reads accept" accept "$(state_of PLN-041)"
+"$S/lv-registry-update.sh" PLN-041 accept testing >/dev/null 2>&1
+assert_eq "(back to testing for what follows)" testing "$(state_of PLN-041)"
+
 # A client's LVI-029: the record's TREE was a day-old build, so the suite
 # result under it was too, and the tester had run nothing on this one.
 old41=$(git -C feature-branches/PLN-041-ui rev-parse --short HEAD~1)
