@@ -411,13 +411,13 @@ Before starting, confirm E2E passed on release:
     scripts/lv-exec.sh lv-commit.sh "release: complete <plan-names>" \
       --branch main --add plans/PLN-NNN-<slug>/plan.md
     ```
-12. **Return to the develop worktree and back-merge `main` → `develop`** (auto-resolve in favor of main). Unlike steps 6–11, this one runs in the develop worktree itself — the commits `main` just received in `release-branches/main` are already visible there as local refs, no push needed:
+12. **Return to the develop worktree and back-merge `main` → `develop`** (auto-resolve in favor of develop). Unlike steps 6–11, this one runs in the develop worktree itself — the commits `main` just received in `release-branches/main` are already visible there as local refs, no push needed:
     ```bash
     cd "$(git worktree list --porcelain | head -1 | sed 's/^worktree //')"
     git pull origin develop
     git merge -X ours main -m "sync: bring completed plans back to develop"
     ```
-    The `-X ours` option automatically accepts main's version of any conflicting files in `plans/` (main has complete state).
+    The merge runs *on develop*, so `-X ours` keeps **develop's** side of any conflicting hunk in `plans/`. That is the side to keep: every registry transition, `complete` included, is written on develop, so develop's `REGISTRY.md` is the live one and main's is the snapshot release carried. Taking main's side would roll back rows that moved since release was cut (a client's LVI-042 found this sentence had it backwards).
 12a. **Now run the general bug-close sweep** — develop is caught up with main as of step 12, so this correctly sees only genuine cross-run orphans (a bug whose link was never acted on before its own close step existed, or an earlier deploy that skipped it on error — client-c's WFI-017 found two, each a full deploy cycle stale) and not the bugs step 10 just closed:
     ```bash
     scripts/lv-exec.sh lv-bug-close-sweep.sh --apply
@@ -598,7 +598,7 @@ Set when `LV_UNATTENDED=1` — the daemon dispatched this run against the fixed 
 Merge strategy `-X theirs` (step 7) and `-X ours` (step 12) automatically resolve conflicts:
 
 - **release → main:** Accept release's version
-- **main → develop:** Accept main's version (has REGISTRY.md updates)
+- **main → develop:** Keep develop's version (`-X ours`, run on develop): develop's REGISTRY.md is live, main's is release's snapshot
 
 Plans never move folders, so the only potential conflict is REGISTRY.md — which is tracked as of v3.2.0, and row-based precisely so that transitions to different plans auto-merge. Feature branches carry no copy (`plans/**` is excluded from every feature worktree), so conflicts can only arise between the long-lived branches this skill promotes. If a merge fails, abort and notify the user.
 
