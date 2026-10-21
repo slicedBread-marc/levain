@@ -310,6 +310,18 @@ progress_sig() {
   # A finished consistency pass moves nothing else — the plan stays `ready` —
   # so it has to appear here or a successful pass reads as a stalled worker.
   "$SELF_DIR/lv-list-consistency.sh" "$id" >/dev/null 2>&1 && con="c"
+  # An outstanding pass is outstanding AGAINST something: the bodies of the
+  # plan and its closure. A dependency still in draft is revised, each
+  # revision re-opens the pass, and every pass comes back clean — so the
+  # signature never moved and the third clean run parked a ready plan as
+  # `stuck` (a client's LVI-001, LVI-002). A revised closure is new input, not
+  # a repeat; a worker that leaves the same closure unchecked still is one.
+  if [ "$con" = c ]; then
+    con="c$("$SELF_DIR/lv-list-closure.sh" "$id" --include-self 2>/dev/null \
+      | while IFS=$'\t' read -r cid cslug _; do
+          [ -f "plans/${cid}-${cslug}/plan.md" ] && wf_plan_body_hash < "plans/${cid}-${cslug}/plan.md"
+        done | shasum 2>/dev/null | cut -c1-12 || true)"
+  fi
   printf '%s:%s:%s' "${st:-none}" "$cnt" "$con"
 }
 

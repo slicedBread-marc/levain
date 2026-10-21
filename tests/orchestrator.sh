@@ -3023,6 +3023,36 @@ assert_eq "falls back to the local ref when nothing tracks a remote" "true" \
 cd "$TEST_DIR" || exit 1
 rm -rf "$PROG" "$PROG.origin.git"
 
+section "A revised dependency is new input for consistency (client LVI-001, LVI-002)"
+
+# PLN-002 (ready) depended on PLN-001 (draft, being replanned). Each revision
+# re-opened PLN-002's consistency pass, each pass was clean, and the signature
+# (state, steps, outstanding) never moved, so the third parked it as `stuck`.
+PROG=$(mktemp -d)
+git init -q -b develop "$PROG" >/dev/null
+cd "$PROG" || exit 1
+git config user.email t@t.com; git config user.name T
+mkdir -p plans/PLN-001-dep plans/PLN-002-consumer
+{ printf '# Plan Registry\n\n| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n'
+  printf '| PLN-001 | dep | draft | — | — | 2026-10-13 | 15.0.0 | — | — |\n'
+  printf '| PLN-002 | consumer | ready | — | — | 2026-10-13 | 15.0.0 | — | PLN-001 |\n\n<!-- Counter: 2 -->\n'; } > plans/REGISTRY.md
+printf '# PLN-001\n\n## Goal\nAn API.\n' > plans/PLN-001-dep/plan.md
+printf '# PLN-002\n\n## Goal\nUse the API.\n' > plans/PLN-002-consumer/plan.md
+git add -A && git commit -qm init
+sig() ( source "$SCRIPT_DIR/lv-orch-lib.sh"
+        plan_state() { echo ready; }; step_counts_of() { echo 0/0; }
+        SELF_DIR="$SCRIPT_DIR"; progress_sig PLN-002 )
+first=$(sig)
+assert_eq "an outstanding pass is in the signature" "true" \
+  "$(printf '%s' "$first" | grep -qE ':c[0-9a-f]{12}$' && echo true || echo false)"
+assert_eq "nothing moved, the signature holds" "$first" "$(sig)"
+printf '# PLN-001\n\n## Goal\nAn API, paged both ways.\n' > plans/PLN-001-dep/plan.md
+git commit -qam "replan PLN-001"
+assert_eq "a revised dependency moves it" "false" \
+  "$([ "$first" = "$(sig)" ] && echo true || echo false)"
+cd "$TEST_DIR" || exit 1
+rm -rf "$PROG"
+
 section "One artifact parks on one question at a time (WFI-025, WFI-026)"
 
 # Gates are one file per ARTIFACT. Opening a second one used to overwrite the
