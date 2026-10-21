@@ -40,8 +40,8 @@ pack, else the library's `deployments.txt`, else this coordinator's `coordinates
 project's declared `services:`, up or down, and the checkout each runs from. A row flagged `⚠` runs
 from a branch other than main. Starting and stopping a service is the owner's, from `v` on the live
 board: the launchers read keys in the owner's own terminal, and `lv-services.sh` refuses under an agent.
-The grid's `services` row counts them per project: `-` for none declared, the declared count, or
-`N/M up` in green while any has a live beacon.
+The grid's `services` row reads running/available per project: `-` for none declared, otherwise
+`N/M` (`0/5` when none run), in green once any has a live beacon.
 
 **The live board is a terminal program.** Its drill-down, daemon toggles (`d`), stop/resume of
 every daemon (`s`/`R`), attend (`t` — on the release or deploy row it starts `/lv-release` or

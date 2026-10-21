@@ -1219,15 +1219,15 @@ render_text() {
   done
   row "daemon" f_daemon_disp
 
-  # SERVICES: what the project declares under `services:`, and how many have a live beacon
-  # (`v` lists them). Green while anything runs, so a bridge left up is seen from the grid.
+  # SERVICES: running/available — how many of what the project declares under `services:`
+  # have a live beacon (`v` lists them). Green while anything runs, so a bridge left up is seen from the grid.
   row_label "services"
   for ((i = win_start; i < win_end; i++)); do
     local ssel=""; sel_cell "services" "$i" && ssel="$REV"
     local sdecl sup; read -r sdecl sup <<< "$(sv_counts "${paths[$i]}")"
     if [ "${sdecl:-0}" -eq 0 ] && [ "${sup:-0}" -eq 0 ]; then cell "$cw" "-" "${DIM}${ssel}"
-    elif [ "${sup:-0}" -gt 0 ]; then cell "$cw" "$sup/$sdecl up" "${B}${GRN}${ssel}"
-    else cell "$cw" "$sdecl" "${col_age[$i]}${ssel}"; fi
+    elif [ "${sup:-0}" -gt 0 ]; then cell "$cw" "$sup/$sdecl" "${B}${GRN}${ssel}"
+    else cell "$cw" "0/$sdecl" "${col_age[$i]}${ssel}"; fi
   done
   printf '\n'
 
