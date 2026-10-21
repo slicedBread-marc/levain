@@ -6807,6 +6807,22 @@ assert_eq "an abandoned external dep reports DEAD" "true" \
   && printf '# BUG-009\n' > bugs/closed/BUG-009-copper-tokens.md )
 assert_eq "a closed bug of the same number satisfies it" "CLEAR" "$(chkdeps PLN-011 2>/dev/null)"
 
+# A brief's `Blocked: BUG-012 (in client-d)` lifts the same way. It was
+# never re-read: the dep cleared, the brief stayed off the specable list until
+# someone ran lv-brief-block.sh --clear by hand (a client's LVI-036). And a bug
+# ref is answered by the bug, not by a plan that happens to share its number.
+mkdir -p plans/briefs
+printf '# BRF-030\n\n> **Status:** Open\n> **Blocked:** BUG-012 (in client-d) — needs their tokens\n' \
+  > plans/briefs/BRF-030-hero.md
+blk() { bash -c "source '$SCRIPT_DIR/lv-orch-lib.sh'; wf_brief_blocked plans/briefs/BRF-030-hero.md" >/dev/null 2>&1 && echo blocked || echo clear; }
+( cd "$XDEP/provider" && printf '| PLN-012 | other | complete | — | — | 2026-09-21 | 2.00 | — | — |\n' >> plans/REGISTRY.md )
+assert_eq "a cross-project block holds while the bug is open" "blocked" "$(blk)"
+assert_eq "even when a plan of the same number is complete there" "blocked" "$(blk)"
+mkdir -p "$XDEP/provider/bugs/closed/BUG-012-tokens"
+printf '# BUG-012\n' > "$XDEP/provider/bugs/closed/BUG-012-tokens/bug.md"
+assert_eq "and lifts once that bug (a folder) is closed there" "clear" "$(blk)"
+rm -rf plans/briefs "$XDEP/provider/bugs/closed/BUG-012-tokens"
+
 # A dependency this cannot resolve is not a satisfied one. Reporting it clear
 # would dispatch exactly the plan the operator parked.
 mv "$XDEP/provider" "$XDEP/provider-moved"

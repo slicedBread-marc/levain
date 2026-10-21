@@ -329,7 +329,13 @@ wf_external_dep_state() {
   reg="$path/plans/REGISTRY.md"
   # The other project names its IDs by its OWN map, so ask it, not ours.
   their=$( cd "$path" 2>/dev/null && bash "$(dirname "${BASH_SOURCE[0]}")/lv-ids.sh" prefixes plan ) || their="PLN"
-  if [ -f "$reg" ]; then
+  # A bug ref is answered by the bug, never by the plan that shares its number:
+  # BUG-085's state is not PLN-085's (a client's LVI-036).
+  local kind bugp
+  kind=$(printf '%s' "${ref#*:}" | sed -E 's/-?[0-9]+$//')
+  bugp=$( cd "$path" 2>/dev/null && bash "$(dirname "${BASH_SOURCE[0]}")/lv-ids.sh" prefixes bug ) || bugp="BUG"
+  case " $bugp " in *" $kind "*) reg="" ;; esac
+  if [ -n "$reg" ] && [ -f "$reg" ]; then
     for p in $their; do
       row="$p-$padded"
       state=$(wf_registry_field "$row" state "$reg" 2>/dev/null || true)
@@ -344,12 +350,16 @@ wf_external_dep_state() {
         LV_EXTERNAL_DEP_STATE="pending"; LV_EXTERNAL_DEP_DETAIL="$row $state"; return 0 ;;
     esac
   fi
-  their=$( cd "$path" 2>/dev/null && bash "$(dirname "${BASH_SOURCE[0]}")/lv-ids.sh" prefixes bug ) || their="BUG"
-  for p in $their; do
-    if ls "$path"/bugs/closed/"$p"-"$padded"-*.md >/dev/null 2>&1; then
+  for p in $bugp; do
+    # A bug is a folder (bugs/closed/BUG-085-slug/bug.md) or, in older
+    # projects, a file — so no .md on the glob.
+    if ls -d "$path"/bugs/closed/"$p"-"$padded"-* >/dev/null 2>&1; then
       LV_EXTERNAL_DEP_STATE="complete"; LV_EXTERNAL_DEP_DETAIL="$p-$padded closed"; return 0
     fi
   done
+  if [ -z "$reg" ]; then
+    LV_EXTERNAL_DEP_STATE="pending"; LV_EXTERNAL_DEP_DETAIL="${ref#*:} not closed in $proj"; return 0
+  fi
   if [ ! -f "$reg" ]; then
     LV_EXTERNAL_DEP_DETAIL="no registry at $path"; return 0
   fi
@@ -494,8 +504,21 @@ wf_brief_blocked() {
   # a real value hides work instead of describing it.
   case "$field" in
     ""|"("*|*"(none"*|*_none_*|"—") return 1 ;;
-    *) printf '%s' "$field"; return 0 ;;
   esac
+  # A block on another project's artifact, as lv-brief-block.sh --repo writes
+  # it ("BUG-085 (in proj) — why"), lifts when that artifact lands there. It
+  # was never re-checked: lv-check-deps.sh printed CLEAR while the bug sat off
+  # the specable list until someone ran --clear by hand (a client's LVI-036).
+  # Only a state read as complete lifts it; unknown or abandoned still holds.
+  local art proj
+  if [[ "$field" =~ ^([A-Z]+-[0-9]+)\ \(in\ ([A-Za-z0-9._/-]+)\) ]]; then
+    art="${BASH_REMATCH[1]}"; proj="${BASH_REMATCH[2]}"
+    wf_external_dep_state "$proj:$art"
+    if [ "$LV_EXTERNAL_DEP_STATE" = "complete" ] && [ "$LV_EXTERNAL_DEP_DETAIL" != "abandoned" ]; then
+      return 1
+    fi
+  fi
+  printf '%s' "$field"; return 0
 }
 
 # wf_bug_chain_block <bug-id> → "<id>\t<reason>" for the first OPEN bug further
