@@ -78,7 +78,8 @@
 # an answer of record already covers this revision of the plan, and 5 when a
 # DIFFERENT gate is already open on the artifact — which this refuses rather
 # than overwrites, because one file holds one artifact's gate (WFI-025), and 6
-# when manual-test is asked for on a plan still in `testing` (LVI-031).
+# when manual-test is asked for on a plan still in `testing` (LVI-031), and 7
+# when a `production-push` question is one lv-autonomy.sh already answers.
 
 set -euo pipefail
 
@@ -482,6 +483,31 @@ if ! wf_gate_revision_scoped "$gate_name"; then
     prior_res=$(wf_gate_field "$prior_file" GATE_RESOLUTION)
     prior_at=$(wf_gate_field "$prior_file" GATE_RESOLVED)
   fi
+fi
+
+# The push-coverage sentence is this script's to write, from the flag. Two
+# clients' deploy workers wrote their own ("…if the push is covered
+# (--covers-push)", "(with --covers-push) to push main") with no flag passed:
+# the human read an offer to push, the record held no coverage, and a second
+# question followed (clients' LVI-048, LVI-270).
+case "$question" in
+  *covers-push*)
+    echo "Error: the question names --covers-push. Pass the flag and let this script write what it" >&2
+    echo "       means, or leave it out; a hand-written mention records no coverage." >&2
+    exit 1 ;;
+esac
+
+# A push question the harness already answers is not one to put to a human.
+# A client's deploy worker opened production-push without asking
+# lv-autonomy.sh first; the daemon withdrew it 46s later as authorized, and
+# the person learned of the push only after answering (a client's LVI-271).
+# --check spends no ceiling.
+if [ "$id:$gate_name" = "DEPLOY:production-push" ] && ! $force \
+   && auth=$("$SELF_DIR/lv-autonomy.sh" production-push --check 2>&1); then
+  echo "Error: production-push is already authorized — no human needs asking:" >&2
+  printf '%s\n' "$auth" | sed 's/^/       /' >&2
+  echo "       /lv-deploy step 14 asks lv-autonomy.sh before opening this gate; push instead." >&2
+  exit 7
 fi
 
 if $covers_push; then

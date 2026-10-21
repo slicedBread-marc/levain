@@ -270,9 +270,19 @@ GIT_COMMITTER_DATE="$(date -u -v+5S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -
   land "another fix"
 "$S/lv-orchestrate.sh" --sweep >/dev/null 2>&1
 assert_eq "no memo, tip committed after the question: withdrawn" "$(gate_state)" "gone"
+# A client's LVI-271: a push question policy already answers is refused at
+# open, rather than parked for the daemon to withdraw after a human read it.
+out=$("$S/lv-gate-open.sh" DEPLOY production-push "push main to origin?" 2>&1); rc=$?
+assert_eq "pre-launch: an authorized production-push is refused at open" "$rc" "7"
+has "…saying why" "$out" "already authorized"
+assert_eq "…and nothing is open" "$(gate_state)" "gone"
+# Clients' LVI-048/270: the coverage sentence is the script's to write.
+out=$("$S/lv-gate-open.sh" DEPLOY deploy-approval "promote, and (with --covers-push) push main" 2>&1); rc=$?
+assert_eq "a hand-written --covers-push mention is refused" "$rc" "1"
+assert_eq "…and nothing is open" "$(gate_state)" "gone"
+printf 'project_slug: "push"\norchestrator:\n  enabled: true\n  max_spawns_per_hour: 0\nprojectProfile:\n  tier: governed\n' > levain.yml
 "$S/lv-gate-open.sh" DEPLOY production-push "push main to origin?" >/dev/null 2>&1
 land "unrelated"
-printf 'project_slug: "push"\norchestrator:\n  enabled: true\n  max_spawns_per_hour: 0\nprojectProfile:\n  tier: governed\n' > levain.yml
 "$S/lv-orchestrate.sh" --sweep >/dev/null 2>&1
 assert_eq "another question on DEPLOY is not touched" "$(gate_state)" "open"
 
