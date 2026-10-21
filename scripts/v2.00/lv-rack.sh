@@ -966,6 +966,7 @@ collect_all() {
   f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
   f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=(); f_claims=()
   collect
+  SVC_KEY=(); SVC_VAL=()
   snapshot_save
   refresh_library_count
 }
@@ -1038,6 +1039,7 @@ finish_refresh() {
   fi
   compute_shown
   refresh_pid=""; refresh_file=""; refreshing=false
+  SVC_KEY=(); SVC_VAL=()
   snapshot_save
 }
 
@@ -1216,6 +1218,18 @@ render_text() {
     esac
   done
   row "daemon" f_daemon_disp
+
+  # SERVICES: what the project declares under `services:`, and how many have a live beacon
+  # (`v` lists them). Green while anything runs, so a bridge left up is seen from the grid.
+  row_label "services"
+  for ((i = win_start; i < win_end; i++)); do
+    local ssel=""; sel_cell "services" "$i" && ssel="$REV"
+    local sdecl sup; read -r sdecl sup <<< "$(sv_counts "${paths[$i]}")"
+    if [ "${sdecl:-0}" -eq 0 ] && [ "${sup:-0}" -eq 0 ]; then cell "$cw" "-" "${DIM}${ssel}"
+    elif [ "${sup:-0}" -gt 0 ]; then cell "$cw" "$sup/$sdecl up" "${B}${GRN}${ssel}"
+    else cell "$cw" "$sdecl" "${col_age[$i]}${ssel}"; fi
+  done
+  printf '\n'
 
   # RUNNING: the daemon's workers, then — in cyan — what attended sessions
   # hold claims on (`0 +RELEASE`). Without the second half a human mid-
@@ -2655,6 +2669,18 @@ set_dormant() {
   else printf '  %s: on\n' "$(basename "$p")"; fi
 }
 
+# stop_and_sleep <project_path> — stop its daemon, wait for the pidfile to clear, then
+# make it dormant. A daemon that will not stop leaves the project on and says so.
+stop_and_sleep() {
+  local p="$1"
+  if has_harness "$p"; then (cd "$p" && hx lv-orchestrate.sh --stop >/dev/null 2>&1) || true; fi
+  if ! wait_until_stopped "$p"; then
+    printf '  %s%s: daemon still live — left on%s\n' "$RED" "$(basename "$p")" "$R"
+    return 3
+  fi
+  set_dormant "$p" on
+}
+
 # dormant_state <project_path> — what the toggle list shows for it: `always on`
 # (daemon live), `dormant`, or `on`.
 dormant_state() {
@@ -2700,7 +2726,16 @@ dormant_screen() {
       $'\x1b[B'|j) sel=$(( (sel + 1) % ${#ps[@]} )) ;;
       ' '|''|$'\n')
         p="${ps[$sel]}"
-        if is_dormant "$p"; then msg=$(set_dormant "$p" off); else msg=$(set_dormant "$p" on); fi
+        # Putting a project to sleep while its daemon runs is refused, so offer the stop
+        # here rather than send the operator to the grid's `d` and back.
+        if ! is_dormant "$p" && daemon_alive "$p"; then
+          printf '\n  %s: daemon running — stop it and make it dormant? [y/N] ' "$(basename "$p")"
+          read_key key
+          case "$key" in
+            y|Y) printf '\n  stopping %s…\n' "$(basename "$p")"; msg=$(stop_and_sleep "$p") ;;
+            *)   msg="  $(basename "$p"): left on" ;;
+          esac
+        elif is_dormant "$p"; then msg=$(set_dormant "$p" off); else msg=$(set_dormant "$p" on); fi
         # set_dormant's refusal is an answer, not a change.
         [ "$(dormant_state "$p")" = "always on" ] || changed=0 ;;
       $'\x1b') break ;;
@@ -2718,6 +2753,35 @@ dormant_screen() {
 # checkout each one runs from: a worker started from a feature worktree shows as that branch,
 # flagged, instead of as nothing. Like the grid, every fact comes from one call to the
 # project's own `lv-services.sh status`; this file knows no service by name.
+
+# sv_counts <project_path> — "<declared> <up>": how many services its levain.yml declares, and
+# how many distinct ones have a live beacon. The board asks on every frame, so the declared
+# count and the beacon directory are read once per collect (SVC_KEY/SVC_VAL), and the up count
+# is builtins only: a glob and kill -0, no probe. A detached record (pid 0) counts as up until
+# `v` or --services probes it and removes it.
+SVC_KEY=(); SVC_VAL=()
+sv_counts() {
+  local p="$1" k v="" decl dir f pid id seen=" " up=0
+  for k in "${!SVC_KEY[@]}"; do [ "${SVC_KEY[$k]}" = "$p" ] && { v="${SVC_VAL[$k]}"; break; }; done
+  if [ -z "$v" ]; then
+    v=$(awk -v base="$(basename "$p")" '
+        /^project_slug:/ { s=$0; sub(/^project_slug:[ \t]*/, "", s); gsub(/["\047]/, "", s); sub(/[ \t]*#.*$/, "", s); slug=s }
+        /^[^ #]/ { insv = ($0 ~ /^services:[ \t]*$/) ; next }
+        insv && /^  [A-Za-z0-9_-]+:/ { n++ }
+        END { if (slug == "") slug = base; printf "%d\t%s", n, slug }' "$p/levain.yml" 2>/dev/null)
+    [ -n "$v" ] || v="0"$'\t'"$(basename "$p")"
+    SVC_KEY+=("$p"); SVC_VAL+=("$v")
+  fi
+  decl="${v%%$'\t'*}"
+  dir="${LV_SERVICES_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/levain/services}/${v#*$'\t'}"
+  for f in "$dir"/*.rec; do
+    [ -e "$f" ] || continue
+    f="${f##*/}"; f="${f%.rec}"; pid="${f##*.}"; id="${f%.*}"
+    case "$seen" in *" $id "*) continue ;; esac
+    if [ "$pid" = 0 ] || kill -0 "$pid" 2>/dev/null; then up=$((up + 1)); seen="$seen$id "; fi
+  done
+  printf '%s %s\n' "$decl" "$up"
+}
 
 sv_reset() { SV_P=(); SV_NAME=(); SV_ID=(); SV_STATE=(); SV_DETAIL=(); SV_CO=(); SV_BRANCH=(); SV_COMMIT=(); SV_SINCE=(); SV_FLAGS=(); }
 

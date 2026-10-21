@@ -143,6 +143,25 @@ ck "every service of every project with a harness" "${#SV_ID[@]}" "4"
 table=$(sv_table)
 has "a worker off main shows as its branch, flagged" "$table" "PLN-9-x ⚠"
 has "a down service shows down" "$(grep ' web ' <<< "$table")" "down"
+ck "the board's services cell: declared, then distinct ids up" "$(sv_counts "$P")" "4 1"
+ck "a project with no services: block declares none" "$(sv_counts "$FIX/no-harness")" "0 0"
+
+echo "── z: making a project dormant stops its daemon first ──"
+mkdir -p "$P/.claude/orchestrator"
+live; DM=$LAST; echo "$DM" > "$P/.claude/orchestrator/daemon.pid"
+hx() { kill "$(cat "$P/.claude/orchestrator/daemon.pid")"; }
+out=$(stop_and_sleep "$P"); rc=$?; wait "$DM" 2>/dev/null
+ck "stop_and_sleep succeeds" "$rc" "0"
+kill -0 "$DM" 2>/dev/null && bad "the daemon is stopped" || ok "the daemon is stopped"
+ck "and the project is dormant" "$(dormant_state "$P")" "dormant"
+set_dormant "$P" off >/dev/null
+live; DM=$LAST; echo "$DM" > "$P/.claude/orchestrator/daemon.pid"
+hx() { :; }; wait_until_stopped() { return 1; }
+out=$(stop_and_sleep "$P"); rc=$?
+ck "a daemon that will not stop leaves it on (exit 3)" "$rc" "3"
+ck "still not dormant" "$(is_dormant "$P" && echo dormant || echo on)" "on"
+rm -f "$P/.claude/orchestrator/daemon.pid"
+
 out=$(LV_RACK_LIB= bash "$BOARD" --services --plain </dev/null 2>&1)
 has "--services prints the table" "$out" "PROJECT"
 has "--services lists the project" "$out" "alpha"
