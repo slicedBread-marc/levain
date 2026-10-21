@@ -978,6 +978,10 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
    from.** `test-progress.md` is working state and goes; the one-line-per-
    criterion record of what ran, what deferred and why is the plan's evidence
    that it was tested at all, and PLN-191 completed leaving none of it (WFI-229).
+   If the file is already gone, the `→ complete` transition took it: it moves
+   `test-progress.md` into `progress.md` under `## Test record` whenever it
+   completes a plan, so a plan completed any other way does not leave it
+   tracked (a client's LVI-043). Write the summary from that section.
    Append a `## Testing — YYYY-MM-DD` section to `plans/PLN-NNN-<slug>/progress.md`
    listing each criterion and its outcome (PASS / FAIL-then-fixed / deferred
    `(external)` / deferred `(soak)`), then:

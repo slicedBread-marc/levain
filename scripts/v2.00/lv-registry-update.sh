@@ -728,6 +728,26 @@ if [ -n "$note" ]; then
   fi
 fi
 
+# --- test-progress.md does not outlive the plan ---
+#
+# It is working state for a plan under test; at `complete` there is nothing
+# left to test. lv-test's exit removed it, but a plan completed any other way
+# (the express lane answering manual-test, an operator by hand) left it
+# tracked, to surface later as a stray deletion on develop (a client's
+# LVI-043). Its rows are the evidence the plan was tested at all (WFI-229), so
+# they move into progress.md, in this commit, rather than being dropped.
+if [ "$to_state" = "complete" ] && [ -n "$slug" ] \
+   && [ -f "plans/${plan_id}-${slug}/test-progress.md" ]; then
+  tp="plans/${plan_id}-${slug}/test-progress.md"
+  pf="plans/${plan_id}-${slug}/progress.md"
+  [ -f "$pf" ] || printf '# Progress — %s\n' "$plan_id" > "$pf"
+  { printf '\n## Test record — %s (test-progress.md at completion)\n\n' "$today"
+    sed 's/^#/###/' "$tp"; } >> "$pf"
+  rm -f "$tp"
+  git add -A -- "$tp" "$pf" 2>/dev/null || true
+  add_files+=("$pf" "$tp")
+fi
+
 # --- Stage the transition, always ---
 #
 # REGISTRY.md is staged here, not by the caller, and whether or not --commit

@@ -242,6 +242,22 @@ tray=$("$S/lv-tray.sh" --fields 2>/dev/null || true)
 assert_has "the --fields line carries accept=2" "	accept=2" "$tray"
 assert_has "…and testing apart from it" "	testing=" "$tray"
 
+# ── 7. Completion ──────────────────────────────────────────────────────────
+echo ""
+echo "7. -> complete moves test-progress.md into progress.md (client LVI-043)"
+printf '# Test Progress — PLN-047\n\n| Criterion | Result |\n|-|-|\n| reads clearly | PASS |\n' \
+  > plans/PLN-047-plain/test-progress.md
+git add plans/PLN-047-plain/test-progress.md && git commit -qm "progress"
+LV_ALLOW_UNMERGED=1 LV_ALLOW_UNTESTED=1 "$S/lv-registry-update.sh" PLN-047 testing complete - >/dev/null 2>&1
+assert_eq "the transition lands" complete "$(state_of PLN-047)"
+assert_eq "test-progress.md is gone from disk" false \
+  "$([ -f plans/PLN-047-plain/test-progress.md ] && echo true || echo false)"
+assert_eq "…and from HEAD, in the transition's commit" "" \
+  "$(git ls-tree -r --name-only HEAD -- plans/PLN-047-plain/test-progress.md)"
+assert_has "its rows are kept in progress.md" "| reads clearly | PASS |" \
+  "$(git show HEAD:plans/PLN-047-plain/progress.md 2>/dev/null)"
+assert_eq "nothing is left dirty" "" "$(git status --porcelain -- plans/PLN-047-plain)"
+
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
