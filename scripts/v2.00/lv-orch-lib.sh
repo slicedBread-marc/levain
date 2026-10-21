@@ -742,6 +742,36 @@ wf_read1() {
 
 # ── Config ────────────────────────────────────────────────────────────────
 
+# _WF_YSCALAR_AWK — the awk function both config readers use to turn what
+# follows a key (or a `- `) into its value. A quoted value ends at its closing
+# quote, so a ` #` inside it is text, not a comment: a test_account_note
+# holding a CSS selector (`input #Form_FirstName`) was cut at 480 of ~1000
+# characters (a client's LVI-011/012/016). Only an unquoted value has a
+# trailing comment stripped. Escapes inside double quotes are kept verbatim,
+# as before; '' inside single quotes is one quote, as YAML has it.
+_WF_YSCALAR_AWK='
+  function yscalar(v,    q, i, c, out, n) {
+    gsub(/^[ \t]+/, "", v)
+    q = substr(v, 1, 1)
+    if (q == "\"" || q == "\047") {
+      out = ""; n = length(v)
+      for (i = 2; i <= n; i++) {
+        c = substr(v, i, 1)
+        if (q == "\"" && c == "\\" && i < n) { out = out c substr(v, i + 1, 1); i++; continue }
+        if (c == q) {
+          if (q == "\047" && substr(v, i + 1, 1) == q) { out = out q; i++; continue }
+          return out
+        }
+        out = out c
+      }
+      return substr(v, 2)
+    }
+    sub(/[ \t]+#.*$/, "", v)
+    gsub(/[ \t]+$/, "", v)
+    return v
+  }
+'
+
 # wf_cfg <dotted.path> [default]
 # Reads a scalar from levain.yml. Deliberately does NOT require yq —
 # the orchestrator must run on a bare client checkout. Handles the nested
@@ -751,7 +781,7 @@ wf_cfg() {
   lv_config_into cfg "$(wf_develop_root)"
   if [ ! -f "$cfg" ]; then printf '%s' "$default"; return 0; fi
 
-  val=$(awk -v path="$path" '
+  val=$(awk -v path="$path" "$_WF_YSCALAR_AWK"'
     BEGIN { n = split(path, want, "."); level = 0 }
     {
       line = $0; sub(/\r$/, "", line)
@@ -764,9 +794,7 @@ wf_cfg() {
       if (key != want[level + 1]) next
       if (level == n - 1) {
         rest = probe; sub(/^[^:]*:[ \t]*/, "", rest)
-        sub(/[ \t]+#.*$/, "", rest)                 # trailing comment
-        gsub(/^[ \t]+|[ \t]+$/, "", rest)
-        gsub(/^"|"$/, "", rest); gsub(/^'"'"'|'"'"'$/, "", rest)
+        rest = yscalar(rest)                        # quotes, trailing comment
         # A bare ">" or "|" (optionally with a chomping/indent modifier) is a
         # YAML block-scalar opener, not a value -- this parser is single-line-
         # per-key only (scalars only, see wf_cfg_list) and has no continuation
@@ -889,7 +917,7 @@ wf_cfg_list() {
   lv_config_into cfg "$(wf_develop_root)"
   [ -f "$cfg" ] || return 0
 
-  awk -v path="$path" '
+  awk -v path="$path" "$_WF_YSCALAR_AWK"'
     BEGIN { n = split(path, want, "."); level = 0; collecting = 0 }
     {
       line = $0; sub(/\r$/, "", line)
@@ -900,9 +928,7 @@ wf_cfg_list() {
       if (collecting) {
         if (probe ~ /^- /) {
           item = probe; sub(/^-[ \t]*/, "", item)
-          sub(/[ \t]+#.*$/, "", item)
-          gsub(/^[ \t]+|[ \t]+$/, "", item)
-          gsub(/^"|"$/, "", item); gsub(/^'"'"'|'"'"'$/, "", item)
+          item = yscalar(item)
           if (item != "") print item
           next
         }
@@ -935,7 +961,7 @@ wf_cfg_keys() {
   lv_config_into cfg "$(wf_develop_root)"
   [ -f "$cfg" ] || return 0
 
-  awk -v path="$path" '
+  awk -v path="$path" "$_WF_YSCALAR_AWK"'
     BEGIN { n = split(path, want, "."); level = 0; collecting = 0 }
     {
       line = $0; sub(/\r$/, "", line)

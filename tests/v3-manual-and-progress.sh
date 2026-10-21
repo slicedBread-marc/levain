@@ -629,6 +629,21 @@ assert_eq "falls back to the default" "3" "$("$SCRIPT_DIR/lv-config-get.sh" spec
 assert_eq "reads a sequence" "2" "$("$SCRIPT_DIR/lv-config-get.sh" specApproval.gateTags --list | wc -l | tr -d ' ')"
 assert_eq "an absent key uses its default" "gate" "$("$SCRIPT_DIR/lv-config-get.sh" specApproval.nothingHere gate)"
 
+# A client's LVI-011/012/016: a ` #` inside a quoted value is text. The note
+# was cut at its first CSS selector.
+cat >> levain.yml <<'Y'
+test_account_note: "open /learners/new, fill input #Form_FirstName and #Form_Age, then save"   # the recipe
+plain_with_comment: just text # a comment
+single_quoted: 'it''s #1'
+hashList:
+  - "a #b"   # c
+  - plain # d
+Y
+assert_eq "a double-quoted value keeps its ' #'" "open /learners/new, fill input #Form_FirstName and #Form_Age, then save" "$("$SCRIPT_DIR/lv-config-get.sh" test_account_note)"
+assert_eq "an unquoted value still drops its comment" "just text" "$("$SCRIPT_DIR/lv-config-get.sh" plain_with_comment)"
+assert_eq "a single-quoted value, '' and all" "it's #1" "$("$SCRIPT_DIR/lv-config-get.sh" single_quoted)"
+assert_eq "a list item keeps a quoted ' #'" "a #b|plain" "$("$SCRIPT_DIR/lv-config-get.sh" hashList --list | paste -sd'|' -)"
+
 # ── Summary ────────────────────────────────────────────────────────────
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
