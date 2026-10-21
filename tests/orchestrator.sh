@@ -1154,6 +1154,17 @@ assert_eq "a claim written today carries its owner's start time" "true" \
 "$SCRIPT_DIR/lv-unclaim.sh" PLN-907 >/dev/null 2>&1
 rm -rf "$claims_root/981" "$claims_root/982" "$claims_root/983" "$claims_root/984"
 
+# Clients' LVI-003/039: an attend session ran lv-unclaim.sh after its own
+# lv-claim.sh was refused, and released a live worker's claim.
+sleep 300 & other=$!
+"$SCRIPT_DIR/lv-claim.sh" PLN-908 --pid "$other" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-unclaim.sh" PLN-908 >/dev/null 2>&1; rc=$?
+assert_eq "unclaim refuses another live session's claim" "2" "$rc"
+assert_eq "…and the claim stays" "true" "$([ -f "$claims_root/908/.wf-claim" ] && echo true || echo false)"
+"$SCRIPT_DIR/lv-unclaim.sh" PLN-908 --force >/dev/null 2>&1; rc=$?
+assert_eq "--force releases it" "0:false" "$rc:$([ -f "$claims_root/908/.wf-claim" ] && echo true || echo false)"
+kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
+
 
 section "Two plans owing consistency do not stop implement (client-b WFI-020)"
 

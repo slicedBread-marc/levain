@@ -186,6 +186,13 @@ The plan is drafted, **already reviewed**, and committed in `draft` state. The o
    scripts/lv-exec.sh lv-unclaim.sh <plan-name>
    ```
 
+   **Run them one at a time, and stop at the first that fails.** `lv-claim.sh` exiting 2 means a
+   live session (usually an unattended consistency or spec worker) holds the plan right now: do not
+   close the gate, do not transition, and **do not unclaim**, because the claim you would release
+   is that worker's. Tell the human who holds it and ask again once it has finished. Two clients'
+   attend sessions chained these with `;`, released a running worker's claim, and moved its plan
+   underneath it (LVI-003, LVI-039).
+
    `--express` runs `lv-lane.sh check <PLN-ID> --accept-warnings` inside the close, recording
    the warnings as accepted by the person answering. It is refused under `LV_UNATTENDED=1`, on
    any gate but `spec-approval`, and on a plan with no declared lane. Pass it only when the human

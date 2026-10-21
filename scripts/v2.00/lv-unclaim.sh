@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lv-unclaim.sh <plan-name>
+# lv-unclaim.sh <plan-name> [--force]
 # Releases a claim on a plan. Safe to call even if no claim exists.
 #
 # Releasing is also a TRIGGER. lv-spawn.sh refuses to launch a successor while
@@ -12,7 +12,9 @@
 
 set -euo pipefail
 
-plan_name="${1:?Usage: lv-unclaim.sh <plan-name>}"
+plan_name="${1:?Usage: lv-unclaim.sh <plan-name> [--force]}"
+force=false
+[ "${2:-}" = "--force" ] && force=true
 
 # A release is idempotent, so it cannot tell a plan that was never claimed from
 # a plan whose name was mistyped — both report success. That is fine for the
@@ -43,6 +45,15 @@ esac
 # claim left in the plan folder by a worker that started before the upgrade.
 develop_root="$(wf_develop_root)"
 if claim_dir=$(wf_claim_dir "$plan_name"); then
+  # Another live session's claim is not this caller's to release. An attend
+  # session whose lv-claim.sh had just been refused (exit 2) ran this anyway,
+  # chained with `;`, and deleted a running worker's claim (clients' LVI-003,
+  # LVI-039). A dead holder's claim is reaped by wf_claim_live and released.
+  if ! $force && wf_claim_live "$claim_dir" && ! wf_claim_mine "$claim_dir"; then
+    echo "lv-unclaim: $plan_name is held by another live session (PID ${LV_CLAIM_HOLDER_PID:-?}) — not releasing it." >&2
+    echo "            If you know that session is finished or wedged: lv-unclaim.sh $plan_name --force" >&2
+    exit 2
+  fi
   rm -f "$claim_dir/.wf-claim"
 fi
 rm -f "$develop_root/plans/${plan_name}/.wf-claim"
