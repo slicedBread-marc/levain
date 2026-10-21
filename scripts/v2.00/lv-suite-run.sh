@@ -439,11 +439,53 @@ echo "  suite:  $TEST_RUN" | tee -a "$LOG"
 [ "$SCOPE" = "filtered" ] && echo "  scope:  FILTERED — not a full-suite run" | tee -a "$LOG"
 echo "" | tee -a "$LOG"
 
+# no_tests_ran <from-line> — did the output from that line of the log on show a
+# run that executed nothing? An exit 0 is not a pass when no test ran: VSTest
+# exits 0 on "No test matches the given testcase filter", and test_only_e2e on
+# a project with no E2E-named tests made that a zero-test "pass" on every plan
+# (eleven client LVIs). A VSTest banner with no result summary after it is the
+# same thing seen from the other side (a 2-second "pass" whose log ended at
+# "test files matched the specified pattern").
+no_tests_ran() {
+  local out
+  out=$(tail -n +"$1" "$LOG")
+  printf '%s\n' "$out" | grep -qiE 'No test matches the given testcase filter|No tests found|No test files found|no tests ran|Total tests: 0\b' && return 0
+  if printf '%s\n' "$out" | grep -q 'test files\? matched the specified pattern' \
+     && ! printf '%s\n' "$out" | grep -qiE 'Passed!|Failed!|Total tests:|Passed: +[0-9]|Failed: +[0-9]|summary: *total'; then
+    return 0
+  fi
+  return 1
+}
+
 set -o pipefail
+from=$(( $(wc -l < "$LOG") + 1 ))
 eval "$TEST_RUN" < /dev/null 2>&1 | tee -a "$LOG"
 rc=${PIPESTATUS[0]}
 
+# test_only_e2e alone, with no plan scope, is "whatever verify did not run".
+# Where that is nothing, the skill's promise is the full suite, so run it
+# rather than hand back a receipt for zero tests. A scope the plan named that
+# matches nothing is the plan's error, and fails.
+if [ "$rc" -eq 0 ] && no_tests_ran "$from" \
+   && [ "$extras_cfg" = "test_only_e2e" ] && [ -z "$extra_args" ]; then
+  {
+    echo ""
+    echo "  test_only_e2e matched no tests and the plan names no E2E scope —"
+    echo "  running the full suite instead."
+    echo "  suite:  $TEST_CMD"
+    echo ""
+  } | tee -a "$LOG"
+  TEST_RUN="$TEST_CMD"
+  from=$(( $(wc -l < "$LOG") + 1 ))
+  eval "$TEST_RUN" < /dev/null 2>&1 | tee -a "$LOG"
+  rc=${PIPESTATUS[0]}
+fi
+
 echo ""
+if [ "$rc" -eq 0 ] && no_tests_ran "$from"; then
+  finish "fail (no tests ran — exit 0, but nothing was executed; see the log)" "$TEST_RUN"
+  exit 1
+fi
 if [ "$rc" -eq 0 ]; then
   finish "pass (exit 0)" "$TEST_RUN"
   exit 0

@@ -201,6 +201,43 @@ has "labelled as reused" "$w" "^SUITE_RESULT=pass \(reused "
 ab=$("$SD/lv-suite-receipts.sh" --abandoned --min-age 0 2>/dev/null || true)
 hasnt "an inline run is never listed as abandoned" "$ab" "suite-(implement|verify|t)-"
 
+# ═══════════════════════════════════════════════════════════════════════
+section "A run that executes no test is never a pass (eleven client LVIs)"
+
+R2="$TEST_DIR/repo2"
+git init -q "$R2"
+cd "$R2" || exit 1
+git config user.email t@t.com; git config user.name T
+printf '.claude/\n' > .gitignore
+mkdir -p .claude; echo "14.40.0" > .claude/workflow-version
+cat > t.sh <<'SH'
+#!/bin/sh
+case "$*" in
+  *E2E*|*Nope*) echo "No test matches the given testcase filter $*"; exit 0 ;;
+  *banner*) echo "A total of 1 test files matched the specified pattern."; exit 0 ;;
+esac
+echo "Passed!  - Failed: 0, Passed: 5"
+SH
+chmod +x t.sh
+printf 'test_command: "./t.sh"\ntest_only_e2e: "--filter E2E"\n' > levain.yml
+git add -A && git commit -q -m base
+
+out=$("$RUN" --label t --only-e2e --extra-args "" --no-reuse 2>&1); rc=$?
+assert_eq "an empty plan scope on a project with no E2E tests passes" 0 "$rc"
+has "…on the full suite it ran instead" "$out" "^SUITE_CMD=\./t\.sh$"
+log=$(printf '%s' "$out" | sed -n 's/^SUITE_LOG=//p' | tail -1)
+has "…and the log says why" "$(cat "$log")" "running the full suite instead"
+has "…with real results" "$(cat "$log")" "Passed: 5"
+
+out=$("$RUN" --label t --only-e2e --extra-args "Nope" --no-reuse 2>&1); rc=$?
+assert_eq "a plan scope that matches nothing fails" 1 "$rc"
+has "…and says no test ran" "$(result_of "$out")" "^fail \(no tests ran"
+
+printf 'test_command: "./t.sh banner"\n' > levain.yml && git commit -qam banner
+out=$("$RUN" --label t --no-reuse 2>&1); rc=$?
+assert_eq "a test banner with no result summary is not a pass" 1 "$rc"
+has "…it is a fail" "$(result_of "$out")" "^fail \(no tests ran"
+
 echo ""
 echo "suite-reuse: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
