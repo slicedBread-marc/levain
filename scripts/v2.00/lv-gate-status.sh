@@ -307,6 +307,18 @@ if [ "$open" = "true" ] && [ "$answered" = "true" ]; then
   basis=none
   stale=false
 fi
+# And the rest of that finished round's record goes with it. A client's open,
+# unanswered spec-approval reported GATE_DECISION='approve', a GATE_RESOLUTION
+# and GATE_STALE='true', all from the previous replan's ledger (a client's
+# LVI-017). The open gate file carries the prior answer as
+# GATE_PRIOR_RESOLUTION for anyone who needs it.
+if [ "$open" = "true" ]; then
+  resolution=""
+  resolved_at=""
+  decision=""
+  stale=false
+  withdrawn=false
+fi
 
 wf_emit GATE_OPEN        "$open"
 wf_emit GATE_QUESTION_STALE "$question_stale"

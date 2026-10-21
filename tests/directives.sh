@@ -292,6 +292,13 @@ assert_eq "a --decision with no gate open fails (a client's LVI-003)" "$rc" "6"
 has "…saying it was not recorded" "$out" "NOT recorded"
 out=$("$S/lv-gate-close.sh" PLN-077 "nothing to close" 2>&1); rc=$?
 assert_eq "without a decision it stays a no-op" "$rc" "0"
+"$S/lv-gate-open.sh" PLN-077 needs-input "first round?" >/dev/null 2>&1
+"$S/lv-gate-close.sh" PLN-077 "approved round one" --decision approve >/dev/null 2>&1
+"$S/lv-gate-open.sh" PLN-077 needs-input "second round?" --force >/dev/null 2>&1
+st=$("$S/lv-gate-status.sh" PLN-077 needs-input 2>/dev/null)
+assert_eq "an open gate is open" "$(field "$st" GATE_OPEN)" "true"
+assert_eq "…and carries no decision from the round before (LVI-017)" "$(field "$st" GATE_DECISION)" ""
+assert_eq "…nor its resolution" "$(field "$st" GATE_RESOLUTION)" ""
 
 echo
 echo "directives: $PASS passed, $FAIL failed"
