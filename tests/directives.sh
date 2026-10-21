@@ -37,6 +37,7 @@ ok()  { echo "  ✓ $1"; PASS=$((PASS + 1)); }
 bad() { echo "  ✗ $1"; [ $# -gt 1 ] && echo "      $2"; FAIL=$((FAIL + 1)); }
 assert_eq() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "no [$3] in: $2" ;; esac; }
+hasnt() { case "$2" in *"$3"*) bad "$1" "unexpected [$3]" ;; *) ok "$1" ;; esac; }
 section() { echo "── $1 ──"; }
 field() { printf '%s\n' "$1" | sed -n "s/^$2='\(.*\)'$/\1/p"; }
 
@@ -147,6 +148,12 @@ assert_eq "it says it was withdrawn" "$(field "$st" GATE_WITHDRAWN)" "true"
 has "with the reason, for the next lv-spec" "$(field "$st" GATE_RESOLUTION)" "PLN-026"
 has "and findings.md says nothing was approved" "$(cat plans/PLN-028-serve/findings.md)" "nothing was approved"
 has "lv-plan-context shows the decision of record upstream" "$("$S/lv-plan-context.sh" PLN-028)" "Remove the Folder allow-list"
+# A client's LVI-015: another project's artifact has no row here.
+sed -i.bak 's#^| PLN-030 | built | active | — | — | 2026-09-30 | 2.00 | — | — |#| PLN-030 | built | active | — | — | 2026-09-30 | 2.00 | — | other-app:BUG-050 |#' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak
+ctx=$("$S/lv-plan-context.sh" PLN-030)
+has "a cross-project dep is listed" "$ctx" "== other-app:BUG-050"
+hasnt "…and the plan is not 'No dependencies.'" "$ctx" "No dependencies"
+sed -i.bak 's#| other-app:BUG-050 |#| — |#' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak
 
 # Re-asked and answered; then the upstream moves again.
 "$S/lv-gate-open.sh" PLN-028 spec-approval "Approve PLN-028?" >/dev/null 2>&1

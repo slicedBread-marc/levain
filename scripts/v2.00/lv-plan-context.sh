@@ -69,8 +69,21 @@ d=$(directives "$id")
 if [ -n "$d" ]; then echo "Directives on this plan — binding; they outrank your own reading:"; echo "$d"; fi
 
 closure=$("$SELF_DIR/lv-list-closure.sh" "$id" 2>/dev/null || true)
+# Another project's artifact has no row here, so the closure never lists it.
+# A plan whose only Deps was <project>:BUG-050 printed "No dependencies." while
+# lv-check-deps.sh named it (a client's LVI-015).
+external=""
+deps=$(wf_registry_field "$id" deps "$(wf_develop_root)/plans/REGISTRY.md")
+IFS=',' read -ra dep_list <<< "${deps:-}"
+for dep in ${dep_list[@]+"${dep_list[@]}"}; do
+  dep=$(printf '%s' "$dep" | xargs)
+  [ -n "$dep" ] && wf_is_external_dep "$dep" || continue
+  wf_external_dep_state "$dep"
+  external="${external}== $dep ($LV_EXTERNAL_DEP_STATE${LV_EXTERNAL_DEP_DETAIL:+ — $LV_EXTERNAL_DEP_DETAIL}) — upstream, in another project"$'\n'
+done
+if [ -n "$external" ]; then echo; printf '%s' "$external"; fi
 if [ -z "$closure" ]; then
-  echo "No dependencies."
+  [ -n "$external" ] || echo "No dependencies."
 else
   while IFS=$'\t' read -r cid _slug cstate; do
     [ -n "$cid" ] || continue
