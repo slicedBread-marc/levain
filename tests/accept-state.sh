@@ -195,6 +195,14 @@ assert_eq "LV_ALLOW_ACCEPT=1 overrides a refusal" 0 "$rc"
 "$S/lv-registry-update.sh" PLN-042 accept testing >/dev/null 2>&1
 assert_eq "accept -> testing hands back" testing "$(state_of PLN-042)"
 
+# Clients' LVI-013/052: `--add findings.md` named the plan's own file and
+# was skipped as a path that matched nothing at the develop root.
+d42=$(ls -d plans/PLN-042-*/ | head -1)
+printf '\n## Acceptance — finding\n' >> "${d42}findings.md"
+LV_ALLOW_ACCEPT=1 "$S/lv-registry-update.sh" PLN-042 testing accept --commit "accept(PLN-042): bare --add" --add findings.md >/dev/null 2>&1
+assert_has "a bare --add name commits the plan's own file" "${d42}findings.md" "$(git show --stat --format= HEAD)"
+"$S/lv-registry-update.sh" PLN-042 accept testing >/dev/null 2>&1
+
 # ── 4. lv-list-acceptable ──────────────────────────────────────────────────
 echo ""
 echo "4. lv-list-acceptable.sh lists what waits on a human"

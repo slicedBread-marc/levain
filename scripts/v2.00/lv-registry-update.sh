@@ -749,6 +749,29 @@ fi
 # lv-commit.sh and list `plans/REGISTRY.md` among their paths.
 git add "$REGISTRY" 2>/dev/null || true
 
+# --- --add names, resolved where the caller meant them ---
+#
+# `--add findings.md test-progress.md` names the plan's own files, but this
+# runs from the develop root, where no such path exists, and lv-commit.sh
+# skips a pathspec that matches nothing as an optional file. The transition
+# committed REGISTRY.md alone and left the findings behind (clients' LVI-013,
+# LVI-052). A bare name that is not at the root but is in the plan's folder
+# means that file; one that is nowhere is said out loud.
+if [ "${#add_files[@]}" -gt 0 ]; then
+  for i in "${!add_files[@]}"; do
+    f="${add_files[$i]}"
+    [ -e "$f" ] && continue
+    case "$f" in
+      */*) ;;
+      *) if [ -n "$slug" ] && [ -e "plans/${plan_id}-${slug}/$f" ]; then
+           add_files[$i]="plans/${plan_id}-${slug}/$f"; continue
+         fi ;;
+    esac
+    git ls-files --error-unmatch -- "$f" >/dev/null 2>&1 \
+      || echo "lv-registry-update: --add $f matches nothing here (develop root) — not committed" >&2
+  done
+fi
+
 # --- Atomic commit (still under the lock) ---
 #
 # Pathspec-scoped via lv-commit.sh: this commit carries the transition and the
