@@ -48,7 +48,7 @@ Order of work:
      ```
      **Never put criterion text in double quotes** — backticks in it are commands, and the shell runs them before the script sees them (WFI-194). See [Deferring a criterion](#deferring-a-criterion).
      **Read what it printed.** The DC row is only half the job — the other half is the checkbox in `plan.md`, which is what anyone opening the completed plan actually reads. `ticked in …` means both halves are done. `ACTION REQUIRED: no matching unchecked criterion` means only the row was written: edit `plan.md` yourself, tick the box it listed, append ` — deferred as DC-NNN`, and only then move on. A completed plan with an empty box says "silently dropped", which is the exact ambiguity deferral exists to remove (WFI-056, WFI-137).
-   - `(eyes:cosmetic)` that step 3 could not settle — leave untested and unchecked; whether it gates is the gate script's call, not yours.
+   - `(eyes:cosmetic)` that step 3 could not settle — leave untested and unchecked; whether it gates is the gate script's call, not yours. When it says `GATE='false'`, the criterion stays that way and the plan completes (step 6).
 6. **Collect the suite (Testing step 4) — then write `test-progress.md`, then ask the gate script whether a human is needed. Do not decide this yourself.**
 
    **The order is load-bearing: `lv-manual-gate.sh` reads that file.** A `#### Manual` criterion you judged and passed this session stays unchecked in `plan.md` — that is by design, you only ever tick a box on a deferral or a cosmetic failure — so the gate has no way to learn the criterion is settled except from the record. Ask it before writing, and you are asking about a plan whose results do not exist yet: client-b' PLN-011 had 8 of 8 criteria PASS on the current build and opened a manual-test gate naming an `eyes:blocking` criterion that had already been judged and passed (WFI-013). Write every result you hold — the full file, per [Saving test progress](#saving-test-progress), build identifiers included — then **commit it**, and only then run the script:
@@ -73,6 +73,7 @@ Order of work:
        scripts/lv-exec.sh lv-lane.sh answer <PLN-ID> manual-test
        ```
        Exit `0` → go to the all-pass exit. Exit `1` → the lane downgraded between the gate script and now (the plan changed): ask `lv-manual-gate.sh` again and follow its new answer. Never tick an eyes criterion by hand to get the same effect — the completion guard reads a ticked box as *settled*, and only the lane's own record says why it was.
+     - An `(eyes:cosmetic)` criterion step 3 left at `—` → **leave it there**, unchecked, with the note on what was ambiguous. Cosmetic criteria never block completion (`blockOnCosmetic`, and the completion guard counts only `eyes:blocking`), `lv-defer-criterion.sh` refuses every `eyes:*` tag, and the gate has just said no human is needed — so it ships unseen, which is the documented trade. It counts as settled for the **Completion gate** below (a client's LVI-044).
      - Each remaining untested criterion → defer it with `lv-defer-criterion.sh`, giving `$GATE_REASON`, per [Deferring a criterion](#deferring-a-criterion) — and mind the quoting rule above (WFI-194). A deferral is the form the completion guard can read; a free-text "untested" note in `test-progress.md` is not, and `lv-registry-update.sh` refuses `testing → complete` when an `eyes:blocking` criterion has no PASS, no deferral and no answered gate (client-d WFI-009).
      - Only then take the all-pass exit path (step 4). The **Completion gate** below governs that exit, and this bullet is not an exception to it.
    - `GATE='true'` → **move the plan to `accept:manual`, once, with everything that is left listed together.** Results first (committed above), then the transition, then the gate, then the claim — the [Order of exit](#order-of-exit), unchanged:
@@ -379,7 +380,7 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    | What the record says | Exit |
    |-|-|
    | Any criterion FAIL | [If findings](#if-findings-failures) |
-   | `GATE='false'`, every criterion PASS on this build or settled by a tick | [If all pass](#if-all-pass) |
+   | `GATE='false'`, every criterion PASS on this build, settled by a tick, or an unsettled `(eyes:cosmetic)` | [If all pass](#if-all-pass) |
    | `GATE='true'` | `testing → accept`, gate, unclaim — the human half is `/lv-accept`'s |
 
    **A plan that comes back from `/lv-accept`** arrives in `testing` with the human's verdicts committed in `test-progress.md` against this build (Notes `human (/lv-accept)`). Step 3c skips what is already PASS on the current build, so those rows are not re-run and not overwritten, and the gate script counts them: the normal outcome is `GATE='false'` and the ship exit. If it says `true` again, something moved — a `release` merge touched a rendering surface (`SURFACE_MOVED`), or a row was paraphrased — and the plan goes back to `accept` with the question naming it.
@@ -513,7 +514,7 @@ Commit the log update as part of the normal test-exit commit (findings or comple
 
 ### Completion gate
 
-**The skill only proceeds to the "all pass" exit path when every criterion shows PASS with the current build identifier, or is settled by a tick (deferred, cosmetic-filed, or scoped out by a human in `/lv-accept`).** This is the single rule that drives the system. An earlier build's PASS counts only where `lv-manual-gate.sh` carried it (`MANUAL_CARRIED`); anything else is re-run by step 3c or, failing that, goes to `accept:manual`.
+**The skill only proceeds to the "all pass" exit path when every criterion shows PASS with the current build identifier, or is settled by a tick (deferred, cosmetic-filed, or scoped out by a human in `/lv-accept`).** The one exception: under `GATE='false'`, an `(eyes:cosmetic)` criterion no run could settle stays at `—` and does not hold the exit (step 6). This is the single rule that drives the system. An earlier build's PASS counts only where `lv-manual-gate.sh` carried it (`MANUAL_CARRIED`); anything else is re-run by step 3c or, failing that, goes to `accept:manual`.
 
 ### Completion confirmation
 
