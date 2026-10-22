@@ -146,6 +146,26 @@ while IFS=$'\037' read -r id slug state priority _rest; do
   findings="$plan_dir/findings.md"
   unchecked=$(wf_unchecked_count "$findings")
   if [ "$unchecked" -gt 0 ]; then
+    # The one dependency that holds a replan back: a Deps entry with no row
+    # yet, i.e. a bug or brief here that has not been specced. The replan is
+    # waiting for that plan to exist, and re-offering it sends a spec worker
+    # that can only unclaim again, every sweep (a client's LVI-007). It comes
+    # back once the dependency has a row; completion is still enforced at
+    # implement, per the note above.
+    waiting=""
+    deps=$(wf_registry_field "$id" deps "$REGISTRY" 2>/dev/null || true)
+    if [ -n "$deps" ] && [ "$deps" != "—" ]; then
+      for dep in ${deps//,/ }; do
+        wf_is_external_dep "$dep" && continue
+        [ "$(wf_state_of "$dep" "$REGISTRY")" = "—" ] || continue
+        compgen -G "bugs/closed/$dep-*" >/dev/null && continue
+        waiting="${waiting:+$waiting, }$dep"
+      done
+    fi
+    if [ -n "$waiting" ]; then
+      not_offered "$id" "replan waits on $waiting, not specced yet"
+      continue
+    fi
     esc_count=$(wf_escalated_count "$findings")
     bhv_count=$(wf_behavior_count "$findings")
     parts=()

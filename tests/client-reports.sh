@@ -2614,6 +2614,20 @@ only_escalated=$(cd "$SPEC_DIR" && ./scripts/lv-list-specable.sh 2>&1 || true)
 assert_eq "escalated work with no unreviewed drafts lists cleanly" "true" \
   "$(printf '%s' "$only_escalated" | grep -q 'unbound variable' && echo false || echo true)"
 
+# A replan waiting on a bug that has no plan yet stands down, instead of a spec
+# worker being sent at it to unclaim again every sweep (a client's LVI-007).
+mkdir -p "$SPEC_DIR/bugs/open/BUG-090-store-wins"
+sed -i.bak 's/^| PLN-008 | capsule-take | draft | high | — | 2026-08-04 | 2.00 | — | — |/| PLN-008 | capsule-take | draft | high | — | 2026-08-04 | 2.00 | — | BUG-090 |/' \
+  "$SPEC_DIR/plans/REGISTRY.md" && rm -f "$SPEC_DIR/plans/REGISTRY.md.bak"
+waits=$(cd "$SPEC_DIR" && ./scripts/lv-list-specable.sh 2>&1 || true)
+assert_eq "a replan whose dep is not specced yet is not offered" "false" \
+  "$(printf '%s' "$waits" | grep -q '^PLN-008-capsule-take' && echo true || echo false)"
+assert_eq "and says what it waits on" "true" \
+  "$(printf '%s' "$waits" | grep -q 'PLN-008 not offered — replan waits on BUG-090' && echo true || echo false)"
+printf '| PLN-090 | store-wins | draft | med | — | 2026-08-04 | 2.00 | — | — |\n' >> "$SPEC_DIR/plans/REGISTRY.md"
+assert_eq "once the dep has a plan, the replan is offered again" "true" \
+  "$(cd "$SPEC_DIR" && ./scripts/lv-list-specable.sh 2>/dev/null | grep -q '^PLN-008-capsule-take' && echo true || echo false)"
+
 # ═══════════════════════════════════════════════════════════════════════
 section "A rename commits both of its halves (client-a WFI-066)"
 

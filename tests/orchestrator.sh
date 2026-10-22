@@ -671,6 +671,22 @@ plan=$(orch --sweep --dry-run 2>/dev/null)
 assert_eq "dep-blocked plan is skipped" "false" \
   "$(printf '%s' "$plan" | grep -q 'implement PLN-024-eee' && echo true || echo false)"
 
+# A bug filed here but not specced yet is a dependency too (a client's
+# LVI-022): it blocks as `—` until it has a plan, and a bug closed without ever
+# getting one lifts it.
+assert_eq "an unfiled bug is still refused as a dep" "1" \
+  "$("$SCRIPT_DIR/lv-set-deps.sh" PLN-024 BUG-077 >/dev/null 2>&1; echo $?)"
+mkdir -p bugs/open/BUG-077-later && printf '> **ID:** BUG-077\n' > bugs/open/BUG-077-later/bug.md
+assert_ok "a filed, unspecced bug is accepted as a dep" "$SCRIPT_DIR/lv-set-deps.sh" PLN-024 BUG-077
+plan=$(orch --sweep --dry-run 2>/dev/null)
+assert_eq "and it blocks the plan until it has one" "false" \
+  "$(printf '%s' "$plan" | grep -q 'implement PLN-024-eee' && echo true || echo false)"
+mkdir -p bugs/closed && mv bugs/open/BUG-077-later bugs/closed/
+# Asked of the list, not the sweep: implement's max_concurrent would hide it.
+assert_eq "a bug closed without a plan releases it" "new" \
+  "$("$SCRIPT_DIR/lv-list-implementable.sh" 2>/dev/null | grep -F 'PLN-024-eee' | cut -f1)"
+rm -rf bugs/closed/BUG-077-later
+
 # max_concurrent must cap a role. implement:2 with three eligible plans.
 registry_add_row PLN-025 fff ready
 "$SCRIPT_DIR/lv-set-deps.sh" PLN-024 — >/dev/null 2>&1

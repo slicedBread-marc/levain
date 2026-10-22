@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # lv-set-deps.sh <plan-id> <deps>
 # Sets the Deps column (10th) for a plan in REGISTRY.md.
-# Deps are comma-separated plan IDs. Use "—" to clear.
+# Deps are comma-separated plan IDs, or the ID of a bug or brief filed here and
+# not specced yet. Use "—" to clear.
 #
 # Examples:
 #   lv-set-deps.sh PLN-004 PLN-001
 #   lv-set-deps.sh PLN-004 PLN-001,PLN-003
+#   lv-set-deps.sh PLN-004 BUG-081
 #   lv-set-deps.sh PLN-004 client-d:BRF-009
 #   lv-set-deps.sh PLN-004 PLN-001,client-d:BRF-009
 #   lv-set-deps.sh PLN-004 —
@@ -93,8 +95,15 @@ if [ "$deps" != "—" ]; then
       fi
       continue
     fi
-    if ! grep -q "^| $dep |" "$REGISTRY"; then
-      echo "Error: dependency '$dep' not found in registry" >&2
+    # A bug or brief filed here but not specced yet has no row. It keeps its
+    # number when it becomes a plan, and wf_state_of reads it through the PLN
+    # alias, so it blocks as `—` until then and lifts when the plan completes.
+    # Refusing it left a plan nowhere to record the bug it waits on
+    # (a client's LVI-022, LVI-007).
+    if ! grep -q "^| $dep |" "$REGISTRY" &&
+       ! compgen -G "bugs/*/$dep-*" >/dev/null && [ ! -e "bugs/open/$dep" ] &&
+       ! compgen -G "plans/briefs/$dep-*" >/dev/null; then
+      echo "Error: dependency '$dep' not found in registry, bugs/ or plans/briefs/" >&2
       exit 1
     fi
   done

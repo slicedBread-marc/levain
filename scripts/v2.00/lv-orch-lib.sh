@@ -396,6 +396,15 @@ wf_blocking_deps() {
     fi
     dep_state=$(wf_state_of "$dep_id" ${reg:+"$reg"})
     [ "$dep_state" = "complete" ] && continue
+    # A bug named before it had a plan (lv-set-deps.sh, LVI-022) may be closed
+    # without ever getting one. It has no row to read, so ask bugs/closed/.
+    if [ "$dep_state" = "—" ]; then
+      local _root
+      _root=$(dirname "$(dirname "${reg:-$(wf_develop_root)/plans/REGISTRY.md}")")
+      if compgen -G "$_root/bugs/closed/$dep_id-*" >/dev/null || [ -e "$_root/bugs/closed/$dep_id" ]; then
+        continue
+      fi
+    fi
     [ "$dep_state" = "abandoned" ] && dep_id="$dep_id (abandoned)"
     blocking="${blocking:+$blocking,}$dep_id"
   done
