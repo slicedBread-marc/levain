@@ -584,9 +584,12 @@ elif [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
         return s
       }
       BEGIN { done = 0; crit = ENVIRON["LV_CRIT"]; ncrit = norm(crit) }
-      /^#####?[[:space:]]*Manual/ { in_manual = 1; print; next }
+      # Both human lists: /lv-accept defers an unbuilt Chrome-Assisted criterion
+      # through here too, and matching only Manual left its box for a hand edit
+      # (LVI-023 on a client).
+      /^#####?[[:space:]]*(Manual|Chrome-Assisted)/ { in_manual = 1; print; next }
       /^#+[[:space:]]/ {
-        if (in_manual && $0 !~ /^#####?[[:space:]]*Manual/) in_manual = 0
+        if (in_manual && $0 !~ /^#####?[[:space:]]*(Manual|Chrome-Assisted)/) in_manual = 0
       }
       {
         # index() not a regex: the criterion is free text and may contain any
@@ -610,9 +613,9 @@ elif [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
     echo "  ACTION REQUIRED: no matching unchecked criterion in $PLAN_DIR/plan.md." >&2
     echo "  Edit that file now: change the matching '- [ ]' to '- [x]' and append ' — deferred as $next'." >&2
     echo "  Do not complete the plan with the box still empty — an empty box reads as 'silently dropped'." >&2
-    echo "  Unchecked Manual criteria in that file:" >&2
+    echo "  Unchecked Chrome-Assisted and Manual criteria in that file:" >&2
     awk '
-      /^#####?[[:space:]]*Manual/ { in_manual = 1; next }
+      /^#####?[[:space:]]*(Manual|Chrome-Assisted)/ { in_manual = 1; next }
       /^#+[[:space:]]/ { if (in_manual) in_manual = 0 }
       in_manual && /^[[:space:]]*-[[:space:]]*\[[ ]\]/ { printf "    %s\n", $0 }
     ' "$plan_file" >&2

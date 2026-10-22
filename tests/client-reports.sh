@@ -2408,6 +2408,26 @@ assert_eq "the deferred criterion is checked off in its own plan" "true" \
 assert_eq "and the line cites the DC id, so it cannot read as silently dropped" "true" \
   "$(printf '%s' "$defer_line" | grep -q 'deferred as DC-001' && echo true || echo false)"
 
+# An unbuilt Chrome-Assisted criterion is deferred through the same script
+# (/lv-accept step 7.3), and the matcher looked under Manual only, so its box
+# was left for a hand edit (LVI-023 on a client).
+cat > "$DEFER/plans/PLN-018-capsule-wire/plan.md" << 'PLANEOF'
+schema_version: 6
+
+## Goal
+Wire contract.
+
+#### Chrome-Assisted
+- [ ] /marks — shows the raised mark after a second sheet
+
+#### Manual
+- [x] (external) already settled
+PLANEOF
+(cd "$DEFER" && ./scripts/lv-defer-criterion.sh PLN-018 unbuilt \
+   "/marks — shows the raised mark after a second sheet" --prereq BUG-081) >/dev/null 2>&1
+assert_eq "a Chrome-Assisted criterion is checked off too" "true" \
+  "$(grep -F '/marks' "$DEFER/plans/PLN-018-capsule-wire/plan.md" | grep -q '^- \[x\].*deferred as DC-' && echo true || echo false)"
+
 # ═══════════════════════════════════════════════════════════════════════
 section "A formatted criterion still ticks (client-a WFI-137)"
 
