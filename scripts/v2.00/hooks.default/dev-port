@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# kind: decide
+#
+# dev-port — the local port a plan's or bug's worktree runs on.
+#
+# Args: <project_slug> <plan-folder> <worktree-path>. Stdin: none.
+# Exit 0 with one port number on stdout. Exit 3 when there is no allocator,
+# and lv-plan-port.sh then uses 8100 + the plan number. Any other exit is a
+# refusal (e.g. the project's ports are all taken): lv-plan-port.sh fails
+# with the hook's message, and does not fall back, because two projects
+# both falling back to 8100 + N is the collision an allocator exists to stop.
+#
+# An allocator must be idempotent: the same project and plan folder get the
+# same port on every call while the plan lives, because lv-plan-port.sh is
+# called again by every step that needs FEATURE_PORT.
+#
+# This default has no allocator.
+exit 3

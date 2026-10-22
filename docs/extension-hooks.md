@@ -45,6 +45,7 @@ contributor never sees it.
 | `project-registry` | decide | `deploy-all.sh`, `sweep-issues.sh`, `check-profiles.sh`, `lv-rack.sh` | stdout: one absolute project path per line | `$LV_DEPLOYMENTS`, else `deployments.txt` in the library root, else a coordinator's `coordinates:` |
 | `publish-denylist` | add-deny | `check-denylist.sh` | stdout: one Perl regex per line, a name that must never reach a public copy of a repository (a client, a private project, a personal path). The list lives only in a pack | nothing |
 | `overseer-vision` | decide | `/lv-vision` | stdout: the absolute path of a `SKILL.md` meeting [vision-spec.md](vision-spec.md) | `.claude/skills/vision/SKILL.md` in the project, else exit 3 |
+| `dev-port` | decide | `lv-plan-port.sh` (and so every step that sets `FEATURE_PORT`) | `<project_slug> <plan-folder> <worktree-path>` → stdout: one port. Must be idempotent per project and plan. Exit 3 means no allocator; any other non-zero exit is a refusal, and `lv-plan-port.sh` fails rather than fall back | exit 3: `8100 + N` |
 
 The format of every add-deny rule is in `hooks.default/secrets-deny-patterns`. The permission
 baseline is described in [autonomy.md](autonomy.md#permission-baseline-what-an-unattended-worker-may-never-do). A rule-id from a

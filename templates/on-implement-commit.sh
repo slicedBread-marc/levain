@@ -41,14 +41,25 @@ LV_LOCAL_CMD
 # worktree it is in, and a feature worktree carries `.plan-ref`; nothing else is
 # needed. An already-exported value wins, so an explicit override still works.
 #
-# The formula is duplicated from scripts/*/lv-plan-port.sh, which remains the
-# authority. `tests/client-reports.sh` asserts the two agree, because a silent
-# divergence here is exactly the class of bug this block exists to kill.
+# lv-plan-port.sh is the authority: it asks the dev-port hook, so a project
+# with a port allocator gets its leased port here too. The formula below is
+# the fallback for a worktree without the harness scripts, duplicated from
+# lv-plan-port.sh; `tests/client-reports.sh` asserts the two agree, because a
+# silent divergence here is exactly the class of bug this block exists to kill.
 if [ -f "$PROJECT_DIR/.plan-ref" ]; then
     _plan_ref=$(tr -d '[:space:]' < "$PROJECT_DIR/.plan-ref")
     _plan_num=$(printf '%s' "$_plan_ref" | grep -oE '[0-9]+' | head -1)
     if [ -n "$_plan_num" ]; then
         _plan_num=$((10#$_plan_num))
+        if [ -z "${FEATURE_PORT:-}" ] && [ -x "$PROJECT_DIR/scripts/lv-exec.sh" ]; then
+            # A refusal (the project's ports are all taken) starts nothing, rather
+            # than putting the plan on a port another project may hold.
+            _port_env=$(cd "$PROJECT_DIR" && scripts/lv-exec.sh lv-plan-port.sh "$_plan_ref") || {
+                echo "local-env: not started — lv-plan-port.sh refused $_plan_ref (its message is above)" >&2
+                exit 0
+            }
+            FEATURE_PORT=$(printf '%s\n' "$_port_env" | sed -n 's/^export FEATURE_PORT=//p')
+        fi
         export FEATURE_PORT="${FEATURE_PORT:-$((8100 + _plan_num))}"
         export PORT="${PORT:-$FEATURE_PORT}"   # as lv-docker-up.sh exports it
         export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(printf '{{project_slug}}-pln%03d' "$_plan_num")}"

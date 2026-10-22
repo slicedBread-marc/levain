@@ -21,6 +21,8 @@
 #      is a skill — no placeholder left, frontmatter that parses, found by the
 #      default hook, and the spec it tells Claude to read is installed
 #      (LVI-020: this path shipped at 14.8.2 without ever having run).
+#  10. dev-port: lv-plan-port.sh takes a pack's port, falls back to 8100 + N
+#      only on exit 3, and fails on a refusal or a non-port answer.
 #
 # Usage: ./tests/hooks.sh        Exit 0 if all pass, 1 on any failure.
 
@@ -258,6 +260,22 @@ cmp -s "$V" "$TEST_DIR/v.keep" && [ -f "$K/.claude/docs/vision-spec.md" ] \
 fill_template "$K/.claude/docs/vision-spec.md" "$TEST_DIR/bad.md" "FAMILY=Acme: the apps"
 frontmatter "$TEST_DIR/bad.md" >/dev/null 2>&1 && bad "an answer that breaks the frontmatter is caught" \
   || ok "an answer that breaks the frontmatter is caught"
+
+section "10. dev-port"
+D="$TEST_DIR/portpack"
+plan_port() { (cd "$P" && CLAUDE_PROJECT_DIR="$P" LV_PACKS="$1" scripts/lv-exec.sh lv-plan-port.sh PLN-004-x </dev/null 2>/dev/null); }
+assert_eq "no allocator: 8100 + N" "$(plan_port "" | sed -n 's/^export FEATURE_PORT=//p')" "8104"
+mkhook "$D/hooks" dev-port 'echo "$1|$2|$3" > "$(dirname "$0")/args"; echo 42007'
+assert_eq "a pack's port wins" "$(plan_port "$D" | sed -n 's/^export FEATURE_PORT=//p')" "42007"
+assert_eq "and it is asked with the slug, the plan folder and the worktree" "$(cat "$D/hooks/args")" "pipe|PLN-004-x|$P"
+assert_eq "PLAN_ID and the compose name are unchanged" "$(plan_port "$D" | grep -v FEATURE_PORT | tr '\n' ' ')" \
+  "export PLAN_ID=4 export COMPOSE_PROJECT_NAME=pipe-pln004 "
+mkhook "$D/hooks" dev-port 'exit 3'
+assert_eq "a pack with no answer (exit 3) falls back to 8100 + N" "$(plan_port "$D" | sed -n 's/^export FEATURE_PORT=//p')" "8104"
+mkhook "$D/hooks" dev-port 'echo "full" >&2; exit 4'
+plan_port "$D" >/dev/null; assert_eq "a refusal fails lv-plan-port.sh, with no fallback" "$?" "1"
+mkhook "$D/hooks" dev-port 'echo soon'
+plan_port "$D" >/dev/null; assert_eq "an answer that is not a port fails it" "$?" "1"
 
 echo ""
 echo "Passed: $PASS   Failed: $FAIL"
