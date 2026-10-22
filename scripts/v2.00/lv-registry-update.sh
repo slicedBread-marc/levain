@@ -58,6 +58,8 @@
 #   draft -> ready      LV_ALLOW_UNREVIEWED=1   no review of record (WFI-164)
 #   draft -> ready      LV_ALLOW_UNGATED=1      spec-approval open, unanswered
 #                                               (client-b WFI-012)
+#   draft -> ready      LV_ALLOW_BLOCKED=1      its source brief or bug is
+#                                               Blocked (LVI-038)
 #   testing -> complete LV_ALLOW_UNTESTED=1     an eyes:blocking criterion with
 #                                               no tick, no record, no gate
 #                                               (client-d WFI-009)
@@ -335,6 +337,31 @@ if [ "$from_state" = "draft" ] && [ "$to_state" = "ready" ] && [ "${LV_ALLOW_UNG
     echo "       Nothing was changed. LV_ALLOW_UNGATED=1 overrides (reconcile only)." >&2
     exit 1
   fi
+fi
+
+# --- Guard: a plan does not go ready over a block on its own source ---------
+#
+# A brief or bug blocked while a spec worker was already in flight on it was
+# planned anyway: a client's BRF-014 was blocked on BUG-072 "to avoid two
+# specs", and the running worker committed `BRF-014 planned` and took PLN-014
+# to ready minutes later. Nothing re-read the block after dispatch (LVI-038).
+# The source keeps the plan's number, so it is found by that number.
+#
+# LV_ALLOW_BLOCKED=1 once a human has decided this plan is the one to keep.
+if [ "$from_state" = "draft" ] && [ "$to_state" = "ready" ] && [ "${LV_ALLOW_BLOCKED:-}" != "1" ]; then
+  src_num="${plan_id##*-}"
+  for src in plans/briefs/*-"$src_num"-*.md bugs/open/*-"$src_num"-*/bug.md bugs/triaged/*-"$src_num"-*/bug.md; do
+    [ -f "$src" ] || continue
+    printf '%s' "${src#*/}" | grep -qE "(^|/)($LV_BRF_RE|$LV_BUG_RE)-$src_num-" || continue
+    if why=$(wf_brief_blocked "$src"); then
+      echo "Error: $plan_id's source $src is Blocked — refusing 'draft' -> 'ready'." >&2
+      echo "       Blocked: $why" >&2
+      echo "       It was blocked after this spec began. Leave the plan in draft and unclaim;" >&2
+      echo "       the block says where this work is to be specced instead (LVI-038)." >&2
+      echo "       Nothing was changed. LV_ALLOW_BLOCKED=1 overrides, once a human has chosen this plan." >&2
+      exit 1
+    fi
+  done
 fi
 
 # --- Guard: a plan does not finish over a question still open on it --------

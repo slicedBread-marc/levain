@@ -419,7 +419,7 @@ If the user picks a bug BUG-NNN:
 
    If it dies *before* this point, the draft is still in `.git/wf-spec-staging/`. A later run of this skill on the same source starts at step 5 with `PLAN_ID_RESUME=false` and no folder under `plans/`, so **check staging before writing anything**: `ls .git/wf-spec-staging/ 2>/dev/null`. A folder there is your own earlier attempt — fold your draft into it rather than starting over. (`/lv-spec` runs from the develop root, where `.git` is a real directory; it never runs from a feature worktree, where it is a file.)
 
-5b. **Update the brief — here, and commit it here (if this plan came from a brief).** Set the brief's `> **Status:**` to `Planned` and its `> **Plan:**` field to the plan folder, then move its `plans/briefs/INDEX.md` line into the `## Planned` section and append the plan link to it. Then commit both, immediately:
+5b. **Update the brief — here, and commit it here (if this plan came from a brief).** First re-read the source's header: if it now carries `> **Blocked:**`, it was blocked after you were dispatched, usually so it is specced once somewhere else. Stop there — do not mark it `Planned`, leave the plan in `draft`, say so in `progress.md`, and unclaim. `lv-registry-update.sh` refuses `draft → ready` over a blocked source anyway (a client's LVI-038). Set the brief's `> **Status:**` to `Planned` and its `> **Plan:**` field to the plan folder, then move its `plans/briefs/INDEX.md` line into the `## Planned` section and append the plan link to it. Then commit both, immediately:
    ```bash
    scripts/lv-exec.sh lv-commit.sh "spec(PLN-NNN-<slug>): BRF-NNN planned" \
      --add plans/briefs/BRF-NNN-<slug>.md plans/briefs/INDEX.md --branch develop

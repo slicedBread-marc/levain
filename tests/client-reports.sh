@@ -6539,6 +6539,23 @@ git add -A >/dev/null 2>&1 && git commit -qm "add PLN-982" >/dev/null 2>&1
 assert_ok "a plan that was never gated transitions normally" \
   env LV_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-982 draft ready
 
+# A source blocked after the spec began holds the plan in draft (a client's
+# LVI-038: BRF-014 blocked on BUG-072, and the in-flight worker took PLN-014
+# to ready anyway).
+registry_add_row PLN-916 blocked-source draft
+mkdir -p plans/briefs
+printf '# BRF-916: blocked source\n\n> **Status:** Decided\n> **Blocked:** BUG-972 — spec it once, there\n' \
+  > plans/briefs/BRF-916-blocked-source.md
+git add -A >/dev/null 2>&1 && git commit -qm "add PLN-916" >/dev/null 2>&1
+out=$(env LV_ALLOW_UNREVIEWED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-916 draft ready 2>&1; echo "rc=$?")
+assert_eq "draft -> ready is refused while the source brief is Blocked" "true" \
+  "$(printf '%s' "$out" | grep -q 'rc=1' && echo true || echo false)"
+assert_eq "and names the block" "true" \
+  "$(printf '%s' "$out" | grep -q 'BUG-972 — spec it once, there' && echo true || echo false)"
+assert_eq "and the row stays draft" "draft" "$(registry_state PLN-916)"
+assert_ok "LV_ALLOW_BLOCKED=1 overrides once a human has chosen the plan" \
+  env LV_ALLOW_UNREVIEWED=1 LV_ALLOW_BLOCKED=1 "$SCRIPT_DIR/lv-registry-update.sh" PLN-916 draft ready
+
 # ═══════════════════════════════════════════════════════════════════════
 section "A plan does not complete over an open question (LVI-008)"
 
