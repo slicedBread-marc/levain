@@ -111,8 +111,14 @@ If `LV_UNATTENDED=1` is set, print `lv-accept is attended only — accept:manual
 
    `[all]` records PASS for every walked criterion on this build, with Notes `human: [all]`. It is the human's assertion, and the record says so.
 
+   **Open the app yourself; don't hand over a URL to copy.** Once the list is shown, open the base URL (`$PUBLIC_URL` on a tunnel run) for the human:
+   ```bash
+   ../../scripts/lv-exec.sh lv-open-url.sh --fresh [--as <account>] "http://localhost:$FEATURE_PORT<route>"
+   ```
+   **Choose the account; never make the human pick one.** `$TEST_ACCOUNT` often names several (a parent, a learner, an operator), and which one a criterion needs is something you can read from the criterion and the note. Pass it as `--as`. With `test_signin_url` set in `levain.yml`, the window opens already signed in as that account; without it, say the one account to choose (`Sign in as parent@example.test`), never the list. Each account gets its own browser profile, so a criterion that needs a different account is just another `--as`, with no sign-out. Pass `--fresh` the first time you open an account in this session. A recipe step the note says must come first (an invite, a seeded learner) is still yours to do or to say, before the window that depends on it.
+
 7. **For each criterion, in order:**
-   1. Show its text, and a **deeplink** to the route it names or implies. Fall back to the base URL only when no route can be inferred. If the human seems lost, offer to show the two or three criteria before it.
+   1. Show its text, and **open** a deeplink to the route it names or implies with `lv-open-url.sh --as <account>`, the account this criterion needs. Print the URL and the account too, in case the window went somewhere else. Fall back to the base URL only when no route can be inferred. If the human seems lost, offer to show the two or three criteria before it.
    2. **Offer auto-test first when it fits.** If `autoTestGrowth.enabled: true` in `levain.yml` and the criterion matches a recurring shape in `plans/auto-test-log.md`'s Realized section, offer `[a]` as the default. It runs [Auto-test mode](../lv-test/SKILL.md#auto-test-mode) exactly as written there: a subagent that writes test code only, and a 4-column Candidates row on FAIL.
    3. **Let the human describe what they see,** in their own words, and classify it:
       - **Pass** → note it, with Notes `human (/lv-accept)`.
