@@ -10,6 +10,18 @@
 #               approved release tip — one question per deploy instead of two
 #               (a client's LVI-041: 8 gates answered for 3 batches).
 #
+# --recommend <answer>
+#               The answer the worker would give, as it should be recorded. In a
+#               pre-launch project (wf_self_answers: needs-input, spec-approval,
+#               scope-reduction, prior-work) the gate is closed on it at once —
+#               basis `pre-launch`, `--decision approve` for spec-approval — and
+#               a human checks it against the end state (lv-end-state.sh). The
+#               next worker reads it as the answer of record. Anywhere else it is
+#               shown to the human with the question. a client's LVI-034.
+# --floor <why> Ask a human even while pre-launch: the answer spends money,
+#               touches a secret, destroys data, or reaches real people. The
+#               reason goes into the question.
+#
 # --unclaim     Release this artifact's claim once the gate is up. THE DEFAULT
 #               for a plan-scoped gate; see "Claim disposition" below.
 # --hold-claim  Keep the claim. For a caller that is going to keep working the
@@ -137,6 +149,8 @@ force=false
 requestion=false
 claim_disposition=default
 covers_push=false
+recommend=""
+floor=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --context)    context="${2:?--context requires a path}"; shift 2 ;;
@@ -146,6 +160,8 @@ while [ $# -gt 0 ]; do
     --unclaim) claim_disposition=release; shift ;;
     --hold-claim) claim_disposition=hold; shift ;;
     --covers-push) covers_push=true; shift ;;
+    --recommend) recommend="${2:?--recommend requires the answer}"; shift 2 ;;
+    --floor) floor="${2:?--floor requires the reason a human must answer}"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -577,6 +593,8 @@ fi
   if $covers_push; then
     wf_emit GATE_COVERS_PUSH true
   fi
+  [ -z "$recommend" ] || wf_emit GATE_RECOMMENDED "$recommend"
+  [ -z "$floor" ] || wf_emit GATE_FLOOR "$floor"
   if [ -n "$prior_res" ]; then
     wf_emit GATE_PRIOR_QUESTION   "$prior_q"
     wf_emit GATE_PRIOR_RESOLUTION "$prior_res"
@@ -593,5 +611,42 @@ fi
 
 wf_event gate-open "$id" "$gate_name: $question"
 echo "$id: gate '$gate_name' opened — $question"
+
+# ── Pre-launch: the recommendation is the answer (a client's LVI-034) ──────
+#
+# Opened first and closed second, so the question, the answer and who gave it
+# land in the same ledger, findings.md entry and events.log as a human's, and
+# lv-end-state.sh can list them for the review that replaces this gate.
+#
+# Bounded: a gate answered this way three times today on this artifact is
+# asked of a human instead. A worker that keeps asking is in a loop the answer
+# is not ending, and a person is the cheaper way out of it.
+if wf_self_answers "$gate_name"; then
+  if [ -n "$floor" ]; then
+    echo "$id: pre-launch, but held for a human — $floor" >&2
+  elif [ -z "$recommend" ]; then
+    echo "$id: pre-launch — this gate would have been answered by --recommend, and none was given. Parked for a human." >&2
+  else
+    max_self=$(wf_cfg projectProfile.selfAnswerMaxPerDay 3)
+    ledger="$(wf_orch_dir)/gates/resolved/$id.$gate_name.log"
+    today_n=0
+    [ -f "$ledger" ] && today_n=$(grep -F "$LV_SELF_ANSWER_MARK" "$ledger" | grep -c "^$(date -u +%Y-%m-%d)" || true)
+    if [ "$today_n" -ge "$max_self" ]; then
+      wf_event self-answer-capped "$id" "$gate_name: answered by recommendation $today_n times today (projectProfile.selfAnswerMaxPerDay=$max_self) — a human decides this one"
+      echo "$id: pre-launch, but '$gate_name' was self-answered $today_n times today — parked for a human." >&2
+    else
+      decision_args=()
+      [ "$gate_name" = spec-approval ] && decision_args=(--decision approve)
+      if LV_UNATTENDED=1 "$SELF_DIR/lv-gate-close.sh" "$id" "$LV_SELF_ANSWER_MARK: $recommend" \
+           --only "$gate_name" --basis pre-launch ${decision_args[@]+"${decision_args[@]}"} >&2; then
+        wf_event gate-self-answered "$id" "$gate_name: $recommend"
+        echo "$id: '$gate_name' answered by its recommendation (pre-launch) — $recommend"
+        echo "  Act on it. It is the decision of record; lv-end-state.sh lists it for the human's end-state review."
+      else
+        echo "$id: pre-launch self-answer was refused by lv-gate-close.sh — the gate stays open for a human." >&2
+      fi
+    fi
+  fi
+fi
 
 release_claim_if_parked

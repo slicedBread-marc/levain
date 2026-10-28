@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+# pre-launch.sh — a client's LVI-034: a pre-launch project does not stop for
+# questions a worker can answer; a human checks the end state instead.
+#
+#   1. needs-input with --recommend is answered on the spot: no gate stays
+#      open, the ledger and events.log record it as self-answered, and the
+#      next open of the same question sees it as the prior answer.
+#   2. --floor, a missing --recommend, and a non-question gate (stuck) still
+#      park for a human; the recommendation is kept on the open gate.
+#   3. spec-approval self-answers as an approve the next worker can act on.
+#   4. The daily cap: past projectProfile.selfAnswerMaxPerDay the gate parks.
+#   5. lv-gate-close.sh --basis pre-launch is checked, not believed: refused
+#      unattended on a governed project and on a gate outside the set.
+#   6. manual-test: lv-manual-gate.sh answers GATE=false with PRELAUNCH=true
+#      on an eyes:blocking plan with no lane; lv-lane.sh answer moves it to the
+#      post-ship checklist saying pre-launch; the completion guard passes.
+#   7. lv-end-state.sh lists the decisions and the checklist.
+#   8. Governed, or pre-launch past live_from: everything gates as before.
+#
+# Usage: ./tests/pre-launch.sh
+# Exit 0 if all pass, 1 on any failure.
+
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+S="$REPO_ROOT/scripts/v2.00"
+TEST_DIR=""
+PASS=0
+FAIL=0
+
+cleanup() { [ -z "${KEEP:-}" ] && [ -n "$TEST_DIR" ] && [ -d "$TEST_DIR" ] && rm -rf "$TEST_DIR"; return 0; }
+trap cleanup EXIT
+
+ok()  { echo "  ✓ $1"; PASS=$((PASS + 1)); }
+bad() { echo "  ✗ $1"; [ $# -gt 1 ] && echo "      $2"; FAIL=$((FAIL + 1)); }
+assert_eq() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want [$2], got [$3]"; fi; }
+assert_has() { if printf '%s' "$3" | grep -qF -- "$2"; then ok "$1"; else bad "$1" "no [$2] in: $(printf '%s' "$3" | head -c 400)"; fi; }
+assert_not() { if printf '%s' "$3" | grep -qF -- "$2"; then bad "$1" "unexpected [$2]"; else ok "$1"; fi; }
+
+TEST_DIR=$(mktemp -d)
+CLIENT="$TEST_DIR/client"
+G=".claude/orchestrator/gates"
+
+plan() {   # plan <id> <slug>
+  mkdir -p "plans/$1-$2"
+  cat > "plans/$1-$2/plan.md" <<P
+# $2
+
+> **ID:** $1
+> **schema_version:** 6
+
+## Goal
+Show the label.
+
+## Steps
+
+### Step 1: Label
+- **Files:** modify \`src/app.txt\`
+- **What:** the label.
+- **Acceptance:** it shows.
+
+## Verification Checklist
+
+### Human Test Criteria
+
+#### Manual
+- [ ] (eyes:blocking) /print — the label reads naturally next to the preview
+
+## Review
+> **Result:** Approved
+P
+  printf '| %s | %s | %s | — | — | 2026-10-27 | 15.16.0 | — | — |\n' "$1" "$2" "${3:-draft}" >> plans/REGISTRY.md.rows
+}
+
+new_client() {   # new_client <profile yaml lines>
+  rm -rf "$CLIENT"
+  git init -q -b develop "$CLIENT"
+  cd "$CLIENT" || exit 1
+  git config user.email t@t; git config user.name "Op Erator"
+  { printf 'project_slug: "prelaunch-test"\n'; printf '%b' "${1:-}"; } > levain.yml
+  mkdir -p plans .claude/orchestrator src
+  printf 'x\n' > src/app.txt
+  printf '.claude/orchestrator/\n' > .gitignore
+  : > plans/REGISTRY.md.rows
+  plan PLN-001 alpha draft
+  plan PLN-002 beta testing
+  {
+    printf '# Plan Registry\n\n| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n'
+    cat plans/REGISTRY.md.rows
+    printf '\n<!-- Counter: 2 -->\n'
+  } > plans/REGISTRY.md
+  rm plans/REGISTRY.md.rows
+  git add -A; git commit -qm init
+}
+
+PRE='projectProfile:\n  tier: pre-launch\n'
+
+echo "pre-launch.sh"
+echo "============="
+
+# ── 1. needs-input answered by its recommendation ──────────────────────────
+echo ""
+echo "1. needs-input with --recommend is answered on the spot"
+new_client "$PRE"
+out=$(LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 needs-input "Which label wording, (a) Print or (b) Print sheet?" \
+  --recommend "(b) Print sheet — matches the brief" 2>&1); rc=$?
+assert_eq "exit 0" 0 "$rc"
+assert_has "…says it was answered by its recommendation" "answered by its recommendation (pre-launch)" "$out"
+assert_eq "no gate is left open" "" "$(ls $G/*.gate 2>/dev/null)"
+assert_has "the ledger records it as self-answered" "self-answered (pre-launch): (b) Print sheet" "$(cat $G/resolved/PLN-001.needs-input.log)"
+assert_has "the slot says who answered" "pre-launch" "$(cat $G/resolved/PLN-001.needs-input)"
+assert_has "events.log has gate-self-answered" "gate-self-answered	PLN-001	needs-input: (b) Print sheet" "$(cat .claude/orchestrator/events.log)"
+assert_has "findings.md carries the decision for the next worker" "(b) Print sheet" "$(cat plans/PLN-001-alpha/findings.md 2>/dev/null)"
+
+# ── 2. What still parks ────────────────────────────────────────────────────
+echo ""
+echo "2. --floor, no --recommend, and a circuit breaker still park"
+out=$(LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 needs-input "Spend \$40 on a calibration run?" \
+  --recommend "yes" --floor "spends money" 2>&1); rc=$?
+assert_eq "--floor: exit 0" 0 "$rc"
+assert_has "…the gate stays open" "needs-input" "$(cat $G/PLN-001.gate 2>/dev/null)"
+assert_has "…carrying the recommendation for the human" "GATE_RECOMMENDED='yes'" "$(cat $G/PLN-001.gate)"
+assert_has "…and the floor" "GATE_FLOOR='spends money'" "$(cat $G/PLN-001.gate)"
+"$S/lv-gate-close.sh" PLN-001 "no" --only needs-input >/dev/null 2>&1
+out=$(LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 needs-input "Which colour?" 2>&1)
+assert_has "no --recommend: parked, saying why" "none was given" "$out"
+assert_eq "…the gate is open" true "$([ -f $G/PLN-001.gate ] && echo true || echo false)"
+"$S/lv-gate-close.sh" PLN-001 "blue" --only needs-input >/dev/null 2>&1
+LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 stuck "attempt budget spent" --recommend "retry" >/dev/null 2>&1
+assert_eq "stuck is never self-answered" true "$([ -f $G/PLN-001.gate ] && echo true || echo false)"
+"$S/lv-gate-close.sh" PLN-001 "reset" --only stuck >/dev/null 2>&1
+
+# ── 3. spec-approval ───────────────────────────────────────────────────────
+echo ""
+echo "3. spec-approval self-answers as an approve"
+out=$(LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 spec-approval "Approve PLN-001? Review: Approved, 0 Critical" \
+  --recommend "approve — review Approved, nothing open" 2>&1); rc=$?
+assert_eq "exit 0" 0 "$rc"
+assert_eq "no gate is left open" "" "$(ls $G/*.gate 2>/dev/null)"
+eval "$("$S/lv-gate-status.sh" PLN-001 spec-approval 2>/dev/null)"
+assert_eq "lv-gate-status reports it answered" true "${GATE_ANSWERED:-}"
+assert_eq "…as an approve" approve "${GATE_DECISION:-}"
+
+# ── 4. The cap ─────────────────────────────────────────────────────────────
+echo ""
+echo "4. The daily cap"
+printf '  selfAnswerMaxPerDay: 2\n' >> levain.yml
+for i in 1 2; do
+  LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-002 needs-input "Question $i?" --recommend "answer $i" >/dev/null 2>&1
+done
+out=$(LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-002 needs-input "Question 3?" --recommend "answer 3" 2>&1)
+assert_has "the third today parks" "self-answered 2 times today" "$out"
+assert_eq "…with a gate open" true "$([ -f $G/PLN-002.gate ] && echo true || echo false)"
+assert_has "…and an event saying so" "self-answer-capped	PLN-002" "$(cat .claude/orchestrator/events.log)"
+"$S/lv-gate-close.sh" PLN-002 "ok" --only needs-input >/dev/null 2>&1
+
+# ── 5. --basis pre-launch is checked ───────────────────────────────────────
+echo ""
+echo "5. --basis pre-launch is checked, not believed"
+"$S/lv-gate-open.sh" PLN-001 merge-failed "PR would not merge" >/dev/null 2>&1
+out=$(LV_UNATTENDED=1 "$S/lv-gate-close.sh" PLN-001 "retried" --only merge-failed --basis pre-launch 2>&1); rc=$?
+assert_eq "a gate outside the set is refused (exit 4)" 4 "$rc"
+"$S/lv-gate-close.sh" PLN-001 "fixed" --only merge-failed >/dev/null 2>&1
+
+# ── 6. manual-test ─────────────────────────────────────────────────────────
+echo ""
+echo "6. manual-test goes to the end state"
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "lv-manual-gate does not gate an eyes:blocking plan" false "$GATE"
+assert_eq "…saying pre-launch" true "$PRELAUNCH"
+assert_eq "…on a plan with no lane" none "$LANE"
+out=$("$S/lv-lane.sh" answer PLN-002 manual-test 2>&1); rc=$?
+assert_eq "lv-lane.sh answer: exit 0" 0 "$rc"
+assert_has "the criterion is ticked in place" "- [x] (eyes:blocking) /print" "$(cat plans/PLN-002-beta/plan.md)"
+assert_has "…listed on the post-ship checklist as pre-launch" "shipped without eyes by pre-launch (end-state review)" "$(cat plans/PLN-002-beta/plan.md)"
+assert_eq "the completion guard lets it complete" 0 \
+  "$("$S/lv-registry-update.sh" PLN-002 testing complete - >/dev/null 2>&1; echo $?)"
+
+# ── 7. lv-end-state.sh ─────────────────────────────────────────────────────
+echo ""
+echo "7. lv-end-state.sh lists what the human owes"
+out=$("$S/lv-end-state.sh" --count)
+assert_eq "counts" "DECISIONS=4 CHECKLIST=1 DEFERRED=0" "$out"
+out=$("$S/lv-end-state.sh")
+assert_has "the needs-input decision" "(b) Print sheet" "$out"
+assert_has "the spec-approval decision" "approve — review Approved" "$out"
+assert_has "the checklist item, under its plan" "PLN-002-beta" "$out"
+
+# ── 8. Not pre-launch ──────────────────────────────────────────────────────
+echo ""
+echo "8. Governed, or past live_from: gates as before"
+new_client 'projectProfile:\n  tier: governed\n'
+LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 needs-input "Which?" --recommend "(a)" >/dev/null 2>&1
+assert_eq "governed: needs-input parks" true "$([ -f $G/PLN-001.gate ] && echo true || echo false)"
+assert_has "…showing the recommendation" "GATE_RECOMMENDED='(a)'" "$(cat $G/PLN-001.gate)"
+out=$(LV_UNATTENDED=1 "$S/lv-gate-close.sh" PLN-001 "(a)" --only needs-input --basis pre-launch 2>&1); rc=$?
+assert_eq "governed: --basis pre-launch refused (exit 4)" 4 "$rc"
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "governed: an eyes:blocking plan gates" true "$GATE"
+new_client 'projectProfile:\n  tier: pre-launch\n  live_from: "2026-01-01"\n'
+LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 needs-input "Which?" --recommend "(a)" >/dev/null 2>&1
+assert_eq "past live_from: needs-input parks" true "$([ -f $G/PLN-001.gate ] && echo true || echo false)"
+
+echo ""
+echo "Passed: $PASS  Failed: $FAIL"
+[ "$FAIL" -eq 0 ]

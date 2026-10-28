@@ -8,8 +8,10 @@
 # This script is READ-ONLY. It never writes levain.yml. The tier is
 # a recorded stance — the reason specApproval.mode, manualTestGate, and
 # orchestrator.autonomy are set the way they are — and a runtime switch in
-# exactly one place: lv-autonomy.sh lets a pre-launch project push to
-# production unattended until projectProfile.live_from (LVI-036). Applying a tier (or a tier change)
+# two places until projectProfile.live_from: lv-autonomy.sh lets a pre-launch
+# project push to production unattended (LVI-036), and question gates take the
+# worker's recommendation, with human checks moved to the end state
+# (wf_self_answers, lv-end-state.sh, a client's LVI-034). Applying a tier (or a tier change)
 # to those knobs is a deliberate edit, same as any other config change; ask
 # Claude to "apply the <tier> profile" and it edits them by hand, the same
 # way a human would, with the rationale comments intact.

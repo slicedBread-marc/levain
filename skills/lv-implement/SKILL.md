@@ -21,6 +21,8 @@ Rules, in force for the whole session:
    ```bash
    scripts/lv-exec.sh lv-gate-open.sh <PLN-ID> <gate-name> "<question>" --skill lv-implement
    ```
+
+   **Always say what you would answer: `--recommend "<the answer, as it should be recorded>"`.** In a pre-launch project (`projectProfile.tier: pre-launch`, `live_from` unset or ahead) `needs-input`, `spec-approval`, `scope-reduction` and `prior-work` are then answered by it on the spot: the gate closes with your recommendation as the decision of record, and a human checks it later against the end state (`lv-end-state.sh`), not now (a client's LVI-034). The output says `answered by its recommendation` — exit as you would on a parked gate; the next dispatch reads the answer like any other. Recommend the answer you would defend, not the cautious non-answer: "hold for a human" recommends nothing. When a human must decide even before launch — it spends money, sets or rotates a secret, destroys data, or reaches real people — add `--floor "<which, and why>"`. Elsewhere the recommendation is shown to the human with the question.
 4. **Never guess.** Anything not in the table is a [GATE] with gate name `needs-input`.
 5. **Never leave work running when you stop.** Run every build, test suite and
    long job in the **foreground** with a generous timeout, and read its output
@@ -238,7 +240,8 @@ If the command prints nothing, continue to Phase 1 / Phase 2 as normal.
    ```bash
    scripts/lv-exec.sh lv-gate-open.sh PLN-NNN prior-work \
      "<sha> '<subject>' is already on develop and came in outside the pipeline — no feature branch, no verify. It touches <N> file(s); <the overlap line lv-prior-work.sh printed>. (1) accept it as this plan's work — straight to verify; (2) revert it on the feature branch and implement per plan.md; or (3) it is unrelated work that stands — leave it on develop and implement per plan.md unchanged?" \
-     --context plans/PLN-NNN-<slug>/plan.md --skill lv-implement
+     --context plans/PLN-NNN-<slug>/plan.md --skill lv-implement \
+     --recommend "(<1|2|3>) <why, from the overlap>"
    ```
    Then exit 0 without transitioning the registry or creating a branch. Attended, put the same question to the user.
 

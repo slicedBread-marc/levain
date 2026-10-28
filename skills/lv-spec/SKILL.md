@@ -32,6 +32,8 @@ Rules, in force for the whole session:
    ```
    Then **exit cleanly** without changing REGISTRY state. The dispatcher skips gated artifacts; `/lv-attend` will bring a human to it.
 
+   **Always say what you would answer: `--recommend "<the answer, as it should be recorded>"`.** In a pre-launch project (`projectProfile.tier: pre-launch`, `live_from` unset or ahead) `needs-input`, `spec-approval`, `scope-reduction` and `prior-work` are then answered by it on the spot: the gate closes with your recommendation as the decision of record, and a human checks it later against the end state (`lv-end-state.sh`), not now (a client's LVI-034). The output says `answered by its recommendation` — exit as you would on a parked gate; the next dispatch reads the answer like any other. Recommend the answer you would defend, not the cautious non-answer: "hold for a human" recommends nothing. When a human must decide even before launch — it spends money, sets or rotates a secret, destroys data, or reaches real people — add `--floor "<which, and why>"`. Elsewhere the recommendation is shown to the human with the question.
+
    **The claim is released for you.** `lv-gate-open.sh` drops it once the gate is up — gate first, claim second, so the plan is never both unguarded and parked (`docs/guard-ordering.md`). You do not call `lv-unclaim.sh` on a gate exit, and calling it anyway is harmless: the release is idempotent.
 
    **Whatever happens — a finished plan, a blocked brief, nothing to do, or a parked gate — this skill never ends holding a claim.** Every exit path below says so again where it applies, but the rule is unconditional. It is written here because it was once true of only some of them: the Replanning path left a worker holding a claim on a plan it had just moved to `active`, which is WFI-012, and the fix went in there and nowhere else.
@@ -858,9 +860,10 @@ draft → review → ┬─ Approved ─┬─ needs a gate ─→ [GATE: spec-a
    scripts/lv-exec.sh lv-commit.sh "spec(PLN-NNN-<slug>): reviewed — Approved with notes, awaiting approval" --add plans/PLN-NNN-<slug>/ plans/REGISTRY.md
    scripts/lv-exec.sh lv-gate-open.sh PLN-NNN spec-approval \
      "<goal> — Review: Approved with notes (2 rounds, N Warnings). N steps, N automated tests, N manual criteria. Approve?" \
-     --context plans/PLN-NNN-<slug>/plan.md --skill lv-spec
+     --context plans/PLN-NNN-<slug>/plan.md --skill lv-spec \
+     --recommend "approve — <why the Warnings do not block, one line>"
    ```
-   Do **not** write the registry row's state as `ready`. `/lv-attend` closes it with a human, and the `## Review` section you just wrote is what they read.
+   Do **not** write the registry row's state as `ready`. `/lv-attend` closes it with a human, and the `## Review` section you just wrote is what they read. **Pre-launch, it is closed on your recommendation instead** (a client's LVI-034): exit as on any gate, and the next `/lv-spec` finds `GATE_ANSWERED=true` with `GATE_DECISION='approve'` and routes `draft → ready`. Recommend approve only on a review with no open Critical; anything else is not a sign-off question, it is the fix loop.
 
    **If the verdict changes while the gate is parked, refresh the question with `--requestion`.** This happens for real: a human amends the source bug mid-run, the plan is corrected and re-reviewed, and the parked gate still carries the superseded round-2 wording. Re-running `lv-gate-open.sh` plainly prints "already open — left as is" and changes nothing, and close-then-reopen is the re-derived-question anti-pattern (WFI-180/181/182). client-a's PLN-202 had no third option and left the understatement standing (WFI-200).
 
@@ -945,8 +948,10 @@ Findings come in two categories:
        After: <what the plan will actually do>
        Reason: <the reviewer's or your own justification, one line>
        Proceed with the reduced scope?" \
-      --context plans/PLN-NNN-<slug>/plan.md --skill lv-spec
+      --context plans/PLN-NNN-<slug>/plan.md --skill lv-spec \
+      --recommend "<proceed with the reduced scope | restore the capability: how>"
     ```
+    Pre-launch, the recommendation decides it and the reduction is listed for the end-state review (a client's LVI-034) — so say in it what the user loses.
     Stamp the verdict (`lv-review-stamp.sh PLN-NNN --no-commit`) as the last write, commit the amendment (state stays `draft`), leave the sub-goal pushed, then exit 0.
 
     **This gate fires whatever the review verdict says, in gate mode and verdict mode alike.** A reviewer judges whether the plan is *sound*; whether a capability the user asked for may be dropped is a product decision no verdict answers, and the two are orthogonal. The case that motivated it: an amendment narrowed an unattended relay to ANSWER-ONLY for an entirely correct reason — a looped write-capable skill over untrusted input was the exact injection the plan existed to prevent — and its own text said *"that is a deliberate reduction of the Goal's headline capability."* As engineering it was right, so a reviewer would approve it, verdict mode would send it to `ready`, and the user would discover that *"fix this while I'm out"* no longer worked the next time they tried it. It reached a human only incidentally, via a tag that was removed from `gateTags` the same day.

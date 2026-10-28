@@ -142,6 +142,12 @@
 #                               `deploy-approval` have an action to ask about.
 #                  human:<ref>  a human's answer of record exists at <ref>.
 #                               Verified to resolve to a commit or a real file.
+#                  pre-launch   the project is pre-launch and this gate is one a
+#                               worker's recommendation answers there
+#                               (wf_self_answers, a client's LVI-034). Verified by
+#                               asking it. lv-gate-open.sh --recommend is the
+#                               caller; a human checks the answer at the end
+#                               state (lv-end-state.sh), not here.
 #
 # A GATE IS A QUESTION FOR A HUMAN, AND A WORKER MAY NOT ANSWER ITS OWN
 #
@@ -379,7 +385,7 @@ if [ "${LV_UNATTENDED:-0}" = "1" ] && ! $withdraw; then
     echo "  human, and a worker may not answer its own (WFI-227). Nothing was closed." >&2
     echo "  Leave the gate open and exit 0; /lv-attend is where this gets answered." >&2
     echo "  If a decision of record DOES exist, name it: --basis verdict | config |" >&2
-    echo "  autonomy | human:<commit-sha or file path>" >&2
+    echo "  autonomy | human:<commit-sha or file path> | pre-launch" >&2
     wf_event gate-close-refused "$id" "$gate_name: ${basis:-no --basis} — $1"
     exit 4
   }
@@ -440,8 +446,17 @@ if [ "${LV_UNATTENDED:-0}" = "1" ] && ! $withdraw; then
       fi
       ;;
 
+    pre-launch)
+      # The policy WFI-227 found missing, now written down: in a pre-launch
+      # project the operator wants the worker's recommendation taken and checked
+      # at the end state. Asked, not believed — a governed project, a passed
+      # live_from or a gate outside the self-answerable set is refused.
+      wf_self_answers "$gate_name" || \
+        refuse_basis "--basis pre-launch, but '$gate_name' is not self-answered here (projectProfile.tier/live_from, or not one of: $LV_GATE_SELF_ANSWERABLE)"
+      ;;
+
     *)
-      refuse_basis "--basis '$basis' is not in the vocabulary (verdict | config | autonomy | human:<ref>)" ;;
+      refuse_basis "--basis '$basis' is not in the vocabulary (verdict | config | autonomy | human:<ref> | pre-launch)" ;;
   esac
 fi
 

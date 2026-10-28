@@ -673,13 +673,22 @@ answer)
     *) echo "Usage: $0 answer <$LV_PLN-NNN> spec-approval|manual-test" >&2; exit 2 ;;
   esac
   verdict "$PLAN_ID" "$PLAN_MD"
-  if [ "$LANE" = none ]; then exit 3; fi
-  write_lane_section "$PLAN_MD"
-  if [ "$LANE" != express ]; then
-    commit_paths "lane($PLAN_ID): express lane downgraded" "$PLAN_MD"
-    print_verdict
-    wf_event lane-check "$PLAN_ID" "express lane downgraded: ${#LANE_OPEN[@]} reason(s) — $gate not answered"
-    exit 1
+  # Pre-launch answers manual-test for every plan, lane or none: its eyes
+  # criteria are checked against the end state (a client's LVI-034,
+  # lv-manual-gate.sh PRELAUNCH). The express lane still answers first when it
+  # holds, so its record is the one a cleared plan keeps.
+  by="the express lane"
+  if [ "$gate" = manual-test ] && [ "$LANE" != express ] && wf_prelaunch; then
+    by="pre-launch (end-state review)"
+  else
+    if [ "$LANE" = none ]; then exit 3; fi
+    write_lane_section "$PLAN_MD"
+    if [ "$LANE" != express ]; then
+      commit_paths "lane($PLAN_ID): express lane downgraded" "$PLAN_MD"
+      print_verdict
+      wf_event lane-check "$PLAN_ID" "express lane downgraded: ${#LANE_OPEN[@]} reason(s) — $gate not answered"
+      exit 1
+    fi
   fi
 
   if [ "$gate" = spec-approval ]; then
@@ -698,11 +707,11 @@ answer)
     while IFS=$'\t' read -r ln tag crit _; do
       [ -n "$ln" ] || continue
       sed -i.bak "${ln}s/\[ \]/[x]/" "$PLAN_MD" && rm -f "$PLAN_MD.bak"
-      list+="- [ ] ${crit} _(${tag}; shipped without eyes by the express lane, ${today})_"$'\n'
+      list+="- [ ] ${crit} _(${tag}; shipped without eyes by ${by}, ${today})_"$'\n'
       moved=$((moved + 1))
     done <<< "$open"
-    LV_LIST="$list" awk '
-      BEGIN { list = ENVIRON["LV_LIST"] }
+    LV_LIST="$list" LV_BY="$by" awk '
+      BEGIN { list = ENVIRON["LV_LIST"]; by = ENVIRON["LV_BY"] }
       /^## / { if (inside && !done) { printf "%s\n", list; done = 1 }
                inside = ($0 ~ /^## Post-ship checklist([ \t]|$)/) ? 1 : 0 }
       { print }
@@ -710,17 +719,22 @@ answer)
         if (inside && !done) { printf "%s", list; done = 1 }
         if (!done) {
           print "## Post-ship checklist"
-          print "> Criteria this plan shipped without a human seeing them, because the express lane"
-          print "> answered its manual test. Check them after it is live; a failure is a new bug."
+          print "> Criteria this plan shipped without a human seeing them, because " by
+          print "> answered its manual test. Check them after it ships (lv-end-state.sh lists"
+          print "> them); a failure is a new bug."
           print ""
           printf "%s", list
         }
       }
     ' "$PLAN_MD" > "$PLAN_MD.tmp" && mv "$PLAN_MD.tmp" "$PLAN_MD"
   fi
-  commit_paths "lane($PLAN_ID): manual-test answered by the express lane — $moved criteria to the post-ship checklist" "$PLAN_MD"
-  wf_event autonomy-use "$PLAN_ID" "express: manual-test answered by the express lane — $moved criteria moved to the post-ship checklist ($DECL_TEXT)"
-  echo "$PLAN_ID: manual-test answered by the express lane — $moved criteria moved to the post-ship checklist."
+  commit_paths "lane($PLAN_ID): manual-test answered by $by — $moved criteria to the post-ship checklist" "$PLAN_MD"
+  if [ "$by" = "the express lane" ]; then
+    wf_event autonomy-use "$PLAN_ID" "express: manual-test answered by the express lane — $moved criteria moved to the post-ship checklist ($DECL_TEXT)"
+  else
+    wf_event autonomy-use "$PLAN_ID" "pre-launch: manual-test answered for the end-state review — $moved criteria moved to the post-ship checklist"
+  fi
+  echo "$PLAN_ID: manual-test answered by $by — $moved criteria moved to the post-ship checklist."
   exit 0
   ;;
 

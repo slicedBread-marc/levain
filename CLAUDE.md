@@ -153,9 +153,12 @@ is a rewrite.
 
 Each client can declare `projectProfile.tier` (`pre-launch` | `governed`) in its own
 `levain.yml` — the recorded reason its `specApproval.mode`, `manualTestGate`
-and `orchestrator.autonomy` are set the way they are. It does not change gate
-behavior itself; it is what a human or Claude checks before re-tuning those knobs, and
-what flags drift once they've fallen out of step with the declared tier.
+and `orchestrator.autonomy` are set the way they are, and what flags drift once they've
+fallen out of step with the declared tier. It is a runtime switch in two places, both
+while `pre-launch` and before `live_from`: `production-push` runs unattended (LVI-036),
+and question gates are answered by the worker's `--recommend` while `manual-test` defers
+to the post-ship checklist, all listed for an end-state review by `lv-end-state.sh`
+(a client's LVI-034, `docs/project-profile.md`).
 
 ```bash
 ./check-profiles.sh              # tier + drift per client

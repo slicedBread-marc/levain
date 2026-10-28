@@ -73,8 +73,9 @@ That is the whole job. **The auto-stop is detached — do not sleep, wait, poll,
 
 **Never guess.** A start result not in its table is a [GATE]:
 ```bash
-scripts/lv-exec.sh lv-gate-open.sh <PLN-ID> needs-input "<question>" --skill lv-stage
+scripts/lv-exec.sh lv-gate-open.sh <PLN-ID> needs-input "<question>" --skill lv-stage --recommend "<your answer>"
 ```
+In a pre-launch project the recommendation answers it on the spot (a client's LVI-034); add `--floor "<why>"` when a human must decide anyway.
 If no plan is in play, or it is a stop, there is nothing to gate — report the situation to the user and stop.
 
 ## Configuration

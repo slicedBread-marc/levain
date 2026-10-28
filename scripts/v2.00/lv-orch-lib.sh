@@ -1213,6 +1213,36 @@ wf_prelaunch() {
   [ "$live" \> "$today" ]
 }
 
+# ── Pre-launch self-answer (a client's LVI-034) ─────────────────────────────
+#
+# A pre-launch project runs to its end state without stopping for questions a
+# worker can answer. The worker names its recommended answer when it opens the
+# gate (lv-gate-open.sh --recommend), the gate is closed on that answer at once,
+# and a human checks the result against the end state (lv-end-state.sh), not
+# plan by plan. a client's PLN-075 sat on a needs-input gate re-asking a ruling
+# three minutes old, blocking four plans, with an acceptable default in hand.
+#
+# Only questions. `stuck` and `spec-stuck` are circuit breakers, not questions —
+# self-answering one turns a loop the budget caught into a loop nothing catches.
+# Promotion gates have their own surface (lv-autonomy.sh, LVI-036), and
+# manual-test is answered by lv-manual-gate.sh deferring eyes criteria to the
+# post-ship checklist, because a closed manual-test gate moves no plan.
+LV_GATE_SELF_ANSWERABLE="needs-input spec-approval scope-reduction prior-work"
+LV_SELF_ANSWER_MARK="self-answered (pre-launch)"
+
+# wf_self_answers <gate-name> → exit 0 when a worker's recommendation stands in
+# for a human at this gate in this project. No gate name: is pre-launch
+# self-answer on at all.
+wf_self_answers() {
+  local g
+  wf_prelaunch || return 1
+  [ -n "${1:-}" ] || return 0
+  for g in $LV_GATE_SELF_ANSWERABLE; do
+    [ "$g" = "$1" ] && return 0
+  done
+  return 1
+}
+
 # wf_plan_files <plan.md> → one distinct path per line, from the steps'
 # `**Files:**` lines. A bare name after a path on the same line is relative to
 # that path's directory: "create `src/a/x.ts`, `y.ts`" is src/a/x.ts and

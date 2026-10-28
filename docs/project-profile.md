@@ -14,8 +14,8 @@ standing release/deploy authorization.
 
 ## The one rule
 
-`projectProfile` is a **recorded stance, not a runtime switch** — with one
-exception, below. Nothing else in the pipeline reads `projectProfile.tier` to
+`projectProfile` is a **recorded stance, not a runtime switch** — with two
+exceptions, below. Nothing else in the pipeline reads `projectProfile.tier` to
 change gate behavior — every other gate still runs on `specApproval.mode`,
 `manualTestGate`, and `orchestrator.autonomy` exactly as it always has, read
 directly, with their own explicit values.
@@ -28,6 +28,34 @@ defaults. From `live_from` on, the project behaves as governed: the push needs
 a standing grant, the express lane, or a person at the `production-push` gate.
 See [Going live](#going-live-live_from) for why this reverses the original
 design.
+
+**The second exception (a client's LVI-034): a pre-launch project does not stop
+for questions.** While `wf_prelaunch` holds:
+
+- `needs-input`, `spec-approval`, `scope-reduction` and `prior-work` are
+  answered by the worker's own recommendation (`lv-gate-open.sh --recommend`),
+  closed with `--basis pre-launch`, which `lv-gate-close.sh` verifies. A worker
+  passes `--floor "<why>"` when a human must decide anyway: money, secrets,
+  destroyed data, real people. More than `selfAnswerMaxPerDay` (default 3) on
+  one artifact and gate in a day parks for a human, because that is a loop.
+- `manual-test` does not gate: `lv-manual-gate.sh` answers `GATE=false` with
+  `PRELAUNCH=true`, and `/lv-test` moves the open eyes criteria to the plan's
+  post-ship checklist (`lv-lane.sh answer <PLN> manual-test`).
+- Neither is dropped. `lv-end-state.sh` lists every self-answered decision and
+  every unticked post-ship item, for a human to check **against the end state**
+  — at the goal's milestone, and before `live_from` is set.
+
+Circuit breakers (`stuck`, `spec-stuck`) and promotion gates are unchanged.
+`governed` behaves exactly as before. The operator's reason, 2026-10-27: work
+under development should reach its end state as fast as possible, and a
+recommended answer is acceptable far more often than a parked question is
+worth; only a live project keeps per-plan gates.
+
+```yaml
+projectProfile:
+  tier: pre-launch
+  selfAnswerMaxPerDay: 3      # optional
+```
 
 What the tier gives you is:
 

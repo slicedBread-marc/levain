@@ -57,6 +57,10 @@
 #   PROGRESS_TREE — the build test-progress.md's `TREE` stamp names
 #   PROGRESS_TREE_STALE='true|false' — that stamp is not the build here now, so
 #     the suite result recorded under it is another build's (LVI-029)
+#   PRELAUNCH='true|false' — GATE is false because the project is pre-launch
+#     (wf_prelaunch): open eyes criteria go to the post-ship checklist with
+#     `lv-lane.sh answer <PLN> manual-test`, for the end-state review
+#     (a client's LVI-034). Takes precedence over every rule below the lane.
 #   LANE='express|normal|none' — lv-lane.sh's verdict. Under `express`, open
 #     `#### Manual` eyes criteria do not gate: /lv-test moves them to the plan's
 #     post-ship checklist with `lv-lane.sh answer <PLN> manual-test` (LVI-025).
@@ -407,6 +411,7 @@ eval "$("$(dirname "$0")/lv-lane.sh" status "$plan_id" 2>/dev/null || true)"
 # ── Decide ────────────────────────────────────────────────────────────────
 gate=true
 reason=""
+PRELAUNCH=false
 
 if [ "$LANE" = express ] && { [ "$open_count" -gt 0 ] || [ "${MANUAL_OPEN_UNTAGGED:-0}" -gt 0 ]; }; then
   # A human declared this plan safe to ship unseen, and lv-lane.sh has just
@@ -414,6 +419,15 @@ if [ "$LANE" = express ] && { [ "$open_count" -gt 0 ] || [ "${MANUAL_OPEN_UNTAGG
   # they move to a post-ship checklist, they are not dropped.
   gate=false
   reason="express lane: $MANUAL_OPEN_BLOCKING open eyes:blocking criteria go to the post-ship checklist (lv-lane.sh answer $plan_id manual-test); cosmetic ones never block completion"
+elif wf_prelaunch && { [ "$open_count" -gt 0 ] || [ "${MANUAL_OPEN_UNTAGGED:-0}" -gt 0 ] || [ "$MANUAL_OPEN_COSMETIC" -gt 0 ]; }; then
+  # Pre-launch: human checks run against the end state, not plan by plan
+  # (a client's LVI-034). The criteria are not dropped — lv-lane.sh answer moves
+  # them to the plan's post-ship checklist, which lv-end-state.sh collects for
+  # the review. Cosmetic ones go too, so nothing a person meant to look at is
+  # left unchecked and unlisted.
+  gate=false
+  PRELAUNCH=true
+  reason="pre-launch: $MANUAL_OPEN_BLOCKING eyes:blocking, $MANUAL_OPEN_COSMETIC cosmetic and ${MANUAL_OPEN_UNTAGGED:-0} untagged open criteria go to the end-state review (lv-lane.sh answer $plan_id manual-test)"
 elif [ "$open_count" -lt "$cfg_min_eyes" ]; then
   gate=false
   reason="$open_count unresolved eyes criteria, below minEyesCriteria=$cfg_min_eyes"
@@ -491,7 +505,11 @@ if [ "$chrome_unrecorded" -gt "$chrome_excused" ]; then
     reason="$chrome_unrecorded Chrome-Assisted criteria have no result — test-progress.md does not exist: $chrome_missing; $reason"
   fi
 fi
-if [ "$chrome_untested" -gt 0 ]; then
+if [ "$chrome_untested" -gt 0 ] && $PRELAUNCH; then
+  # A recorded reason (needs: device, a headless ERROR, a disagreement) is a
+  # question for the human — at the end state, while pre-launch.
+  reason="$chrome_untested Chrome-Assisted criteria untested go to the end-state review too: $chrome_reasoned; $reason"
+elif [ "$chrome_untested" -gt 0 ]; then
   gate=true
   reason="$chrome_untested Chrome-Assisted criteria untested (reason in test-progress.md): $chrome_reasoned; $reason"
 fi
@@ -548,6 +566,7 @@ fi
 wf_emit PROGRESS_TREE        "$tree_stamp"
 wf_emit PROGRESS_TREE_STALE  "$tree_stale"
 wf_emit LANE                 "$LANE"
+wf_emit PRELAUNCH            "$PRELAUNCH"
 
 if $explain; then
   {

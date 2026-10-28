@@ -518,6 +518,12 @@ Scoped to one artifact: see [One artifact](#one-artifact) — stop after it. Oth
 
 When the queue is empty: "Queue clear. The daemon will pick these up on its next sweep." If the daemon isn't running (check `/lv-tray`), mention that too.
 
+**Pre-launch, the queue is short on purpose** — question gates were answered by the workers' recommendations and eyes criteria went to post-ship checklists (a client's LVI-034). End by showing what is owed at the end state:
+```bash
+scripts/lv-exec.sh lv-end-state.sh --count
+```
+When it is not all zeros, offer `scripts/lv-exec.sh lv-end-state.sh` and walk it with the user against the running app: a decision they disagree with becomes a directive or a bug, a checklist item that holds is ticked in its plan.md, one that does not is a `/lv-bug` naming the plan.
+
 ## Rules
 
 - **Never edit source code.** You route to `/lv-implement`; you do not fix.
