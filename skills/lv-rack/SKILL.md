@@ -43,7 +43,9 @@ board: the launchers read keys in the owner's own terminal, and `lv-services.sh`
 The grid's `services` row reads running/available per project: `-` for none declared, otherwise
 `N/M` (`0/5` when none run), in green once any has a live beacon.
 
-**The live board is a terminal program.** Its drill-down, daemon toggles (`d`), stop/resume of
+**The live board is a terminal program.** Its drill-down (Enter on a `daemon` cell opens that
+daemon's menu — start/stop, sweep, kill, its logs — and on a `services` cell the services screen
+for that project alone), daemon toggles (`d`), stop/resume of
 every daemon (`s`/`R`), attend (`t` — on the release or deploy row it starts `/lv-release` or
 `/lv-deploy` instead), the dormant-project toggle (`z`, which offers to stop a running daemon first), the services view (`v`), the library deploy (`U`)
 and the blind library sweep (`W`) need a real terminal, so point the owner at

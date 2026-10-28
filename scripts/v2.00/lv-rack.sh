@@ -82,7 +82,9 @@
 # `project-a / running` lists the three live workers, one of those opens
 # its plan, its files and its logs, and a log opens in a pager that can
 # FOLLOW a worker still writing it. Esc bubbles back up one level at a time,
-# m returns to the board in one key from any depth. `a` is the old project action menu, still one
+# m returns to the board in one key from any depth. Enter on a daemon cell opens
+# that daemon's menu (start/stop, sweep, kill, its logs), and on a services cell
+# the services screen for that project alone. `a` is the old project action menu, still one
 # keypress away, and `d` starts or stops the highlighted project's daemon
 # outright — Enter used to open that menu before the drill-down took the key,
 # so the toggle keeps a key of its own rather than living two levels down.
@@ -370,7 +372,13 @@ sel_name=""
 # One list, so a row added to the grid and a row you can open are the same
 # thing by construction — the alternative is a board with a cell nothing
 # happens on and no way to tell which.
-ROW_LABELS=(daemon running gates attn ideas draft ready active verify testing
+#
+# Two rows open a screen of this script's own instead of a drill: Enter on
+# `daemon` opens daemon_menu (start/stop, sweep, kill, its logs) and Enter on
+# `services` opens services_screen for that one project. Both used to be
+# reachable only by a letter (`d`, `v`), and `services` was drawn on the grid
+# but skipped by the cursor.
+ROW_LABELS=(daemon services running gates attn ideas draft ready active verify testing
             accept complete abandoned release deploy registry)
 sel_row=""
 
@@ -2026,6 +2034,8 @@ drill_rows_lines() {
   for label in "${ROW_LABELS[@]}"; do
     case "$label" in
       daemon)   val="${f_daemon[$i]}" ;;
+      services) local sdecl sup; read -r sdecl sup <<< "$(sv_counts "${paths[$i]}")"
+                val="${sup:-0}/${sdecl:-0}" ;;
       running)  val="${f_running[$i]}" ;;
       gates)    val="${f_gates[$i]}"
                 [ "${f_gates_stuck[$i]:-0}" -gt 0 ] 2>/dev/null && val="$val (${f_gates_stuck[$i]} stuck)" ;;
@@ -2243,6 +2253,12 @@ drill_browse() {
           st_sel[$depth]="$sel"
           case "${d_kind[$sel]}" in
             list)
+              # The services row has no node in lv-tray-drill.sh: it is this
+              # script's own screen, so open that instead of pushing a level.
+              if [ "${d_targ[$sel]}" = "row services" ]; then
+                services_screen "$dpath"; $to_main && { node_job_cancel; break; }
+                redraw=true; continue
+              fi
               node_job_cancel
               st_title+=("${d_disp[$sel]}"); st_argv+=("${d_targ[$sel]}"); st_sel+=(0)
               break ;;
@@ -2408,6 +2424,59 @@ project_menu() {
       R)   pm_action "$i" 7; printf '\n  (press any key to continue) '; read_key key ;;
       *) : ;;
     esac
+  done
+}
+
+# daemon_menu <index> — what Enter on a daemon cell opens: the actions that are
+# about the daemon itself, a subset of project_menu's, run through pm_action so
+# the two cannot drift. "open its logs" is the drill the daemon row used to open
+# directly. Same keys as project_menu: arrows + Enter, a digit, b or Esc, m.
+daemon_menu() {
+  local i="$1" key sub=0 a pick
+  local -a acts=(0 1 2 3 daemon-logs)
+  local -a labels=("" "run one sweep now" "kill daemon + all live workers" "tail recent events" "open its logs")
+  local n="${#acts[@]}"
+  while true; do
+    printf '\033[2J\033[H'
+    printf '%s%s%s / daemon  %s%s%s\n' "$B" "${names[$i]}" "$R" "$DIM" "${paths[$i]}" "$R"
+    if [ "${statuses[$i]}" != "ok" ]; then
+      printf '  status: %s — orchestrator unreachable\n  b) back   m) main\n' "${statuses[$i]}"
+      read_key key
+      $key_eof && return
+      [ "$key_rc" -eq 0 ] || continue
+      case "$key" in ''|b|B|$'\x1b') return ;; m|M) to_main=true; return ;; esac
+      continue
+    fi
+    labels[0]="$([ "${f_daemon[$i]}" = "running" ] && echo "stop daemon" || echo "start daemon")"
+    printf '  daemon: %s   running: %s\n\n' "${f_daemon[$i]}" "${f_running[$i]}"
+    for a in "${!labels[@]}"; do
+      if [ "$a" -eq "$sub" ]; then printf '  %s> %d) %s%s\n' "$REV" "$((a + 1))" "${labels[$a]}" "$R"
+      else printf '    %d) %s\n' "$((a + 1))" "${labels[$a]}"; fi
+    done
+    printf '  b) back   m) main\n\n  arrows + enter, a digit, b or m\n'
+
+    read_key key
+    $key_eof && return
+    [ "$key_rc" -eq 0 ] || continue
+    pick=""
+    case "$key" in
+      $'\x1b[A') sub=$(( (sub - 1 + n) % n )) ;;
+      $'\x1b[B') sub=$(( (sub + 1) % n )) ;;
+      ''|$'\n') pick="$sub" ;;
+      [1-9]) [ "$key" -le "$n" ] && pick=$((key - 1)) ;;
+      d|D) pick=0 ;;
+      b|B|$'\x1b') return ;;
+      m|M) to_main=true; return ;;
+    esac
+    [ -n "$pick" ] || continue
+    if [ "${acts[$pick]}" = daemon-logs ]; then
+      # The browser paints its own screens and ends on Esc; no prompt on top.
+      drill_browse "$i" "daemon" "row daemon"
+      $to_main && return
+      continue
+    fi
+    pm_action "$i" "${acts[$pick]}"
+    printf '\n  (press any key to continue) '; read_key key
   done
 }
 
@@ -2785,11 +2854,13 @@ sv_counts() {
 
 sv_reset() { SV_P=(); SV_NAME=(); SV_ID=(); SV_STATE=(); SV_DETAIL=(); SV_CO=(); SV_BRANCH=(); SV_COMMIT=(); SV_SINCE=(); SV_FLAGS=(); }
 
+# sv_collect [project_path] — every project's services, or only that one's.
 sv_collect() {
-  local p out id st de co br cm si pid fl
+  local only="${1:-}" p out id st de co br cm si pid fl
   sv_reset
   while IFS= read -r p; do
     [ -n "$p" ] || continue
+    [ -z "$only" ] || [ "$p" = "$only" ] || continue
     has_harness "$p" || continue
     out=$(cd "$p" && hx lv-services.sh status 2>/dev/null) || continue
     while IFS=$'\t' read -r id st de co br cm si pid fl; do
@@ -2859,17 +2930,22 @@ sv_pick_worktree() {
   sv_run "$i" start "${SV_ID[$i]}" --checkout "${wts[$((choice - 1))]%%$'\t'*}"
 }
 
-# services_screen — the list behind `v`. ↑↓ move, u start from main, w start from a worktree,
-# x stop, o the project's own console, r refresh, esc back, m main.
+# services_screen [project_path] — the list behind `v`, or behind Enter on one project's
+# services cell, scoped to that project (`v` there widens it to every project).
+# ↑↓ move, u start from main, w start from a worktree, x stop, o the project's own console,
+# r refresh, esc back, m main.
 services_screen() {
-  local key sel=0 i n
+  local only="${1:-}" key sel=0 i n title widen=""
   printf '\033[2J\033[H  %scollecting services…%s\n' "$DIM" "$R"
-  sv_collect
+  sv_collect "$only"
   while true; do
     n="${#SV_ID[@]}"
-    printf '\033[2J\033[H%sSERVICES%s  %s↑↓ move · u start · w start from a worktree · x stop · o console · r refresh · esc back · m main%s\n\n' "$B" "$R" "$DIM" "$R"
+    title="SERVICES"; widen=""
+    [ -n "$only" ] && { title="SERVICES — $(basename "$only")"; widen=" · v all projects"; }
+    printf '\033[2J\033[H%s%s%s  %s↑↓ move · u start · w start from a worktree · x stop · o console · r refresh%s · esc back · m main%s\n\n' "$B" "$title" "$R" "$DIM" "$widen" "$R"
     if [ "$n" -eq 0 ]; then
-      printf '  %sno project declares services: in levain.yml%s\n' "$DIM" "$R"
+      if [ -n "$only" ]; then printf '  %s%s declares no services: in levain.yml%s\n' "$DIM" "$(basename "$only")" "$R"
+      else printf '  %sno project declares services: in levain.yml%s\n' "$DIM" "$R"; fi
     else
       printf '    %s%-16s %-12s %-14s %-34s %s%s\n' "$B" PROJECT SERVICE STATE CHECKOUT SINCE "$R"
       [ "$sel" -lt "$n" ] || sel=0
@@ -2880,11 +2956,12 @@ services_screen() {
     case "$key" in
       $'\x1b[A'|k) [ "$n" -gt 0 ] && sel=$(( (sel - 1 + n) % n )) ;;
       $'\x1b[B'|j) [ "$n" -gt 0 ] && sel=$(( (sel + 1) % n )) ;;
-      u|U) [ "$n" -gt 0 ] && { sv_run "$sel" start "${SV_ID[$sel]}"; sv_collect; } ;;
-      w|W) [ "$n" -gt 0 ] && { sv_pick_worktree "$sel"; sv_collect; } ;;
-      x|X) [ "$n" -gt 0 ] && { sv_run "$sel" stop "${SV_ID[$sel]}"; sv_collect; } ;;
+      u|U) [ "$n" -gt 0 ] && { sv_run "$sel" start "${SV_ID[$sel]}"; sv_collect "$only"; } ;;
+      w|W) [ "$n" -gt 0 ] && { sv_pick_worktree "$sel"; sv_collect "$only"; } ;;
+      x|X) [ "$n" -gt 0 ] && { sv_run "$sel" stop "${SV_ID[$sel]}"; sv_collect "$only"; } ;;
       o|O) [ "$n" -gt 0 ] && sv_run "$sel" console ;;
-      r) printf '\033[2J\033[H  %scollecting services…%s\n' "$DIM" "$R"; sv_collect ;;
+      r) printf '\033[2J\033[H  %scollecting services…%s\n' "$DIM" "$R"; sv_collect "$only" ;;
+      v|V) [ -n "$only" ] && { only=""; sel=0; printf '\033[2J\033[H  %scollecting services…%s\n' "$DIM" "$R"; sv_collect; } ;;
       $'\x1b') break ;;
       m|M) to_main=true; break ;;
     esac
@@ -3147,7 +3224,11 @@ if $watch_mode; then
         render_frame ;;
       ''|$'\n')                         # enter — open the highlighted CELL
         printf '\033[?25h'
-        drill_browse "$sel_idx" "${ROW_LABELS[$sel_row]}" "row ${ROW_LABELS[$sel_row]}"
+        case "${ROW_LABELS[$sel_row]}" in
+          daemon)   daemon_menu "$sel_idx" ;;
+          services) services_screen "${paths[$sel_idx]}" ;;
+          *)        drill_browse "$sel_idx" "${ROW_LABELS[$sel_row]}" "row ${ROW_LABELS[$sel_row]}" ;;
+        esac
         resume_board
         age_sig=$(age_signature)
         ;;

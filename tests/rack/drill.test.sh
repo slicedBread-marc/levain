@@ -112,7 +112,7 @@ printf '\x1b' | drill_browse 0 "ideas" "row ideas" > "$OUT" 2>&1
 says "an unknown node reports the harness" "$OUT" "needs a newer harness"
 
 # ── 5. The cell cursor highlights exactly one cell ───────────────────────
-sel_idx=0; sel_row=1     # ROW_LABELS[1] = running
+sel_idx=0; sel_row=2     # ROW_LABELS[2] = running
 if sel_cell "running" 0 && ! sel_cell "gates" 0; then
   ok "sel_cell matches only the selected row"
 else

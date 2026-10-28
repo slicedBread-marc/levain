@@ -110,6 +110,29 @@ else ok "digit 9 is not an action"; fi
 says "the portfolio actions are listed" "$FIX/t6.out" "stop ALL daemons"
 says "so is the resume half"            "$FIX/t6.out" "resume the daemons that were stopped"
 
+# ── Enter on a daemon cell: the daemon's own menu, same dispatch ────────
+run_dmenu() { printf '%s' "$1" | daemon_menu 0 > "$2" 2>&1; }
+
+seed off
+run_dmenu '1 b' "$FIX/d1.out"
+says "daemon menu: 1 starts a stopped daemon" "$WF_MENU_CALLS" "wf-orchestrate.sh --daemon"
+says "and names the cell it opened from"      "$FIX/d1.out"    "alpha / daemon"
+
+seed running
+run_dmenu 'd b' "$FIX/d2.out"
+says "daemon menu: d stops a running daemon" "$WF_MENU_CALLS" "wf-orchestrate.sh --stop"
+says "and labels the action for it"          "$FIX/d2.out"    "1) stop daemon"
+
+seed off
+run_dmenu '2 b' "$FIX/d3.out"
+says "daemon menu: 2 runs one sweep" "$WF_MENU_CALLS" "wf-orchestrate.sh --sweep"
+says "and offers the daemon's logs"  "$FIX/d3.out"    "open its logs"
+
+seed off
+run_dmenu $'\x1b' "$FIX/d4.out"
+if [ -s "$WF_MENU_CALLS" ]; then bad "daemon menu: esc acts on nothing"
+else ok "daemon menu: esc acts on nothing"; fi
+
 printf '\n'
 if [ "$fails" -eq 0 ]; then printf 'all assertions passed\n'; exit 0; fi
 printf '%d assertion(s) failed\n' "$fails"; exit 1
