@@ -44,7 +44,8 @@
 #                                for records written before it existed, and for
 #                                gates on artifacts with no plan.md.
 #   GATE_RESOLUTION='approved'   the recorded resolution (empty if never closed)
-#   GATE_QUESTION='…'            the question AS ASKED when it was answered, so
+#   GATE_QUESTION='…'            the question AS ASKED: the open gate's own while
+#                                one is open, otherwise the one that was answered, so
 #                                a caller can replay it instead of writing it
 #                                again from what it happens to see now — five
 #                                regenerations of one question accumulated three
@@ -82,7 +83,8 @@
 #                                every other gate, and on a promotion gate
 #                                closed without `--decision`.
 #   GATE_PROMOTE_TIP='<sha>'     the source-branch tip that approval was given
-#                                for. Empty likewise. lv-promote-approval.sh is
+#                                for — or, while a gate is open, the tip it is
+#                                asking about. Empty likewise. lv-promote-approval.sh is
 #                                what compares it; this only reports it.
 #
 # GATE_ANSWERED=true is the "do not re-open" signal. GATE_STALE=true means the
@@ -312,12 +314,19 @@ fi
 # and GATE_STALE='true', all from the previous replan's ledger (a client's
 # LVI-017). The open gate file carries the prior answer as
 # GATE_PRIOR_RESOLUTION for anyone who needs it.
+#
+# The question and the promotion tip too: they are the open gate's own, not the
+# finished round's. Reported off the ledger, an open DEPLOY gate on DC-091 read
+# as the earlier DC-090 approval's question and tip, and an open spec-approval
+# re-asked on round 3 read as round 2's text (two clients' LVI-045/033).
 if [ "$open" = "true" ]; then
   resolution=""
   resolved_at=""
   decision=""
   stale=false
   withdrawn=false
+  question=$(wf_gate_field "$gate_file" GATE_QUESTION)
+  promote_tip=$(wf_gate_field "$gate_file" GATE_PROMOTE_TIP)
 fi
 
 wf_emit GATE_OPEN        "$open"

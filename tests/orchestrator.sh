@@ -2334,6 +2334,14 @@ eval "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-902 spec-approval)"
 assert_eq "an edit to the spec still goes stale" "true" "$GATE_STALE"
 assert_eq "and stops reading as answered" "false" "$GATE_ANSWERED"
 
+# Re-asked on the revised plan: the open gate's question is the one reported,
+# not the finished round's (two clients' LVI-045/033).
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-902 spec-approval "round 2: approve the steps?" >/dev/null 2>&1
+eval "$("$SCRIPT_DIR/lv-gate-status.sh" PLN-902 spec-approval)"
+assert_eq "an open gate is reported open" "true" "$GATE_OPEN"
+assert_eq "…with its own question, not the answered round's" "round 2: approve the steps?" "$GATE_QUESTION"
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-902 "approved" >/dev/null 2>&1
+
 # ═══════════════════════════════════════════════════════════════════════
 section "The consistency done-marker is not a specification change (WFI-151)"
 
