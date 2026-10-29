@@ -203,6 +203,15 @@ check_criterion() {
   # $1 = the text, $2 = what to call it in the error, $3 = "stdin" when it was
   # read from stdin (no length limit — see above)
   local text="$1" what="$2" source="${3:-argv}"
+  # Blank is never a criterion. `-` with nothing on stdin (/dev/null under an
+  # unattended run) wrote an empty DC row, and the empty string is a substring
+  # of every line, so it ticked the first open box it met (a client's LVI-032).
+  if [ -z "${text//[[:space:]]/}" ]; then
+    echo "Error: $what is empty${3:+ (nothing arrived on stdin)} — nothing was written." >&2
+    echo "       Give the criterion verbatim from plan.md: in single quotes, or as '-'" >&2
+    echo "       with the text on stdin (a heredoc)." >&2
+    return 1
+  fi
   # `case`, not `grep -q $'\n'`: a grep pattern containing a newline is two
   # patterns, and both halves are empty, so that form matches every string.
   if [ "$text" != "${text%$'\n'*}" ]; then
@@ -587,10 +596,11 @@ elif [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
       # Both human lists: /lv-accept defers an unbuilt Chrome-Assisted criterion
       # through here too, and matching only Manual left its box for a hand edit
       # (LVI-023 on a client).
-      /^#####?[[:space:]]*(Manual|Chrome-Assisted)/ { in_manual = 1; print; next }
-      /^#+[[:space:]]/ {
-        if (in_manual && $0 !~ /^#####?[[:space:]]*(Manual|Chrome-Assisted)/) in_manual = 0
-      }
+      # And the post-ship checklist, where pre-launch and the express lane move
+      # open human criteria: /lv-end-state offers deferring one from there
+      # (LVI-041 on a client).
+      /^#####?[[:space:]]*(Manual|Chrome-Assisted)/ || /^##[[:space:]]*Post-ship checklist/ { in_manual = 1; print; next }
+      /^#+[[:space:]]/ { if (in_manual) in_manual = 0 }
       {
         # index() not a regex: the criterion is free text and may contain any
         # metacharacter a planner typed.
@@ -613,9 +623,9 @@ elif [ -n "${PLAN_DIR:-}" ] && [ -f "$plan_file" ]; then
     echo "  ACTION REQUIRED: no matching unchecked criterion in $PLAN_DIR/plan.md." >&2
     echo "  Edit that file now: change the matching '- [ ]' to '- [x]' and append ' — deferred as $next'." >&2
     echo "  Do not complete the plan with the box still empty — an empty box reads as 'silently dropped'." >&2
-    echo "  Unchecked Chrome-Assisted and Manual criteria in that file:" >&2
+    echo "  Unchecked Chrome-Assisted, Manual and post-ship checklist items in that file:" >&2
     awk '
-      /^#####?[[:space:]]*(Manual|Chrome-Assisted)/ { in_manual = 1; next }
+      /^#####?[[:space:]]*(Manual|Chrome-Assisted)/ || /^##[[:space:]]*Post-ship checklist/ { in_manual = 1; next }
       /^#+[[:space:]]/ { if (in_manual) in_manual = 0 }
       in_manual && /^[[:space:]]*-[[:space:]]*\[[ ]\]/ { printf "    %s\n", $0 }
     ' "$plan_file" >&2

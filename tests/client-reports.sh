@@ -2428,6 +2428,31 @@ PLANEOF
 assert_eq "a Chrome-Assisted criterion is checked off too" "true" \
   "$(grep -F '/marks' "$DEFER/plans/PLN-018-capsule-wire/plan.md" | grep -q '^- \[x\].*deferred as DC-' && echo true || echo false)"
 
+# A post-ship checklist item, which /lv-end-state offers to defer (a client's
+# LVI-041), and an empty stdin, which ticked the first open box (LVI-032).
+cat > "$DEFER/plans/PLN-018-capsule-wire/plan.md" << 'PLANEOF'
+schema_version: 6
+
+## Goal
+Wire contract.
+
+#### Manual
+- [ ] (external) an open manual line that must stay open
+
+## Post-ship checklist
+- [ ] the calibration run on real hardware matches the table
+PLANEOF
+(cd "$DEFER" && git add -A && git commit -qm pre) >/dev/null 2>&1
+before=$(cat "$DEFER/plans/deferred-criteria.md" 2>/dev/null)
+(cd "$DEFER" && ./scripts/lv-defer-criterion.sh PLN-018 external - < /dev/null) >/dev/null 2>&1; rc=$?
+assert_eq "a deferral with nothing on stdin is refused" "1" "$rc"
+assert_eq "…and writes no row" "$before" "$(cat "$DEFER/plans/deferred-criteria.md" 2>/dev/null)"
+assert_eq "…and ticks nothing" "0" "$(grep -c '^- \[x\]' "$DEFER/plans/PLN-018-capsule-wire/plan.md")"
+(cd "$DEFER" && ./scripts/lv-defer-criterion.sh PLN-018 external \
+   "the calibration run on real hardware matches the table") >/dev/null 2>&1
+assert_eq "a post-ship checklist item is checked off" "true" \
+  "$(grep -F 'calibration run' "$DEFER/plans/PLN-018-capsule-wire/plan.md" | grep -q '^- \[x\].*deferred as DC-' && echo true || echo false)"
+
 # ═══════════════════════════════════════════════════════════════════════
 section "A formatted criterion still ticks (client-a WFI-137)"
 
