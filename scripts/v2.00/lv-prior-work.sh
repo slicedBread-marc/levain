@@ -26,7 +26,7 @@
 #
 # A commit on the base branch that names this plan or the bug it consumes, and
 # touches something other than pipeline bookkeeping. `plans/`, `bugs/`,
-# `briefs/` and `.claude/` are how the pipeline talks about a plan; anything
+# `briefs/`, `.claude/` and the WORKFLOW files are how the pipeline talks about a plan; anything
 # else is how it BUILDS one. A spec commit naming PLN-092 is expected and
 # silent here. A commit naming PLN-092 that edits `src/` is the report.
 #
@@ -113,9 +113,12 @@ if [ -n "$plan_dir" ] && [ -f "$plan_dir/plan.md" ]; then
 fi
 [ -n "$bug_id" ] || bug_id="$LV_BUG-$num"
 
-# The paths that are bookkeeping rather than implementation: the four the
+# The paths that are bookkeeping rather than implementation: the ones the
 # harness owns, plus whatever this project declares (see the header).
-ignore_prefixes=(plans/ bugs/ briefs/ .claude/)
+# WORKFLOW-ISSUES.md is lv-issue.sh's, and a filing swept into a plan's own
+# spec commit opened a prior-work gate on that spec (a client's LVI-046);
+# WORKFLOW.md is rendered by the installer.
+ignore_prefixes=(plans/ bugs/ briefs/ .claude/ WORKFLOW-ISSUES.md WORKFLOW.md)
 extra_prefixes=()
 while IFS= read -r p; do
   [ -n "$p" ] || continue

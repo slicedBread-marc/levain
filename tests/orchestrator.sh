@@ -319,6 +319,15 @@ git branch -f develop HEAD >/dev/null 2>&1
 assert_fails "a plans/-only commit naming the plan is not prior work" \
   "$SCRIPT_DIR/lv-prior-work.sh" PLN-019
 
+# A client's LVI-046: an lv-issue.sh filing swept into the spec commit.
+echo "## LVI-001" >> WORKFLOW-ISSUES.md
+echo "amended" >> plans/PLN-019-prior/plan.md
+git add WORKFLOW-ISSUES.md plans/PLN-019-prior/plan.md >/dev/null 2>&1
+git commit -q -m "spec(PLN-019-prior): amended" -- WORKFLOW-ISSUES.md plans/PLN-019-prior/plan.md >/dev/null 2>&1
+git branch -f develop HEAD >/dev/null 2>&1
+assert_fails "a spec commit that also carries WORKFLOW-ISSUES.md is not prior work" \
+  "$SCRIPT_DIR/lv-prior-work.sh" PLN-019
+
 # A code commit naming the bug, straight onto develop, is.
 mkdir -p src
 echo "the prototype that bypassed lv-implement" > src/clipboard.js
