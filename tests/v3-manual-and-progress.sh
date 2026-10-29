@@ -427,7 +427,15 @@ assert_eq "a note naming a disagreement is a reason" "0 0 1" "$CHROME_EXCUSED $C
 sed -i.bak 's/| Disagreement: a FAIL was recorded on 1f76729, headless now reads the grid reordered |/| headless screenshot 390+1280: ambiguous — one tile moves by design |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
 eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "an ambiguous headless reading is a reason" "0 0 1" "$CHROME_EXCUSED $CHROME_UNRECORDED $CHROME_UNTESTED"
-sed -i.bak 's/| headless screenshot 390+1280: ambiguous — one tile moves by design |/| needs: device — the camera prompt on a real phone |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+# A client's LVI-047: data the dev environment does not hold is a reason,
+# when the note says what is missing.
+sed -i.bak 's/| headless screenshot 390+1280: ambiguous — one tile moves by design |/| needs: data — dev DB has no photos and no seeder |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "needs: data naming what is missing is a reason" "0 0 1" "$CHROME_EXCUSED $CHROME_UNRECORDED $CHROME_UNTESTED"
+sed -i.bak 's/| needs: data — dev DB has no photos and no seeder |/| needs: data |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "a bare needs: data is an excuse" "1 1 0" "$CHROME_EXCUSED $CHROME_UNRECORDED $CHROME_UNTESTED"
+sed -i.bak 's/| needs: data |/| needs: device — the camera prompt on a real phone |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
 sed -i.bak 's/| needs: device — the camera prompt on a real phone |/| headless: ERROR waitForSelector #photo-2 timed out |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
 eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "one run, one untested with a reason: nothing unrecorded" "0" "$CHROME_UNRECORDED"

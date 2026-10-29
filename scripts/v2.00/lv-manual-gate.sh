@@ -49,7 +49,8 @@
 #     or reason for (never run, or the record was never written)
 #   CHROME_UNTESTED — how many it records as not run, with a reason: a
 #     headless ERROR, a disagreement with a prior reading, an ambiguous
-#     headless reading, or `needs: oauth|device|extension|profile`
+#     headless reading, `needs: oauth|device|extension|profile`, or
+#     `needs: data — <what is missing>` (LVI-047)
 #   CHROME_EXCUSED — how many carry some other note instead of a run. They
 #     count in CHROME_UNRECORDED too: a note is not a result (LVI-030)
 #   PROGRESS_INCOMPLETE='true|false' — CHROME_UNRECORDED > 0
@@ -348,6 +349,10 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" -v sha="$build_sha" -v carried
     # "needs: device — file download requires real browser" on all 7 criteria
     # of one plan, and this accepted it; an attended session then ran all 7 to
     # PASS against the same cached browser.
+    # Data the dev environment does not hold and the plan gives no way to make
+    # (no seeder, no fixture): headless has nothing to load. LVI-047 from a
+    # client had no tag for it, so a true precondition read as "run them".
+    if (l ~ /needs: *data *[^ ]/) return 1
     if (l ~ /needs: *(oauth|device|extension|profile)/) {
       if (l ~ /download|upload|file (input|chooser|picker|dialog)|clipboard|copy|paste/) return 0
       return 1
@@ -502,7 +507,7 @@ if [ "$chrome_excused" -gt 0 ]; then
   # the gate took the notes as reasons, and an attended re-run passed all 6
   # headlessly in under a minute. A note is not a run.
   gate=true
-  reason="$chrome_excused Chrome-Assisted criteria carry a note but no headless result (no ERROR, no disagreement, no ambiguous headless reading, no needs: oauth|device|extension|profile that a headless verb cannot cover) — run them: $chrome_excuses; $reason"
+  reason="$chrome_excused Chrome-Assisted criteria carry a note but no headless result (no ERROR, no disagreement, no ambiguous headless reading, no needs: oauth|device|extension|profile that a headless verb cannot cover, no needs: data) — run them: $chrome_excuses; $reason"
 fi
 if [ "$chrome_unrecorded" -gt "$chrome_excused" ]; then
   gate=true
