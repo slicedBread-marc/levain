@@ -419,6 +419,15 @@ assert_eq "needs: device for a download is an excuse, not a reason" "1 1 0" "$CH
 sed -i.bak 's/| needs: device — file download requires real browser |/| needs: device — the camera prompt on a real phone |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
 eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "needs: device for a real device is still a reason" "0 0 1" "$CHROME_EXCUSED $CHROME_UNRECORDED $CHROME_UNTESTED"
+# A client's LVI-031 and LVI-028: a disagreement named as such, and a run whose
+# capture could not be judged, are reasons — both were run.
+sed -i.bak 's/| needs: device — the camera prompt on a real phone |/| Disagreement: a FAIL was recorded on 1f76729, headless now reads the grid reordered |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "a note naming a disagreement is a reason" "0 0 1" "$CHROME_EXCUSED $CHROME_UNRECORDED $CHROME_UNTESTED"
+sed -i.bak 's/| Disagreement: a FAIL was recorded on 1f76729, headless now reads the grid reordered |/| headless screenshot 390+1280: ambiguous — one tile moves by design |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
+eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
+assert_eq "an ambiguous headless reading is a reason" "0 0 1" "$CHROME_EXCUSED $CHROME_UNRECORDED $CHROME_UNTESTED"
+sed -i.bak 's/| headless screenshot 390+1280: ambiguous — one tile moves by design |/| needs: device — the camera prompt on a real phone |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
 sed -i.bak 's/| needs: device — the camera prompt on a real phone |/| headless: ERROR waitForSelector #photo-2 timed out |/' plans/PLN-007-ui/test-progress.md && rm -f plans/PLN-007-ui/test-progress.md.bak
 eval "$("$SCRIPT_DIR/lv-manual-gate.sh" PLN-007)"
 assert_eq "one run, one untested with a reason: nothing unrecorded" "0" "$CHROME_UNRECORDED"

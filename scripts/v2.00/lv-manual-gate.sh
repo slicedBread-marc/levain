@@ -48,8 +48,8 @@
 #   CHROME_UNRECORDED — how many of those test-progress.md holds no result
 #     or reason for (never run, or the record was never written)
 #   CHROME_UNTESTED — how many it records as not run, with a reason: a
-#     headless ERROR, a disagreement with a prior reading, or
-#     `needs: oauth|device|extension|profile`
+#     headless ERROR, a disagreement with a prior reading, an ambiguous
+#     headless reading, or `needs: oauth|device|extension|profile`
 #   CHROME_EXCUSED — how many carry some other note instead of a run. They
 #     count in CHROME_UNRECORDED too: a note is not a result (LVI-030)
 #   PROGRESS_INCOMPLETE='true|false' — CHROME_UNRECORDED > 0
@@ -336,6 +336,13 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" -v sha="$build_sha" -v carried
     if (n ~ /ERROR/) return 1
     l = tolower(n)
     if (l ~ /headless:? *(pass|fail)/ && l ~ /prior/) return 1
+    # Named outright: a client wrote "Disagreement: a FAIL was recorded on
+    # <sha> ..." and the gate sent it back as never run (LVI-031).
+    if (l ~ /disagree/) return 1
+    # A headless run whose capture could not be judged either way: lv-test
+    # step 3 leaves it at the dash for a human, and the gate said "run them"
+    # over a criterion that had been run (LVI-028 on a client).
+    if (l ~ /ambiguous/ && l ~ /headless|screenshot/) return 1
     # A download, an upload or the clipboard is not one of the four, whatever
     # the note calls it: each has a headless verb. LVI-036 from a client wrote
     # "needs: device — file download requires real browser" on all 7 criteria
@@ -495,7 +502,7 @@ if [ "$chrome_excused" -gt 0 ]; then
   # the gate took the notes as reasons, and an attended re-run passed all 6
   # headlessly in under a minute. A note is not a run.
   gate=true
-  reason="$chrome_excused Chrome-Assisted criteria carry a note but no headless result (no ERROR, no disagreement, no needs: oauth|device|extension|profile that a headless verb cannot cover) — run them: $chrome_excuses; $reason"
+  reason="$chrome_excused Chrome-Assisted criteria carry a note but no headless result (no ERROR, no disagreement, no ambiguous headless reading, no needs: oauth|device|extension|profile that a headless verb cannot cover) — run them: $chrome_excuses; $reason"
 fi
 if [ "$chrome_unrecorded" -gt "$chrome_excused" ]; then
   gate=true
