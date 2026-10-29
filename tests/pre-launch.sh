@@ -5,8 +5,8 @@
 #   1. needs-input with --recommend is answered on the spot: no gate stays
 #      open, the ledger and events.log record it as self-answered, and the
 #      next open of the same question sees it as the prior answer.
-#   2. --floor, a missing --recommend, and a non-question gate (stuck) still
-#      park for a human; the recommendation is kept on the open gate.
+#   2. --floor, an attended missing --recommend, and a non-question gate (stuck)
+#      still park for a human (unattended, a missing one is refused, LVI-046); the recommendation is kept on the open gate.
 #   3. spec-approval self-answers as an approve the next worker can act on.
 #   4. The daily cap: past projectProfile.selfAnswerMaxPerDay the gate parks.
 #   5. lv-gate-close.sh --basis pre-launch is checked, not believed: refused
@@ -122,8 +122,12 @@ assert_has "…the gate stays open" "needs-input" "$(cat $G/PLN-001.gate 2>/dev/
 assert_has "…carrying the recommendation for the human" "GATE_RECOMMENDED='yes'" "$(cat $G/PLN-001.gate)"
 assert_has "…and the floor" "GATE_FLOOR='spends money'" "$(cat $G/PLN-001.gate)"
 "$S/lv-gate-close.sh" PLN-001 "no" --only needs-input >/dev/null 2>&1
-out=$(LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 needs-input "Which colour?" 2>&1)
-assert_has "no --recommend: parked, saying why" "none was given" "$out"
+out=$(LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 needs-input "Which colour?" 2>&1); rc=$?
+assert_eq "unattended, no --recommend: refused (exit 8)" 8 "$rc"
+assert_has "…naming the flag to add" "--recommend" "$out"
+assert_eq "…and no gate is written" false "$([ -f $G/PLN-001.gate ] && echo true || echo false)"
+out=$("$S/lv-gate-open.sh" PLN-001 needs-input "Which colour?" 2>&1)
+assert_has "attended, no --recommend: parked, saying why" "none was given" "$out"
 assert_eq "…the gate is open" true "$([ -f $G/PLN-001.gate ] && echo true || echo false)"
 "$S/lv-gate-close.sh" PLN-001 "blue" --only needs-input >/dev/null 2>&1
 LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 stuck "attempt budget spent" --recommend "retry" >/dev/null 2>&1

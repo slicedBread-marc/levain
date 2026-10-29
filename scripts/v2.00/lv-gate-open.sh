@@ -92,7 +92,9 @@
 # DIFFERENT gate is already open on the artifact — which this refuses rather
 # than overwrites, because one file holds one artifact's gate (WFI-025), and 6
 # when manual-test is asked for on a plan still in `testing` (LVI-031), and 7
-# when a `production-push` question is one lv-autonomy.sh already answers.
+# when a `production-push` question is one lv-autonomy.sh already answers, and
+# 8 when an unattended worker asks a pre-launch question gate with neither
+# --recommend nor --floor (a client's LVI-046).
 
 set -euo pipefail
 
@@ -554,6 +556,21 @@ if $covers_push; then
   # Said in the question itself: an approval can only authorize what the
   # person answering was shown it would authorize.
   question="$question — approving also pushes the promoted main to origin (production-push), provided main's code is exactly this release tip"
+fi
+
+# ── Pre-launch: an unattended question carries its answer (a client's LVI-046) ─
+#
+# Self-answering used to depend on the worker remembering --recommend. A tester
+# that forgot parked its plan on a question the policy says it answers itself,
+# and the plan sat until an operator happened by. Refused before anything is
+# written, so the worker's next call is the same one with the flag added.
+# Attended, the person is here to answer it, so it parks as before.
+if wf_self_answers "$gate_name" && [ "${LV_UNATTENDED:-0}" = "1" ] \
+   && [ -z "$recommend" ] && [ -z "$floor" ]; then
+  echo "Error: $id is pre-launch — an unattended '$gate_name' is answered by the worker, not parked." >&2
+  echo "       Re-run with --recommend \"<the answer you would act on>\", or --floor \"<why a human must>\"" >&2
+  echo "       when it spends money, touches a secret, destroys data or reaches real people." >&2
+  exit 8
 fi
 
 # A promotion question has to say which tip it is about — the approval is
