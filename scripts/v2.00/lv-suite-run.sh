@@ -48,6 +48,10 @@
 #   SUITE_CMD=<the command that ran, verbatim>
 #   SUITE_LOG=<absolute path to the full output>
 #   SUITE_RESULT=pass|fail (exit <code of the command>)
+#   SUITE_RESULT=fail (inconclusive — …)  — the runner printed its banner and
+#                    then nothing; exit 1 like any non-pass, and <log>.status
+#                    carries SUITE_INCONCLUSIVE=1 (LVI-010). Retry it; never
+#                    record it as a red suite
 #   SUITE_RESULT=pass (reused <log>, <tip>, <ended>)   — on a reuse hit, with
 #   SUITE_REUSED_FROM=<the original log>, which holds the real output
 #
@@ -413,6 +417,7 @@ finish() {
       "$(git branch --show-current 2>/dev/null || echo '(detached)')" \
       "$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$clean_end"
+    [ "${INCONCLUSIVE:-0}" = "1" ] && printf 'SUITE_INCONCLUSIVE=1\n'
   } > "$LOG.status"
   # Inline, the verdict reached its caller on stdout just now — so it is
   # collected, and lv-suite-receipts.sh --abandoned must not list it.
@@ -447,14 +452,22 @@ echo "" | tee -a "$LOG"
 # same thing seen from the other side (a 2-second "pass" whose log ended at
 # "test files matched the specified pattern").
 no_tests_ran() {
+  tail -n +"$1" "$LOG" | grep -qiE 'No test matches the given testcase filter|No tests found|No test files found|no tests ran|Total tests: 0\b' && return 0
+  no_result_after_banner "$1"
+}
+
+# no_result_after_banner <from-line> — the runner announced its test files and
+# then printed nothing at all: no summary, no failure. That is the host cutting
+# the run short (a hung testhost, a killed process), not a verdict on the code.
+# It is still never a pass, but it is INCONCLUSIVE rather than red: a client's
+# deploy memoized one as a failed suite and parked a one-commit batch for three
+# days, and a manual re-run passed 320/320 in 10 s (LVI-010). The status file
+# carries SUITE_INCONCLUSIVE=1 so lv-deploy-suite-memo.sh refuses to record it.
+no_result_after_banner() {
   local out
   out=$(tail -n +"$1" "$LOG")
-  printf '%s\n' "$out" | grep -qiE 'No test matches the given testcase filter|No tests found|No test files found|no tests ran|Total tests: 0\b' && return 0
-  if printf '%s\n' "$out" | grep -q 'test files\? matched the specified pattern' \
-     && ! printf '%s\n' "$out" | grep -qiE 'Passed!|Failed!|Total tests:|Passed: +[0-9]|Failed: +[0-9]|summary: *total'; then
-    return 0
-  fi
-  return 1
+  printf '%s\n' "$out" | grep -q 'test files\? matched the specified pattern' \
+    && ! printf '%s\n' "$out" | grep -qiE 'Passed!|Failed!|Total tests:|Passed: +[0-9]|Failed: +[0-9]|summary: *total'
 }
 
 # failed_tests <from-line> — how many tests the output from that line on
@@ -502,6 +515,11 @@ if [ "$nfail" -gt 0 ]; then
   else
     finish "fail ($nfail failed test(s), exit $rc)" "$TEST_RUN"
   fi
+  exit 1
+fi
+if [ "$rc" -eq 0 ] && no_result_after_banner "$from"; then
+  INCONCLUSIVE=1
+  finish "fail (inconclusive — the runner printed no result after its banner, exit 0; this says nothing about the code, so run it again; see the log)" "$TEST_RUN"
   exit 1
 fi
 if [ "$rc" -eq 0 ] && no_tests_ran "$from"; then

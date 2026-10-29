@@ -41,7 +41,8 @@
 #   --show             print the memo, if any. Exit 0 either way.
 #
 # Exit 0 nothing recorded for this tip / action done, 1 this tip is a known
-# failure (--check only), 2 usage.
+# failure (--check only), 2 usage, 3 --fail refused: the --log run was
+# inconclusive (SUITE_INCONCLUSIVE=1 in its status), so there is no verdict.
 
 set -uo pipefail
 
@@ -85,6 +86,14 @@ case "$action" in
       echo "  not 'tests failed'. It is what a human reads at the gate." >&2
       exit 2
     fi
+    # A run that printed no result is not a red suite (LVI-010): a client's
+    # deploy memoized one and parked a one-commit batch for three days, then a
+    # manual re-run passed. lv-suite-run.sh marks that shape in the status file.
+    if [ -n "$log" ] && grep -qx 'SUITE_INCONCLUSIVE=1' "$log.status" 2>/dev/null; then
+      echo "lv-deploy-suite-memo: not recorded — that run was inconclusive (no result after the" >&2
+      echo "  test banner), which says nothing about this batch. Run the suite again instead." >&2
+      exit 3
+    fi
     printf 'tip=%s\nat=%s\nsummary=%s\nlog=%s\n' \
       "$tip" "$(wf_now)" "$summary" "$log" > "$MEMO"
     echo "Recorded: origin/release ${tip:0:9} failed the deploy suite — $summary"
@@ -126,7 +135,7 @@ case "$action" in
     ;;
 
   *)
-    sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,47p' "$0" | sed 's/^# \{0,1\}//'
     exit 2 ;;
 esac
 exit 0

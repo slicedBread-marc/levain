@@ -237,11 +237,19 @@ has "…with real results" "$(cat "$log")" "Passed: 5"
 out=$("$RUN" --label t --only-e2e --extra-args "Nope" --no-reuse 2>&1); rc=$?
 assert_eq "a plan scope that matches nothing fails" 1 "$rc"
 has "…and says no test ran" "$(result_of "$out")" "^fail \(no tests ran"
+log=$(printf '%s' "$out" | sed -n 's/^SUITE_LOG=//p' | tail -1)
+hasnt "…which is a verdict, not inconclusive" "$(cat "$log.status")" "SUITE_INCONCLUSIVE"
 
 printf 'test_command: "./t.sh banner"\n' > levain.yml && git commit -qam banner
 out=$("$RUN" --label t --no-reuse 2>&1); rc=$?
 assert_eq "a test banner with no result summary is not a pass" 1 "$rc"
-has "…it is a fail" "$(result_of "$out")" "^fail \(no tests ran"
+has "…it is an inconclusive fail, not 'no tests ran' (LVI-010)" "$(result_of "$out")" "^fail \(inconclusive"
+log=$(printf '%s' "$out" | sed -n 's/^SUITE_LOG=//p' | tail -1)
+has "…and its status says so" "$(cat "$log.status")" "^SUITE_INCONCLUSIVE=1$"
+git branch -q release 2>/dev/null || true
+"$SD/lv-deploy-suite-memo.sh" --fail "no result" --log "$log" >/dev/null 2>&1; rc=$?
+assert_eq "…which the deploy memo refuses to record as red" "3:no" \
+  "$rc:$([ -f .claude/orchestrator/deploy-suite-failed ] && echo yes || echo no)"
 
 printf 'test_command: "./t.sh cutshort"\n' > levain.yml && git commit -qam cutshort
 out=$("$RUN" --label t --no-reuse 2>&1); rc=$?
@@ -252,6 +260,9 @@ printf 'test_command: "./t.sh redsum"\n' > levain.yml && git commit -qam redsum
 out=$("$RUN" --label t --no-reuse 2>&1); rc=$?
 assert_eq "a red run with a summary fails" 1 "$rc"
 has "…and carries the count" "$(result_of "$out")" "^fail \(1 failed test\(s\), exit 1\)"
+log=$(printf '%s' "$out" | sed -n 's/^SUITE_LOG=//p' | tail -1)
+"$SD/lv-deploy-suite-memo.sh" --fail "T.B.One, 1 of 5" --log "$log" >/dev/null 2>&1; rc=$?
+assert_eq "…and a real red run is recorded by the deploy memo" 0 "$rc"
 
 echo ""
 echo "suite-reuse: $PASS passed, $FAIL failed"

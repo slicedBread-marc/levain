@@ -341,6 +341,8 @@ Before starting, confirm E2E passed on release:
    scripts/lv-exec.sh lv-deploy-suite-memo.sh --clear
    ```
 
+   **An inconclusive run is not a red suite.** `SUITE_RESULT=fail (inconclusive — …)` (and `SUITE_INCONCLUSIVE=1` in the status) means the runner printed its banner and then nothing: the host cut it short, and it says nothing about this batch. Run the same command once more with `--no-reuse`. If that run gives a real verdict, act on it as below. If it is inconclusive again, recover the merge (`lv-deploy-guard.sh --recover`), **record no memo** — `lv-deploy-suite-memo.sh --fail` refuses an inconclusive log with exit 3 anyway — report both `SUITE_LOG=` lines, and stop (unattended: unclaim and exit 0, opening no gate), so a later dispatch tries again on a quieter host. A client's deploy once memoized such a run and parked a one-commit batch for three days; a manual re-run passed 320/320 in 10 s (LVI-010).
+
    If tests fail, abort the deploy — do NOT proceed to registry updates, and **leave the guard armed**; recover the merge and **record the verdict against this batch** before you stop:
    ```bash
    scripts/lv-exec.sh lv-deploy-guard.sh --recover
