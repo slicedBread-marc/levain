@@ -111,8 +111,26 @@ launch() {
   echo "OPENED=$target"
 }
 
-if $fresh; then
-  run rm -rf "$profile"
+# A profile still open in a browser cannot be emptied: the browser writes into
+# it while rm walks it, and `rm -rf` failed "Directory not empty" with nothing
+# opened (a client's LVI-035). So close that profile's browser first, and if the
+# directory still will not go, move it aside: --fresh promises a clean profile,
+# not a particular inode.
+if $fresh && { $dry || [ -e "$profile" ]; }; then
+  if ! $dry; then
+    holders=$(pgrep -f -- "--user-data-dir=$profile( |$)" 2>/dev/null || true)
+    if [ -n "$holders" ]; then
+      echo "lv-open-url: closing the browser still using $profile_key's profile" >&2
+      kill $holders 2>/dev/null || true
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        pgrep -f -- "--user-data-dir=$profile( |$)" >/dev/null 2>&1 || break
+        sleep 0.5
+      done
+    fi
+  fi
+  if ! run rm -rf "$profile" 2>/dev/null; then
+    run mv "$profile" "$profile.stale.$$" && (rm -rf "$profile.stale.$$" >/dev/null 2>&1 &)
+  fi
 fi
 $dry || mkdir -p "$profile"
 
