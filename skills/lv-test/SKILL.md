@@ -733,6 +733,10 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    - Display: "Post-merge check failed after merging release. Routed back to builder (testing → active). Findings written."
    - **Stop here — do not continue with remaining steps.** Nothing below this point may run: the push and the PR merge are what put the broken tree on `release`.
 
+   **A red post-merge check has no ship-anyway exit, and no wait-for-it exit either.** Nothing in this skill accepts named failing tests, and nothing parks a plan until another one merges, so never offer "ship accepting the N failures" or "hold in testing until PLN-NNN lands" as a gate option or a `--recommend` — the answer cannot be carried out, the next tester fails the same way and asks again (a client's LVI-045), and a hold just re-dispatches you until the stuck breaker trips (a client's LVI-043). Route to the builder as above, every time.
+
+   **When the failing tests are ones another in-flight plan fixes**, say so in the finding: name that plan and its branch, and tell the builder to merge it into this branch (`git merge origin/<its-branch>`) and re-run. Two plans each red only on what the other fixes otherwise wait on each other forever; merging one into the other is what broke the cycle by hand (a client's LVI-044: PLN-110 and PLN-112, 842/842 green once combined). Find the owner with `grep -l '<failing test or file>' ../../plans/*/plan.md` and the registry's `active`/`verify`/`testing` rows.
+
    Push to remote. **Wrap every call that talks to GitHub in `lv-retry.sh`** — it retries only transient failures (timeouts, 5xx, resets, rate limits) and returns a real refusal immediately:
    ```bash
    ../../scripts/lv-exec.sh lv-retry.sh --tempfail --label "git push" -- git push -u origin "$CURRENT_BRANCH"
