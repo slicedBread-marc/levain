@@ -234,8 +234,15 @@ resolve_declaration() {
   local candidates=("$plan_id")
   while IFS= read -r src; do
     [ -n "$src" ] && candidates+=("$src")
-  done < <(grep -E '^[ \t]*>?[ \t]*\*\*(Bug|Brief):\*\*' "$plan_md" 2>/dev/null \
-             | grep -oE "(($LV_BUG_RE)|($LV_BRF_RE))-[0-9]+" | awk '!seen[$0]++' || true)
+  # Only the header's Bug/Brief lines (above the first `## `), and only the
+  # FIRST id on each: a later id, or one in Goal or Design Decisions, is prose.
+  # Reading more gave a client's PLN-092 an express lane declared on an
+  # unrelated BUG-089 its prose mentioned (LVI-030).
+  done < <(awk '/^## / { exit } { print }' "$plan_md" 2>/dev/null \
+             | grep -E '^[ \t]*>?[ \t]*\*\*(Bug|Brief):\*\*' \
+             | while IFS= read -r l; do
+                 printf '%s\n' "$l" | grep -oE "(($LV_BUG_RE)|($LV_BRF_RE))-[0-9]+" | head -1
+               done | awk '!seen[$0]++' || true)
 
   for src in "${candidates[@]}"; do
     if [ "$src" = "$plan_id" ]; then f="$plan_md"; else f=$(artifact_file "$src" || true); fi

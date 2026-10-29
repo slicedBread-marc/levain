@@ -192,6 +192,17 @@ assert_eq "a small declared plan is eligible (exit 0)" 0 "$rc"
 assert_has "…and the verdict is written into plan.md" "**express** — eligible" "$(cat "plans/PLN-$N_SMALL-rename/plan.md")"
 assert_not "Out of Scope text is not read (it names secrets and the Dockerfile)" "secrets" "$out"
 
+# A client's LVI-030: a plan whose own source declares no lane, mentioning a
+# declared bug, inherits nothing from the mention.
+eval "$("$S/lv-bug-new.sh" "Retitle the footer" 2>/dev/null)"
+N_UND=${BUG_ID#*-}
+small_plan "plans/PLN-$N_UND-footer" "> **Bug:** $BUG_ID — follows $BUG_SMALL"
+printf '\n**Bug:** %s is where the rename was done.\n' "$BUG_SMALL" >> "plans/PLN-$N_UND-footer/plan.md"
+add_row "PLN-$N_UND" footer draft ux
+git add -A; git commit -qm plan
+out=$("$S/lv-lane.sh" check "PLN-$N_UND" 2>&1); rc=$?
+assert_eq "a lane is not inherited from a bug the plan only mentions (exit 3)" 3 "$rc"
+
 eval "$("$S/lv-bug-new.sh" "Photo tool" --lane express 2>/dev/null)"
 N_BIG=${BUG_ID#*-}
 big_plan "plans/PLN-$N_BIG-photo" "> **Bug:** $BUG_ID — Photo tool"
