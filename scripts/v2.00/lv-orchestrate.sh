@@ -943,6 +943,50 @@ withdraw_moot_suite_red_gates() {
   return 0
 }
 
+# ── A deferred-criteria question a later rule now covers is withdrawn ─────
+#
+# /lv-deploy step 4a parks `deploy-deferred-criteria` when the batch carries
+# open deferred criteria that nothing covers. The coverage can arrive under the
+# open gate: a later release taught lv-lane.sh deferred-covered to answer
+# (external)/(soak) rows for any plan in a pre-launch project (LVI-042), or the
+# rows were closed in plans/deferred-criteria.md. dispatch() skips DEPLOY while
+# a gate is open, so the run that would now pass step 4a is never started. Two
+# clients' DEPLOY sat on such gates for two and seven days after the rule
+# shipped, until an operator closed them by hand (a client's LVI-046).
+#
+# Re-runs step 4a's own two checks on the batch as it stands (release tip
+# against origin/main): nothing open, or every open row covered. WITHDRAWN,
+# never approved — lv-promote-approval.sh reads no answer from it, and the next
+# /lv-deploy runs step 4a for real, so a row that stops being covered parks
+# again. Not while a deploy worker is live: the gate it just opened is its exit.
+withdraw_moot_deferred_gates() {
+  [ "$(open_gate_name DEPLOY)" = "deploy-deferred-criteria" ] || return 0
+  [ "$(role_running deploy)" -eq 0 ] || return 0
+  local tip base why="" rc=0
+  tip=$(git rev-parse --verify -q refs/remotes/origin/release 2>/dev/null \
+        || git rev-parse --verify -q refs/heads/release 2>/dev/null || true)
+  base=$(git rev-parse --verify -q refs/remotes/origin/main 2>/dev/null \
+         || git rev-parse --verify -q refs/heads/main 2>/dev/null || true)
+  [ -n "$tip" ] && [ -n "$base" ] || return 0
+  "$SELF_DIR/lv-deferred-check.sh" --range "$tip" --not "$base" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0) why="the batch carries no open deferred criteria any more" ;;
+    1) "$SELF_DIR/lv-lane.sh" deferred-covered --quiet -- "$tip" --not "$base" >/dev/null 2>&1 \
+         && why="every open deferred criterion in the batch is now covered (lv-lane.sh deferred-covered)" ;;
+  esac
+  [ -n "$why" ] || return 0
+  if $dry_run; then
+    echo "  would WITHDRAW: deploy-deferred-criteria on DEPLOY ($why)"
+    return 0
+  fi
+  if "$SELF_DIR/lv-gate-close.sh" DEPLOY "withdrawn — $why; the next /lv-deploy runs step 4a again" \
+       --only deploy-deferred-criteria --withdraw >/dev/null 2>&1; then
+    echo "$(wf_now)  withdrew deploy-deferred-criteria on DEPLOY — $why"
+    skip_clear deploy DEPLOY
+  fi
+  return 0
+}
+
 # sweep() reports its count in SWEPT, not on stdout.
 #
 # It used to `printf '%s' "$spawned"` and be called as `n=$(sweep)`. Everything
@@ -976,6 +1020,7 @@ sweep() {
   withdraw_moot_approvals
   withdraw_moot_push_gates
   withdraw_moot_suite_red_gates
+  withdraw_moot_deferred_gates
 
   for role in $SWEEP_ROLES; do
     cap=$(max_concurrent "$role")

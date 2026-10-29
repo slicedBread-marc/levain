@@ -20,6 +20,8 @@
 #      by the dispatcher — never approved — and one it still refuses stays.
 #  12. A deploy-suite-red question is withdrawn once the release tip it failed
 #      on has moved, and stays while it has not (memo, or no memo + gate age).
+#  12c. A deploy-deferred-criteria question is withdrawn once step 4a's checks
+#      pass on the batch as it stands (LVI-046), and stays while they do not.
 #
 # Usage: ./tests/directives.sh     Exit 0 if all pass, 1 on any failure.
 
@@ -309,6 +311,43 @@ land "the fix lands on release"
 "$S/lv-list-deploy.sh" >/dev/null 2>&1
 assert_eq "release moved: a candidate again" "$?" "0"
 "$S/lv-deploy-suite-memo.sh" --clear >/dev/null 2>&1
+
+section "12c. a deferred-criteria question a later rule covers is withdrawn"
+# A client's LVI-046: DEPLOY sat on deploy-deferred-criteria for days after
+# LVI-042 made pre-launch cover (external)/(soak) rows, until closed by hand.
+dc_rows() {
+  printf '# Deferred Criteria\n\n| ID | Criterion | Tag | From | Prereq | Note | Added | Status |\n|-|-|-|-|-|-|-|-|\n'
+  printf '| DC-001 | an iPad walk | external | PLN-005 | — | — | 2026-10-22 | open |\n'
+  [ -z "${1:-}" ] || printf '| DC-002 | a printer not built yet | unbuilt | PLN-005 | — | — | 2026-10-22 | open |\n'
+}
+dc_rows > plans/deferred-criteria.md
+git update-ref refs/heads/main release
+land "implement(PLN-005-walk): step 1"
+"$S/lv-gate-open.sh" DEPLOY deploy-deferred-criteria "ship with DC-001 open?" >/dev/null 2>&1
+assert_eq "the question opens" "$(gate_state)" "open"
+"$S/lv-orchestrate.sh" --sweep >/dev/null 2>&1
+assert_eq "governed, plan outside the lane: the question stays" "$(gate_state)" "open"
+printf 'project_slug: "push"\norchestrator:\n  enabled: true\n  max_spawns_per_hour: 0\nprojectProfile:\n  tier: pre-launch\n' > levain.yml
+dc_rows unbuilt > plans/deferred-criteria.md
+"$S/lv-orchestrate.sh" --sweep >/dev/null 2>&1
+assert_eq "pre-launch with an (unbuilt) row: it stays" "$(gate_state)" "open"
+dc_rows > plans/deferred-criteria.md
+out=$("$S/lv-orchestrate.sh" --sweep --dry-run 2>&1)
+has "a dry run says it would withdraw" "$out" "would WITHDRAW: deploy-deferred-criteria on DEPLOY"
+assert_eq "and does not" "$(gate_state)" "open"
+out=$("$S/lv-orchestrate.sh" --sweep 2>&1)
+assert_eq "pre-launch now covers the external row: withdrawn" "$(gate_state)" "gone"
+has "and the sweep says so" "$out" "withdrew deploy-deferred-criteria on DEPLOY"
+st=$("$S/lv-gate-status.sh" DEPLOY deploy-deferred-criteria 2>/dev/null)
+assert_eq "a withdrawal is not an answer" "$(field "$st" GATE_ANSWERED)" "false"
+"$S/lv-promote-approval.sh" deferred --quiet >/dev/null 2>&1
+assert_eq "and no deferred approval can be read back from it" "$?" "1"
+printf 'project_slug: "push"\norchestrator:\n  enabled: true\n  max_spawns_per_hour: 0\nprojectProfile:\n  tier: governed\n' > levain.yml
+"$S/lv-gate-open.sh" DEPLOY deploy-deferred-criteria "ship with DC-001 open?" >/dev/null 2>&1
+printf '# Deferred Criteria\n\n| ID | Criterion | Tag | From | Prereq | Note | Added | Status |\n|-|-|-|-|-|-|-|-|\n| DC-001 | an iPad walk | external | PLN-005 | — | — | 2026-10-22 | met |\n' > plans/deferred-criteria.md
+"$S/lv-orchestrate.sh" --sweep >/dev/null 2>&1
+assert_eq "governed, the row since closed: withdrawn" "$(gate_state)" "gone"
+rm -f plans/deferred-criteria.md
 
 section "13. an answer with no open gate is not recorded, and says so"
 out=$("$S/lv-gate-close.sh" PLN-077 "approved" --decision approve 2>&1); rc=$?
