@@ -457,6 +457,19 @@ no_tests_ran() {
   return 1
 }
 
+# failed_tests <from-line> — how many tests the output from that line on
+# reported as failed. A run cut short before its summary (a host build timeout
+# killed it) still exits 0 and prints no "Total tests:", so no_tests_ran used
+# to call three xUnit [FAIL] lines "nothing was executed" (two client LVI-045/047).
+# Counted: xUnit's "[FAIL]" lines or VSTest's "  Failed <Name> [time]" lines,
+# whichever is more — `dotnet test` over xUnit prints both for one failure.
+failed_tests() {
+  local x v
+  x=$(tail -n +"$1" "$LOG" | grep -cE '\[FAIL\]') || true
+  v=$(tail -n +"$1" "$LOG" | grep -cE '^[[:space:]]+Failed [A-Za-z_][^[:space:]]* \[') || true
+  [ "${x:-0}" -ge "${v:-0}" ] && echo "${x:-0}" || echo "${v:-0}"
+}
+
 set -o pipefail
 from=$(( $(wc -l < "$LOG") + 1 ))
 eval "$TEST_RUN" < /dev/null 2>&1 | tee -a "$LOG"
@@ -482,6 +495,15 @@ if [ "$rc" -eq 0 ] && no_tests_ran "$from" \
 fi
 
 echo ""
+nfail=$(failed_tests "$from")
+if [ "$nfail" -gt 0 ]; then
+  if [ "$rc" -eq 0 ]; then
+    finish "fail ($nfail failed test(s) — exit 0 with no result summary, so the run was cut short; see the log)" "$TEST_RUN"
+  else
+    finish "fail ($nfail failed test(s), exit $rc)" "$TEST_RUN"
+  fi
+  exit 1
+fi
 if [ "$rc" -eq 0 ] && no_tests_ran "$from"; then
   finish "fail (no tests ran — exit 0, but nothing was executed; see the log)" "$TEST_RUN"
   exit 1

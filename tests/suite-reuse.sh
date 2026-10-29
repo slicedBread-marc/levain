@@ -215,6 +215,11 @@ cat > t.sh <<'SH'
 case "$*" in
   *E2E*|*Nope*) echo "No test matches the given testcase filter $*"; exit 0 ;;
   *banner*) echo "A total of 1 test files matched the specified pattern."; exit 0 ;;
+  *cutshort*) echo "A total of 1 test files matched the specified pattern."
+              echo "[xUnit.net 00:05:00.01]     T.A.One [FAIL]"
+              echo "[xUnit.net 00:05:00.02]     T.A.Two [FAIL]"
+              echo "  Failed T.A.One [5 m]"; exit 0 ;;
+  *redsum*) echo "  Failed T.B.One [12 ms]"; echo "Failed!  - Failed: 1, Passed: 4"; exit 1 ;;
 esac
 echo "Passed!  - Failed: 0, Passed: 5"
 SH
@@ -237,6 +242,16 @@ printf 'test_command: "./t.sh banner"\n' > levain.yml && git commit -qam banner
 out=$("$RUN" --label t --no-reuse 2>&1); rc=$?
 assert_eq "a test banner with no result summary is not a pass" 1 "$rc"
 has "…it is a fail" "$(result_of "$out")" "^fail \(no tests ran"
+
+printf 'test_command: "./t.sh cutshort"\n' > levain.yml && git commit -qam cutshort
+out=$("$RUN" --label t --no-reuse 2>&1); rc=$?
+assert_eq "failed tests in a run cut short before its summary fail (LVI-045/047)" 1 "$rc"
+has "…with their count, not 'no tests ran'" "$(result_of "$out")" "^fail \(2 failed test\(s\) — exit 0"
+
+printf 'test_command: "./t.sh redsum"\n' > levain.yml && git commit -qam redsum
+out=$("$RUN" --label t --no-reuse 2>&1); rc=$?
+assert_eq "a red run with a summary fails" 1 "$rc"
+has "…and carries the count" "$(result_of "$out")" "^fail \(1 failed test\(s\), exit 1\)"
 
 echo ""
 echo "suite-reuse: $PASS passed, $FAIL failed"
