@@ -96,7 +96,7 @@ fi
 # (a client's LVI-002). The command the project already declared for local
 # runs is the one to use. It is eval'd in the worktree, in its own process
 # group (so `dotnet run`'s child app dies with it), logging to APP_LOG.
-native_pidfile="${TMPDIR:-/tmp}/lv-app-$COMPOSE_PROJECT_NAME.pid"
+native_pidfile="$(wf_app_run_dir)/lv-app-$COMPOSE_PROJECT_NAME.pid"
 if [ ! -f docker/docker-compose.yml ]; then
   start_cmd=$(wf_cfg local_deploy_command "")
   [ -n "$start_cmd" ] || start_cmd=$(wf_cfg local_start_command "")
@@ -121,6 +121,7 @@ if [ ! -f docker/docker-compose.yml ]; then
   FEATURE_PORT=$FEATURE_PORT PORT=$FEATURE_PORT FEATURE_ALLOWED_HOSTS=$FEATURE_ALLOWED_HOSTS \
     nohup perl -e 'setpgrp(0, 0); exec "bash", "-c", $ARGV[0]' "$start_cmd" >>"$app_log" 2>&1 </dev/null &
   echo $! > "$native_pidfile"
+  echo "$FEATURE_PORT" > "${native_pidfile%.pid}.port"
   wf_emit APP_LOG "$app_log"
 
   # A native start may compile first, so it gets longer than a container.

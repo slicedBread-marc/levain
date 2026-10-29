@@ -2527,3 +2527,72 @@ wf_plan_flux_note() {
   [ -n "$deps" ] && printf ' [unbuilt dependents that move with this answer: %s]' "$deps"
   return 0
 }
+
+# ── Native app runs (lv-docker-up.sh with no compose file) ─────────────────
+#
+# wf_app_run_dir — where a native run's pidfile and port live. Not $TMPDIR:
+# it differs between Claude sessions (/private/tmp/claude-501/… against
+# /var/folders/…), so the session that tore a plan down never found the
+# pidfile the starting session wrote, and nothing else looked. 19 static
+# servers were found alive 11-35 days later (the coordinator's LVI-039).
+wf_app_run_dir() {
+  local d="/tmp/lv-apps-$(id -u)"
+  mkdir -p "$d" 2>/dev/null && chmod 700 "$d" 2>/dev/null
+  printf '%s' "$d"
+}
+
+# wf_app_descendants <pid> — every process under pid, deepest last.
+wf_app_descendants() {
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null); do
+    printf '%s\n' "$c"
+    wf_app_descendants "$c"
+  done
+}
+
+# wf_stop_native <compose-name> — stop the native app started under that name:
+# its process group, every descendant (a child that left the group survived a
+# group kill and kept serving the port, a client's LVI-027), then anything
+# still listening on its recorded port. Prints what it did; returns 1 when the
+# port is still held afterwards, 0 otherwise (including nothing to stop).
+wf_stop_native() {
+  local name="$1" dir pidf portf pid port pids p held f
+  dir=$(wf_app_run_dir)
+  pidf="$dir/lv-app-$name.pid"; portf="$dir/lv-app-$name.port"
+  # A pidfile from before 15.18 sits in the starting session's $TMPDIR.
+  [ -f "$pidf" ] || { f="${TMPDIR:-/tmp}/lv-app-$name.pid"; [ -f "$f" ] && pidf="$f"; }
+  [ -f "$pidf" ] || return 0
+  pid=$(tr -d '[:space:]' < "$pidf")
+  port=$(tr -d '[:space:]' < "$portf" 2>/dev/null || true)
+  [ -n "$port" ] || port="${FEATURE_PORT:-}"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    pids="$pid $(wf_app_descendants "$pid" | tr '\n' ' ')"
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    for p in $pids; do kill -TERM "$p" 2>/dev/null || true; done
+    for _ in 1 2 3 4 5; do
+      held=""
+      for p in $pids; do kill -0 "$p" 2>/dev/null && held=1; done
+      [ -z "$held" ] && break
+      sleep 1
+    done
+    kill -KILL -- "-$pid" 2>/dev/null || true
+    for p in $pids; do kill -KILL "$p" 2>/dev/null || true; done
+  fi
+  if [ -n "$port" ] && command -v lsof >/dev/null 2>&1; then
+    # Only a process started from this run's tree is ours to kill: its pid was
+    # recorded, or it descends from one. Anything else on the port is reported.
+    for p in $(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null); do
+      case " ${pids:-} " in *" $p "*) kill -KILL "$p" 2>/dev/null || true ;; esac
+    done
+    sleep 0.2
+    if lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1; then
+      echo "App $name: port $port is STILL held after stopping its run:" >&2
+      lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | sed 's/^/  /' >&2
+      rm -f "$pidf" "$portf"
+      return 1
+    fi
+  fi
+  rm -f "$pidf" "$portf"
+  echo "App $name stopped${port:+ (port $port free)}"
+  return 0
+}

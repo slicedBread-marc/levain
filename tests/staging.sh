@@ -336,6 +336,19 @@ else
   assert_eq "lv-docker-down.sh stops it"                "false" \
     "$(curl -fsS "http://127.0.0.1:$((8100 + n))/health" >/dev/null 2>&1 && echo true || echo false)"
 
+  # A client's LVI-027: the served child outlived a group kill, and down said
+  # "App … stopped" and "Container … stopped" over a port still answering. The
+  # coordinator's LVI-039: a later session's $TMPDIR never found the pidfile.
+  printf 'project_slug: "demo"\nlocal_start_command: "cd www && perl -e '"'"'setpgrp(0,0); exec @ARGV'"'"' python3 -m http.server $FEATURE_PORT --bind 127.0.0.1 & wait"\n' > levain.yml
+  stage lv-docker-up.sh
+  assert_eq "a run whose server leaves the group starts" "0" "$RC"
+  down_out=$(TMPDIR="$TEST_DIR/other-session" "$SD/lv-docker-down.sh" 2>&1); sleep 0.3
+  assert_eq "down from another session's TMPDIR stops its server too" "false" \
+    "$(curl -fsS "http://127.0.0.1:$((8100 + n))/health" >/dev/null 2>&1 && echo true || echo false)"
+  has "…and says the port is free"                    "$down_out" "port $((8100 + n)) free"
+  assert_eq "…with no container claimed"              "false" \
+    "$(printf '%s' "$down_out" | grep -q 'Container' && echo true || echo false)"
+
   printf 'project_slug: "demo"\nlocal_start_command: "echo boom-from-app; exit 1"\n' > levain.yml
   stage lv-docker-up.sh
   assert_eq "a command that dies exits 1"               "1" "$RC"

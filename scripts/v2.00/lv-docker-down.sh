@@ -45,25 +45,23 @@ if ! $native_only && [ -f "$tunnel_pidfile" ]; then
   rm -f "$tunnel_pidfile"
 fi
 
-# The native run: its whole process group, so `dotnet run`'s child app goes too.
-native_pidfile="${TMPDIR:-/tmp}/lv-app-$COMPOSE_PROJECT_NAME.pid"
-if [ -f "$native_pidfile" ]; then
-  pid=$(tr -d '[:space:]' < "$native_pidfile")
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    kill -TERM -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
-    for _ in 1 2 3 4 5; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
-    kill -KILL -- "-$pid" 2>/dev/null || true
-    echo "App $COMPOSE_PROJECT_NAME stopped"
-  fi
-  rm -f "$native_pidfile"
-fi
+# The native run: its process group, every descendant, and its port.
+# shellcheck source=lv-orch-lib.sh
+source "$SCRIPT_DIR/lv-orch-lib.sh"
+wf_stop_native "$COMPOSE_PROJECT_NAME" || true
 $native_only && exit 0
 
-docker compose -f docker/docker-compose.yml \
-  -p "$COMPOSE_PROJECT_NAME" \
-  down -v 2>/dev/null || true
+# A tree with no compose file ran natively, and saying "Container … stopped"
+# after the native stop above read as a second success (a client's LVI-027).
+if [ -f docker/docker-compose.yml ]; then
+  docker compose -f docker/docker-compose.yml \
+    -p "$COMPOSE_PROJECT_NAME" \
+    down -v 2>/dev/null || true
+fi
 
-docker ps -a --filter "name=$COMPOSE_PROJECT_NAME" \
-  --format "{{.ID}}" | xargs -r docker rm -f 2>/dev/null || true
+ids=$(docker ps -a --filter "name=$COMPOSE_PROJECT_NAME" --format "{{.ID}}" 2>/dev/null || true)
+[ -z "$ids" ] || printf '%s\n' "$ids" | xargs docker rm -f >/dev/null 2>&1 || true
 
-echo "Container $COMPOSE_PROJECT_NAME stopped"
+if [ -f docker/docker-compose.yml ] || [ -n "$ids" ]; then
+  echo "Container $COMPOSE_PROJECT_NAME stopped"
+fi
