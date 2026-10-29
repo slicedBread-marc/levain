@@ -98,8 +98,14 @@ fi
 # group (so `dotnet run`'s child app dies with it), logging to APP_LOG.
 native_pidfile="$(wf_app_run_dir)/lv-app-$COMPOSE_PROJECT_NAME.pid"
 if [ ! -f docker/docker-compose.yml ]; then
-  start_cmd=$(wf_cfg local_deploy_command "")
-  [ -n "$start_cmd" ] || start_cmd=$(wf_cfg local_start_command "")
+  # The start command is the tree's own: a feature branch that changes it runs
+  # its change. Pipeline settings stay develop's; how this tree's app starts is
+  # part of the tree (a client's LVI-025: a branch's sync-prefixed command was
+  # replaced by develop's, so the plan's design never ran).
+  tree_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  lv_has_config "$tree_root" || tree_root=$(wf_develop_root)
+  start_cmd=$(LV_CFG_ROOT="$tree_root" wf_cfg local_deploy_command "")
+  [ -n "$start_cmd" ] || start_cmd=$(LV_CFG_ROOT="$tree_root" wf_cfg local_start_command "")
   case "$start_cmd" in
     "")
       echo "lv-docker-up: no docker/docker-compose.yml and no local_start_command in levain.yml — nothing to start." >&2

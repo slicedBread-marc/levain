@@ -349,6 +349,21 @@ else
   assert_eq "…with no container claimed"              "false" \
     "$(printf '%s' "$down_out" | grep -q 'Container' && echo true || echo false)"
 
+  # A client's LVI-025: a feature worktree whose branch changes the start
+  # command runs its own, not develop's.
+  printf 'project_slug: "demo"\nlocal_start_command: "cd www && exec python3 -m http.server $FEATURE_PORT --bind 127.0.0.1"\n' > levain.yml
+  git add levain.yml && { git diff --cached --quiet || git commit -qm "native cmd"; }
+  git worktree add -q -b "feature/PLN-$(printf '%03d' "$n")-wt" "$N/feature-branches/wt" HEAD
+  cd "$N/feature-branches/wt" || exit 1
+  printf 'project_slug: "demo"\nlocal_start_command: "cd www && echo tree-own-cmd && exec python3 -m http.server $FEATURE_PORT --bind 127.0.0.1"\n' > levain.yml
+  git commit -qam "branch cmd"
+  stage lv-docker-up.sh
+  assert_eq "a worktree's app starts"                   "0" "$RC"
+  has "…with the branch's own start command"           "$(cat "$TEST_DIR/stage.err")" "tree-own-cmd"
+  "$SD/lv-docker-down.sh" >/dev/null 2>&1
+  cd "$N" || exit 1
+  git worktree remove --force "$N/feature-branches/wt" >/dev/null 2>&1
+
   printf 'project_slug: "demo"\nlocal_start_command: "echo boom-from-app; exit 1"\n' > levain.yml
   stage lv-docker-up.sh
   assert_eq "a command that dies exits 1"               "1" "$RC"

@@ -808,9 +808,13 @@ _WF_YSCALAR_AWK='
 # Reads a scalar from levain.yml. Deliberately does NOT require yq —
 # the orchestrator must run on a bare client checkout. Handles the nested
 # 2-space-indented scalar shape this config uses; not a general YAML parser.
+#
+# LV_CFG_ROOT reads another checkout's levain.yml instead of develop's — for a
+# value that belongs to the tree being run, not to the pipeline (lv-docker-up's
+# start command).
 wf_cfg() {
   local path="$1" default="${2:-}" cfg val
-  lv_config_into cfg "$(wf_develop_root)"
+  lv_config_into cfg "${LV_CFG_ROOT:-$(wf_develop_root)}"
   if [ ! -f "$cfg" ]; then printf '%s' "$default"; return 0; fi
 
   val=$(awk -v path="$path" "$_WF_YSCALAR_AWK"'
