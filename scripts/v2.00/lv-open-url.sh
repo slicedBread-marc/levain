@@ -13,9 +13,12 @@
 # an account in with one GET. `{account}` is replaced by the account and
 # `{return}` by the target URL, both URL-encoded. A template with `{return}`
 # is opened alone; one without it is opened first, and the target a moment
-# later (LV_OPEN_DELAY seconds, default 2) once its cookie has landed. e.g.
+# later (LV_OPEN_DELAY seconds, default 2) once its cookie has landed.
+# `{origin}` (scheme://host:port) and `{port}` are the target URL's, for a
+# sign-in route served by the app itself on the plan's own port. e.g.
 #
 #   test_signin_url: "http://localhost:8084/dev/login?fixture={account}"
+#   test_signin_url: "{origin}/dev/sign-in?as={account}&returnUrl={return}"
 #
 # No template: the target opens and the script says which account to choose.
 #
@@ -78,9 +81,17 @@ browser=$(wf_cfg test_browser "Google Chrome")
 template=$(wf_cfg test_signin_url "")
 slug=$(wf_cfg project_slug "$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")")
 
+# `{origin}` and `{port}` come from the target URL. A project whose sign-in is
+# the app's own route must hit the plan's container on its FEATURE_PORT, which
+# no fixed template can name, and a cookie from another port's instance does
+# not decrypt there (a client's LVI-044).
+origin=$(printf '%s' "$url" | sed -nE 's#^([A-Za-z][A-Za-z0-9+.-]*://[^/?#]+).*#\1#p')
+port=$(printf '%s' "$origin" | sed -nE 's#.*:([0-9]+)$#\1#p')
 signin=""
 if [ -n "$account" ] && [ -n "$template" ]; then
-  signin="${template//\{account\}/$(urlencode "$account")}"
+  signin="${template//\{origin\}/$origin}"
+  signin="${signin//\{port\}/$port}"
+  signin="${signin//\{account\}/$(urlencode "$account")}"
   if [[ "$template" == *"{return}"* ]]; then
     signin="${signin//\{return\}/$(urlencode "$url")}"
   fi

@@ -62,6 +62,11 @@ assert_has "target encoded into the one URL" "OPENED=http://localhost:8084/dev/l
 n=$(printf '%s\n' "$out" | grep -c '^OPENED=')
 if [ "$n" = "1" ]; then ok "opened once"; else bad "opened once" "$n opens: $out"; fi
 
+# A client's LVI-044: the app's own sign-in route, on the plan's own port.
+printf 'project_slug: "open-test"\ntest_browser: "Some Browser"\ntest_signin_url: "{origin}/dev/sign-in?as={account}&p={port}&r={return}"\n' > levain.yml
+out=$("$S/lv-open-url.sh" --dry-run --as kid@example.test http://localhost:8179/room 2>&1)
+assert_has "{origin} and {port} are the target's" "OPENED=http://localhost:8179/dev/sign-in?as=kid%40example.test&p=8179&r=http%3A%2F%2Flocalhost%3A8179%2Froom" "$out"
+
 echo "4. --as with no template"
 printf 'project_slug: "open-test"\ntest_browser: "Some Browser"\n' > levain.yml
 out=$("$S/lv-open-url.sh" --dry-run --as parent@example.test http://localhost:8091/ 2>&1)

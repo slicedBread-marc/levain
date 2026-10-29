@@ -381,9 +381,12 @@ test_account_note: ""
 # of a login page and a list to choose from (lv-open-url.sh). {account} is
 # replaced by the account; {return}, if present, by the page to land on. Both
 # are URL-encoded. Without {return}, the page opens a moment after sign-in.
+# {origin} (scheme://host:port) and {port} are the page's own, for a sign-in
+# route the app serves itself on each plan's port.
 # Leave blank if no such URL exists: the human is then told which account to
-# choose. e.g. against a local identity provider's dev login:
+# choose. e.g. against a local identity provider's dev login, or the app's own:
 #   test_signin_url: "http://localhost:8084/dev/login?fixture={account}"
+#   test_signin_url: "{origin}/dev/sign-in?as={account}&returnUrl={return}"
 test_signin_url: ""
 
 # The browser lv-open-url.sh opens (macOS application name).
