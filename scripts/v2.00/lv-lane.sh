@@ -773,6 +773,14 @@ deferred-covered)
   # an (external) or (soak) criterion of a plan whose lane still holds. A client
   # answered this gate twice in one day, "post-deploy iPad walks, accepted
   # unrun", for plans whose lane had already accepted exactly those criteria.
+  #
+  # Pre-launch answers it for every plan, lane or none, as it does manual-test:
+  # (external) and (soak) rows are checked against the end state, and
+  # lv-end-state.sh lists them while they stay open. a client's LVI-042 parked
+  # DEPLOY twice in one day on DC-034..036, calibration runs only the operator's
+  # terminal can make. (unbuilt) still gates: that is work not done, not a check
+  # after shipping.
+  prelaunch=0; wf_prelaunch && prelaunch=1
   [ "${#range_args[@]}" -gt 0 ] || { echo "Error: deferred-covered needs -- <git log revision args>" >&2; exit 2; }
   dc_rc=0
   rows=$("$SELF_DIR/lv-deferred-check.sh" --range "${range_args[@]}" 2>/dev/null) || dc_rc=$?
@@ -792,6 +800,7 @@ deferred-covered)
       external|soak) ;;
       *) say "express: $dc ($id) is a '${tag:-unknown}' criterion — the lane covers (external) and (soak) only"; exit 1 ;;
     esac
+    if [ "$prelaunch" = 1 ]; then covered+="$row"$'\n'; continue; fi
     ( resolve_plan ) >/dev/null 2>&1 || { say "express: $dc names $id, which has no plan.md — not covered"; exit 1; }
     resolve_plan
     verdict "$PLAN_ID" "$PLAN_MD"
@@ -800,6 +809,11 @@ deferred-covered)
   done <<< "$rows"
   while IFS= read -r row; do
     [ -n "$row" ] || continue
+    if [ "$prelaunch" = 1 ]; then
+      wf_event autonomy-use "$(printf '%s' "$row" | sed -nE 's/^[^ ]+ \(([^)]+)\):.*/\1/p')" \
+        "pre-launch: deploy-deferred-criteria answered for the end-state review for ${row%% *} — checked after the deploy"
+      continue
+    fi
     wf_event autonomy-use "$(printf '%s' "$row" | sed -nE 's/^[^ ]+ \(([^)]+)\):.*/\1/p')" \
       "express: deploy-deferred-criteria answered by the express lane for ${row%% *} — checked after the deploy"
   done <<< "$covered"

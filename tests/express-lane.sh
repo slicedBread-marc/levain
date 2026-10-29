@@ -503,6 +503,37 @@ assert_eq "declare --trust refuses unattended" 1 "$rc"
 out=$("$S/lv-lane.sh" check PLN-078 2>&1); rc=$?
 assert_eq "declare --trust on a pre-launch project waives it" 0 "$rc"
 
+# ── 13. Pre-launch answers deploy-deferred-criteria for any plan ──────────
+echo ""
+echo "13. deploy-deferred-criteria: pre-launch covers external rows of plans outside the lane"
+# a client's LVI-042: DEPLOY parked on DC-036, an operator-only calibration run.
+dc_register() {
+  printf '# Deferred Criteria\n\n| ID | Criterion | Tag | From | Prereq | Note | Added | Status |\n|-|-|-|-|-|-|-|-|\n'
+  printf '| DC-003 | prints true to size | external | PLN-%s | — | — | 2026-10-05 | open |\n' "$N_BIG"
+  [ -z "${1:-}" ] || printf '| DC-004 | a printer that is not built yet | unbuilt | PLN-%s | — | — | 2026-10-05 | open |\n' "$N_BIG"
+}
+dc_had=0; [ -f plans/deferred-criteria.md ] && { dc_had=1; cp plans/deferred-criteria.md "$TMPDIR/dc.keep"; }
+dc_register > plans/deferred-criteria.md
+PL_BASE=$(git rev-parse HEAD)
+git checkout -q -b pl-test
+printf 'size\n' >> src/app.txt; git add src/app.txt; git commit -qm "implement(PLN-$N_BIG-photo): step 2"
+git checkout -q develop
+out=$("$S/lv-lane.sh" deferred-covered -- pl-test --not "$PL_BASE" 2>&1); rc=$?
+assert_eq "pre-launch: an external row of a non-lane plan is covered (exit 0)" 0 "$rc"
+assert_has "…naming the row" "DC-003" "$out"
+assert_has "…logged as a pre-launch answer" "pre-launch: deploy-deferred-criteria answered for the end-state review for DC-003" "$(cat .claude/orchestrator/events.log)"
+dc_register unbuilt > plans/deferred-criteria.md
+out=$("$S/lv-lane.sh" deferred-covered -- pl-test --not "$PL_BASE" 2>&1); rc=$?
+assert_eq "pre-launch: an unbuilt row still gates (exit 1)" 1 "$rc"
+assert_has "…and says which" "DC-004" "$out"
+dc_register > plans/deferred-criteria.md
+cp levain.yml "$TMPDIR/levain.keep"
+perl -0pi -e 's/^  tier: pre-launch\n/  tier: pre-launch\n  live_from: 2000-01-01\n/m' levain.yml
+out=$("$S/lv-lane.sh" deferred-covered -- pl-test --not "$PL_BASE" 2>&1); rc=$?
+assert_eq "once live_from has passed, a non-lane row gates again (exit 1)" 1 "$rc"
+cp "$TMPDIR/levain.keep" levain.yml
+if [ "$dc_had" = 1 ]; then cp "$TMPDIR/dc.keep" plans/deferred-criteria.md; else rm -f plans/deferred-criteria.md; fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

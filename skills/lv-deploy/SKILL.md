@@ -177,6 +177,13 @@ Before starting, confirm E2E passed on release:
    day with "post-deploy iPad walks, accepted unrun" for plans whose lane had already
    accepted exactly those criteria.
 
+   **In a pre-launch project it answers for every plan, lane or none.** While
+   `projectProfile.tier` is `pre-launch` and `live_from` is unset or still ahead, every open
+   `(external)` or `(soak)` row is covered, the same way `lv-lane.sh answer` covers manual-test.
+   They stay open in the register, and `lv-end-state.sh` lists them for the human's end-state
+   review. An `(unbuilt)` row still gates, because it is work not done. a client's LVI-042 parked
+   DEPLOY twice in one day on calibration runs that only the operator's terminal can make.
+
    **Under `LV_UNATTENDED=1`, exit `1` is a gate — but read the answer of record first:**
    ```bash
    scripts/lv-exec.sh lv-promote-approval.sh deferred; echo "deferred approval exit=$?"

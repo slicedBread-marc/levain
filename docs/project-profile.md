@@ -41,7 +41,11 @@ for questions.** While `wf_prelaunch` holds:
 - `manual-test` does not gate: `lv-manual-gate.sh` answers `GATE=false` with
   `PRELAUNCH=true`, and `/lv-test` moves the open eyes criteria to the plan's
   post-ship checklist (`lv-lane.sh answer <PLN> manual-test`).
-- Neither is dropped. `lv-end-state.sh` lists every self-answered decision and
+- `deploy-deferred-criteria` does not gate on `(external)` or `(soak)` rows:
+  `lv-lane.sh deferred-covered` covers them for any plan, lane or none, and they
+  stay open in `plans/deferred-criteria.md`. An `(unbuilt)` row still gates
+  (a client's LVI-042).
+- None of these is dropped. `lv-end-state.sh` lists every self-answered decision and
   every unticked post-ship item, for a human to check **against the end state**
   — at the goal's milestone, and before `live_from` is set.
 
