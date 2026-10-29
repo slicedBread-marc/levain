@@ -702,14 +702,57 @@ answer)
   # ticked and listed under `## Post-ship checklist`, for a human after ship.
   open=$("$SELF_DIR/lv-manual-lint.sh" "$PLAN_ID" --open 2>/dev/null || true)
   moved=0
+  list=""
   if [ -n "$open" ]; then
-    list=""
     while IFS=$'\t' read -r ln tag crit _; do
       [ -n "$ln" ] || continue
       sed -i.bak "${ln}s/\[ \]/[x]/" "$PLAN_MD" && rm -f "$PLAN_MD.bak"
       list+="- [ ] ${crit} _(${tag}; shipped without eyes by ${by}, ${today})_"$'\n'
       moved=$((moved + 1))
     done <<< "$open"
+  fi
+  # And every live Chrome-Assisted criterion with no PASS on record. The guard
+  # does not count them, so --open never lists them, and the gate had just told
+  # the human they "go to the end-state review too": two stayed unchecked in
+  # plan.md and the plan completed with them in neither place (a client's
+  # LVI-036). Matched as lv-manual-gate.sh matches rows: normalised, or one
+  # containing the other at 24+ characters.
+  live_c=$("$SELF_DIR/lv-manual-lint.sh" "$PLAN_ID" --live 2>/dev/null | awk -F'\t' '$2 == "Chrome-Assisted" { print $5 }' || true)
+  if [ -n "$live_c" ]; then
+    passes=$(wf_test_progress_passes "$(dirname "$PLAN_MD")/test-progress.md" 2>/dev/null || true)
+    chrome=$(LV_LIVE="$live_c" LV_PASS="$passes" awk '
+      function norm(s,   t) {
+        t = tolower(s); gsub(/[`*_]/, "", t)
+        sub(/^[[:space:]]*-[[:space:]]*\[[ xX]\][[:space:]]*/, "", t)
+        sub(/^[[:space:]]*\([^)]*\)[[:space:]]*/, "", t)
+        gsub(/[[:space:]]+/, " ", t); sub(/^ /, "", t); sub(/ $/, "", t)
+        sub(/[.,;:]+$/, "", t)
+        return t
+      }
+      function passed(n,   k) {
+        if (n in P) return 1
+        for (k in P) if (length(n) >= 24 && length(k) >= 24 && (index(k, n) || index(n, k))) return 1
+        return 0
+      }
+      BEGIN {
+        n = split(ENVIRON["LV_LIVE"], a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") L[norm(a[i])] = 1
+        n = split(ENVIRON["LV_PASS"], a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") P[norm(a[i])] = 1
+      }
+      /^####[[:space:]]*Chrome-Assisted/ { in_c = 1; next }
+      /^#+[[:space:]]/ { in_c = 0 }
+      in_c && /^[[:space:]]*-[[:space:]]*\[ \]/ {
+        k = norm($0)
+        if ((k in L) && !passed(k)) { t = $0; sub(/^[[:space:]]*-[[:space:]]*\[ \][[:space:]]*/, "", t); print NR "\t" t }
+      }
+    ' "$PLAN_MD")
+    while IFS=$'\t' read -r ln crit; do
+      [ -n "$ln" ] || continue
+      sed -i.bak "${ln}s/\[ \]/[x]/" "$PLAN_MD" && rm -f "$PLAN_MD.bak"
+      list+="- [ ] ${crit} _(chrome-assisted, untested; shipped without eyes by ${by}, ${today})_"$'\n'
+      moved=$((moved + 1))
+    done <<< "$chrome"
+  fi
+  if [ -n "${list:-}" ]; then
     LV_LIST="$list" LV_BY="$by" awk '
       BEGIN { list = ENVIRON["LV_LIST"]; by = ENVIRON["LV_BY"] }
       /^## / { if (inside && !done) { printf "%s\n", list; done = 1 }

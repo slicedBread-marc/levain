@@ -169,10 +169,22 @@ eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
 assert_eq "lv-manual-gate does not gate an eyes:blocking plan" false "$GATE"
 assert_eq "…saying pre-launch" true "$PRELAUNCH"
 assert_eq "…on a plan with no lane" none "$LANE"
+# A client's LVI-036: Chrome-Assisted criteria nobody ran stayed unchecked and
+# off the checklist. One here has a PASS on record and must stay put.
+python3 - plans/PLN-002-beta/plan.md <<'PY2'
+import sys; p=sys.argv[1]; s=open(p).read()
+s=s.replace("#### Manual\n", "#### Chrome-Assisted\n- [ ] /print — the preview shows the label beside the sheet title\n- [ ] /print — the download button saves a PDF of the sheet\n\n#### Manual\n", 1)
+open(p,"w").write(s)
+PY2
+printf '| # | Criterion | Build | Result | Notes |\n|-|-|-|-|-|\n| 1 | /print — the preview shows the label beside the sheet title | abc1234 | PASS | headless eval |\n' > plans/PLN-002-beta/test-progress.md
+git add -A && git commit -qm "chrome criteria"
 out=$("$S/lv-lane.sh" answer PLN-002 manual-test 2>&1); rc=$?
 assert_eq "lv-lane.sh answer: exit 0" 0 "$rc"
 assert_has "the criterion is ticked in place" "- [x] (eyes:blocking) /print" "$(cat plans/PLN-002-beta/plan.md)"
 assert_has "…listed on the post-ship checklist as pre-launch" "shipped without eyes by pre-launch (end-state review)" "$(cat plans/PLN-002-beta/plan.md)"
+assert_has "an untested Chrome-Assisted criterion goes to the checklist too" "- [ ] /print — the download button saves a PDF of the sheet _(chrome-assisted" "$(cat plans/PLN-002-beta/plan.md)"
+assert_has "…ticked in place" "- [x] /print — the download button" "$(cat plans/PLN-002-beta/plan.md)"
+assert_not "one with a PASS on record does not" "- [ ] /print — the preview shows the label beside the sheet title _(" "$(cat plans/PLN-002-beta/plan.md)"
 assert_eq "the completion guard lets it complete" 0 \
   "$("$S/lv-registry-update.sh" PLN-002 testing complete - >/dev/null 2>&1; echo $?)"
 
@@ -180,7 +192,7 @@ assert_eq "the completion guard lets it complete" 0 \
 echo ""
 echo "7. lv-end-state.sh lists what the human owes"
 out=$("$S/lv-end-state.sh" --count)
-assert_eq "counts" "DECISIONS=4 CHECKLIST=1 DEFERRED=0" "$out"
+assert_eq "counts" "DECISIONS=4 CHECKLIST=2 DEFERRED=0" "$out"
 out=$("$S/lv-end-state.sh")
 assert_has "the needs-input decision" "(b) Print sheet" "$out"
 assert_has "the spec-approval decision" "approve — review Approved" "$out"
