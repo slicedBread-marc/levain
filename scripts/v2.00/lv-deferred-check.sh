@@ -70,10 +70,13 @@ fi
 FILE="$(wf_develop_root)/plans/deferred-criteria.md"
 [ -f "$FILE" ] || exit 0
 
+# Every id in every argument. A list built as lv-attend says — grep -oE … |
+# sort -u — and passed quoted is ONE argument with 36 ids on 36 lines, and
+# reading only its first id showed one row of fourteen (a client's LVI-039).
+plan_ids=$(printf '%s\n' "$@" | grep -oE "($LV_PLN_RE)-[0-9]+" | awk '!seen[$0]++' || true)
+
 found=0
-for raw in "$@"; do
-  plan_id=$(printf '%s' "$raw" | grep -oE "($LV_PLN_RE)-[0-9]+" | head -1 || true)
-  [ -n "$plan_id" ] || continue
+for plan_id in $plan_ids; do
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     found=1

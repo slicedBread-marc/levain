@@ -125,6 +125,9 @@ assert_eq "a satisfied row is not read out"            "0" "$(rc "$SD/lv-deferre
 assert_eq "a plan with none: exit 0"                   "0" "$(rc "$SD/lv-deferred-check.sh" PLN-010)"
 assert_eq "no plan ids (an empty range): exit 0, not a usage error" "0" "$(rc "$SD/lv-deferred-check.sh")"
 has "ids are pulled out of commit-subject noise"       "$("$SD/lv-deferred-check.sh" "feat(PLN-001-merged-one):" 2>/dev/null)" "PLN-001"
+# A client's LVI-039: the list lv-attend builds, passed quoted, is one argument.
+out=$("$SD/lv-deferred-check.sh" "$(printf 'PLN-004\nPLN-010\nPLN-001\n')" 2>/dev/null)
+assert_eq "every id in a quoted, newline-separated list is read" "2" "$(printf '%s\n' "$out" | grep -c 'PLN-001')"
 
 # --range: the batch is the plan each commit is ABOUT — the first id in its
 # subject. A later id is a mention (LVI-037: a spec commit naming another plan
