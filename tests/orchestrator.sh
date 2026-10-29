@@ -474,6 +474,15 @@ assert_eq "--resolves all clears what is left" "clean" \
 "$SCRIPT_DIR/lv-gate-open.sh" PLN-038 needs-input "again?" >/dev/null 2>&1
 assert_eq "a close with no --resolves warns about what it leaves unchecked" "false" \
   "$("$SCRIPT_DIR/lv-gate-close.sh" PLN-038 "noted" 2>&1 >/dev/null | grep -q 'unchecked finding' && echo true || echo false)"
+# A client's LVI-040: the warning's own advice re-runs with --resolves after
+# the gate is closed, and that printed "no open gate" and ticked nothing.
+printf -- '- [ ] **Behavior**: a late one\n' >> "plans/PLN-038-settled/findings.md"
+"$SCRIPT_DIR/lv-gate-open.sh" PLN-038 needs-input "late?" >/dev/null 2>&1
+"$SCRIPT_DIR/lv-gate-close.sh" PLN-038 "answered" >/dev/null 2>&1
+out=$("$SCRIPT_DIR/lv-gate-close.sh" PLN-038 --resolves "a late one" 2>&1); rc=$?
+assert_eq "--resolves after the close exits 0" "0" "$rc"
+assert_eq "…and ticks the finding with no gate open" "1" \
+  "$(grep -c '^- \[x\] \*\*Behavior\*\*: a late one' "plans/PLN-038-settled/findings.md" | xargs)"
 
 # ── The resolved slot has no memory; the ledger does (WFI-100) ─────────────
 #

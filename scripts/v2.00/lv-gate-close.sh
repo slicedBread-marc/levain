@@ -260,6 +260,56 @@ fi
 # is the name in hand (WFI-187).
 gate_file=$(wf_gate_file "$id" || true)
 
+# resolve_findings — why it exists is with its call, further down (WFI-233); defined
+# so the no-open-gate path can run it too.
+resolve_findings() {
+  local root plan_dir findings ticked=0 stamp left before after tmp
+  root="$(wf_develop_root)"
+  plan_dir=$(ls -d "$root"/plans/"${id}"-* 2>/dev/null | head -1 || true)
+  [ -n "$plan_dir" ] && [ -d "$plan_dir" ] || return 0
+  findings="$plan_dir/findings.md"
+  [ -f "$findings" ] || return 0
+
+  if [ -n "$resolves" ]; then
+    tmp=$(mktemp "${TMPDIR:-/tmp}/wf-findings.XXXXXX")
+    stamp="resolved at gate '$gate_name', $(wf_now)"
+    RESOLVES="$resolves" STAMP="$stamp" awk '
+      # Column-0 unchecked findings only — the same shape lv-findings-route.sh
+      # routes on. An indented checkbox has never been a finding here.
+      /^- \[ \]/ && (ENVIRON["RESOLVES"] == "all" || index($0, ENVIRON["RESOLVES"]) > 0) {
+        sub(/^- \[ \]/, "- [x]")
+        print $0 "  <!-- " ENVIRON["STAMP"] " -->"
+        next
+      }
+      { print }
+    ' "$findings" > "$tmp"
+    # `grep -c` exits 1 on a zero count while still printing `0`, so `|| true`
+    # keeps the count and drops the status. `|| echo 0` would print it twice.
+    before=$(grep -c '^- \[ \]' "$findings" 2>/dev/null || true)
+    after=$(grep -c '^- \[ \]' "$tmp" 2>/dev/null || true)
+    ticked=$(( ${before:-0} - ${after:-0} ))
+    cat "$tmp" > "$findings"
+    rm -f "$tmp"
+    if [ "${ticked:-0}" -gt 0 ]; then
+      echo "$id: ticked $ticked finding(s) settled by this answer"
+      ( cd "$root" && "$SELF_DIR/lv-commit.sh" \
+          "gate($id): $gate_name — $ticked finding(s) checked off as settled" \
+          --add "plans/$(basename "$plan_dir")/findings.md" >/dev/null 2>&1 ) || true
+    else
+      echo "lv-gate-close: --resolves '$resolves' matched no unchecked finding in $findings" >&2
+    fi
+  fi
+
+  # Whatever is still unchecked is what the next router will route on. Saying so
+  # is the difference between a decision that lands and one that gets re-asked.
+  left=$(grep -c '^- \[ \]' "$findings" 2>/dev/null || true)
+  if [ "${left:-0}" -gt 0 ]; then
+    echo "lv-gate-close: $id still has ${left} unchecked finding(s) in findings.md." >&2
+    echo "  lv-findings-route.sh routes on those boxes and cannot read your resolution text." >&2
+    echo "  If this answer settled any of them: lv-gate-close.sh $id --resolves '<finding text>'" >&2
+    echo "  — it ticks them with the gate already closed (WFI-233, WFI-237, LVI-040)." >&2
+  fi
+}
 if [ ! -f "$gate_file" ] && [ -z "$forced_gate" ]; then
   # A human's answer with nowhere to go is not a no-op: it is lost. A client's
   # attend session closed a spec-approval the harness had withdrawn minutes
@@ -273,6 +323,16 @@ if [ ! -f "$gate_file" ] && [ -z "$forced_gate" ]; then
     fi
     echo "       Re-read what the harness is asking now (lv-gate-status.sh $id) and put that to the human." >&2
     exit 6
+  fi
+  # The close's own advice is "re-run with --resolves", and that re-run always
+  # lands here, after the gate is gone: it printed "no open gate" and ticked
+  # nothing (a client's LVI-040). Ticking findings needs no open gate.
+  if [ -n "$resolves" ]; then
+    last=$(ls -t "$(wf_orch_dir)/gates/resolved/"*"$id"* 2>/dev/null | head -1 || true)
+    gate_name=$( [ -n "$last" ] && wf_gate_field "$last" GATE_NAME || true)
+    gate_name="${gate_name:-closed gate}"
+    resolve_findings || true
+    exit 0
   fi
   # Includes --withdraw: a question already gone has nothing left to withdraw.
   echo "$id: no open gate"
@@ -730,53 +790,6 @@ transcribe_resolution || true
 # So the close ticks what it settled. `--resolves` names it; without one, an
 # unchecked finding that survives the close is at least said out loud, here,
 # where the person closing the gate can still act on it.
-resolve_findings() {
-  local root plan_dir findings ticked=0 stamp left before after tmp
-  root="$(wf_develop_root)"
-  plan_dir=$(ls -d "$root"/plans/"${id}"-* 2>/dev/null | head -1 || true)
-  [ -n "$plan_dir" ] && [ -d "$plan_dir" ] || return 0
-  findings="$plan_dir/findings.md"
-  [ -f "$findings" ] || return 0
-
-  if [ -n "$resolves" ]; then
-    tmp=$(mktemp "${TMPDIR:-/tmp}/wf-findings.XXXXXX")
-    stamp="resolved at gate '$gate_name', $(wf_now)"
-    RESOLVES="$resolves" STAMP="$stamp" awk '
-      # Column-0 unchecked findings only — the same shape lv-findings-route.sh
-      # routes on. An indented checkbox has never been a finding here.
-      /^- \[ \]/ && (ENVIRON["RESOLVES"] == "all" || index($0, ENVIRON["RESOLVES"]) > 0) {
-        sub(/^- \[ \]/, "- [x]")
-        print $0 "  <!-- " ENVIRON["STAMP"] " -->"
-        next
-      }
-      { print }
-    ' "$findings" > "$tmp"
-    # `grep -c` exits 1 on a zero count while still printing `0`, so `|| true`
-    # keeps the count and drops the status. `|| echo 0` would print it twice.
-    before=$(grep -c '^- \[ \]' "$findings" 2>/dev/null || true)
-    after=$(grep -c '^- \[ \]' "$tmp" 2>/dev/null || true)
-    ticked=$(( ${before:-0} - ${after:-0} ))
-    cat "$tmp" > "$findings"
-    rm -f "$tmp"
-    if [ "${ticked:-0}" -gt 0 ]; then
-      echo "$id: ticked $ticked finding(s) settled by this answer"
-      ( cd "$root" && "$SELF_DIR/lv-commit.sh" \
-          "gate($id): $gate_name — $ticked finding(s) checked off as settled" \
-          --add "plans/$(basename "$plan_dir")/findings.md" >/dev/null 2>&1 ) || true
-    else
-      echo "lv-gate-close: --resolves '$resolves' matched no unchecked finding in $findings" >&2
-    fi
-  fi
-
-  # Whatever is still unchecked is what the next router will route on. Saying so
-  # is the difference between a decision that lands and one that gets re-asked.
-  left=$(grep -c '^- \[ \]' "$findings" 2>/dev/null || true)
-  if [ "${left:-0}" -gt 0 ]; then
-    echo "lv-gate-close: $id still has ${left} unchecked finding(s) in findings.md." >&2
-    echo "  lv-findings-route.sh routes on those boxes and cannot read your resolution text." >&2
-    echo "  If this answer settled any of them, re-run with --resolves '<finding text>' (WFI-233, WFI-237)." >&2
-  fi
-}
 resolve_findings || true
 
 # ── Answering a gate is forward progress ──────────────────────────────────
