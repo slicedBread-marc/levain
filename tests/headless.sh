@@ -51,6 +51,21 @@ assert_eq "session with no spec"                       "2|ERROR usage" \
 assert_eq "session @file that does not exist"          "2|ERROR session file not found: $TEST_DIR/nope.json" \
   "$(run lv-headless-session.sh "@$TEST_DIR/nope.json")"
 
+# A misquoted actions-json is refused before anything touches the disk
+# (LVI-026: a fragment in the output-path slot became a directory in the tree).
+mkdir -p "$TEST_DIR/cwd"
+r=$(cd "$TEST_DIR/cwd" && run lv-headless-screenshot.sh http://x '{"type":"goto","url":"/a/b"}')
+has "screenshot: JSON in the output-path slot is refused" "$r" '^2\|ERROR output path looks like JSON'
+assert_eq "  and no directory is made from it"           "" "$(ls -A "$TEST_DIR/cwd")"
+has "screenshot: an output path with no image extension" \
+  "$(run lv-headless-screenshot.sh http://x /tmp/shot)" '^2\|ERROR output path must end'
+has "eval: split actions-json (extra arguments)" \
+  "$(run lv-headless-eval.sh http://x true '[{"type":"click"' '"selector":"x"}]' 1 2)" '^2\|ERROR 1 argument\(s\) past'
+has "eval: actions that are not one JSON array" \
+  "$(run lv-headless-eval.sh http://x true 'type:click')" '^2\|ERROR actions-json must be'
+has "eval: a width that is not a number" \
+  "$(run lv-headless-eval.sh http://x true '[]' '"x"}]')" '^2\|ERROR width and height'
+
 # No node: a PATH with the system tools and nothing else.
 nonode=$(PATH=/usr/bin:/bin bash "$SD/lv-headless-eval.sh" http://x true 2>/dev/null); nonode="$nonode|$?"
 has "no node/npm on the machine: ERROR, exit 2"        "$nonode" "^ERROR no node/npm.*\|2$"

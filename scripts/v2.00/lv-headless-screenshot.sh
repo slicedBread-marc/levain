@@ -14,9 +14,9 @@
 #                                  [--viewport]
 #   Default viewport is 390x844 (mobile), matching lv-headless-eval.sh — pass
 #   width/height to check a different breakpoint (e.g. 1280 800 for desktop).
-#   output-path should live under the feature worktree (e.g.
-#   /tmp/wf-screenshots/<plan>-<n>.png is fine too) — anywhere the Read tool
-#   can reach it.
+#   output-path belongs outside the worktree, e.g.
+#   /tmp/wf-shots/<plan>-<n>.png: anything untracked in the tree makes
+#   lv-suite-run --reuse refuse it (LVI-026). It must end in .png/.jpg/.jpeg.
 #
 #   --viewport  Capture only what fits in the viewport, instead of the whole
 #   (--no-full-page) scrollable page. THIS IS WHAT AN ABOVE-THE-FOLD CRITERION
@@ -60,6 +60,7 @@ fi
 
 # shellcheck source=lv-headless-common.sh
 source "$(dirname "$0")/lv-headless-common.sh"
+wf_headless_check_args "$ACTIONS" "$WIDTH" "$HEIGHT" $(( $# > 5 ? $# - 5 : 0 )) "$OUT" || exit 2
 wf_headless_ensure_ready || exit 2
 
 mkdir -p "$(dirname "$OUT")"

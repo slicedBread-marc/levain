@@ -92,6 +92,7 @@ fi
 
 # shellcheck source=lv-headless-common.sh
 source "$(dirname "$0")/lv-headless-common.sh"
+wf_headless_check_args "$ACTIONS" "$WIDTH" "$HEIGHT" $(( $# > 5 ? $# - 5 : 0 )) || exit 2
 wf_headless_ensure_ready || exit 2
 
 RUNNER="$CACHE_DIR/run-eval.mjs"

@@ -22,6 +22,40 @@
 # Returns 0 when ready. On failure prints "ERROR <reason>" to stdout (the
 # same contract both callers use for their own exit-2 case) and returns 2 —
 # the caller must check the return and exit, not just call this and continue.
+#
+# wf_headless_check_args <actions-json> <width> <height> <extra-count> [<output-path>]:
+#   Refuses the shapes an unquoted or misplaced actions-json produces, before
+#   anything touches the disk: actions that are not one JSON array, a width or
+#   height that is not a number, positional arguments past the last one, and
+#   an output path that is JSON or has no image extension. A shell splits an
+#   unquoted '[{"type":"goto","url":"/a/b"}]' into several words, so a
+#   fragment lands in a later slot, and the screenshot's mkdir -p of its
+#   dirname made a fragment-named directory in the worktree, which then made
+#   lv-suite-run --reuse refuse the tree (a client's LVI-026). Prints
+#   "ERROR <reason>" and returns 2, like wf_headless_ensure_ready.
+
+wf_headless_check_args() {
+  local actions="$1" width="$2" height="$3" extra="$4" out="${5-}"
+  if [ "$extra" -gt 0 ]; then
+    echo "ERROR $extra argument(s) past the last one - pass actions-json as ONE single-quoted argument: '[{\"type\":...}]'"
+    return 2
+  fi
+  case "$actions" in
+    \[*\]) ;;
+    *) echo "ERROR actions-json must be one single-quoted JSON array, got: ${actions:0:60}"; return 2 ;;
+  esac
+  case "$width$height" in
+    ''|*[!0-9]*) echo "ERROR width and height must be numbers, got: ${width:0:30} ${height:0:30} - is actions-json quoted?"; return 2 ;;
+  esac
+  if [ $# -ge 5 ]; then
+    case "$out" in
+      \{*|\[*|*\"*) echo "ERROR output path looks like JSON: ${out:0:60} - pass <url> <output-path> [actions-json]"; return 2 ;;
+      *.png|*.jpg|*.jpeg) ;;
+      *) echo "ERROR output path must end in .png, .jpg or .jpeg, got: ${out:0:60}"; return 2 ;;
+    esac
+  fi
+  return 0
+}
 
 wf_headless_ensure_ready() {
   CACHE_DIR="${LV_HEADLESS_CACHE:-$HOME/.cache/wf-headless-browser}"
