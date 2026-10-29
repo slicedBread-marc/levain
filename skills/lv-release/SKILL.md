@@ -151,36 +151,29 @@ release-branches/release → release's own permanent worktree — staging enviro
 6. **Push local `develop`, then merge it into `release`** to bring plan files and REGISTRY state. Nothing in the pipeline pushes `develop` mid-cycle — only `/lv-deploy`'s back-merge does, right at the end — so `origin/develop` is routinely behind the local branch every other skill has been committing to. Merging `origin/develop` without pushing first silently drops everything committed since the last deploy: client-a's WFI-250 merged 39 commits behind, picked up only the bookkeeping paths that happened to already be pushed, and the omission of a whole plan's code and tests was caught only by noticing its plan folder absent from the release worktree afterward — the full test suite passed regardless, because it never contained the missing plan's tests to fail.
    ```bash
    git push origin develop
-   git pull origin release
+   git pull --no-rebase --no-edit origin release
    git merge origin/develop --no-edit
    ```
-   A push rejected as non-fast-forward means another session pushed `develop` from elsewhere between your read of it and now — pull and reconcile there before retrying; never force. If the merge fails with non-trivial conflicts, `git merge --abort` first — a worktree left mid-merge is neither the old state nor the new one, and the next run inherits it — then inform the user (and, under `LV_UNATTENDED=1`, unclaim) and stop; do not proceed to E2E.
+   `--no-rebase` is not optional: with no `pull.rebase`/`pull.ff` configured, a local `release` that has diverged from `origin/release` (a PR merged there while this worktree held unpushed commits) makes a bare `git pull` refuse with "Need to specify how to reconcile divergent branches" (a client's LVI-037). A merge is what step 6 does anyway. A push rejected as non-fast-forward means another session pushed `develop` from elsewhere between your read of it and now — pull and reconcile there before retrying; never force. If the merge fails with non-trivial conflicts, `git merge --abort` first — a worktree left mid-merge is neither the old state nor the new one, and the next run inherits it — then inform the user (and, under `LV_UNATTENDED=1`, unclaim) and stop; do not proceed to E2E.
 
 6a. **Check the harness survived the merge** — run this immediately, before anything else:
    ```bash
-   [ -x scripts/lv-exec.sh ] && [ -f scripts/version-map.txt ] && echo "harness ok" \
-     || echo "HARNESS MISSING"
+   main_root=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+   "$main_root/scripts/lv-exec.sh" lv-harness-restore.sh
    ```
-   `harness ok` → continue at step 7.
+   `Harness intact` → continue at step 7. Anything else is the script restoring it: in this
+   linked worktree that means copying the stub (`scripts/lv-exec.sh` and the `lv-*` skills) from
+   the main checkout, where the versioned scripts live. **Re-run it** and continue on
+   `Harness intact`.
 
-   `HARNESS MISSING` means the untrack commit reached a branch that still tracked the generated harness, so git deleted the files — and they are gitignored now, so nothing puts them back.
+   **Never run `install.sh` here.** It writes a full harness (`scripts/current`, `scripts/gen/`,
+   `version-map.txt`) into `release-branches/release`, and nothing ever updates that copy:
+   `deploy-all.sh` writes the main checkout only. A client's release worktree kept a 15.9.1
+   harness for two weeks after the project moved to 15.18.0, and a test that resolved its harness
+   from there failed every release run (LVI-038). `lv-worktree-pin.sh` (step 1) now removes such a
+   copy when it finds one.
 
-   **Reinstall from the library first.** `install.sh` recorded its own path when this project was set up, and it survives any checkout because it is untracked. That last word is also why the snippet below looks in two places: untracked files are **not** materialised in a git worktree, and you are always releasing from `release-branches/release` — a dedicated worktree — so `.claude/workflow-source` exists only in the main (develop) checkout (client-a's WFI-191 — the old one-liner was guarded with `[ -n "$lib" ] &&`, so an empty `$lib` made it a silent no-op that exited 0).
-   ```bash
-   lib=$(cat .claude/workflow-source 2>/dev/null | tr -d '[:space:]')
-   if [ -z "$lib" ]; then
-     main_root=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
-     lib=$(cat "$main_root/.claude/workflow-source" 2>/dev/null | tr -d '[:space:]')
-   fi
-   if [ -n "$lib" ] && [ -f "$lib/install.sh" ]; then
-     bash "$lib/install.sh" "$PWD"
-   else
-     echo "NO LIBRARY — .claude/workflow-source is empty in this checkout and in the main worktree"
-   fi
-   ```
-   That regenerates the harness this project's `.claude/workflow-version` actually names, and leaves the tree clean because the files are gitignored. **Re-run the step 6a check** — do not take the installer's exit code as the answer. On `harness ok`, continue at step 7; on `NO LIBRARY` or a still-missing harness, use the history recovery below.
-
-   **Only if the library is unreachable**, recover from history with plain git — but understand what you are getting. The newest ref that still *tracks* the harness is, by definition, a ref from before this client's untrack commit, so the further back that migration is, the staler the restore. client-a's WFI-119 recovered a v3.3.0-era harness into a project stamped 6.2.1 and reported success: three major versions of stale `lv-*` scripts, which is the exact failure mode WFI-014 warns about. **Find the ref first — do not assume `HEAD@{1}` — and check its version before trusting it:**
+   **Only if `lv-harness-restore.sh` cannot restore it**, recover from history with plain git — but understand what you are getting. The newest ref that still *tracks* the harness is, by definition, a ref from before this client's untrack commit, so the further back that migration is, the staler the restore. client-a's WFI-119 recovered a v3.3.0-era harness into a project stamped 6.2.1 and reported success: three major versions of stale `lv-*` scripts, which is the exact failure mode WFI-014 warns about. **Find the ref first — do not assume `HEAD@{1}` — and check its version before trusting it:**
    ```bash
    want=$(cat .claude/workflow-version 2>/dev/null | tr -d '[:space:]')
    for n in $(seq 1 40); do

@@ -994,6 +994,19 @@ lv_wt_repo=$(mktemp -d)
 ) >/dev/null 2>&1
 assert_eq "the harness copier puts the local-env script in the worktree, executable" "true" \
   "$([ -x "$lv_wt_repo/feature-branches/PLN-001-x/.claude/on-implement-commit.sh" ] && echo true || echo false)"
+# A client's LVI-038: a full generated harness in a linked worktree is a fork
+# nothing updates. Untracked, it is removed; a tracked path is left alone.
+(
+  cd "$lv_wt_repo/feature-branches/PLN-001-x" || exit 1
+  mkdir -p scripts/gen/15.9.1-old/v2.00 scripts/v2.00 && echo 15.9.1-old > scripts/current
+  echo x > scripts/version-map.txt && echo x > scripts/v2.00/lv-a.sh
+  mkdir -p scripts/v9 && echo keep > scripts/v9/tracked.sh && git add -f scripts/v9/tracked.sh && git commit -qm tracked
+  "$SCRIPT_DIR/lv-worktree-harness.sh" .
+) >/dev/null 2>&1
+lv_wt=$lv_wt_repo/feature-branches/PLN-001-x
+assert_eq "a stale full harness copy in a linked worktree is removed" "false" \
+  "$([ -e "$lv_wt/scripts/current" ] || [ -e "$lv_wt/scripts/gen" ] || [ -e "$lv_wt/scripts/version-map.txt" ] || [ -e "$lv_wt/scripts/v2.00" ] && echo true || echo false)"
+assert_eq "…but a tracked scripts/v* path stays" "true" "$([ -f "$lv_wt/scripts/v9/tracked.sh" ] && echo true || echo false)"
 rm -rf "$lv_wt_repo"
 
 # ═══════════════════════════════════════════════════════════════════════

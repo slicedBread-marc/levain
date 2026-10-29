@@ -154,6 +154,24 @@ fi
 # guarantees the file a skill invokes by relative path is executable. Normally
 # a no-op regardless: `cp -p` preserves the source mode, and install.sh makes
 # the main worktree's copy executable.
+# A FULL generated harness in a linked worktree is a fork nothing updates:
+# deploy-all.sh writes the main checkout only. /lv-release once told its
+# recovery to run install.sh in release-branches/release, and a client's copy
+# there sat at 15.9.1 two weeks after the project moved on, failing every
+# release run that resolved its harness from that tree (LVI-038). The stub
+# above is all a linked worktree carries, so remove the rest — only when git
+# does not track it, i.e. it is generated output and nothing else.
+stale=0
+for rel in scripts/current scripts/version-map.txt scripts/gen scripts/v[0-9]*; do
+  [ -e "$rel" ] || continue
+  git ls-files --error-unmatch "$rel" >/dev/null 2>&1 && continue
+  [ -n "$(git ls-files "$rel" 2>/dev/null | head -1)" ] && continue
+  rm -rf "$rel" && stale=$((stale + 1))
+done
+if [ "$stale" -gt 0 ]; then
+  echo "Removed a stale full harness copy from $(basename "$HERE") ($stale path(s)); it resolves from the main worktree"
+fi
+
 if [ -f scripts/lv-exec.sh ] && ! git ls-files --error-unmatch scripts/lv-exec.sh >/dev/null 2>&1; then
   [ -x scripts/lv-exec.sh ] || chmod +x scripts/lv-exec.sh 2>/dev/null || true
 fi
