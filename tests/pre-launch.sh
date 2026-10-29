@@ -154,6 +154,12 @@ assert_eq "…with a gate open" true "$([ -f $G/PLN-002.gate ] && echo true || e
 assert_has "…and an event saying so" "self-answer-capped	PLN-002" "$(cat .claude/orchestrator/events.log)"
 "$S/lv-gate-close.sh" PLN-002 "ok" --only needs-input >/dev/null 2>&1
 
+# A client's LVI-029: the same question, in the same words, already answered.
+out=$("$S/lv-gate-open.sh" PLN-002 needs-input "question  3?" 2>&1); rc=$?
+assert_eq "an answered question asked again in the same words is refused (exit 3)" 3 "$rc"
+assert_has "…naming the answer of record" "resolution:" "$out"
+assert_eq "…with no gate open" false "$([ -f $G/PLN-002.gate ] && echo true || echo false)"
+
 # ── 5. --basis pre-launch is checked ───────────────────────────────────────
 echo ""
 echo "5. --basis pre-launch is checked, not believed"

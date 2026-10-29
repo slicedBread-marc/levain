@@ -87,7 +87,8 @@
 # A gate that has already been ANSWERED is refused outright — see below.
 #
 # Exit 0 when a gate is open, 1 on error, 3 when the gate was refused because
-# an answer of record already covers this revision of the plan, and 5 when a
+# an answer of record already covers this revision of the plan (or, for any
+# other gate, this exact question in the same words), and 5 when a
 # DIFFERENT gate is already open on the artifact — which this refuses rather
 # than overwrites, because one file holds one artifact's gate (WFI-025), and 6
 # when manual-test is asked for on a plan still in `testing` (LVI-031), and 7
@@ -499,6 +500,24 @@ if ! wf_gate_revision_scoped "$gate_name"; then
     prior_res=$(wf_gate_field "$prior_file" GATE_RESOLUTION)
     prior_at=$(wf_gate_field "$prior_file" GATE_RESOLVED)
   fi
+fi
+
+# ── The same words, already answered ───────────────────────────────────────
+#
+# Carrying the prior answer is right for a question that might be new. One
+# asked in the very same words is not new: a client's tester printed the
+# decision of record and then opened a duplicate needs-input anyway, which an
+# unattended close could not clear without --basis (a client's LVI-029). Exact
+# text only (case and spacing aside) — anything looser is the semantic match
+# the paragraph above refuses to guess at. --force asks again regardless.
+same_words() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//'; }
+if ! $force && [ -n "$prior_res" ] && [ -z "$(wf_gate_field "$prior_file" GATE_WITHDRAWN)" ] \
+   && [ "$(same_words "$question")" = "$(same_words "$prior_q")" ]; then
+  wf_event gate-refused "$id" "$gate_name: asked in the same words, answered ${prior_at:-} — $question"
+  echo "$id: gate '$gate_name' NOT opened — this exact question was answered${prior_at:+ at $prior_at}." >&2
+  echo "  resolution: $prior_res" >&2
+  echo "  Act on that answer. It is the decision of record; if the situation really changed, ask what changed." >&2
+  exit 3
 fi
 
 # The push-coverage sentence is this script's to write, from the flag. Two
