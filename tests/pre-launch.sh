@@ -9,7 +9,8 @@
 #      still park for a human (unattended, a missing one is refused, LVI-046); the recommendation is kept on the open gate.
 #   3. spec-approval self-answers as an approve the next worker can act on.
 #   4. The daily cap: past projectProfile.selfAnswerMaxPerDay the gate parks.
-#   5. lv-gate-close.sh --basis pre-launch is checked, not believed: refused
+#   5. lv-gate-close.sh --basis pre-launch is checked, not believed (and inferred
+#      when absent, never past a --floor, LVI-048): refused
 #      unattended on a governed project and on a gate outside the set.
 #   6. manual-test: lv-manual-gate.sh answers GATE=false with PRELAUNCH=true
 #      on an eyes:blocking plan with no lane; lv-lane.sh answer moves it to the
@@ -171,6 +172,24 @@ echo "5. --basis pre-launch is checked, not believed"
 out=$(LV_UNATTENDED=1 "$S/lv-gate-close.sh" PLN-001 "retried" --only merge-failed --basis pre-launch 2>&1); rc=$?
 assert_eq "a gate outside the set is refused (exit 4)" 4 "$rc"
 "$S/lv-gate-close.sh" PLN-001 "fixed" --only merge-failed >/dev/null 2>&1
+# A client's LVI-048: a worker self-closing its own needs-input without
+# --basis was refused, and the gate parked for a human. Inferred now, where
+# --basis pre-launch would pass, and never past a --floor.
+"$S/lv-gate-open.sh" PLN-001 needs-input "Which colour?" >/dev/null 2>&1
+out=$(LV_UNATTENDED=1 "$S/lv-gate-close.sh" PLN-001 "blue" --only needs-input 2>&1); rc=$?
+assert_eq "no --basis on a self-answerable gate: closed as pre-launch" 0 "$rc"
+assert_eq "…the gate is gone" false "$([ -f $G/PLN-001.gate ] && echo true || echo false)"
+"$S/lv-gate-open.sh" PLN-001 merge-failed "PR #9 would not merge either" >/dev/null 2>&1
+out=$(LV_UNATTENDED=1 "$S/lv-gate-close.sh" PLN-001 "retried" --only merge-failed 2>&1); rc=$?
+assert_eq "no --basis outside the set: still refused (exit 4)" 4 "$rc"
+"$S/lv-gate-close.sh" PLN-001 "fixed" --only merge-failed >/dev/null 2>&1
+LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 needs-input "Spend \$40?" --recommend "yes" --floor "spends money" >/dev/null 2>&1
+out=$(LV_UNATTENDED=1 "$S/lv-gate-close.sh" PLN-001 "yes" --only needs-input 2>&1); rc=$?
+assert_eq "a floored gate, no --basis: refused (exit 4)" 4 "$rc"
+out=$(LV_UNATTENDED=1 "$S/lv-gate-close.sh" PLN-001 "yes" --only needs-input --basis pre-launch 2>&1); rc=$?
+assert_eq "a floored gate, --basis pre-launch: refused (exit 4)" 4 "$rc"
+assert_has "…saying it was held for a human" "held for a human" "$out"
+"$S/lv-gate-close.sh" PLN-001 "no" --only needs-input >/dev/null 2>&1
 
 # ── 6. manual-test ─────────────────────────────────────────────────────────
 echo ""

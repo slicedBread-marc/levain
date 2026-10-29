@@ -147,7 +147,10 @@
 #                               (wf_self_answers, a client's LVI-034). Verified by
 #                               asking it. lv-gate-open.sh --recommend is the
 #                               caller; a human checks the answer at the end
-#                               state (lv-end-state.sh), not here.
+#                               state (lv-end-state.sh), not here. Inferred
+#                               when --basis is absent and it would pass
+#                               (a client's LVI-048); refused on a gate opened
+#                               with --floor.
 #
 # A GATE IS A QUESTION FOR A HUMAN, AND A WORKER MAY NOT ANSWER ITS OWN
 #
@@ -450,6 +453,19 @@ if [ "${LV_UNATTENDED:-0}" = "1" ] && ! $withdraw; then
     exit 4
   }
 
+  # A floored gate is a human's even before launch: the opener said why.
+  # Checked first, so neither a named nor an inferred pre-launch basis gets past it.
+  gate_floor=""
+  [ -f "$gate_file" ] && gate_floor=$(wf_gate_field "$gate_file" GATE_FLOOR || true)
+
+  # Under pre-launch the basis of a self-answerable gate is not in doubt, and
+  # asking the worker to name it only refused the answer the policy wants:
+  # PLN-112 and PLN-113 self-closed without it and parked for a human
+  # (a client's LVI-048). Inferred only where --basis pre-launch would pass.
+  if [ -z "$basis" ] && [ -z "$gate_floor" ] && wf_self_answers "$gate_name"; then
+    basis=pre-launch
+  fi
+
   case "$basis" in
     "")
       refuse_basis "no --basis given" ;;
@@ -513,6 +529,8 @@ if [ "${LV_UNATTENDED:-0}" = "1" ] && ! $withdraw; then
       # live_from or a gate outside the self-answerable set is refused.
       wf_self_answers "$gate_name" || \
         refuse_basis "--basis pre-launch, but '$gate_name' is not self-answered here (projectProfile.tier/live_from, or not one of: $LV_GATE_SELF_ANSWERABLE)"
+      [ -z "$gate_floor" ] || \
+        refuse_basis "--basis pre-launch, but the gate was held for a human: $gate_floor"
       ;;
 
     *)
