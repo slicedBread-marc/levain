@@ -720,6 +720,49 @@ wf_behavior_count() {
 
 wf_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+# ── Times a person reads (LVI-037) ──────────────────────────────────────────
+#
+# Stored and compared stamps stay UTC: wf_now, status files, ledgers, epochs.
+# What changes is what a person reads, and the "today" that a person's own
+# dates (live_from, an autonomy date, a lane declaration) are compared with.
+# A UTC date rolls over at 20:00 EDT, so those dates flipped four hours early.
+#
+# wf_tz — the zone to show times in: LV_TZ, else levain.yml display.timezone
+# (an IANA name such as America/Toronto, so DST is right), else empty, which
+# means the machine's own zone. A repainting caller resolves it once with
+# `_WF_TZ=$(wf_tz); _WF_TZ_SET=1`, so a frame never re-reads levain.yml.
+wf_tz() {
+  [ -n "${_WF_TZ_SET:-}" ] && { printf '%s' "${_WF_TZ:-}"; return 0; }
+  local z="${LV_TZ:-}"
+  [ -n "$z" ] || z=$(wf_cfg display.timezone "" 2>/dev/null)
+  case "$z" in null|Null|NULL|'~') z="" ;; esac
+  printf '%s' "$z"
+}
+
+# wf_today — YYYY-MM-DD in wf_tz.
+wf_today() {
+  local z; z=$(wf_tz)
+  if [ -n "$z" ]; then TZ="$z" date +%Y-%m-%d; else date +%Y-%m-%d; fi
+}
+
+# wf_show_time [<epoch>|<YYYY-MM-DDTHH:MM:SSZ>] — "2026-10-29 14:05:09 EDT"
+# in wf_tz, labelled with the zone; now when given nothing. Anything it cannot
+# read is printed back unchanged, so a display never loses a stamp.
+wf_show_time() {
+  local t="${1:-}" z epoch
+  z=$(wf_tz)
+  case "$t" in
+    '')                          epoch=$(date +%s) ;;
+    *[!0-9]*)                    epoch=$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$t" +%s 2>/dev/null \
+                                   || date -u -d "$t" +%s 2>/dev/null) \
+                                   || { printf '%s' "$t"; return 0; } ;;
+    *)                           epoch="$t" ;;
+  esac
+  ( [ -z "$z" ] || export TZ="$z"
+    date -r "$epoch" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || date -d "@$epoch" '+%Y-%m-%d %H:%M:%S %Z' ) \
+    || printf '%s' "$t"
+}
+
 # macOS and GNU stat disagree on the flag for every field; try both. Lived in
 # lv-tray.sh and lv-tray-drill.sh as byte-identical copies, and the drill
 # renders the same worker rows the board does — so the two had to agree about
@@ -1213,7 +1256,7 @@ wf_prelaunch() {
   case "$live" in null|'~'|Null|NULL) live="" ;; esac
   [ -n "$live" ] || return 0
   printf '%s' "$live" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || return 1
-  today="${LV_LANE_TODAY:-$(date -u +%Y-%m-%d)}"
+  today="${LV_LANE_TODAY:-$(wf_today)}"
   [ "$live" \> "$today" ]
 }
 

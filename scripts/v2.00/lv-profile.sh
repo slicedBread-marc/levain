@@ -35,7 +35,7 @@ set_by=$(wf_cfg projectProfile.set_by "")
 set_on=$(wf_cfg projectProfile.set_on "")
 live_from=$(wf_cfg projectProfile.live_from "")
 case "$live_from" in null|'~'|Null|NULL) live_from="" ;; esac
-today="${LV_AUTONOMY_TODAY:-$(date -u +%Y-%m-%d)}"
+today="${LV_AUTONOMY_TODAY:-$(wf_today)}"
 
 if [ -z "$tier" ]; then
   echo "No projectProfile declared in levain.yml." >&2

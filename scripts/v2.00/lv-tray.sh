@@ -53,6 +53,8 @@ set -uo pipefail
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lv-orch-lib.sh
 source "$SELF_DIR/lv-orch-lib.sh"
+# The header's clock is read every frame; resolve its zone once (LVI-037).
+_WF_TZ=$(wf_tz); _WF_TZ_SET=1
 # shellcheck source=lv-states.sh
 source "$SELF_DIR/lv-states.sh"
 
@@ -732,7 +734,7 @@ render() {
   fi
 
   # ── Header ──────────────────────────────────────────────────────────
-  printf '%s\n' "${B}WORKFLOW BOARD${R}  ${DIM}$(date '+%Y-%m-%d %H:%M:%S')${R}"
+  printf '%s\n' "${B}WORKFLOW BOARD${R}  ${DIM}$(wf_show_time)${R}"
   printf '  daemon: %s   enabled: %s   spawns this hour: %s/%s\n\n' \
     "$daemon_state" "$enabled" "$budget_used" "$budget_max"
   $plans_mode && ! $stats_only && plans_context

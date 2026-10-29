@@ -1516,7 +1516,7 @@ case "$mode" in
       auto_live=$(wf_cfg projectProfile.live_from "")
       case "$auto_live" in null|'~'|Null|NULL) auto_live="" ;; esac
       if [ "$(wf_cfg projectProfile.tier "")" = pre-launch ] \
-         && { [ -z "$auto_live" ] || [ "$auto_live" \> "${LV_AUTONOMY_TODAY:-$(date -u +%Y-%m-%d)}" ]; }; then
+         && { [ -z "$auto_live" ] || [ "$auto_live" \> "${LV_AUTONOMY_TODAY:-$(wf_today)}" ]; }; then
         auto_cand="$auto_cand production-push"
       fi
       for auto_a in $auto_cand; do

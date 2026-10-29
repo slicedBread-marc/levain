@@ -243,5 +243,28 @@ LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 needs-input "Which?" --recommend "(
 assert_eq "past live_from: needs-input parks" true "$([ -f $G/PLN-001.gate ] && echo true || echo false)"
 
 echo ""
+echo "9. Today is the display zone's, not UTC's (LVI-037)"
+# Two zones a day apart at the same instant: Kiritimati is UTC+14, Pago Pago
+# UTC-11. Whichever date the far-east zone reads, live_from = that date is
+# "today" there (not pre-launch) and "tomorrow" in the far west (pre-launch).
+east=$(TZ=Pacific/Kiritimati date +%Y-%m-%d)
+west=$(TZ=Pacific/Pago_Pago date +%Y-%m-%d)
+new_client "projectProfile:\n  tier: pre-launch\n  live_from: \"$east\"\ndisplay:\n  timezone: Pacific/Kiritimati\n"
+assert_eq "display.timezone sets today"  "$east" "$(bash -c '. "$1/lv-orch-lib.sh"; wf_today' _ "$S")"
+assert_eq "live_from = today there: not pre-launch" no \
+  "$(bash -c '. "$1/lv-orch-lib.sh"; wf_prelaunch && echo yes || echo no' _ "$S")"
+assert_eq "LV_TZ overrides levain.yml"   "$west" "$(LV_TZ=Pacific/Pago_Pago bash -c '. "$1/lv-orch-lib.sh"; wf_today' _ "$S")"
+assert_eq "the same live_from is tomorrow in the far west: pre-launch" yes \
+  "$(LV_TZ=Pacific/Pago_Pago bash -c '. "$1/lv-orch-lib.sh"; wf_prelaunch && echo yes || echo no' _ "$S")"
+assert_eq "a UTC stamp is shown in the zone, labelled" "2026-10-29 19:30:00 EDT" \
+  "$(LV_TZ=America/Toronto bash -c '. "$1/lv-orch-lib.sh"; wf_show_time 2026-10-29T23:30:00Z' _ "$S")"
+assert_eq "an epoch too" "2026-10-30 00:30:00 CET" \
+  "$(LV_TZ=Europe/Paris bash -c '. "$1/lv-orch-lib.sh"; wf_show_time 1793316600' _ "$S")"
+assert_eq "an unreadable stamp comes back unchanged" "soon" \
+  "$(bash -c '. "$1/lv-orch-lib.sh"; wf_show_time soon' _ "$S")"
+assert_eq "showing a time leaves the caller's TZ alone" unset \
+  "$(LV_TZ=Europe/Paris bash -c 'unset TZ; . "$1/lv-orch-lib.sh"; wf_show_time >/dev/null; echo "${TZ-unset}"' _ "$S")"
+
+echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

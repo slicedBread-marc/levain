@@ -435,6 +435,16 @@ tunnel_command: "cloudflared tunnel --url http://localhost:$FEATURE_PORT"
 #   scripts/lv-exec.sh lv-profile.sh --show     tier, reason, who, when
 #   scripts/lv-exec.sh lv-profile.sh --check    drift against the table above
 projectProfile: {}
+
+# ─── Display ─────────────────────────────────────────────────────────────────
+# display.timezone: the zone the board shows times in, and the zone whose
+# "today" a live_from, an autonomy date or a lane declaration is compared with
+# (LVI-037). An IANA name, so DST is right — America/Toronto, not -05:00.
+# Unset means the machine's own zone; LV_TZ in the environment overrides both.
+# Stored stamps (registry, gates, status files) stay UTC either way.
+#
+# display:
+#   timezone: America/Toronto
 #   tier: pre-launch
 #   reason: "No real users yet."
 #   set_by: "Marc Blais"

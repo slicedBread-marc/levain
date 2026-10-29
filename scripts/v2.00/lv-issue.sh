@@ -130,7 +130,7 @@ case "${1:-}" in
         ;;
     esac
 
-    awk -v id="$id" -v note="$note" -v today="$(date -u +%Y-%m-%d)" '
+    awk -v id="$id" -v note="$note" -v today="$(wf_today)" '
       $0 ~ "^## " id " " { inblock = 1 }
       inblock && /^\*\*Status:\*\*/ {
         print "**Status:** resolved " today " — " note

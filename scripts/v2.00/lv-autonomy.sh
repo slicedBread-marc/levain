@@ -88,7 +88,7 @@ NEVER="spec-approval manual-test force-push history-rewrite claim-steal"
 ALREADY="merge"
 
 # Injectable so expiry is testable without waiting a month.
-today="${LV_AUTONOMY_TODAY:-$(date -u +%Y-%m-%d)}"
+today="${LV_AUTONOMY_TODAY:-$(wf_today)}"
 
 action=""
 artifact=""

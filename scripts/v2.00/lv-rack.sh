@@ -217,6 +217,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # the coordinator's map; the library defaults are always accepted anyway.
 # shellcheck source=lv-ids.sh
 . "$HERE/lv-ids.sh"
+
+# rack_clock — the header's time, labelled with its zone (LVI-037). The rack
+# spans projects, so no one levain.yml names the zone: LV_TZ, else the
+# machine's own. An empty TZ means UTC to date(1), so it is never set empty.
+rack_clock() {
+  if [ -n "${LV_TZ:-}" ]; then TZ="$LV_TZ" date '+%Y-%m-%d %H:%M:%S %Z'
+  else date '+%Y-%m-%d %H:%M:%S %Z'; fi
+}
 # The coordinator this board belongs to: its state (the suspend record, the
 # snapshot cache) lives in that project's gitignored .claude/orchestrator/.
 # Run through its scripts/lv-exec.sh from inside the project, which is how
@@ -1101,7 +1109,7 @@ render_text() {
     fi
     head+="  ${DIM}$(head_age_phrase)${R}"
   else
-    head+="  ${DIM}$(date '+%Y-%m-%d %H:%M:%S')${R}"
+    head+="  ${DIM}$(rack_clock)${R}"
     if [ "$total_n" -gt "$shown_n" ]; then
       head+="  ${DIM}showing $shown_n of $total_n by activity — --all for full${R}"
     fi

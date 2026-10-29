@@ -180,7 +180,7 @@ run() {
     finish "refused — LIBRARY-LOCK.md is held or stale"; exit 3
   fi
   trap 'lock release >/dev/null 2>&1; rm -f "$STATE/pid"' EXIT
-  printf '== blind sweep %s in %s\n' "$(date -u +%FT%TZ)" "$LIB"
+  printf '== blind sweep %s in %s\n' "$(if [ -n "${LV_TZ:-}" ]; then TZ="$LV_TZ" date '+%F %T %Z'; else date '+%F %T %Z'; fi)" "$LIB"
   local start_sha out rc
   start_sha=$(git -C "$LIB" rev-parse HEAD)
   settings_file || { finish "failed — could not write the baseline settings"; exit 1; }

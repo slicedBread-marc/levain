@@ -115,7 +115,7 @@ source "$SELF_DIR/lv-orch-lib.sh"
 
 cd "$(wf_develop_root)"   # plans/* and bugs/* are develop-root work
 
-today="${LV_LANE_TODAY:-$(date -u +%Y-%m-%d)}"
+today="${LV_LANE_TODAY:-$(wf_today)}"
 EVENTS="$(wf_orch_dir)/events.log"
 
 cmd="${1:-}"

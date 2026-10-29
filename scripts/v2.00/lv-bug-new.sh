@@ -201,7 +201,7 @@ mkdir -p "$bug_dir"
   printf '> **Source:** %s\n' "$source_who"
   printf '> **Plan:** _(none — link added by /lv-spec when a fix plan is created)_\n'
   printf '> **Links:** %s\n' "${links:-_(none)_}"
-  [ "$lane" = express ] && printf '> **Lane:** %s (declared by %s, %s)\n' "$lane_kind" "$lane_by" "$(date -u +%Y-%m-%d)"
+  [ "$lane" = express ] && printf '> **Lane:** %s (declared by %s, %s)\n' "$lane_kind" "$lane_by" "$(wf_today)"
   printf '\n## Description\n%s\n' "${description:-TBD}"
   printf '\n## Steps to Reproduce\n%s\n' "${steps:-TBD}"
   printf '\n## Expected\n%s\n' "${expected:-TBD}"
