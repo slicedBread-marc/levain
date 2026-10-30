@@ -45,7 +45,13 @@ fi
 # LV_BUMP since 14.0.0; WF_BUMP is still read, so an old habit or note works.
 BUMP="${LV_BUMP:-${WF_BUMP:-patch}}"
 
-current=$(tr -d '[:space:]' < "$VERSION_FILE")
+# From the last commit's VERSION, not the working tree's. commit-msg runs after
+# this hook and can still refuse the commit (the publish denylist), which leaves
+# this bump staged; the reworded retry then bumped it again, and 15.22.0 was a
+# version that never existed (the coordinator's LVI-040). Counted from HEAD, a
+# retry lands on the same number. No HEAD yet: the file is all there is.
+current=$(git show HEAD:VERSION 2>/dev/null | tr -d '[:space:]')
+[ -n "$current" ] || current=$(tr -d '[:space:]' < "$VERSION_FILE")
 IFS='.' read -r major minor patch <<< "$current"
 
 case "$BUMP" in

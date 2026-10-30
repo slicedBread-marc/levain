@@ -135,5 +135,20 @@ LV_PACKS="$T.gone" githooks/commit-msg "$m" >/dev/null 2>&1
 check "commit-msg: a listed pack that is missing refuses" 1 $?
 rm -rf githooks
 
+# githooks/pre-commit + commit-msg together (LVI-040): a refused commit's bump
+# is left staged, and the retry must land on the same version, not the next.
+git reset -q --hard "$base" && mkdir -p githooks && cp "$HERE/githooks/pre-commit" "$H" githooks/
+echo "1.4.2" > VERSION && git add VERSION && git commit -qm "version" --no-verify
+git config core.hooksPath githooks
+export LV_DENYLIST="$T.list"; printf 'zebra-corp\n' > "$LV_DENYLIST"
+echo "work" > w.txt && git add w.txt
+LV_BUMP=minor git commit -qm "feat: for zebra-corp" >/dev/null 2>&1; check "pre-commit+commit-msg: a listed name refuses the commit" 1 $?
+LV_BUMP=minor git commit -qm "feat: for a client" >/dev/null 2>&1;    check "pre-commit+commit-msg: the reworded retry commits"      0 $?
+check "pre-commit+commit-msg: the retry is 1.5.0, not 1.6.0" "1.5.0" "$(git show HEAD:VERSION)"
+echo "more" >> w.txt && git add w.txt && git commit -qm "fix: more" >/dev/null 2>&1
+check "pre-commit: the next commit counts from HEAD (1.5.1)" "1.5.1" "$(git show HEAD:VERSION)"
+git config --unset core.hooksPath; unset LV_DENYLIST
+rm -rf githooks
+
 echo "  $pass passed, $fail failed"
 [ "$fail" = 0 ]
