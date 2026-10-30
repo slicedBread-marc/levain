@@ -227,6 +227,26 @@ assert_has "the needs-input decision" "(b) Print sheet" "$out"
 assert_has "the spec-approval decision" "approve — review Approved" "$out"
 assert_has "the checklist item, under its plan" "PLN-002-beta" "$out"
 
+# A client's LVI-052: Manual all PASS and one Chrome-Assisted criterion untested
+# with a recorded reason. PRELAUNCH was set only by the Manual branch, so the
+# Chrome one alone opened a human gate.
+new_client "$PRE"
+python3 - plans/PLN-002-beta/plan.md <<'PY3'
+import sys; p=sys.argv[1]; s=open(p).read()
+s=s.replace("- [ ] (eyes:blocking)", "- [x] (eyes:blocking)", 1)
+s=s.replace("#### Manual\n", "#### Chrome-Assisted\n- [ ] /print — the label stays on one line at a phone width\n\n#### Manual\n", 1)
+open(p,"w").write(s)
+PY3
+git add -A && git commit -qm "chrome only"
+printf '| # | Criterion | Build | Result | Notes |\n|-|-|-|-|-|\n| 1 | /print — the label stays on one line at a phone width | %s | — | ambiguous headless screenshot at 390px |\n' "$(git rev-parse --short HEAD)" > plans/PLN-002-beta/test-progress.md
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "an untested Chrome criterion alone: CHROME_UNTESTED=1" 1 "$CHROME_UNTESTED"
+assert_eq "…does not gate a pre-launch plan" false "$GATE"
+assert_eq "…saying pre-launch" true "$PRELAUNCH"
+printf '| # | Criterion | Build | Result | Notes |\n|-|-|-|-|-|\n' > plans/PLN-002-beta/test-progress.md
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "one with no result at all is still the tester's work, and gates" true "$GATE"
+
 # ── 8. Not pre-launch ──────────────────────────────────────────────────────
 echo ""
 echo "8. Governed, or past live_from: gates as before"

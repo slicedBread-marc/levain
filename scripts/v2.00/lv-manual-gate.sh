@@ -517,9 +517,15 @@ if [ "$chrome_unrecorded" -gt "$chrome_excused" ]; then
     reason="$chrome_unrecorded Chrome-Assisted criteria have no result — test-progress.md does not exist: $chrome_missing; $reason"
   fi
 fi
-if [ "$chrome_untested" -gt 0 ] && $PRELAUNCH; then
+if [ "$chrome_untested" -gt 0 ] && wf_prelaunch; then
   # A recorded reason (needs: device, a headless ERROR, a disagreement) is a
-  # question for the human — at the end state, while pre-launch.
+  # question for the human — at the end state, while pre-launch. Asked of
+  # wf_prelaunch, not of $PRELAUNCH: that is set only when a Manual criterion
+  # is open, so a plan whose Manual ones had all passed gated on its Chrome
+  # one alone (a client's LVI-052). The tester's own unfinished Chrome work,
+  # gated just above, still gates.
+  PRELAUNCH=true
+  [ "$chrome_excused" -gt 0 ] || [ "$chrome_unrecorded" -gt "$chrome_excused" ] || gate=false
   reason="$chrome_untested Chrome-Assisted criteria untested go to the end-state review too: $chrome_reasoned; $reason"
 elif [ "$chrome_untested" -gt 0 ]; then
   gate=true
