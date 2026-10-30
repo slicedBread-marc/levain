@@ -788,6 +788,15 @@ answer)
     wf_event autonomy-use "$PLAN_ID" "pre-launch: manual-test answered for the end-state review — $moved criteria moved to the post-ship checklist"
   fi
   echo "$PLAN_ID: manual-test answered by $by — $moved criteria moved to the post-ship checklist."
+  # A tester that opened the gate also moved the plan to `accept`, which the
+  # daemon never dispatches: it waits for /lv-accept. Nothing is left for a
+  # human, so hand it back to `testing`, where the next tester takes the
+  # all-pass exit (a client's LVI-053 sat in accept until moved by hand).
+  if [ "$(wf_registry_field "$PLAN_ID" state)" = accept ]; then
+    "$SELF_DIR/lv-registry-update.sh" "$PLAN_ID" accept testing \
+      --commit "registry($PLAN_ID): accept → testing — manual-test answered by $by, nothing left for /lv-accept" \
+      || echo "lv-lane: $PLAN_ID is still in accept — move it to testing, or the daemon will not pick it up" >&2
+  fi
   exit 0
   ;;
 

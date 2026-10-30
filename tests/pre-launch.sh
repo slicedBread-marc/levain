@@ -247,6 +247,16 @@ printf '| # | Criterion | Build | Result | Notes |\n|-|-|-|-|-|\n' > plans/PLN-0
 eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
 assert_eq "one with no result at all is still the tester's work, and gates" true "$GATE"
 
+# A client's LVI-053: the tester had moved the plan to accept when it opened
+# manual-test; answering it left the row where the daemon never looks.
+new_client "$PRE"
+sed -i.bak 's/| PLN-002 | beta | testing | — | — |/| PLN-002 | beta | accept | — | feature\/PLN-002-beta |/' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak
+git add -A && git commit -qm "in accept"
+out=$("$S/lv-lane.sh" answer PLN-002 manual-test 2>&1); rc=$?
+assert_eq "answer from accept: exit 0" 0 "$rc"
+assert_has "…moves the plan back to testing, branch kept" "| PLN-002 | beta | testing | — | feature/PLN-002-beta |" "$(cat plans/REGISTRY.md)"
+assert_eq "…and commits it" "" "$(git status --porcelain plans/REGISTRY.md)"
+
 # ── 8. Not pre-launch ──────────────────────────────────────────────────────
 echo ""
 echo "8. Governed, or past live_from: gates as before"
