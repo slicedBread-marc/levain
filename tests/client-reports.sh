@@ -4432,6 +4432,14 @@ assert_ok "the default is spent against max_unattended_per_day..." \
   "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_eq "...and the one past it is refused" "1" \
   "$("$SCRIPT_DIR/lv-autonomy.sh" release --quiet; echo $?)"
+# Stamps are UTC and today is local: at 22:00 EDT on the 29th the use is
+# stamped the 30th, and a stamp-prefix count read it as none (15.23.0).
+rm -f .claude/orchestrator/events.log
+printf '2026-10-30T02:00:00Z\tautonomy-use\t-\trelease authorized by default (x)\n' > .claude/orchestrator/events.log
+assert_eq "an evening use stamped tomorrow in UTC still counts against the local day" "1" \
+  "$(LV_TZ=America/New_York LV_AUTONOMY_TODAY=2026-10-29 "$SCRIPT_DIR/lv-autonomy.sh" release --quiet; echo $?)"
+assert_eq "...and not against the next local day" "0" \
+  "$(LV_TZ=America/New_York LV_AUTONOMY_TODAY=2026-10-30 "$SCRIPT_DIR/lv-autonomy.sh" release --quiet; echo $?)"
 rm -f levain.yml .claude/orchestrator/events.log
 assert_eq "and --show says so without calling it a fault" "0" \
   "$("$SCRIPT_DIR/lv-autonomy.sh" --show >/dev/null 2>&1; echo $?)"
@@ -4503,20 +4511,20 @@ assert_eq "merge reports that it is already unattended, not that it is refused" 
 assert_eq "an unknown action is exit 2, never exit 1" "2" \
   "$("$SCRIPT_DIR/lv-autonomy.sh" relase --quiet; echo $?)"
 
-TODAY_UTC=$(date -u +%Y-%m-%d)
+TODAY_LOCAL=$(date +%Y-%m-%d)   # the scripts' today is local (LVI-037); stamps stay UTC
 # The ceiling is counted against the REAL day, so these blocks have to ask as
 # of today — and a grant with a hardcoded expiry therefore goes stale on its
 # own deadline and fails the whole section for no reason. NOT_YET is always
 # in this run's future.
-NOT_YET="$((${TODAY_UTC%%-*} + 1))-01-01"
+NOT_YET="$((${TODAY_LOCAL%%-*} + 1))-01-01"
 
 # The ceiling bounds the blast radius of a grant when the pipeline goes wrong.
 rm -f .claude/orchestrator/events.log
 write_grant standing "A Tester" $NOT_YET 1 "release"
 assert_ok "the first action inside the ceiling is authorized" \
-  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_LOCAL" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_fails "the one past it is not" \
-  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_LOCAL" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_eq "every question asked is on the event log, refusals included" "true" \
   "$(grep -q 'autonomy-use' .claude/orchestrator/events.log \
      && grep -q 'autonomy-refuse' .claude/orchestrator/events.log && echo true || echo false)"
@@ -4533,13 +4541,13 @@ assert_eq "and an authorization carries the grant's identity, not just 'ok'" "tr
 rm -f .claude/orchestrator/events.log
 write_grant standing "A Tester" $NOT_YET 1 "release deploy production-push"
 assert_ok "spending the release budget..." \
-  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_LOCAL" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_fails "...exhausts release" \
-  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_LOCAL" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 assert_ok "...and leaves deploy untouched" \
-  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" deploy --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_LOCAL" "$SCRIPT_DIR/lv-autonomy.sh" deploy --quiet
 assert_ok "...and production-push untouched" \
-  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" production-push --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_LOCAL" "$SCRIPT_DIR/lv-autonomy.sh" production-push --quiet
 assert_eq "the refusal names the action whose budget is spent" "true" \
   "$(grep 'autonomy-refuse' .claude/orchestrator/events.log \
      | grep -q 'daily release ceiling 1 reached' && echo true || echo false)"
@@ -4555,13 +4563,13 @@ assert_eq "a production-push line is not counted as a release" "true" \
 rm -f .claude/orchestrator/events.log
 write_grant standing "A Tester" $NOT_YET 1 "release"
 assert_ok "--check on an authorized action exits 0" \
-  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --check --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_LOCAL" "$SCRIPT_DIR/lv-autonomy.sh" release --check --quiet
 assert_fails "--check on an unauthorized action exits 1" \
-  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" deploy --check --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_LOCAL" "$SCRIPT_DIR/lv-autonomy.sh" deploy --check --quiet
 assert_eq "and neither wrote anything to the event log" "false" \
   "$([ -s .claude/orchestrator/events.log ] && echo true || echo false)"
 assert_ok "so the real question still has its whole budget" \
-  env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
+  env LV_AUTONOMY_TODAY="$TODAY_LOCAL" "$SCRIPT_DIR/lv-autonomy.sh" release --quiet
 
 # LVI-036: a pre-launch project pushes to production unattended until
 # projectProfile.live_from, with no grant to renew — and from live_from on the
@@ -4601,9 +4609,9 @@ rm -f .claude/orchestrator/events.log
 printf 'projectProfile:\n  tier: pre-launch\norchestrator:\n  autonomy:\n    max_unattended_per_day: 1\n' > levain.yml
 # The ceiling counts today's log lines by their real UTC date, so this one asks
 # on the real date rather than AP's fixed one.
-env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" production-push --quiet >/dev/null 2>&1
+env LV_AUTONOMY_TODAY="$TODAY_LOCAL" "$SCRIPT_DIR/lv-autonomy.sh" production-push --quiet >/dev/null 2>&1
 assert_eq "the pre-launch push is bounded by max_unattended_per_day" "1" \
-  "$(env LV_AUTONOMY_TODAY="$TODAY_UTC" "$SCRIPT_DIR/lv-autonomy.sh" production-push --quiet; echo $?)"
+  "$(env LV_AUTONOMY_TODAY="$TODAY_LOCAL" "$SCRIPT_DIR/lv-autonomy.sh" production-push --quiet; echo $?)"
 
 [ -n "$AUTONOMY_CFG_BACKUP" ] && printf '%s\n' "$AUTONOMY_CFG_BACKUP" > levain.yml
 rm -f .claude/orchestrator/events.log

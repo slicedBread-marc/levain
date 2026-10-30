@@ -420,8 +420,12 @@ fi
 log="$(wf_orch_dir)/events.log"
 used=0
 if [ -f "$log" ]; then
-  used=$(awk -F'\t' -v d="$today" -v a="$action" '
-    $1 ~ "^" d "T" && $2 == "autonomy-use" && index($4, a " authorized") == 1 { n++ }
+  # Stamps are UTC and today is local (LVI-037), so count inside the local
+  # day's UTC window; a date it cannot read falls back to the stamp prefix.
+  read -r win_lo win_hi <<< "$(wf_day_window_utc "$today")" || true
+  used=$(awk -F'\t' -v d="$today" -v a="$action" -v lo="${win_lo:-}" -v hi="${win_hi:-}" '
+    $2 == "autonomy-use" && index($4, a " authorized") == 1 \
+      && ((lo != "" && $1 >= lo && $1 < hi) || (lo == "" && $1 ~ "^" d "T")) { n++ }
     END { print n + 0 }' "$log" 2>/dev/null || true)
   used=${used:-0}
 fi

@@ -745,6 +745,24 @@ wf_today() {
   if [ -n "$z" ]; then TZ="$z" date +%Y-%m-%d; else date +%Y-%m-%d; fi
 }
 
+# wf_day_window_utc <YYYY-MM-DD> — "<start> <end>": the UTC stamps (wf_now's
+# format) of that day's midnight and the next one, in wf_tz. A count of stored
+# events "today" has to compare against this window, never against the date
+# as a stamp prefix: from 20:00 EDT the local day and the UTC stamps disagree,
+# and a prefix match counted nothing, so the daily autonomy ceiling went
+# unenforced every evening (15.23.0). Prints nothing when the date cannot be read.
+wf_day_window_utc() {
+  local d="$1" z next s e
+  z=$(wf_tz)
+  ( [ -z "$z" ] || export TZ="$z"
+    next=$(date -j -v+1d -f '%Y-%m-%d' "$d" +%Y-%m-%d 2>/dev/null || date -d "$d +1 day" +%Y-%m-%d 2>/dev/null) || exit 0
+    s=$(date -j -f '%Y-%m-%d %H:%M:%S' "$d 00:00:00" +%s 2>/dev/null || date -d "$d 00:00:00" +%s 2>/dev/null) || exit 0
+    e=$(date -j -f '%Y-%m-%d %H:%M:%S' "$next 00:00:00" +%s 2>/dev/null || date -d "$next 00:00:00" +%s 2>/dev/null) || exit 0
+    printf '%s %s\n' \
+      "$(date -u -r "$s" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$s" +%Y-%m-%dT%H:%M:%SZ)" \
+      "$(date -u -r "$e" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$e" +%Y-%m-%dT%H:%M:%SZ)" )
+}
+
 # wf_show_time [<epoch>|<YYYY-MM-DDTHH:MM:SSZ>] — "2026-10-29 14:05:09 EDT"
 # in wf_tz, labelled with the zone; now when given nothing. Anything it cannot
 # read is printed back unchanged, so a display never loses a stamp.
