@@ -765,6 +765,14 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    ```bash
      OPEN_PR=$(gh pr list --head "$CURRENT_BRANCH" --state open \
                  --json url -q '.[0].url' 2>/dev/null || echo "")
+     # Claim a human test only when one happened: a row a human recorded in
+     # /lv-accept. An unattended pass, or criteria sent to the post-ship
+     # checklist, had none (WFI-229; a client's LVI-051 had to reword this by hand).
+     if grep -qF 'human (/lv-accept)' "../../plans/$PLAN_NAME/test-progress.md" 2>/dev/null; then
+       TEST_LINE="All acceptance criteria passed — automated, and by a human where one was needed"
+     else
+       TEST_LINE="All automated acceptance criteria passed. No human tested this build; any eyes criteria are on the plan's post-ship checklist"
+     fi
      if [ -z "$OPEN_PR" ]; then
        ../../scripts/lv-exec.sh lv-retry.sh --label "gh pr create" -- gh pr create \
          --base release \
@@ -774,7 +782,7 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
    $PLAN_GOAL
    
    ## Test Results
-   All acceptance criteria passed — automated, and by a human where one was needed
+   $TEST_LINE
    
    **Plan:** plans/$PLAN_NAME/
    
