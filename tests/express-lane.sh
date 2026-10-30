@@ -376,6 +376,19 @@ assert_eq "a later real match still downgrades, past the negated one" 1 "$rc"
 assert_has "…reported on the line that does it" "Secret stripping" "$out"
 git checkout -q -- "$PDT/plan.md"
 
+# A client's LVI-050: the bug's Source field quoted as provenance is not a contract.
+LV_ADD='- **What:** This is a request filed by the hub (`cross-project:hub`) with an express lane declared.' \
+  awk '/^### Step 2/ && !d { print ENVIRON["LV_ADD"]; print ""; d = 1 } { print }' "$PDT/plan.md" > "$PDT/plan.md.tmp" && mv "$PDT/plan.md.tmp" "$PDT/plan.md"
+out=$("$S/lv-lane.sh" check "$PT" --no-commit 2>&1); rc=$?
+assert_eq "a quoted cross-project:<name> Source field does not downgrade" 0 "$rc"
+assert_not "…no contract reason" "contract shared" "$out"
+git checkout -q -- "$PDT/plan.md"
+LV_ADD='- **What:** the cross-project send endpoint gains a field every caller must send.' \
+  awk '/^### Step 2/ && !d { print ENVIRON["LV_ADD"]; print ""; d = 1 } { print }' "$PDT/plan.md" > "$PDT/plan.md.tmp" && mv "$PDT/plan.md.tmp" "$PDT/plan.md"
+out=$("$S/lv-lane.sh" check "$PT" --no-commit 2>&1)
+assert_has "…but the word itself still does" "contract shared" "$out"
+git checkout -q -- "$PDT/plan.md"
+
 LV_ADD='### Step 3: Compose\n- **Files:** modify `docker/docker-compose.household.yml`\n- **What:** mount the folder.\n' \
   awk '/^## Design Decisions/ && !d { printf "%s\n", ENVIRON["LV_ADD"]; d = 1 } { print }' "$PDT/plan.md" > "$PDT/plan.md.tmp" && mv "$PDT/plan.md.tmp" "$PDT/plan.md"
 out=$("$S/lv-lane.sh" check "$PT" --no-commit 2>&1)

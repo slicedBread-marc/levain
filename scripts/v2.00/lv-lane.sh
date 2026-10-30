@@ -295,7 +295,10 @@ TXT_AUTH='\[Authorize|AllowAnonymous|RequireAuthorization|AddAuthentication|AddA
 TXT_SECRET='(^|[^a-z])secrets?([^a-z]|$)|api[ _-]?keys?|secrets-tool|credentials?([^a-z]|$)|private key|(^|[^a-z])\.env([^a-z]|$)|passwords?([^a-z]|$)|connection string'
 TXT_MIGRATION='migrations?([^a-z]|$)|alter table|create table|drop table|drop column|schema change|backfill|dbcontext|litestream|sqlite'
 TXT_DEP='npm (install|i|add)( |$)|yarn add|pnpm add|dotnet add package|PackageReference|pip install|poetry add|go get|cargo add|gem install|bundle add|(dev)?dependencies"|new (third-party )?dependenc|third-party (package|library|dependenc)'
-TXT_CONTRACT='lv-dep-notify|shared contract|cross-repo|cross-project|breaking change|public api|api contract|(^|[^a-z])dependents?:'
+# `cross-project:<name>` is a bug's Source field, which says where a request came
+# from, not that the plan changes anything shared: a plan quoting its own
+# provenance was downgraded for it (a client's LVI-050). The bare words still count.
+TXT_CONTRACT='lv-dep-notify|shared contract|cross-repo|cross-project([^:a-z]|$)|breaking change|public api|api contract|(^|[^a-z])dependents?:'
 
 REASONS=()   # "key<TAB>message"
 add_reason() {
