@@ -835,3 +835,13 @@ elif ! $no_commit; then
     echo "lv-registry-update: the transition is staged but could not be committed — commit plans/REGISTRY.md before another worker does" >&2
   fi
 fi
+
+# --- A finished plan gives its port back ---
+#
+# dev-port leases a port per plan, and a lease taken from the develop root has
+# a path that never goes away, so it never went stale either. A client's
+# blocks filled with ten complete plans' ports and the next plan could not
+# start (a client's LVI-049). observe: a failure here is reported, never ours.
+if wf_state_is_terminal "$to_state" && [ -x "$SELF_DIR/lv-hook.sh" ]; then
+  "$SELF_DIR/lv-hook.sh" dev-port-release "{{project_slug}}" "${plan_id}${slug:+-$slug}" </dev/null || true
+fi

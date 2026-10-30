@@ -23,6 +23,8 @@
 #      (LVI-020: this path shipped at 14.8.2 without ever having run).
 #  10. dev-port: lv-plan-port.sh takes a pack's port, falls back to 8100 + N
 #      only on exit 3, and fails on a refusal or a non-port answer.
+#  11. dev-port-release: a plan reaching a terminal state asks the pack to free
+#      its port; a live state does not, and a failing release never fails it.
 #
 # Usage: ./tests/hooks.sh        Exit 0 if all pass, 1 on any failure.
 
@@ -276,6 +278,25 @@ mkhook "$D/hooks" dev-port 'echo "full" >&2; exit 4'
 plan_port "$D" >/dev/null; assert_eq "a refusal fails lv-plan-port.sh, with no fallback" "$?" "1"
 mkhook "$D/hooks" dev-port 'echo soon'
 plan_port "$D" >/dev/null; assert_eq "an answer that is not a port fails it" "$?" "1"
+
+section "11. dev-port-release"
+R="$TEST_DIR/relclient"; RP="$TEST_DIR/relpack"
+git init -q -b develop "$R"; git -C "$R" config user.email t@t; git -C "$R" config user.name T
+printf 'project_slug: rel\n' > "$R/levain.yml"
+mkdir -p "$R/plans/PLN-001-alpha" "$R/plans/PLN-002-beta"
+echo '# alpha' > "$R/plans/PLN-001-alpha/plan.md"; echo '# beta' > "$R/plans/PLN-002-beta/plan.md"
+printf '# Plan Registry\n\n| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n| PLN-001 | alpha | draft | — | — | 2026-10-29 | 15.23.0 | — | — |\n| PLN-002 | beta | draft | — | — | 2026-10-29 | 15.23.0 | — | — |\n\n<!-- Counter: 2 -->\n' > "$R/plans/REGISTRY.md"
+git -C "$R" add -A; git -C "$R" commit -qm init
+mkhook "$RP/hooks" dev-port-release 'echo "$1|$2" >> "$(dirname "$0")/released"'
+regup() { (cd "$R" && CLAUDE_PROJECT_DIR="$R" LV_PACKS="$RP" "$SCRIPTS/lv-registry-update.sh" "$@" >/dev/null 2>&1); }
+regup PLN-002 draft active -
+assert_eq "a live state releases nothing" "$(cat "$RP/hooks/released" 2>/dev/null)" ""
+regup PLN-001 draft abandoned -
+assert_eq "a terminal state releases the plan's port" "$(cat "$RP/hooks/released" 2>/dev/null)" "{{project_slug}}|PLN-001-alpha"
+mkhook "$RP/hooks" dev-port-release 'exit 9'
+regup PLN-002 active abandoned -; rc=$?
+assert_eq "a failing release never fails the transition" "$rc" "0"
+assert_eq "and the transition still landed" "$(grep -c '| PLN-002 | beta | abandoned |' "$R/plans/REGISTRY.md")" "1"
 
 echo ""
 echo "Passed: $PASS   Failed: $FAIL"

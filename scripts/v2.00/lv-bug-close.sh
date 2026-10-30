@@ -360,3 +360,9 @@ if $do_commit; then
 else
   echo "$bug_id → closed ($close_line) — staged, NOT committed (--no-commit)"
 fi
+
+# A closed bug gives back the port dev-port leased its worktree, as a finished
+# plan does in lv-registry-update.sh (a client's LVI-049). observe: never ours.
+if [ -x "$SELF_DIR/lv-hook.sh" ]; then
+  "$SELF_DIR/lv-hook.sh" dev-port-release "{{project_slug}}" "$bug_slug" </dev/null || true
+fi

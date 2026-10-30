@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# kind: observe
+#
+# dev-port-release — a plan or bug is finished; give back the port dev-port
+# leased it.
+#
+# Args: <project_slug> <plan-folder>. Stdin: none. lv-registry-update.sh calls
+# it when a plan reaches a terminal state (complete, rolled-back, abandoned).
+# An allocator whose leases outlive the worktree they were taken from needs it:
+# a plan built on the develop root leases against a path that never goes away,
+# so nothing else ever frees that port (a client's LVI-049).
+#
+# This default has no allocator, so there is nothing to release.
+exit 0
