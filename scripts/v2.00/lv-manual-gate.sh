@@ -53,6 +53,9 @@
 #     `needs: data — <what is missing>` (LVI-047)
 #   CHROME_EXCUSED — how many carry some other note instead of a run. They
 #     count in CHROME_UNRECORDED too: a note is not a result (LVI-030)
+#   CHROME_ERRORED — how many of CHROME_UNTESTED have only a headless ERROR
+#     as their reason. They gate even while pre-launch: an ERROR is no result,
+#     so it is never moved to the end-state review as if tested (LVI-043)
 #   PROGRESS_INCOMPLETE='true|false' — CHROME_UNRECORDED > 0
 #   PROGRESS_MISSING='<criteria, "; "-joined>' — the unrecorded ones
 #   PROGRESS_TREE — the build test-progress.md's `TREE` stamp names
@@ -368,6 +371,18 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" -v sha="$build_sha" -v carried
       if (length(parts[i]) >= 7 && index(sha, tolower(parts[i])) == 1) return 1
     return 0
   }
+  # Reasoned only by a headless ERROR: the run produced no result at all. Not a
+  # question for the end-state review — shipping it there is shipping it
+  # untested (LVI-043 from the coordinator: a sign-in criterion whose form submit
+  # never navigated headlessly went to a post-ship checklist as "untested").
+  function erroronly(n,   l) {
+    if (n !~ /ERROR/) return 0
+    l = tolower(n)
+    if (l ~ /disagree/ || (l ~ /ambiguous/ && l ~ /headless|screenshot/)) return 0
+    if (l ~ /headless:? *(pass|fail)/ && l ~ /prior/) return 0
+    if (l ~ /needs: *(data|oauth|device|extension|profile)/) return 0
+    return 1
+  }
   function settled(k) {
     if (RES[k] != "PASS" && RES[k] != "FAIL") return 0
     if (current(BUILD[k])) return 1
@@ -396,19 +411,21 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" -v sha="$build_sha" -v carried
     text = $0; sub(/^[[:space:]]*-[[:space:]]*\[ \][[:space:]]*/, "", text)
     k = lookup(norm(text))
     if (k != "" && settled(k)) print "S\t" text
-    else if (k != "" && reasoned(NOTE[k])) print "R\t" text
+    else if (k != "" && reasoned(NOTE[k])) print (erroronly(NOTE[k]) ? "X" : "R") "\t" text
     else if (k != "" && NOTE[k] != "") print "E\t" text
     else print "U\t" text
   }
 ' <(wf_live_criteria "$ROOT/plans/$plan_name/plan.md" 2>/dev/null) 2>/dev/null || true)
-chrome_open=$(printf '%s\n' "$chrome_out" | grep -c '^[SREU]	' || true)
-chrome_untested=$(printf '%s\n' "$chrome_out" | grep -c '^R	' || true)
+chrome_open=$(printf '%s\n' "$chrome_out" | grep -c '^[SREUX]	' || true)
+chrome_untested=$(printf '%s\n' "$chrome_out" | grep -c '^[RX]	' || true)
+chrome_errored=$(printf '%s\n' "$chrome_out" | grep -c '^X	' || true)
+chrome_errors=$(printf '%s\n' "$chrome_out" | sed -n 's/^X	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
 chrome_excused=$(printf '%s\n' "$chrome_out" | grep -c '^E	' || true)
 chrome_unrecorded=$(printf '%s\n' "$chrome_out" | grep -c '^[UE]	' || true)
 chrome_missing=$(printf '%s\n' "$chrome_out" | sed -n 's/^[UE]	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
 chrome_blank=$(printf '%s\n' "$chrome_out" | sed -n 's/^U	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
 chrome_excuses=$(printf '%s\n' "$chrome_out" | sed -n 's/^E	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
-chrome_reasoned=$(printf '%s\n' "$chrome_out" | sed -n 's/^R	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
+chrome_reasoned=$(printf '%s\n' "$chrome_out" | sed -n 's/^[RX]	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
 
 # ── How many open criteria actually count toward gating ───────────────────
 open_count="$MANUAL_OPEN_BLOCKING"
@@ -527,6 +544,14 @@ if [ "$chrome_untested" -gt 0 ] && wf_prelaunch; then
   PRELAUNCH=true
   [ "$chrome_excused" -gt 0 ] || [ "$chrome_unrecorded" -gt "$chrome_excused" ] || gate=false
   reason="$chrome_untested Chrome-Assisted criteria untested go to the end-state review too: $chrome_reasoned; $reason"
+  if [ "$chrome_errored" -gt 0 ]; then
+    gate=true
+    # An ERROR is a run that produced nothing, not a reason a person must look
+    # (the coordinator's LVI-043). Re-run it in lv-test step 3c (a navigating
+    # submit now waits; name the landing page with waitForURL); one that still
+    # errors goes to a human, never to the post-ship checklist as tested.
+    reason="$chrome_errored Chrome-Assisted criteria have only a headless ERROR, which is no result — re-run them, or a human checks them; they do not go to the end-state review: $chrome_errors; $reason"
+  fi
 elif [ "$chrome_untested" -gt 0 ]; then
   gate=true
   reason="$chrome_untested Chrome-Assisted criteria untested (reason in test-progress.md): $chrome_reasoned; $reason"
@@ -565,6 +590,7 @@ wf_emit CHROME_OPEN          "$chrome_open"
 wf_emit CHROME_UNRECORDED    "$chrome_unrecorded"
 wf_emit CHROME_UNTESTED      "$chrome_untested"
 wf_emit CHROME_EXCUSED       "$chrome_excused"
+wf_emit CHROME_ERRORED       "$chrome_errored"
 wf_emit PROGRESS_INCOMPLETE  "$([ "$chrome_unrecorded" -gt 0 ] && echo true || echo false)"
 wf_emit PROGRESS_MISSING     "$chrome_missing"
 

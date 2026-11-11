@@ -44,6 +44,9 @@
 #     {"type":"selectOption","selector":"...","value":"..."}
 #     {"type":"check","selector":"..."}  /  {"type":"uncheck",...}
 #     {"type":"waitForSelector","selector":"...","state":"visible"}
+#     {"type":"waitForURL","url":"**/signin/sent"}  — or "/regex/": wait until
+#                                   the page has arrived there and loaded
+#     {"type":"waitForLoadState","state":"networkidle"}
 #     {"type":"wait","ms":300}
 #     {"type":"goto","url":"..."}   — navigate again (e.g. to check a redirect)
 #     {"type":"reload"}             — for persistence checks (survives refresh)
@@ -57,6 +60,13 @@
 #     {"type":"clipboard"}          — read the clipboard into `clipboard`
 #     {"type":"clipboardWrite","text":"..."} — seed it, for a paste criterion
 #   Every step optionally takes "timeout" (ms, default 5000/15000 per type).
+#   A click, press, keyboard, check/uncheck or selectOption that starts a
+#   navigation (a form submit: POST, 302, a new page) waits for the new page
+#   to load before the next step runs, so a following goto or assertion never
+#   lands on the page being left (LVI-043). The wait begins if a navigation
+#   starts within "navGrace" ms of the action (default 250; 0 turns it off)
+#   and lasts up to "navTimeout" (default 15000). Name the destination with
+#   waitForURL when the criterion is about where the submit lands.
 #   Selectors are Playwright's: CSS pierces open shadow roots on its own
 #   (`my-menu button` finds a button inside <my-menu>'s shadow DOM), and
 #   `text=Round 2` matches by visible text. For layering, evaluate

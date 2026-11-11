@@ -57,7 +57,8 @@
 #               interleaving is what a two-device criterion asserts about. The
 #               action vocabulary is actions.mjs's, identical to
 #               lv-headless-eval.sh's — click, fill, press, keyboard, hover, focus, mouse, selectOption,
-#               check/uncheck, waitForSelector, wait, goto, reload.
+#               check/uncheck, waitForSelector, waitForURL, waitForLoadState,
+#               wait, goto, reload. A navigating click waits for the new page.
 #   expr        ONE boolean expression, evaluated in ONE named context, after
 #               every step. `consoleErrors` is in scope and holds that
 #               context's errors only. One criterion, one invocation, one

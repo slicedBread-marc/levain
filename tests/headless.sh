@@ -22,7 +22,8 @@ PASS=0
 FAIL=0
 TEST_DIR=$(mktemp -d)
 SERVER_PID=""
-trap '[ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null; rm -rf "$TEST_DIR"' EXIT
+NAV_PID=""
+trap '[ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null; [ -n "$NAV_PID" ] && kill "$NAV_PID" 2>/dev/null; rm -rf "$TEST_DIR"' EXIT
 
 ok()  { echo "  ✓ $1"; PASS=$((PASS + 1)); }
 bad() { echo "  ✗ $1"; [ $# -gt 1 ] && echo "      $2"; FAIL=$((FAIL + 1)); }
@@ -191,6 +192,60 @@ HTML
   DEAD=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
   r=$(run lv-headless-eval.sh "http://127.0.0.1:$DEAD/" "true")
   assert_eq "a server that is not there is ERROR"      "2" "${r%%|*}"
+
+  echo "  navigation (LVI-043)"
+  # A submit the page starts a moment after the click (a POST, then 302 to a
+  # new page). The next step used to run on the page being left: the
+  # expression read the old URL, and a goto aborted the POST in flight, so no
+  # mail was sent — a client's sign-in criterion recorded exactly that ERROR.
+  cat > "$TEST_DIR/nav.py" <<'PY'
+import http.server, sys, time
+LATE = ("<input id='e'><button id='go' onclick=\"setTimeout(function(){var f=document.createElement('form');"
+        "f.method='post';f.action='/signin';document.body.appendChild(f);f.submit();},120)\">Send</button>"
+        "<button id='stay' onclick=\"this.textContent='stayed'\">x</button>")
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def page(self, body):
+        self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers()
+        self.wfile.write(body.encode())
+    def do_GET(self):
+        if self.path.startswith('/signin/sent'):
+            self.page("<h1 id='sent'>sent</h1>")
+        elif self.path.startswith('/mail'):
+            self.page("<p id='mail'>%s</p>" % ('got' if 'signed=1' in (self.headers.get('Cookie') or '') else 'none'))
+        elif self.path.startswith('/js'):
+            self.page(LATE)
+        else:
+            self.page("<form method='post' action='/signin'><input id='e' name='e'><button id='go'>Send</button></form>")
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('Content-Length') or 0))
+        time.sleep(0.4)
+        self.send_response(302); self.send_header('Location', '/signin/sent')
+        self.send_header('Set-Cookie', 'signed=1; Path=/'); self.end_headers()
+http.server.ThreadingHTTPServer(('127.0.0.1', int(sys.argv[1])), H).serve_forever()
+PY
+  NPORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+  python3 "$TEST_DIR/nav.py" "$NPORT" >/dev/null 2>&1 &
+  NAV_PID=$!; disown "$NAV_PID" 2>/dev/null
+  for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$NPORT/" >/dev/null 2>&1 && break; sleep 0.1; done
+  N="http://127.0.0.1:$NPORT"
+  assert_eq "a click whose submit starts late: the expression sees the new page" '0|PASS "/signin/sent"' \
+    "$(run lv-headless-eval.sh "$N/js" "location.pathname" '[{"type":"click","selector":"#go"}]')"
+  assert_eq "…and a goto after it does not abort the POST"  '0|PASS "got"' \
+    "$(run lv-headless-eval.sh "$N/js" "document.getElementById('mail').textContent" '[{"type":"click","selector":"#go"},{"type":"goto","url":"'"$N"'/mail"}]')"
+  assert_eq "a form submit by Enter lands too"              '0|PASS "/signin/sent"' \
+    "$(run lv-headless-eval.sh "$N/" "location.pathname" '[{"type":"fill","selector":"#e","value":"a@b"},{"type":"press","selector":"#e","key":"Enter"}]')"
+  assert_eq "waitForURL names where it lands"               '0|PASS true' \
+    "$(run lv-headless-eval.sh "$N/js" "!!document.getElementById('sent')" '[{"type":"click","selector":"#go","navGrace":0},{"type":"waitForURL","url":"**/signin/sent"}]')"
+  assert_eq "waitForURL takes a /regex/"                    '0|PASS true' \
+    "$(run lv-headless-eval.sh "$N/js" "!!document.getElementById('sent')" '[{"type":"click","selector":"#go","navGrace":0},{"type":"waitForURL","url":"/signin.sent$/"}]')"
+  r=$(run lv-headless-eval.sh "$N/js" "true" '[{"type":"waitForURL","url":"**/never","timeout":400}]')
+  assert_eq "waitForURL that never arrives is ERROR"        "2" "${r%%|*}"
+  assert_eq "a click that navigates nowhere still just clicks" '0|PASS "stayed"' \
+    "$(run lv-headless-eval.sh "$N/js" "document.getElementById('stay').textContent" '[{"type":"click","selector":"#stay"}]')"
+  assert_eq "a session step waits for the navigation too"   '0|PASS "/signin/sent"' \
+    "$(run lv-headless-session.sh '{"contexts":[{"name":"a","url":"'"$N"'/js"}],"steps":[{"context":"a","actions":[{"type":"click","selector":"#go"}]}],"expr":{"context":"a","js":"location.pathname"}}')"
+  kill "$NAV_PID" 2>/dev/null
 
   echo "  screenshot"
   png_size() { python3 -c 'import struct,sys; d=open(sys.argv[1],"rb").read(24); print("%dx%d" % struct.unpack(">II", d[16:24]) if d[:8]==b"\x89PNG\r\n\x1a\n" else "not-a-png")' "$1"; }

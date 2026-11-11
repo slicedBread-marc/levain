@@ -247,6 +247,26 @@ printf '| # | Criterion | Build | Result | Notes |\n|-|-|-|-|-|\n' > plans/PLN-0
 eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
 assert_eq "one with no result at all is still the tester's work, and gates" true "$GATE"
 
+# LVI-043 from the coordinator: a criterion whose only result was a headless
+# ERROR (the sign-in form submit did not navigate) went to the post-ship
+# checklist as "untested" and shipped. An ERROR is no result.
+sha=$(git rev-parse --short HEAD)
+printf '| # | Criterion | Build | Result | Notes |\n|-|-|-|-|-|\n| 1 | /print — the label stays on one line at a phone width | %s | — | ERROR browser form submit did not navigate headlessly (page stayed on /signin) |\n' "$sha" > plans/PLN-002-beta/test-progress.md
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "an ERROR-only Chrome criterion: CHROME_ERRORED=1" 1 "$CHROME_ERRORED"
+assert_eq "…gates a pre-launch plan" true "$GATE"
+assert_has "…saying an ERROR is no result" "only a headless ERROR, which is no result" "$GATE_REASON"
+git add -A && git commit -qm "errored row"
+before=$(cat plans/PLN-002-beta/plan.md)
+out=$("$S/lv-lane.sh" answer PLN-002 manual-test 2>&1); rc=$?
+assert_eq "lv-lane.sh answer refuses it (exit 4)" 4 "$rc"
+assert_has "…naming the criterion" "the label stays on one line at a phone width" "$out"
+assert_eq "…and moves nothing" "$before" "$(cat plans/PLN-002-beta/plan.md)"
+printf '| # | Criterion | Build | Result | Notes |\n|-|-|-|-|-|\n| 1 | /print — the label stays on one line at a phone width | %s | — | needs: device — ERROR on the emulated touch path; a real phone is required |\n' "$sha" > plans/PLN-002-beta/test-progress.md
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "an ERROR beside a needs: reason is a reason, not a bare ERROR" 0 "$CHROME_ERRORED"
+assert_eq "…and goes to the end-state review" false "$GATE"
+
 # A client's LVI-053: the tester had moved the plan to accept when it opened
 # manual-test; answering it left the row where the daemon never looks.
 new_client "$PRE"

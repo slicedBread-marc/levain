@@ -103,6 +103,8 @@
 # Exit codes:
 #   check / answer   0 express holds · 1 downgraded (reasons on stdout and in
 #                    plan.md) · 3 no lane declared · 2 usage or error
+#                    · 4 (answer manual-test) a Chrome-Assisted criterion's only
+#                    result is a headless ERROR; nothing moved (LVI-043)
 #   push-covered     0 covered · 1 not covered (reason on stderr)
 #   declare          0 done · 1 refused or error
 #   status           0 always, unless the plan cannot be resolved (2)
@@ -708,29 +710,17 @@ answer)
     exit 0
   fi
 
-  # manual-test: every open criterion the completion guard would refuse on is
-  # ticked and listed under `## Post-ship checklist`, for a human after ship.
-  open=$("$SELF_DIR/lv-manual-lint.sh" "$PLAN_ID" --open 2>/dev/null || true)
-  moved=0
-  list=""
-  if [ -n "$open" ]; then
-    while IFS=$'\t' read -r ln tag crit _; do
-      [ -n "$ln" ] || continue
-      sed -i.bak "${ln}s/\[ \]/[x]/" "$PLAN_MD" && rm -f "$PLAN_MD.bak"
-      list+="- [ ] ${crit} _(${tag}; shipped without eyes by ${by}, ${today})_"$'\n'
-      moved=$((moved + 1))
-    done <<< "$open"
-  fi
   # And every live Chrome-Assisted criterion with no PASS on record. The guard
   # does not count them, so --open never lists them, and the gate had just told
   # the human they "go to the end-state review too": two stayed unchecked in
   # plan.md and the plan completed with them in neither place (a client's
   # LVI-036). Matched as lv-manual-gate.sh matches rows: normalised, or one
   # containing the other at 24+ characters.
+  chrome=""
   live_c=$("$SELF_DIR/lv-manual-lint.sh" "$PLAN_ID" --live 2>/dev/null | awk -F'\t' '$2 == "Chrome-Assisted" { print $5 }' || true)
   if [ -n "$live_c" ]; then
     passes=$(wf_test_progress_passes "$(dirname "$PLAN_MD")/test-progress.md" 2>/dev/null || true)
-    chrome=$(LV_LIVE="$live_c" LV_PASS="$passes" awk '
+    chrome=$(LV_LIVE="$live_c" LV_PASS="$passes" LV_PROGRESS="$(dirname "$PLAN_MD")/test-progress.md" awk '
       function norm(s,   t) {
         t = tolower(s); gsub(/[`*_]/, "", t)
         sub(/^[[:space:]]*-[[:space:]]*\[[ xX]\][[:space:]]*/, "", t)
@@ -744,18 +734,62 @@ answer)
         for (k in P) if (length(n) >= 24 && length(k) >= 24 && (index(k, n) || index(n, k))) return 1
         return 0
       }
+      # Its only result is a headless ERROR: no run produced anything, so it is
+      # not moved as untested-but-checked-later. LVI-043 from the coordinator:
+      # a sign-in criterion went to the checklist that way, and shipped.
+      function errored(n,   k, t, l) {
+        t = ""
+        if (n in NOTE) t = NOTE[n]
+        else for (k in NOTE) if (length(n) >= 24 && length(k) >= 24 && (index(k, n) || index(n, k))) { t = NOTE[k]; break }
+        if (t !~ /ERROR/) return 0
+        l = tolower(t)
+        if (l ~ /disagree/ || (l ~ /ambiguous/ && l ~ /headless|screenshot/)) return 0
+        if (l ~ /needs: *(data|oauth|device|extension|profile)/) return 0
+        return 1
+      }
       BEGIN {
         n = split(ENVIRON["LV_LIVE"], a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") L[norm(a[i])] = 1
         n = split(ENVIRON["LV_PASS"], a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") P[norm(a[i])] = 1
+        f = ENVIRON["LV_PROGRESS"]
+        while ((getline row < f) > 0) {
+          m = split(row, c, "|"); if (m < 6) continue
+          r = toupper(c[5]); gsub(/[[:space:]]/, "", r)
+          if (r == "PASS" || r == "FAIL") continue
+          NOTE[norm(c[3])] = c[6]
+        }
       }
       /^####[[:space:]]*Chrome-Assisted/ { in_c = 1; next }
       /^#+[[:space:]]/ { in_c = 0 }
       in_c && /^[[:space:]]*-[[:space:]]*\[ \]/ {
         k = norm($0)
-        if ((k in L) && !passed(k)) { t = $0; sub(/^[[:space:]]*-[[:space:]]*\[ \][[:space:]]*/, "", t); print NR "\t" t }
+        if ((k in L) && !passed(k)) { t = $0; sub(/^[[:space:]]*-[[:space:]]*\[ \][[:space:]]*/, "", t); print (errored(k) ? "E" : "M") "\t" NR "\t" t }
       }
     ' "$PLAN_MD")
-    while IFS=$'\t' read -r ln crit; do
+  fi
+  errored=$(printf '%s\n' "${chrome:-}" | sed -n 's/^E	[0-9]*	//p')
+  if [ -n "$errored" ]; then
+    echo "$PLAN_ID: manual-test not answered — these Chrome-Assisted criteria have only a headless ERROR," >&2
+    echo "  which is no result, so they cannot go to the post-ship checklist as if tested (LVI-043):" >&2
+    printf '%s\n' "$errored" | sed 's/^/    - /' >&2
+    echo "  Re-run them in /lv-test step 3c (a navigating submit waits now; waitForURL names its landing)," >&2
+    echo "  record a PASS, FAIL or needs: reason, or let a human check them at manual-test. Nothing was changed." >&2
+    exit 4
+  fi
+  # manual-test: every open criterion the completion guard would refuse on is
+  # ticked and listed under `## Post-ship checklist`, for a human after ship.
+  open=$("$SELF_DIR/lv-manual-lint.sh" "$PLAN_ID" --open 2>/dev/null || true)
+  moved=0
+  list=""
+  if [ -n "$open" ]; then
+    while IFS=$'\t' read -r ln tag crit _; do
+      [ -n "$ln" ] || continue
+      sed -i.bak "${ln}s/\[ \]/[x]/" "$PLAN_MD" && rm -f "$PLAN_MD.bak"
+      list+="- [ ] ${crit} _(${tag}; shipped without eyes by ${by}, ${today})_"$'\n'
+      moved=$((moved + 1))
+    done <<< "$open"
+  fi
+  if [ -n "${chrome:-}" ]; then
+    while IFS=$'\t' read -r _kind ln crit; do
       [ -n "$ln" ] || continue
       sed -i.bak "${ln}s/\[ \]/[x]/" "$PLAN_MD" && rm -f "$PLAN_MD.bak"
       list+="- [ ] ${crit} _(chrome-assisted, untested; shipped without eyes by ${by}, ${today})_"$'\n'

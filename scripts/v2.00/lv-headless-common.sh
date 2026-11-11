@@ -11,11 +11,13 @@
 #   - Writes actions.mjs into that cache dir: a shared action-runner module
 #     (`runActions(page, actions)`) both scripts import, so the interaction
 #     vocabulary (click, fill, press, keyboard, hover, focus, mouse,
-#     selectOption, check/uncheck, waitForSelector, wait, goto, reload,
-#     download, upload, clipboard, clipboardWrite) is defined in exactly one
-#     place. It also exports exprScope(page, consoleErrors): what an
-#     expression can name — consoleErrors, downloads, clipboard — and
-#     exprFunction(js), which builds the function evaluated in the page.
+#     selectOption, check/uncheck, waitForSelector, waitForURL,
+#     waitForLoadState, wait, goto, reload, download, upload, clipboard,
+#     clipboardWrite) is defined in exactly one place. A click, press,
+#     keyboard, check/uncheck or selectOption that starts a navigation waits
+#     for the new page to load before the next step (LVI-043). It also
+#     exports exprScope(page, consoleErrors): what an expression can name —
+#     consoleErrors, downloads, clipboard — and exprFunction(js), which builds the function evaluated in the page.
 #   - Sets (unprefixed, in the caller's shell — this is sourced, not
 #     subshelled) CACHE_DIR for the caller to build runner/output paths from.
 #
@@ -116,6 +118,59 @@ function uploadFile(f) {
   return { name: f.name || 'upload.txt', mimeType: f.mimeType || 'text/plain', buffer };
 }
 
+// A click, key or check that submits a form starts a navigation the action
+// itself does not wait for: Playwright returns once the event is dispatched.
+// The next step then ran on the page being left, and a `goto` aborted the POST
+// in flight: a client's sign-in criterion (POST /signin -> 302 /signin/sent)
+// recorded "the form submit did not navigate headlessly", and the same flow
+// passed once a script waited for the URL (the coordinator's LVI-043). So an
+// action that may navigate is watched: when a main-frame navigation starts
+// within `navGrace` ms (default 250) of it, the step waits for that navigation
+// to commit and the new page to reach 'load' before the next one runs. One
+// that is aborted (a download, a 204) ends the wait. `"navGrace": 0` opts out.
+const NAVIGATES = new Set(['click', 'press', 'keyboard', 'check', 'uncheck', 'selectOption']);
+
+function watchNavigation(page) {
+  const main = page.mainFrame();
+  const st = { started: false, done: false };
+  const onRequest = (r) => {
+    if (r.isNavigationRequest() && r.frame() === main) { st.started = true; st.done = false; }
+  };
+  const onCommit = (f) => { if (f === main && st.started) st.done = true; };
+  const onFailed = (r) => { if (r.isNavigationRequest() && r.frame() === main) st.done = true; };
+  page.on('request', onRequest);
+  page.on('framenavigated', onCommit);
+  page.on('requestfailed', onFailed);
+  st.stop = () => {
+    page.off('request', onRequest);
+    page.off('framenavigated', onCommit);
+    page.off('requestfailed', onFailed);
+  };
+  return st;
+}
+
+async function settleNavigation(page, st, step) {
+  try {
+    const graceEnd = Date.now() + (step.navGrace ?? 250);
+    while (!st.started && Date.now() < graceEnd) await page.waitForTimeout(25);
+    if (!st.started) return;
+    const timeout = step.navTimeout || 15000;
+    const end = Date.now() + timeout;
+    while (!st.done && Date.now() < end) await page.waitForTimeout(25);
+    if (!st.done) throw new Error(`${step.type} started a navigation that did not finish within ${timeout}ms`);
+    await page.waitForLoadState('load', { timeout });
+  } finally {
+    st.stop();
+  }
+}
+
+// waitForURL's url: a "/regex/flags" string, else a Playwright glob or an
+// exact URL ("**/signin/sent").
+function urlMatcher(u) {
+  const m = typeof u === 'string' && u.match(/^\/(.+)\/([a-z]*)$/);
+  return m ? new RegExp(m[1], m[2]) : u;
+}
+
 async function grantClipboard(page) {
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.bringToFront();
@@ -130,6 +185,18 @@ export async function runActions(page, actions) {
   }
   for (const step of actions || []) {
     const timeout = step.timeout || 5000;
+    const nav = NAVIGATES.has(step.type) && step.navGrace !== 0 ? watchNavigation(page) : null;
+    try {
+      await runStep(page, step, timeout);
+    } catch (e) {
+      if (nav) nav.stop();
+      throw e;
+    }
+    if (nav) await settleNavigation(page, nav, step);
+  }
+}
+
+async function runStep(page, step, timeout) {
     switch (step.type) {
       case 'click':
         await page.click(step.selector, { timeout });
@@ -172,6 +239,13 @@ export async function runActions(page, actions) {
         break;
       case 'goto':
         await page.goto(step.url, { waitUntil: 'load', timeout: step.timeout || 15000 });
+        break;
+      case 'waitForURL':
+        // Explicit: the page must arrive at this URL (a redirect chain's end).
+        await page.waitForURL(urlMatcher(step.url), { waitUntil: 'load', timeout: step.timeout || 15000 });
+        break;
+      case 'waitForLoadState':
+        await page.waitForLoadState(step.state || 'load', { timeout: step.timeout || 15000 });
         break;
       case 'reload':
         await page.reload({ waitUntil: 'load', timeout: step.timeout || 15000 });
@@ -225,7 +299,6 @@ export async function runActions(page, actions) {
       default:
         throw new Error(`unknown action type: ${step.type}`);
     }
-  }
 }
 NODE
 
