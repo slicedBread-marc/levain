@@ -13,8 +13,10 @@
 #   --tunnel   also publish the container at a public HTTPS URL, for criteria
 #              that need a real device. See "Device testing" below.
 #
-# Output: FEATURE_PORT, COMPOSE_PROJECT_NAME, TEST_ACCOUNT, PUBLIC_URL
-#         (eval-friendly)
+# Output: FEATURE_PORT, COMPOSE_PROJECT_NAME, TEST_ACCOUNT, PUBLIC_URL,
+#         APP_LOG (native only), STARTUP_LOG, STARTUP_WARNINGS (eval-friendly).
+#         STARTUP_LOG holds the warning/error lines the app logged while
+#         starting; see "Startup sanity" below (LVI-042).
 # Exit 0 on healthy, 1 on timeout or a failed start, 3 no compose file and no
 # local start command to use instead.
 
@@ -198,6 +200,53 @@ done
 
 # Wait for health (the native path waited already)
 [ -f docker/docker-compose.yml ] && "$SCRIPT_DIR/lv-wait-healthy.sh" >&2
+
+# ── Startup sanity ────────────────────────────────────────────────────────
+#
+# Healthy is not working. A client's app, started with its own
+# local_start_command, answered /health and logged
+#     warn: …ItemBank[0]
+#           Bank: …/Content/bank missing, serving no items
+# so every visitor saw "No questions are ready today". The tester restarted it
+# with an env override, passed the plan on that, and filed the defect as a
+# harness issue nobody read as a product bug (the coordinator's LVI-042). So
+# the app is asked for / once — services built on first use log then too — and
+# its log so far is scanned for warning and error lines. They go to
+# STARTUP_LOG (one per line; a .NET level line is joined to the message
+# under it), STARTUP_WARNINGS counts them, and /lv-test records them in
+# test-progress.md as STARTUP_RESULT, where they feed the verdict.
+startup_src="${app_log:-}"
+curl -s -o /dev/null --max-time 10 "http://localhost:$FEATURE_PORT/" 2>/dev/null || true
+sleep 1
+if [ -f docker/docker-compose.yml ]; then
+  startup_src="${TMPDIR:-/tmp}/lv-app-$COMPOSE_PROJECT_NAME.compose.log"
+  docker compose -f docker/docker-compose.yml -p "$COMPOSE_PROJECT_NAME" logs --no-color \
+    > "$startup_src" 2>/dev/null || true
+fi
+startup_log="${TMPDIR:-/tmp}/lv-app-$COMPOSE_PROJECT_NAME.startup"
+: > "$startup_log"
+if [ -n "$startup_src" ] && [ -f "$startup_src" ]; then
+  awk '
+    function flush() { if (held != "") { print held; held = "" } }
+    {
+      line = $0; l = tolower(line)
+      if (held != "" && line ~ /^[ \t]+[^ \t]/) { sub(/^[ \t]+/, "", line); print held " " line; held = ""; next }
+      flush()
+      if (l ~ /(^|[^a-z])(warn|fail|crit|error): /) { held = $0; next }
+      if (l ~ /(^|[^a-z])(warn|warning|error|errors|fail|failed|failure|fatal|crit|critical|exception|missing|panic|traceback|unhandled)([^a-z]|$)/) print $0
+    }
+    END { flush() }
+  ' "$startup_src" | head -50 > "$startup_log" || true
+fi
+startup_n=$(grep -c . "$startup_log" 2>/dev/null || true)
+wf_emit STARTUP_LOG "$startup_log"
+wf_emit STARTUP_WARNINGS "${startup_n:-0}"
+if [ "${startup_n:-0}" -gt 0 ]; then
+  echo "lv-docker-up: the app logged ${startup_n} warning/error line(s) while starting — record them as STARTUP_RESULT (lv-test step 3):" >&2
+  sed 's/^/      /' "$startup_log" >&2
+else
+  echo "lv-docker-up: startup log clean (no warning or error lines)" >&2
+fi
 
 # ── Test account ──────────────────────────────────────────────────────────
 #

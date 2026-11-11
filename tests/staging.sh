@@ -332,6 +332,8 @@ else
   has "emits APP_LOG"                                   "${APP_LOG:-}" "lv-app-demo-pln0"
   assert_eq "never calls compose"                       "false" \
     "$(grep -q 'compose' "$DOCKER_LOG" && echo true || echo false)"
+  assert_eq "a clean start: STARTUP_WARNINGS=0"          "0" "${STARTUP_WARNINGS:-}"
+  has "…and says so"                                    "$(cat "$TEST_DIR/stage.err")" "startup log clean"
   "$SD/lv-docker-down.sh" >/dev/null 2>&1; sleep 0.3
   assert_eq "lv-docker-down.sh stops it"                "false" \
     "$(curl -fsS "http://127.0.0.1:$((8100 + n))/health" >/dev/null 2>&1 && echo true || echo false)"
@@ -363,6 +365,20 @@ else
   "$SD/lv-docker-down.sh" >/dev/null 2>&1
   cd "$N" || exit 1
   git worktree remove --force "$N/feature-branches/wt" >/dev/null 2>&1
+
+  # The coordinator's LVI-042: an app that answered /health while logging that
+  # it served no data. The tester worked around it and passed the plan.
+  cat > levain.yml <<'Y'
+project_slug: "demo"
+local_start_command: "printf 'info: App[0]\n      Now listening\nwarn: App.Bank[0]\n      Bank: /x/Content/bank missing, serving no items\n'; cd www && exec python3 -m http.server $FEATURE_PORT --bind 127.0.0.1"
+Y
+  stage lv-docker-up.sh
+  assert_eq "a start that logs a warning still starts"   "0" "$RC"
+  assert_eq "…STARTUP_WARNINGS counts it"                "1" "${STARTUP_WARNINGS:-}"
+  assert_eq "…STARTUP_LOG holds it, level and message on one line" \
+    "warn: App.Bank[0] Bank: /x/Content/bank missing, serving no items" "$(cat "${STARTUP_LOG:-/nonexistent}" 2>/dev/null)"
+  has "…and prints it for the tester"                   "$(cat "$TEST_DIR/stage.err")" "serving no items"
+  "$SD/lv-docker-down.sh" >/dev/null 2>&1; sleep 0.2
 
   printf 'project_slug: "demo"\nlocal_start_command: "echo boom-from-app; exit 1"\n' > levain.yml
   stage lv-docker-up.sh

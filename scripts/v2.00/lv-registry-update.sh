@@ -614,7 +614,9 @@ fi
 #
 # /lv-test records results that are not criteria: the layout audit of every
 # route the plan touches (`LAYOUT_RESULT <route>=pass|fail|error`, the
-# coordinator's LVI-044). A FAIL there is a FAIL on the build, and the
+# coordinator's LVI-044), and the app's own startup as the project starts it
+# (`STARTUP_RESULT=pass|warn|fail`: a log line saying it serves no data, or a
+# workaround the tester needed to make it work — LVI-042). A FAIL there is a FAIL on the build, and the
 # criteria-table rules above never see it, so a plan could complete over it.
 # The test-progress.md lines are the record; this reads them.
 #
@@ -624,11 +626,11 @@ if [ "$from_state" = "testing" ] && [ "$to_state" = "complete" ] \
   rf_slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
   rf_file="plans/${plan_id}-${rf_slug}/test-progress.md"
   rf_lines=""
-  [ -f "$rf_file" ] && rf_lines=$(grep -E '^LAYOUT_RESULT [^ ]*=fail' "$rf_file" || true)
+  [ -f "$rf_file" ] && rf_lines=$(grep -E '^(LAYOUT_RESULT [^ ]*|STARTUP_RESULT)=fail' "$rf_file" || true)
   if [ -n "$rf_lines" ]; then
     echo "Error: refusing $plan_id 'testing' -> 'complete' — test-progress.md records a FAIL outside the criteria table:" >&2
     printf '%s\n' "$rf_lines" | cut -c1-200 | sed 's/^/         /' >&2
-    echo "       A failed layout audit is a FAIL on this build: take /lv-test's findings exit." >&2
+    echo "       A failed layout audit or startup is a FAIL on this build: take /lv-test's findings exit." >&2
     echo "       Nothing was changed. LV_ALLOW_FAILED=1 overrides (a human's ruling)." >&2
     exit 1
   fi

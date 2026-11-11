@@ -66,7 +66,7 @@ Order of work:
    ```bash
    eval "$(scripts/lv-exec.sh lv-manual-gate.sh <PLN-ID>)"
    ```
-   - **Any criterion recorded FAIL, or a `LAYOUT_RESULT …=fail` line, whatever `GATE` says** → take the **findings** exit and route back to the builder. A FAIL is a result, not a question, and a person cannot un-fail an assertion a run made; scope is not reduced here. **The express lane does not change this.** (A reading that *disagrees* with a prior one is not a FAIL — step 3c leaves it at `—`, and it goes to `accept:manual` below.)
+   - **Any criterion recorded FAIL, or a `STARTUP_RESULT=fail` or `LAYOUT_RESULT …=fail` line, whatever `GATE` says** → take the **findings** exit and route back to the builder. A FAIL is a result, not a question, and a person cannot un-fail an assertion a run made; scope is not reduced here. **The express lane does not change this.** (A reading that *disagrees* with a prior one is not a FAIL — step 3c leaves it at `—`, and it goes to `accept:manual` below.)
    - `GATE='false'` → **do not stop for a human.** A plan whose diff renders nothing to a human never stops for a human. But `GATE='false'` is a statement about *human eyes*, not about test results, and it does not turn an untested criterion into a PASS:
      - `LANE='express'` → a human declared this plan safe to ship unseen, and the lane check still passes on the plan as written (LVI-025). Instead of deferring the untested eyes criteria, move them to the plan's post-ship checklist — the script ticks each one, lists it under `## Post-ship checklist` for a human after it ships, logs the answer as `express`, and commits:
        ```bash
@@ -103,6 +103,7 @@ Order of work:
 | Step 2 | Goal missing | **[GATE]** | `goal-missing` |
 | Step 4 | A criterion 3c could not settle | [AUTO] | Auto-test it when it matches a recurring shape; otherwise leave it at `—` with the recorded reason, for `accept:manual` |
 | Step 6 | A criterion recorded FAIL | [AUTO] | Write the finding and route to spec as normal — that is a state transition, not a question. An `(eyes:cosmetic)` failure files a bug and checks off instead |
+| Step 3 | The app logs that it serves no data, or works only with an override, path fix or restart the start command does not do | [AUTO] | `STARTUP_RESULT=fail`, a product bug with `lv-bug-new.sh`, the findings exit. Never pass criteria on the workaround; `lv-issue.sh` only for a fault in `lv-docker-up.sh` itself (LVI-042) |
 | Step 3c | `lv-headless-layout.sh` FAIL on a route the plan touches | [AUTO] | Record the `LAYOUT_RESULT …=fail` line with its offending elements and take the findings exit, one finding per element (LVI-044) |
 | Step 5 | Deferring a criterion | [AUTO] | Defer `(external)` and `(soak)` criteria — that is mechanical. Never defer anything else; an `unbuilt` deferral is a human's call, in `/lv-accept` |
 | Testing step 4 | `lv-suite-wait.sh` exits 3 | [AUTO] | Call it again with the same handle. Never end the turn on a running suite |
@@ -237,6 +238,20 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
 
    **A project with no `docker/docker-compose.yml` is not a Docker failure.** `lv-docker-up.sh` then runs the project's own `local_deploy_command` (else `local_start_command`) from `levain.yml` natively on `$FEATURE_PORT`, and sets `APP_LOG`; `lv-docker-down.sh` stops it the same way. Its exit 3 means the project declared no usable start command, and exit 1 prints the app's own log. Either is a `needs-input` question about **that command** — quote it and the log tail — never a remedy of "set up Docker" for a project that does not use it (a client's LVI-002).
    Also read `guest_entry_path` from `levain.yml` (root of repo). If set, store it as `GUEST_ENTRY_PATH`.
+
+   **Startup sanity — before step 3a, and before any criterion.** `lv-docker-up.sh` starts the app exactly as the project starts it, asks it for `/` once, and scans its log: it prints every warning or error line, writes them to `$STARTUP_LOG`, and counts them in `$STARTUP_WARNINGS`. Record one line in `test-progress.md`, under the `TREE` stamp, before anything else:
+   - `STARTUP_RESULT=pass` — `$STARTUP_WARNINGS` is 0.
+   - `STARTUP_RESULT=warn — <n> line(s), judged benign: <why>` — every line is framework noise that changes nothing a user gets (a dev data-protection key, a missing optional dev certificate). Quote the lines under it, indented.
+   - `STARTUP_RESULT=fail — <the line>` — any line saying the app runs without something its users need: data it serves none of (`serving no items`, `0 loaded`), a store or service it could not reach, a feature switched off. **This is a FAIL on the build**, whatever the criteria then do: take the findings exit, and file the product bug (below). `lv-registry-update.sh` refuses `testing → complete` while a `STARTUP_RESULT=fail` line stands.
+
+   **The app is tested as the project starts it, never as you got it working.** If making it work needs anything other than `lv-docker-up.sh` running the configured command — an environment override (`Bank__Path=…`), a path fix, a manual restart with different settings, an edited config file — that is a defect in the build, not a test setup step: record `STARTUP_RESULT=fail — <what you had to change, and the log line that showed it>`, write it as a `**Behavior**` finding, and file it in **this project's** pipeline:
+   ```bash
+   eval "$(../../scripts/lv-exec.sh lv-bug-new.sh "<the app as started by local_start_command: what is broken>" \
+     --severity High --source agent:lv-test \
+     --description "<the start command, the log line, what a user sees, the workaround that made it work>" \
+     --links "found testing PLN-NNN")"
+   ```
+   Then take the findings exit, naming `$BUG_ID` in the finding. Never pass criteria on the workaround, and never file this with `lv-issue.sh` alone: a harness issue is read by the library, not by this project's planner. `lv-issue.sh` is for a fault in `lv-docker-up.sh` itself — it ran something other than the configured command, or mishandled its output. A client's tester restarted with `Bank__Path` pointed at `bin/`, passed every criterion on that, completed the plan, and filed the defect twice as a harness issue; the operator then started the app with the documented command and got no questions at all (the coordinator's LVI-042).
 
    **`$TEST_ACCOUNT` is the sign-in line** — display it verbatim with the URL in every state below. A fresh container has no account unless `test_account_command` made one. **Attended, whenever you hand the human the app, open it for them** with `../../scripts/lv-exec.sh lv-open-url.sh --fresh --as <account> <url>`, choosing the one account they need from the note, as `/lv-accept` step 6 does. Never print a list of accounts for them to pick from. The script opens nothing under `LV_UNATTENDED=1`.
 
@@ -550,6 +565,7 @@ The step 6 write is not bookkeeping. `lv-manual-gate.sh` decides whether to stop
 
 TREE feature-branches/PLN-NNN-slug @ feature/PLN-NNN-slug a1b2c3d (2026-08-17T15:14:51Z)
 
+STARTUP_RESULT=pass
 LAYOUT_RESULT /round=pass — PASS layout 390x844 1280x800: no overflow, targets >= 24px, radios and checkboxes on their label's line, no text overflow
 
 | # | Criterion | Build | Result | Notes |
@@ -566,6 +582,7 @@ Last failure: #3 on build Apr 08 14:32 (f4e5d6c)
 
 - The `TREE` line is the one `lv-test-tree.sh` printed, pasted. If you are writing this file without one in your tool output, you have no provenance for the results below it — re-run the command in the plan's worktree and paste what it prints.
 - One row per criterion, always present. Result: `PASS`, `FAIL`, `SKIP`, or `—` (untested).
+- One `STARTUP_RESULT=pass|warn|fail` line from step 3's startup sanity, measured on this build; a `=fail` refuses completion.
 - One `LAYOUT_RESULT <route>=pass|fail|error — <verdict line>` per route step 3c audited, measured on the build in the `TREE` stamp; replace them on every run, never carry one from another build. A `=fail` line refuses completion (step 3c).
 - **An untested Chrome-Assisted row's Notes must be one of five things, or the gate counts the criterion as never run** (`CHROME_EXCUSED`, LVI-030/033): the `ERROR …` line a headless script printed; a headless reading that disagrees with a prior one (row 5 — the gate looks for the word `disagreement`, or `headless PASS|FAIL` with `prior`); a headless run you could not judge, as `headless screenshot <widths>: ambiguous — <what>` (the gate looks for `ambiguous` with `headless` or `screenshot`); `needs: oauth|device|extension|profile — <why>` for the four things Playwright cannot be; or `needs: data — <what is missing, and why you cannot make it>` when the criterion needs records the dev environment does not hold and nothing in the plan, a seeder or the UI lets you create them (a client's LVI-047: a labels page over an empty database). Data you could make by clicking through the app is not missing — make it. "Needs browser mode", "requires user interaction" or "needs eyes" describe a criterion you did not try — hover, Tab order, iframes, shadow DOM, file downloads, file uploads and the clipboard are all scriptable, and a `needs:` note naming a download, an upload or the clipboard is counted as an excuse (LVI-036).
 - **Unattended, write `PASS` on a `#### Manual` eyes criterion only from a headless run or screenshot you captured on this build, with Notes saying which, and never change a result you did not produce this run.** A human's FAIL, or any prior reading, that your run contradicts is a disagreement (row 5), not something to overwrite. The gate counts an unattended worker's Manual PASS only from the committed file, which is why step 6 commits before it asks (LVI-033, LVI-002).
@@ -1187,7 +1204,7 @@ scripts/lv-exec.sh lv-issue.sh --source lv-test \
   --context  "<plan id, branch, state>"
 ```
 
-These are swept into the Levain library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures or plan findings — those are normal work, not harness faults. Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
+These are swept into the Levain library and fixed upstream, so one report fixes it for every project. **Not** for application build/test failures, plan findings, or an app that misbehaves when started with the project's own start command — those are normal work, not harness faults, and the last is a FAIL plus `lv-bug-new.sh` (step 3, LVI-042). Filing never justifies abandoning the run; work around it if you can and say so in `--notes`.
 
 ## Usage
 

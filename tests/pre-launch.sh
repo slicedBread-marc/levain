@@ -222,6 +222,13 @@ out=$("$S/lv-registry-update.sh" PLN-002 testing complete - 2>&1); rc=$?
 assert_eq "a LAYOUT_RESULT fail line refuses completion" 1 "$rc"
 assert_has "…quoting it" "LAYOUT_RESULT /print=fail" "$out"
 cp "$TEST_DIR/tp.keep" plans/PLN-002-beta/test-progress.md
+# LVI-042: the app as configured logged that it served no data.
+printf 'STARTUP_RESULT=fail — warn: Bank: missing, serving no items (passed only with Bank__Path overridden)\n' >> plans/PLN-002-beta/test-progress.md
+out=$("$S/lv-registry-update.sh" PLN-002 testing complete - 2>&1); rc=$?
+assert_eq "a STARTUP_RESULT=fail line refuses completion" 1 "$rc"
+assert_has "…quoting it" "STARTUP_RESULT=fail" "$out"
+cp "$TEST_DIR/tp.keep" plans/PLN-002-beta/test-progress.md
+printf 'STARTUP_RESULT=warn — 1 line, judged benign: no XML encryptor configured\n' >> plans/PLN-002-beta/test-progress.md
 printf 'LAYOUT_RESULT /print=pass — PASS layout 390x844 1280x800\n' >> plans/PLN-002-beta/test-progress.md
 assert_eq "the completion guard lets it complete" 0 \
   "$("$S/lv-registry-update.sh" PLN-002 testing complete - >/dev/null 2>&1; echo $?)"
