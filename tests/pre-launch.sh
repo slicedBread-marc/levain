@@ -214,6 +214,15 @@ assert_has "…listed on the post-ship checklist as pre-launch" "shipped without
 assert_has "an untested Chrome-Assisted criterion goes to the checklist too" "- [ ] /print — the download button saves a PDF of the sheet _(chrome-assisted" "$(cat plans/PLN-002-beta/plan.md)"
 assert_has "…ticked in place" "- [x] /print — the download button" "$(cat plans/PLN-002-beta/plan.md)"
 assert_not "one with a PASS on record does not" "- [ ] /print — the preview shows the label beside the sheet title _(" "$(cat plans/PLN-002-beta/plan.md)"
+# The coordinator's LVI-044: a failed layout audit is a FAIL on the build,
+# though it is not a criterion row.
+cp plans/PLN-002-beta/test-progress.md "$TEST_DIR/tp.keep"
+printf 'LAYOUT_RESULT /print=fail — FAIL layout 390x844 1280x800: 1 problem(s) — target 1\n' >> plans/PLN-002-beta/test-progress.md
+out=$("$S/lv-registry-update.sh" PLN-002 testing complete - 2>&1); rc=$?
+assert_eq "a LAYOUT_RESULT fail line refuses completion" 1 "$rc"
+assert_has "…quoting it" "LAYOUT_RESULT /print=fail" "$out"
+cp "$TEST_DIR/tp.keep" plans/PLN-002-beta/test-progress.md
+printf 'LAYOUT_RESULT /print=pass — PASS layout 390x844 1280x800\n' >> plans/PLN-002-beta/test-progress.md
 assert_eq "the completion guard lets it complete" 0 \
   "$("$S/lv-registry-update.sh" PLN-002 testing complete - >/dev/null 2>&1; echo $?)"
 

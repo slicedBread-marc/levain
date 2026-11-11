@@ -66,7 +66,7 @@ Order of work:
    ```bash
    eval "$(scripts/lv-exec.sh lv-manual-gate.sh <PLN-ID>)"
    ```
-   - **Any criterion recorded FAIL, whatever `GATE` says** → take the **findings** exit and route back to the builder. A FAIL is a result, not a question, and a person cannot un-fail an assertion a run made; scope is not reduced here. **The express lane does not change this.** (A reading that *disagrees* with a prior one is not a FAIL — step 3c leaves it at `—`, and it goes to `accept:manual` below.)
+   - **Any criterion recorded FAIL, or a `LAYOUT_RESULT …=fail` line, whatever `GATE` says** → take the **findings** exit and route back to the builder. A FAIL is a result, not a question, and a person cannot un-fail an assertion a run made; scope is not reduced here. **The express lane does not change this.** (A reading that *disagrees* with a prior one is not a FAIL — step 3c leaves it at `—`, and it goes to `accept:manual` below.)
    - `GATE='false'` → **do not stop for a human.** A plan whose diff renders nothing to a human never stops for a human. But `GATE='false'` is a statement about *human eyes*, not about test results, and it does not turn an untested criterion into a PASS:
      - `LANE='express'` → a human declared this plan safe to ship unseen, and the lane check still passes on the plan as written (LVI-025). Instead of deferring the untested eyes criteria, move them to the plan's post-ship checklist — the script ticks each one, lists it under `## Post-ship checklist` for a human after it ships, logs the answer as `express`, and commits:
        ```bash
@@ -103,6 +103,7 @@ Order of work:
 | Step 2 | Goal missing | **[GATE]** | `goal-missing` |
 | Step 4 | A criterion 3c could not settle | [AUTO] | Auto-test it when it matches a recurring shape; otherwise leave it at `—` with the recorded reason, for `accept:manual` |
 | Step 6 | A criterion recorded FAIL | [AUTO] | Write the finding and route to spec as normal — that is a state transition, not a question. An `(eyes:cosmetic)` failure files a bug and checks off instead |
+| Step 3c | `lv-headless-layout.sh` FAIL on a route the plan touches | [AUTO] | Record the `LAYOUT_RESULT …=fail` line with its offending elements and take the findings exit, one finding per element (LVI-044) |
 | Step 5 | Deferring a criterion | [AUTO] | Defer `(external)` and `(soak)` criteria — that is mechanical. Never defer anything else; an `unbuilt` deferral is a human's call, in `/lv-accept` |
 | Testing step 4 | `lv-suite-wait.sh` exits 3 | [AUTO] | Call it again with the same handle. Never end the turn on a running suite |
 | Testing step 4 | Suite verdict is `pass (reused …)` | [AUTO] | Record it as reused under step 3a's `TREE` stamp, totals from `SUITE_REUSED_FROM=`. Do not re-run it to "confirm" |
@@ -333,6 +334,17 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
      Read both. **PASS only if the claim holds at both widths**; if it holds at one and fails at the other, that is a FAIL, and the note says which width failed and by how much. client-b WFI-034: *"the composition reads as one full-screen warm background"* was judged from the 390px default and recorded PASS. The plate is 324px wide — near-full-bleed at 390, a narrow centred column with flat background either side at 1280. All 7 criteria went down as PASS on a build whose Goal (*"the warm grained plate fills the viewport below the appbar"*) was unmet, and only a human arriving at the manual-test gate caught it.
 
      Where a width genuinely cannot be reached, that is [a recorded reason it could not be run](#testing), not a PASS — the same rule as any other criterion this step cannot settle. "I measured it somewhere" is not "I measured it where the claim lives".
+   - **The layout audit — every route the plan touches, every run, whatever the criteria say.** The routes are the ones its criteria name (the `/route —` they start with) plus any page whose source the plan's diff changes. For each, with the actions that reach the state the plan changed (a round in progress, the results view):
+     ```bash
+     ../../scripts/lv-exec.sh lv-headless-layout.sh "http://localhost:$FEATURE_PORT<route>" '<actions-json>'
+     ```
+     It asserts at 390×844 and 1280×800: no horizontal page scroll; every visible button, link, input, select and radio/checkbox label at least 24px tall (a link inside running text is exempt); each radio and checkbox on the same line as its label's text; no element whose text overflows its box. Exit 0 `PASS`, 1 `FAIL` with one line per offending element above the verdict, 2 `ERROR`. Record one line per route in `test-progress.md`, under the `TREE` stamp, with the verdict line verbatim, and on a FAIL the offending lines under it, indented:
+     ```
+     LAYOUT_RESULT /round=fail — FAIL layout 390x844 1280x800: 2 problem(s) — target 1, align 1
+       - 390x844 target: a.guide "Guide" — 18px tall (< 24px)
+       - 390x844 align: label "A long answer…" — label text starts at y=212px, the radio spans y=190px–203px: not on the same line
+     ```
+     (`=pass` and `=error` likewise.) **A layout FAIL is a FAIL on this build** — the findings exit, one `**Behavior**` finding per offending element, exactly like a failed criterion; `lv-registry-update.sh` refuses `testing → complete` while a `LAYOUT_RESULT …=fail` line stands. It is not a judgement to soften: a client's tester judged 390px screenshots "ambiguous" and passed them, and a script then found a radio alone on a line above its inline-block label and 18px guide links under every result on the same build (the coordinator's LVI-044). An `ERROR` gets the same treatment as any other headless ERROR: fix the actions and re-run.
    - **Criteria needing TWO OR MORE concurrent browsers** ("the same account on two devices", "reload-rejoin while a peer is still connected", "the second tab does not get the session cookie") — `lv-headless-session.sh`. Each named context is a separate browser context with its own cookies and storage, which is what makes it a *device*; `steps` interleave across them, and one `expr` in one named context is the verdict:
      ```bash
      ../../scripts/lv-exec.sh lv-headless-session.sh '{
@@ -538,6 +550,8 @@ The step 6 write is not bookkeeping. `lv-manual-gate.sh` decides whether to stop
 
 TREE feature-branches/PLN-NNN-slug @ feature/PLN-NNN-slug a1b2c3d (2026-08-17T15:14:51Z)
 
+LAYOUT_RESULT /round=pass — PASS layout 390x844 1280x800: no overflow, targets >= 24px, radios and checkboxes on their label's line, no text overflow
+
 | # | Criterion | Build | Result | Notes |
 |-|-|-|-|-|
 | 1 | criterion one text | Apr 07 09:15 (a1b2c3d) | PASS | |
@@ -552,6 +566,7 @@ Last failure: #3 on build Apr 08 14:32 (f4e5d6c)
 
 - The `TREE` line is the one `lv-test-tree.sh` printed, pasted. If you are writing this file without one in your tool output, you have no provenance for the results below it — re-run the command in the plan's worktree and paste what it prints.
 - One row per criterion, always present. Result: `PASS`, `FAIL`, `SKIP`, or `—` (untested).
+- One `LAYOUT_RESULT <route>=pass|fail|error — <verdict line>` per route step 3c audited, measured on the build in the `TREE` stamp; replace them on every run, never carry one from another build. A `=fail` line refuses completion (step 3c).
 - **An untested Chrome-Assisted row's Notes must be one of five things, or the gate counts the criterion as never run** (`CHROME_EXCUSED`, LVI-030/033): the `ERROR …` line a headless script printed; a headless reading that disagrees with a prior one (row 5 — the gate looks for the word `disagreement`, or `headless PASS|FAIL` with `prior`); a headless run you could not judge, as `headless screenshot <widths>: ambiguous — <what>` (the gate looks for `ambiguous` with `headless` or `screenshot`); `needs: oauth|device|extension|profile — <why>` for the four things Playwright cannot be; or `needs: data — <what is missing, and why you cannot make it>` when the criterion needs records the dev environment does not hold and nothing in the plan, a seeder or the UI lets you create them (a client's LVI-047: a labels page over an empty database). Data you could make by clicking through the app is not missing — make it. "Needs browser mode", "requires user interaction" or "needs eyes" describe a criterion you did not try — hover, Tab order, iframes, shadow DOM, file downloads, file uploads and the clipboard are all scriptable, and a `needs:` note naming a download, an upload or the clipboard is counted as an excuse (LVI-036).
 - **Unattended, write `PASS` on a `#### Manual` eyes criterion only from a headless run or screenshot you captured on this build, with Notes saying which, and never change a result you did not produce this run.** A human's FAIL, or any prior reading, that your run contradicts is a disagreement (row 5), not something to overwrite. The gate counts an unattended worker's Manual PASS only from the committed file, which is why step 6 commits before it asks (LVI-033, LVI-002).
 - **Notes is where an untested (`—`) row's reason ends up at exit.** Held in session memory like every other result until then (see above), but write it here rather than dropping it: the auto-test agent's outcome (`EXISTS`/`PASS` name, or a `FAIL` reason) and step 3c's headless-eval outcome (why it couldn't run, or what it disagreed with) both belong in this column. A reason that never reaches the file does not survive a compaction or a different session resuming the plan — this file is the only thing either reads (WFI-070's own lesson, applied to the reason column, not just the verdict column).

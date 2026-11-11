@@ -610,6 +610,30 @@ if [ "$from_state" = "testing" ] && [ "$to_state" = "complete" ] \
   fi
 fi
 
+# --- Guard: a FAIL recorded outside the criteria table ----------------------
+#
+# /lv-test records results that are not criteria: the layout audit of every
+# route the plan touches (`LAYOUT_RESULT <route>=pass|fail|error`, the
+# coordinator's LVI-044). A FAIL there is a FAIL on the build, and the
+# criteria-table rules above never see it, so a plan could complete over it.
+# The test-progress.md lines are the record; this reads them.
+#
+# LV_ALLOW_FAILED=1 for a human who rules the plan complete over one.
+if [ "$from_state" = "testing" ] && [ "$to_state" = "complete" ] \
+   && [ "${LV_ALLOW_FAILED:-}" != "1" ]; then
+  rf_slug=$(wf_registry_field "$plan_id" slug "$REGISTRY")
+  rf_file="plans/${plan_id}-${rf_slug}/test-progress.md"
+  rf_lines=""
+  [ -f "$rf_file" ] && rf_lines=$(grep -E '^LAYOUT_RESULT [^ ]*=fail' "$rf_file" || true)
+  if [ -n "$rf_lines" ]; then
+    echo "Error: refusing $plan_id 'testing' -> 'complete' — test-progress.md records a FAIL outside the criteria table:" >&2
+    printf '%s\n' "$rf_lines" | cut -c1-200 | sed 's/^/         /' >&2
+    echo "       A failed layout audit is a FAIL on this build: take /lv-test's findings exit." >&2
+    echo "       Nothing was changed. LV_ALLOW_FAILED=1 overrides (a human's ruling)." >&2
+    exit 1
+  fi
+fi
+
 # --- Guard: `complete` means the work is actually on an integration branch ---
 #
 # client-a's WFI-165: PLN-103 reached `complete` and its bug was closed with

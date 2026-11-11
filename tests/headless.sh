@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# headless.sh — lv-headless-eval.sh, lv-headless-screenshot.sh,
+# headless.sh — lv-headless-eval.sh, lv-headless-screenshot.sh, lv-headless-layout.sh,
 # lv-headless-session.sh and the lv-headless-common.sh they share. /lv-test
 # step 3c resolves Chrome-Assisted criteria through these, unattended, and
 # their exit code IS the verdict: 0 PASS, 1 FAIL, 2 "could not run" — never a
@@ -47,6 +47,12 @@ assert_eq "eval with a url but no expression"          "2|ERROR usage" \
   "$(run lv-headless-eval.sh http://x | cut -c1-13)"
 assert_eq "screenshot with no output path"             "2|ERROR usage" \
   "$(run lv-headless-screenshot.sh http://x | cut -c1-13)"
+assert_eq "layout with no url"                         "2|ERROR usage" \
+  "$(run lv-headless-layout.sh | cut -c1-13)"
+has "layout: --sizes that are not WxH" \
+  "$(run lv-headless-layout.sh http://x --sizes big)" '^2\|ERROR --sizes must be'
+has "layout: a third positional (split actions-json)" \
+  "$(run lv-headless-layout.sh http://x '[{"type":"click"' '"selector":"x"}]')" '^2\|ERROR argument past the last one'
 assert_eq "session with no spec"                       "2|ERROR usage" \
   "$(run lv-headless-session.sh | cut -c1-13)"
 assert_eq "session @file that does not exist"          "2|ERROR session file not found: $TEST_DIR/nope.json" \
@@ -126,6 +132,29 @@ HTML
 <div id="out"></div>
 <button id="copy" onclick="navigator.clipboard.writeText('share-code-42')">copy</button>
 <textarea id="paste"></textarea>
+</body></html>
+HTML
+  # The layout audit's two fixtures (LVI-044): one that passes at both widths,
+  # and one with each defect a client's phone-width screenshots let through.
+  cat > "$TEST_DIR/www/layout-good.html" <<'HTML'
+<!doctype html><html><head><meta name="viewport" content="width=device-width"><style>
+body{margin:0;padding:16px;font:16px/1.5 sans-serif} button,a.btn{display:inline-block;min-height:44px;padding:10px} label{display:flex;gap:8px;align-items:center;min-height:32px}
+</style></head><body>
+<p>Read the <a href="/g">guide</a> before you start the round today.</p>
+<a class="btn" href="/x">Start</a> <button>Check</button>
+<form><label><input type="radio" name="q"> A long answer that wraps over more than one line at phone width easily enough</label>
+<label for="e">Email</label><input id="e" style="height:40px"></form>
+</body></html>
+HTML
+  cat > "$TEST_DIR/www/layout-bad.html" <<'HTML'
+<!doctype html><html><head><meta name="viewport" content="width=device-width"><style>
+body{margin:0;font:16px/1.2 sans-serif} form.q label{display:inline-block} .wide{width:600px} .box{width:80px;white-space:nowrap}
+a.guide{font-size:13px;display:block;line-height:18px}
+</style></head><body>
+<form class="q"><input type="radio" id="r1" name="q"><label for="r1">A long answer that wraps over more than one line at phone width, so the inline-block label drops below the radio</label></form>
+<div><a class="guide" href="/guide">Guide</a></div>
+<div class="box">marbles marbles marbles today</div>
+<div class="wide">wide</div>
 </body></html>
 HTML
   cat > "$TEST_DIR/www/tall.html" <<'HTML'
@@ -246,6 +275,24 @@ PY
   assert_eq "a session step waits for the navigation too"   '0|PASS "/signin/sent"' \
     "$(run lv-headless-session.sh '{"contexts":[{"name":"a","url":"'"$N"'/js"}],"steps":[{"context":"a","actions":[{"type":"click","selector":"#go"}]}],"expr":{"context":"a","js":"location.pathname"}}')"
   kill "$NAV_PID" 2>/dev/null
+
+  echo "  layout (LVI-044)"
+  L="http://127.0.0.1:$PORT"
+  assert_eq "a clean page passes at both widths"          "0|PASS layout 390x844 1280x800: no overflow, targets >= 24px, radios and checkboxes on their label's line, no text overflow" \
+    "$(run lv-headless-layout.sh "$L/layout-good.html")"
+  lay=$(bash "$SD/lv-headless-layout.sh" "$L/layout-bad.html" 2>/dev/null); rc=$?
+  assert_eq "a page with defects is FAIL, exit 1"          1 "$rc"
+  has "…the verdict is the last line, with counts"          "$(printf '%s' "$lay" | tail -1)" '^FAIL layout 390x844 1280x800: 7 problem\(s\) — overflow 1, target 3, align 1, text 2$'
+  has "horizontal overflow, naming what is past the edge"   "$lay" '^390x844 overflow: document — scrollWidth 600 > clientWidth 390 \(past the edge: div.wide'
+  has "an 18px link is under the 24px target"               "$lay" '^390x844 target: a.guide "Guide" — 18px tall'
+  has "a radio left alone above its inline-block label"     "$lay" '^390x844 align: label "A long answer'
+  has "text wider than its box"                             "$lay" '^390x844 text: div.box "marbles'
+  has "a link inside running text is exempt"                "$(bash "$SD/lv-headless-layout.sh" "$L/layout-good.html" --min-target 30 2>/dev/null)" '^PASS'
+  assert_eq "--sizes picks the widths"                      "1|FAIL layout 1280x800: 3 problem(s) — target 2, text 1" \
+    "$(run lv-headless-layout.sh "$L/layout-bad.html" --sizes 1280x800)"
+  has "actions run before the audit"                        "$(run lv-headless-layout.sh "$U" '[{"type":"click","selector":"#b"}]' --sizes 390x844)" '^[01]\|(PASS|FAIL) layout 390x844'
+  r=$(run lv-headless-layout.sh "http://127.0.0.1:$DEAD/")
+  assert_eq "a server that is not there is ERROR"           "2" "${r%%|*}"
 
   echo "  screenshot"
   png_size() { python3 -c 'import struct,sys; d=open(sys.argv[1],"rb").read(24); print("%dx%d" % struct.unpack(">II", d[16:24]) if d[:8]==b"\x89PNG\r\n\x1a\n" else "not-a-png")' "$1"; }
