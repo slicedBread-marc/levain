@@ -348,6 +348,13 @@ else
   AGE0=$'\033[97m'; AGE1=$'\033[37m'; AGE2=$'\033[90m'
 fi
 
+# "cooking" is drawn in a rainbow that scrolls right through the word, one step
+# per board tick (operator 2026-11-13). xterm-256 red → orange → yellow → green
+# → cyan → blue → violet → magenta. Empty under --plain or a pipe, so the word
+# is then printed plain like every other cell.
+if [ -n "$R" ]; then RAINBOW=(196 208 226 46 51 33 93 201); else RAINBOW=(); fi
+rainbow_phase=0
+
 # Age bucket boundaries, in seconds since THAT column was collected. The
 # third bucket is deliberately open-ended: at the default 60s poll it is the
 # window between a refresh falling due and its results landing, so a column
@@ -937,6 +944,32 @@ cell() {
   printf ' %s%*s%s' "$c" "$w" "$v" "$R"
 }
 
+# rainbow_cell <width> <value> [attrs] — cell(), with each character in the next
+# RAINBOW colour, shifted by rainbow_phase so the colours travel rightwards
+# through the word as the phase steps. Pads by hand: escapes inside the value
+# would throw printf's %*s width off.
+rainbow_cell() {
+  local w="$1" v="$2" a="${3:-}" n="${#RAINBOW[@]}" k pad
+  [ "$n" -gt 0 ] || { cell "$w" "$v" "$a"; return; }
+  pad=$(( w - ${#v} )); [ "$pad" -lt 0 ] && pad=0
+  printf ' %*s' "$pad" ''
+  for ((k = 0; k < ${#v}; k++)); do
+    printf '%s\033[38;5;%sm%s' "$a" "${RAINBOW[$(( ((k - rainbow_phase) % n + n) % n ))]}" "${v:$k:1}"
+  done
+  printf '%s' "$R"
+}
+
+# any_cooking — true when a project in the visible window is cooking (daemon
+# running with a worker up), which is when the rainbow needs another frame.
+any_cooking() {
+  [ "${#RAINBOW[@]}" -gt 0 ] || return 1
+  local i
+  for ((i = win_start; i < win_end; i++)); do
+    [ "${f_daemon[$i]:-}" = running ] && [ "${f_running[$i]:-0}" -gt 0 ] 2>/dev/null && return 0
+  done
+  return 1
+}
+
 # set_sel_idx <index> — move the column cursor, keeping the remembered name
 # in step. Every cursor move goes through here so there is exactly one place
 # the two can fall out of sync.
@@ -1217,7 +1250,12 @@ render_text() {
       local c="$DIM"
       [ "${statuses[$i]}" = "ok" ] && c="${col_age[$i]}"
       sel_cell "$label" "$i" && c="${c}${REV}"
-      cell "$cw" "$val" "$c"
+      if [ "$label" = daemon ] && [ "$val" = cooking ] && [ "${statuses[$i]}" = "ok" ]; then
+        local ra="$B"; sel_cell "$label" "$i" && ra="${ra}${REV}"
+        rainbow_cell "$cw" "$val" "$ra"
+      else
+        cell "$cw" "$val" "$c"
+      fi
     done
     printf '\n'
   }
@@ -3202,6 +3240,8 @@ if $watch_mode; then
       fi
       new_sig=$(age_signature)
       if [ "$new_sig" != "$age_sig" ]; then age_sig="$new_sig"; repaint_tick=true; fi
+      # Bash 3.2's read -t takes whole seconds only, so the rainbow steps once a tick.
+      if any_cooking; then rainbow_phase=$(( (rainbow_phase + 1) % ${#RAINBOW[@]} )); repaint_tick=true; fi
       $repaint_tick && render_frame
       continue
     fi
