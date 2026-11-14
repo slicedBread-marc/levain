@@ -246,6 +246,13 @@ resolve_declaration() {
                  printf '%s\n' "$l" | grep -oE "(($LV_BUG_RE)|($LV_BRF_RE))-[0-9]+" | head -1
                done | awk '!seen[$0]++' || true)
 
+  # A field with no event at all is not a declaration, but it does not hide
+  # one: /lv-spec copies the source's `> **Lane:**` line into plan.md, and
+  # stopping at that uncorroborated copy refused PLN-002 the lane a human had
+  # declared on BUG-002 (a client's LVI-001). So keep looking, and report the
+  # first uncorroborated field only when no candidate is corroborated. A
+  # lane-clear is an answer, and still ends the search.
+  local first_id="" first_text="" first_note=""
   for src in "${candidates[@]}"; do
     if [ "$src" = "$plan_id" ]; then f="$plan_md"; else f=$(artifact_file "$src" || true); fi
     [ -n "$f" ] || continue
@@ -254,11 +261,16 @@ resolve_declaration() {
       express*) ;;
       *) continue ;;
     esac
-    DECL_ID="$src"; DECL_TEXT="$v"
     ev=$(last_event 'lane-declare|lane-clear' "$src")
     if [ -z "$ev" ]; then
-      DECL_NOTE="$src carries a Lane field, but events.log has no lane-declare for it — a declaration nobody made through the harness is not one"
-    elif [ "$(printf '%s' "$ev" | cut -f2)" = "lane-clear" ]; then
+      if [ -z "$first_id" ]; then
+        first_id="$src"; first_text="$v"
+        first_note="$src carries a Lane field, but events.log has no lane-declare for it — a declaration nobody made through the harness is not one"
+      fi
+      continue
+    fi
+    DECL_ID="$src"; DECL_TEXT="$v"
+    if [ "$(printf '%s' "$ev" | cut -f2)" = "lane-clear" ]; then
       DECL_NOTE="$src's lane was cleared ($(printf '%s' "$ev" | cut -f1)) — its Lane field is left over"
     else
       DECL_OK=true
@@ -268,6 +280,9 @@ resolve_declaration() {
     fi
     return 0
   done
+  if [ -n "$first_id" ]; then
+    DECL_ID="$first_id"; DECL_TEXT="$first_text"; DECL_NOTE="$first_note"
+  fi
   return 0
 }
 

@@ -203,6 +203,20 @@ git add -A; git commit -qm plan
 out=$("$S/lv-lane.sh" check "PLN-$N_UND" 2>&1); rc=$?
 assert_eq "a lane is not inherited from a bug the plan only mentions (exit 3)" 3 "$rc"
 
+# A client's LVI-001: /lv-spec copies the bug's Lane line into plan.md. That
+# uncorroborated copy must not hide the bug's corroborated declaration.
+eval "$("$S/lv-bug-new.sh" "Retitle the header" --lane express --description 'the label' 2>/dev/null)"
+N_CP=${BUG_ID#*-}
+small_plan "plans/PLN-$N_CP-header" "> **Bug:** $BUG_ID — Retitle the header
+$(grep -m1 '\*\*Lane:\*\*' "$BUG_DIR/bug.md")"
+add_row "PLN-$N_CP" header draft ux
+git add -A; git commit -qm plan
+out=$("$S/lv-lane.sh" check "PLN-$N_CP" 2>&1); rc=$?
+assert_eq "a plan carrying its bug's copied Lane line inherits the bug's declaration (exit 0)" 0 "$rc"
+assert_not "…and is not refused for the copy" "no lane-declare" "$out"
+eval "$("$S/lv-lane.sh" status "PLN-$N_CP")"
+assert_eq "…the lane is express" express "$LANE"
+
 eval "$("$S/lv-bug-new.sh" "Photo tool" --lane express 2>/dev/null)"
 N_BIG=${BUG_ID#*-}
 big_plan "plans/PLN-$N_BIG-photo" "> **Bug:** $BUG_ID — Photo tool"
