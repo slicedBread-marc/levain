@@ -112,7 +112,7 @@ release-branches/release → release's own permanent worktree — staging enviro
    `e2ePrereqs:` and checked at step 6b, nowhere else. Under `LV_UNATTENDED=1` there is no user to
    show the list to — quote it in your final report and continue at step 5. A client's LVI-037:
    an unattended worker opened a `needs-input` gate on RELEASE claiming three of PLN-032's
-   criteria (a Fly secret, a `secrets-tool verify --fly`, a second repo running on `localhost:8083`)
+   criteria (a Fly secret, a secrets-tool verify, a second repo running on `localhost:8083`)
    were "prerequisites required for the test suite to function". PLN-032 had completed eleven
    days earlier and was not in the batch — a PLN-041 spec commit merely mentioned it, and the old
    `grep` of every ID in every subject pulled it in. Staging stalled until a human closed the gate.

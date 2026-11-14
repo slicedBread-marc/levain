@@ -309,7 +309,7 @@ MIGRATION_GLOBS='*[Mm]igration* *.sql *.db *.sqlite *DbContext* *[Ss]chema*'
 
 TXT_BUILD='github/workflows|dockerfile|docker-compose|fly\.toml|deploy\.yml|entrypoint'
 TXT_AUTH='\[Authorize|AllowAnonymous|RequireAuthorization|AddAuthentication|AddAuthorization|Content-Security-Policy|(^|[^a-z])CSP([^a-z]|$)|route[- ]polic|RoutePolicy|(^|[^a-z])OIDC([^a-z]|$)|(^|[^a-z])CORS([^a-z]|$)|SameSite|Set-Cookie'
-TXT_SECRET='(^|[^a-z])secrets?([^a-z]|$)|api[ _-]?keys?|secrets-tool|credentials?([^a-z]|$)|private key|(^|[^a-z])\.env([^a-z]|$)|passwords?([^a-z]|$)|connection string'
+TXT_SECRET='(^|[^a-z])secrets?([^a-z]|$)|api[ _-]?keys?|credentials?([^a-z]|$)|private key|(^|[^a-z])\.env([^a-z]|$)|passwords?([^a-z]|$)|connection string'
 TXT_MIGRATION='migrations?([^a-z]|$)|alter table|create table|drop table|drop column|schema change|backfill|dbcontext|litestream|sqlite'
 TXT_DEP='npm (install|i|add)( |$)|yarn add|pnpm add|dotnet add package|PackageReference|pip install|poetry add|go get|cargo add|gem install|bundle add|(dev)?dependencies"|new (third-party )?dependenc|third-party (package|library|dependenc)'
 # `cross-project:<name>` is a bug's Source field, which says where a request came
