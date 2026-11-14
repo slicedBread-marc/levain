@@ -88,7 +88,7 @@ has "and at START.md for the rungs above"            "$out" "START.md"
 mk "$T/coord"
 printf 'role: "coordinator"\nproject_slug: "coord"\ncoordinates:\n  - "app:%s"\n' "$T/app" > "$T/coord/levain.yml"
 out=$(LV_PACKS="" LV_INSTALL_NO_COMMIT=1 bash install.sh "$T/coord" </dev/null 2>&1)
-for s in /lv-rack /lv-dep-notify /lv-vision; do has "a coordinator install lists $s" "$out" "$s"; done
+for s in /lv-rack /lv-dep-notify /lv-sweep /lv-vision; do has "a coordinator install lists $s" "$out" "$s"; done
 
 echo
 echo "4. The config's old name (claude-workflow.yml, before 14.7.0)"

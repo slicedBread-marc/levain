@@ -46,8 +46,15 @@
 # operator has read every line (docs/upstream-intake.md). The prompt says so,
 # and nothing here offers the session that list.
 #
+# THE PUBLISH
+#
+# After a deploy, the library-publish hook (decide; the default publishes
+# nothing). A pack that hosts a public copy answers it. Its failure is a note
+# on the result line, never a hold: the clients already have the fix.
+#
 # Test seams: LV_SWEEP_CLAUDE replaces `claude`; LV_RACK_SUITE replaces the
-# suite (the same seam the rack's `U` reads); LV_SWEEP_MODEL picks a model.
+# suite (the same seam the rack's `U` reads); LV_SWEEP_MODEL picks a model;
+# LV_SWEEP_PUBLISH replaces the library-publish hook.
 #
 # Exit: 0 started / done · 3 refused (the reason on stdout) · 1 usage or error.
 
@@ -224,7 +231,26 @@ run() {
   (cd "$LIB" && ./deploy-all.sh) < /dev/null || { hold "deploy-all.sh failed"; exit 0; }
   printf '%s\n' "$fixed" | grep . >> "$STATE/pending"
   resolve_pending
-  finish "fixed $n_fixed · left $(count) · deployed v$(head -1 "$LIB/VERSION")"
+  finish "fixed $n_fixed · left $(count) · deployed v$(head -1 "$LIB/VERSION")$(publish)"
+}
+
+# publish — the library-publish hook, after a deploy: " · published" when a
+# publisher ran clean, " · publish failed" when one failed, nothing when no
+# layer has one (exit 3). A failure never undoes the deploy. LV_SWEEP_PUBLISH
+# replaces the hook (the test seam).
+publish() {
+  local rc
+  printf '== publish\n' >&2
+  if [ -n "${LV_SWEEP_PUBLISH:-}" ]; then
+    (cd "$LIB" && bash -c "$LV_SWEEP_PUBLISH") >&2 < /dev/null; rc=$?
+  else
+    "$HERE/lv-hook.sh" library-publish "$LIB" >&2 < /dev/null; rc=$?
+  fi
+  case "$rc" in
+    0) printf ' · published' ;;
+    3) ;;
+    *) printf ' · publish failed (exit %s)' "$rc" ;;
+  esac
 }
 
 # suite — every tests/*.sh, naming each failure; LV_RACK_SUITE instead when set.

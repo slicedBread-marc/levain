@@ -184,7 +184,7 @@ assert_eq "lv-exec.sh outside any project falls back to CLAUDE_PROJECT_DIR" "$ou
 out=$(cd "$E" && env -u CLAUDE_PROJECT_DIR "$TEST_DIR/inst-pipeline/scripts/lv-exec.sh" lv-hook.sh project-registry </dev/null 2>&1); rc=$?
 assert_eq "and without it still says it cannot locate a project" "1" "$rc"
 P="$TEST_DIR/inst-pipeline"; K="$TEST_DIR/inst-coordinator"
-[ ! -d "$P/.claude/skills/lv-rack" ] && [ ! -d "$P/.claude/skills/lv-vision" ] \
+[ ! -d "$P/.claude/skills/lv-rack" ] && [ ! -d "$P/.claude/skills/lv-vision" ] && [ ! -d "$P/.claude/skills/lv-sweep" ] \
   && ok "pipeline: no overseer skills (/lv-rack, /lv-vision)" || bad "pipeline: no overseer skills"
 [ -f "$K/.claude/skills/lv-vision/SKILL.md" ] && [ -f "$K/.claude/skills/lv-rack/SKILL.md" ] \
   && ok "coordinator: /lv-rack and /lv-vision" || bad "coordinator: /lv-rack and /lv-vision" "$(ls "$K/.claude/skills")"

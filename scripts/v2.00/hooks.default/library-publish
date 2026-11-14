@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# kind: decide
+#
+# library-publish — publish the library somewhere public after a deploy: a
+# scrubbed copy of its history, a mirror, a release page. lv-library-sweep.sh
+# calls it once a sweep's fixes have deployed; you may call it by hand.
+#
+# Args: <library-dir>. Stdin: none. Stdout: one line saying what was published
+# (e.g. "published v15.28.1 to <where>"). Exit 0 published · 3 no publisher ·
+# anything else a failure, which never undoes the deploy before it.
+#
+# This default publishes nothing: the library never names where it is hosted.
+echo "library-publish: no publisher (add one in a pack)" >&2
+exit 3

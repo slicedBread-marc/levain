@@ -30,7 +30,9 @@ pack, else the library's `deployments.txt`, else this coordinator's `coordinates
    - A yellow HARNESS cell means that client runs a different version from the library; say
      which, and that `U` on the live board deploys.
    - The library line under it counts open client issues; when it is non-zero, say so, and that
-     `W` on the live board starts a blind sweep of the top three.
+     `W` on the live board starts a blind sweep of the top three. The line reads `heal (N)`, three
+     hearts filling while a sweep runs, and `restart required` once a deploy has landed under a
+     running board (`X` restarts it). `/lv-sweep` runs the same sweep from a session.
 3. Offer the next step for the most urgent item: `/lv-attend <ID>` in that project, or the
    board itself.
 
@@ -47,8 +49,9 @@ The grid's `services` row reads running/available per project: `-` for none decl
 daemon's menu — start/stop, sweep, kill, its logs — and on a `services` cell the services screen
 for that project alone), daemon toggles (`d`), stop/resume of
 every daemon (`s`/`R`), attend (`t` — on the release or deploy row it starts `/lv-release` or
-`/lv-deploy` instead), the dormant-project toggle (`z`, which offers to stop a running daemon first), the services view (`v`), the library deploy (`U`)
-and the blind library sweep (`W`) need a real terminal, so point the owner at
+`/lv-deploy` instead), the dormant-project toggle (`z`, which offers to stop a running daemon first), the services view (`v`), the library deploy (`U`),
+the blind library sweep (`W`, or Enter on `heal (N)`), the restart (`X`) and the settings screen (`,`, where
+auto-heal is turned on) need a real terminal, so point the owner at
 `! scripts/lv-exec.sh lv-rack.sh --watch` rather than running it here. `--stop-all` and
 `--resume` change what every project is doing unattended: run them only when asked.
 

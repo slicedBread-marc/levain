@@ -10,6 +10,8 @@
 # Exit 0 if all pass, 1 otherwise.
 
 set -uo pipefail
+# No real pack: a hook here must never reach the operator's publisher.
+export LV_PACKS=
 
 LIB_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LIB_SCRIPTS="$LIB_ROOT/scripts"
@@ -1815,7 +1817,7 @@ assert_eq "no bugs/ inbox of its own" "true" \
   "$([ -d "$COORD/bugs" ] && echo false || echo true)"
 assert_eq "no orchestrator runtime" "true" \
   "$([ -d "$COORD/.claude/orchestrator" ] && echo false || echo true)"
-assert_eq "no pipeline skills — only the overseer's: filing, board, vision" "lv-dep-notify lv-rack lv-vision" \
+assert_eq "no pipeline skills — only the overseer's: filing, board, vision" "lv-dep-notify lv-rack lv-sweep lv-vision" \
   "$(ls "$COORD/.claude/skills" | tr '\n' ' ' | sed 's/ $//')"
 
 # The slice is an allowlist, not "whatever the library ships". A pipeline
@@ -1882,7 +1884,7 @@ sed -i.bak 's/^role: "client"/role: "coordinator"/' "$COORD/levain.yml" && rm -f
 coord_reinstall=$(LV_INSTALL_NO_COMMIT=1 bash "$LIB_ROOT/install.sh" "$COORD" 2>&1)
 assert_eq "switching back prunes the pipeline scripts" "true" \
   "$([ -f "$(live_script_dir "$COORD")/lv-worktree-sparse.sh" ] && echo false || echo true)"
-assert_eq "and the pipeline skills" "lv-dep-notify lv-rack lv-vision" "$(ls "$COORD/.claude/skills" | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "and the pipeline skills" "lv-dep-notify lv-rack lv-sweep lv-vision" "$(ls "$COORD/.claude/skills" | tr '\n' ' ' | sed 's/ $//')"
 assert_eq "the client install's plans/ is reported, not deleted" "true" \
   "$([ -f "$COORD/plans/REGISTRY.md" ] && echo true || echo false)"
 assert_eq "and the deploy says so rather than staying silent" "true" \

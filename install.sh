@@ -305,8 +305,8 @@ ROLE=$(get_config "role")
 ROLE="${ROLE:-client}"
 # The overseer rung's skills (LVI-014): a coordinator installs these and no
 # pipeline skill; a client installs every other skill and none of these.
-COORD_SKILLS="lv-dep-notify lv-rack lv-vision"
-COORD_ONLY_SKILLS="lv-rack lv-vision"
+COORD_SKILLS="lv-dep-notify lv-rack lv-sweep lv-vision"
+COORD_ONLY_SKILLS="lv-rack lv-sweep lv-vision"
 
 case "$ROLE" in
     client|coordinator) ;;
@@ -566,6 +566,7 @@ if [ "$ROLE" = "coordinator" ]; then
     echo ""
     echo "Available skills:"
     echo "  /lv-rack        — the board: every coordinated project's pipeline, and what waits on you"
+    echo "  /lv-sweep       — heal the library: sweep client issues, deploy, publish"
     echo "  /lv-dep-notify  — file a request, bug or notice into a coordinated project"
     echo "  /lv-vision      — your vision skill, or the interview that writes one"
     echo ""

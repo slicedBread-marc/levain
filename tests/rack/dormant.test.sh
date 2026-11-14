@@ -12,6 +12,8 @@
 # Exit 0 if every assertion passes, 1 otherwise.
 
 set -uo pipefail
+# No real pack: a hook here must never reach the operator's publisher.
+export LV_PACKS=
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BOARD="${LV_TEST_SCRIPT_DIR:-$REPO_ROOT/scripts/v2.00}/lv-rack.sh"

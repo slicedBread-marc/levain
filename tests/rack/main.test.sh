@@ -148,7 +148,7 @@ resume_board > /dev/null
 flag "the board clears the flag" "$to_main" false
 
 # 9. The board's legend lists z and v.
-grep -q "z on/dormant, v services, q quit" "$BOARD" && ok "the board legend lists z and v" \
+grep -q "z on/dormant, v services, W heal, X restart, , settings, q quit" "$BOARD" && ok "the board legend lists z and v" \
   || bad "the board legend lists z and v"
 
 [ "$fails" -eq 0 ] && { echo "all passed"; exit 0; }

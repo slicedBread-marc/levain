@@ -11,6 +11,8 @@
 # Exit 0 if every assertion passes, 1 otherwise.
 
 set -uo pipefail
+# No real pack: a hook here must never reach the operator's publisher.
+export LV_PACKS=
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPTS="${LV_TEST_SCRIPT_DIR:-$REPO_ROOT/scripts/v2.00}"
@@ -143,11 +145,73 @@ export LV_DEPLOYMENTS="$FIX/deployments.txt" LV_BOARD_CACHE="$FIX/cache"
 # shellcheck disable=SC1090
 source "$BOARD"
 refresh_library_count
-has "the library line carries the count" "$(library_sweep_line)" " · 2 open issues"
-has "and the last result" "$(library_sweep_line)" "sweep: fixed 1 · left 2 · deployed v1.0.0"
+has "the library line offers to heal the count" "$(library_sweep_line)" "heal (2)"
+has "and the last result" "$(library_sweep_line)" "last sweep: fixed 1 · left 2 · deployed v1.0.0"
 printf '%s\n' "$LIVE" > "$STATE/pid"
-has "a live sweep reads as sweeping" "$(library_sweep_line)" "sweeping…"
-rm -f "$STATE/pid"
+has "a live sweep reads as hearts" "$(library_sweep_line)" "♡♡♡"
+heart_i=2
+has "which fill a tick at a time" "$(library_sweep_line)" "♥♥♡"
+case "$(library_sweep_line)" in *"heal ("*) bad "no heal offer while one runs" ;; *) ok "no heal offer while one runs" ;; esac
+rm -f "$STATE/pid"; heart_i=0
+
+echo "── restart required ──"
+COORD_DIR="$FIX/coord"; mkdir -p "$COORD_DIR/.claude"
+printf '1.0.0\n' > "$COORD_DIR/.claude/workflow-version"; BOARD_V=1.0.0
+case "$(library_sweep_line)" in *restart*) bad "same version: no restart" ;; *) ok "same version: no restart" ;; esac
+printf '1.0.1\n' > "$COORD_DIR/.claude/workflow-version"
+has "a newer deploy: restart required" "$(library_sweep_line)" "restart required"
+case "$(library_sweep_line)" in *"heal ("*) bad "restart comes before heal" ;; *) ok "restart comes before heal" ;; esac
+BOARD_V=1.0.1
+
+echo "── settings and auto-heal ──"
+RACK_SETTINGS="$FIX/rack-settings"
+ck "unset reads empty" "$(setting_get auto_heal)" ""
+setting_set auto_heal on; setting_set other x; setting_set auto_heal off
+ck "set rewrites one key" "$(setting_get auto_heal):$(setting_get other):$(grep -c . "$RACK_SETTINGS")" "off:x:2"
+case "$(library_sweep_line)" in *auto-heal*) bad "off: not on the line" ;; *) ok "off: not on the line" ;; esac
+# A stand-in sweep script: records starts, never runs anything.
+mkdir -p "$FIX/here"
+printf '#!/usr/bin/env bash\necho "start $*" >> "%s"\n' "$CALLS" > "$FIX/here/lv-library-sweep.sh"
+chmod +x "$FIX/here/lv-library-sweep.sh"
+REAL_HERE="$HERE"; HERE="$FIX/here"; : > "$CALLS"; rm -f "$STATE/auto-last"
+maybe_auto_heal
+ck "off: never starts" "$(grep -c '^start' "$CALLS")" "0"
+setting_set auto_heal on
+has "on: shown on the line" "$(library_sweep_line)" "auto-heal"
+maybe_auto_heal
+ck "on, issues open: starts one" "$(grep -c '^start' "$CALLS")" "1"
+maybe_auto_heal
+ck "inside the cool-down: no second" "$(grep -c '^start' "$CALLS")" "1"
+printf '1 2\n' > "$STATE/auto-last"; printf 'fixed 0 · left 2\n' > "$STATE/result"
+maybe_auto_heal
+ck "fixed nothing, same count: no retry" "$(grep -c '^start' "$CALLS")" "1"
+printf '3\n' > "$STATE/lvis"
+maybe_auto_heal
+ck "the count moved: retries" "$(grep -c '^start' "$CALLS")" "2"
+printf '1 3\n' > "$STATE/auto-last"; printf 'fixed 1 · left 3 · held for review — x\n' > "$STATE/result"
+maybe_auto_heal
+ck "held for review: never" "$(grep -c '^start' "$CALLS")" "2"
+printf '0\n' > "$STATE/lvis"; rm -f "$STATE/result" "$STATE/auto-last"
+maybe_auto_heal
+ck "nothing open: never" "$(grep -c '^start' "$CALLS")" "2"
+HERE="$REAL_HERE"
+
+echo "── publish after a deploy ──"
+new_lib
+LV_SWEEP_PUBLISH='echo pub >> "$CALLS"' STUB_TOUCH=scripts/v2.00/lv-foo.sh "$SWEEP" run "$LIB" "$STATE" >/dev/null 2>&1
+ck "a deploy publishes" "$(grep -c '^pub' "$CALLS")" "1"
+has "and says so" "$(cat "$STATE/result")" "deployed v1.0.0 · published"
+new_lib
+LV_SWEEP_PUBLISH='exit 1' STUB_TOUCH=scripts/v2.00/lv-foo.sh "$SWEEP" run "$LIB" "$STATE" >/dev/null 2>&1
+has "a failed publish is a note, the deploy stands" "$(cat "$STATE/result")" "deployed v1.0.0 · publish failed (exit 1)"
+new_lib
+LV_SWEEP_PUBLISH='exit 3' STUB_TOUCH=scripts/v2.00/lv-foo.sh "$SWEEP" run "$LIB" "$STATE" >/dev/null 2>&1
+ck "no publisher: nothing said" "$(sed 's/.*deployed v1.0.0//' "$STATE/result")" ""
+new_lib
+LV_SWEEP_PUBLISH='echo pub >> "$CALLS"' LV_RACK_SUITE="exit 1" STUB_TOUCH=scripts/v2.00/lv-foo.sh "$SWEEP" run "$LIB" "$STATE" >/dev/null 2>&1
+ck "a held sweep never publishes" "$(grep -c '^pub' "$CALLS")" "0"
+LV_PACKS= out=$("$SCRIPTS/lv-hook.sh" library-publish "$LIB" 2>&1); rc=$?
+ck "the default publisher publishes nothing" "$rc" "3"
 
 [ "$fails" -eq 0 ] && { echo "all passed"; exit 0; }
 echo "$fails failed"; exit 1

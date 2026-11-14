@@ -211,6 +211,10 @@
 # tests/*.sh; LV_RACK_SUITE replaces it (tests, or a faster local gate).
 
 set -uo pipefail
+# The argv the board started with, for `X` (restart on a newer deploy): exec
+# runs it again through the coordinator's lv-exec.sh, which picks the newest
+# version folder.
+ORIG_ARGS=("$@")
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The ID prefixes (LV_PLN, LV_WORK_RE). The board spans projects, so it reads
@@ -248,6 +252,16 @@ LIB_DIR="${LV_LIBRARY_DIR:-}"
 # The blind sweep's state — pid, result, logs, held fixes (lv-library-sweep.sh,
 # LVI-031). LV_SWEEP_STATE is the test seam.
 SWEEP_STATE="${LV_SWEEP_STATE:-$COORD_DIR/.claude/orchestrator/library-sweep}"
+# The board's own settings (`,`): key=value lines, gitignored coordinator
+# state. LV_RACK_SETTINGS is the test seam.
+RACK_SETTINGS="${LV_RACK_SETTINGS:-$COORD_DIR/.claude/orchestrator/rack-settings}"
+# The coordinator's harness version when this board started. A deploy (a
+# sweep's, or `U`) moves .claude/workflow-version on; the board is still the
+# old code until it restarts, and the library line says so.
+BOARD_V=""
+[ -f "$COORD_DIR/.claude/workflow-version" ] && IFS= read -r BOARD_V < "$COORD_DIR/.claude/workflow-version"
+# Auto-heal's cool-down, in seconds, between two sweeps it starts itself.
+AUTO_HEAL_GAP="${LV_AUTO_HEAL_GAP:-600}"
 
 # The snapshot cache — see "Snapshots" below. The coordinator's own state, like
 # the suspend record: "what the portfolio last looked like" is a coordinator
@@ -396,6 +410,11 @@ sel_name=""
 ROW_LABELS=(daemon services running gates attn ideas draft ready active verify testing
             accept complete abandoned release deploy registry)
 sel_row=""
+# One stop past the grid's rows: the library line under it (heal, restart).
+# Not in ROW_LABELS, because it is not a metric and nothing drills into it;
+# sel_row equal to LIB_ROW means the cursor is on that line.
+LIB_ROW=${#ROW_LABELS[@]}
+NAV_ROWS=$(( LIB_ROW + 1 ))
 
 # key_eof: set by read_key when stdin is closed rather than merely quiet. Every
 # keyboard loop here treats "no key" as "try again", which is correct for a
@@ -443,6 +462,10 @@ back_to_board=false
 to_main=false
 spin_i=0
 SPIN_FRAMES=("⏳" "⌛")
+# A sweep in flight on the library line: three hearts filling like a charging
+# light, one step per tick.
+HEART_FRAMES=("♡♡♡" "♥♡♡" "♥♥♡" "♥♥♥")
+heart_i=0
 IDLE_GLYPH="·"
 POLL_SECS=1
 next_refresh_at=0
@@ -987,7 +1010,7 @@ set_sel_idx() {
 # them empty and must render with nothing highlighted.
 sel_cell() {
   [ -n "$sel_row" ] && [ -n "$sel_idx" ] || return 1
-  [ "${ROW_LABELS[$sel_row]}" = "$1" ] && [ "$sel_idx" = "$2" ]
+  [ "${ROW_LABELS[$sel_row]:-}" = "$1" ] && [ "$sel_idx" = "$2" ]
 }
 
 # row_label <label> — the row's name in the left gutter, bold on the row the
@@ -1001,7 +1024,7 @@ row_label() {
   # are the drill vocabulary (`row testing`, `row accept`).
   local shown="$1"
   case "$1" in testing) shown="acc:auto" ;; accept) shown="acc:man" ;; esac
-  if [ -n "$sel_row" ] && [ "${ROW_LABELS[$sel_row]}" = "$1" ]; then
+  if [ -n "$sel_row" ] && [ "${ROW_LABELS[$sel_row]:-}" = "$1" ]; then
     printf '  %s%-9s%s' "$B" "$shown" "$R"
   else
     printf '  %-9s' "$shown"
@@ -1433,7 +1456,11 @@ render_text() {
     else cell "$cw" "$hv" "$DIM"; fi
   done
   printf '\n'
-  [ -n "$lib_v" ] && printf '%-11s%slibrary %s%s%s\n' "" "$DIM" "$lib_v" "$(library_sweep_line)" "$R"
+  if [ -n "$lib_v" ]; then
+    local lsel=""
+    [ -n "$sel_row" ] && [ "$sel_row" = "$LIB_ROW" ] && lsel="$REV"
+    printf '%-11s%slibrary %s%s%s\n' "" "$DIM" "$lib_v" "$(library_sweep_line "$lsel")" "$R"
+  fi
 
   # ── Legend for anything not "ok" ─────────────────────────────────────
   local any_bad=false
@@ -1492,20 +1519,140 @@ refresh_library_count() {
   fi
 }
 
-# library_sweep_line — " · N open issues · sweeping…" or "… · sweep: <result>",
-# from files only: render_text calls it every frame.
-library_sweep_line() {
-  local n="" pid="" res=""
-  read_stamp n "$SWEEP_STATE/lvis"
-  [ -n "$n" ] && printf ' · %s open issue%s' "$n" "$([ "$n" = 1 ] || printf s)"
+# sweep_running — a blind sweep's PID is live.
+sweep_running() {
+  local pid=""
   read_stamp pid "$SWEEP_STATE/pid"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    printf ' · sweeping…'
-  else
-    read_stamp res "$SWEEP_STATE/result"
-    [ -n "$res" ] && printf ' · sweep: %s' "$res"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# restart_needed — the coordinator's harness moved on since this board started.
+restart_needed() {
+  local v=""
+  [ -n "$BOARD_V" ] || return 1
+  read_stamp v "$COORD_DIR/.claude/workflow-version"
+  [ -n "$v" ] && [ "$v" != "$BOARD_V" ]
+}
+
+# library_sweep_line [<selected-attr>] — the rest of the library line, from
+# files only: render_text calls it every frame. The actionable token — what
+# Enter on this line does — carries <selected-attr> when the cursor is here:
+#   ♥♥♡                 a sweep running (HEART_FRAMES, one step a tick)
+#   restart required    a deploy landed after the board started; Enter or X
+#   heal (N)            N open client issues; Enter or W sweeps them
+# then the last sweep's result, and "auto-heal" while that setting is on.
+library_sweep_line() {
+  local sa="${1:-}" n="" res="" tok=""
+  read_stamp n "$SWEEP_STATE/lvis"
+  if sweep_running; then
+    tok="${RED}${HEART_FRAMES[$heart_i]}"
+  elif restart_needed; then
+    tok="${YEL}restart required"
+  elif [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null; then
+    tok="${YEL}heal ($n)"
+  elif [ -n "$sa" ]; then
+    tok="healthy"
   fi
+  [ -n "$tok" ] && printf ' · %s%s%s%s' "${R}${sa}" "$tok" "$R" "$DIM"
+  if ! sweep_running; then
+    read_stamp res "$SWEEP_STATE/result"
+    [ -n "$res" ] && printf ' · last sweep: %s' "$res"
+  fi
+  [ "$(setting_get auto_heal)" = on ] && printf ' · auto-heal'
   return 0
+}
+
+# ── Settings (`,`) ──────────────────────────────────────────────────────
+
+# setting_get <key> — its value in RACK_SETTINGS, or nothing. Builtins only:
+# the library line asks every frame.
+setting_get() {
+  local k v
+  [ -f "$RACK_SETTINGS" ] || return 0
+  while IFS='=' read -r k v; do
+    [ "$k" = "$1" ] && { printf '%s' "$v"; return 0; }
+  done < "$RACK_SETTINGS"
+  return 0
+}
+
+# setting_set <key> <value> — rewrite the file with that one line changed.
+setting_set() {
+  local tmp k v
+  mkdir -p "$(dirname "$RACK_SETTINGS")" || return 1
+  tmp=$(mktemp "$RACK_SETTINGS.XXXXXX") || return 1
+  if [ -f "$RACK_SETTINGS" ]; then
+    while IFS='=' read -r k v; do
+      [ -n "$k" ] && [ "$k" != "$1" ] && printf '%s=%s\n' "$k" "$v"
+    done < "$RACK_SETTINGS" > "$tmp"
+  fi
+  printf '%s=%s\n' "$1" "$2" >> "$tmp"
+  mv -f "$tmp" "$RACK_SETTINGS"
+}
+
+settings_screen() {
+  local key st
+  while true; do
+    st=$(setting_get auto_heal); [ "$st" = on ] || st=off
+    printf '\033[2J\033[H%sRACK SETTINGS%s  %s1 toggle · esc back%s\n\n' "$B" "$R" "$DIM" "$R"
+    printf '  1  auto-heal   %s%s%s\n' "$([ "$st" = on ] && printf '%s' "$GRN" || printf '%s' "$DIM")" "$st" "$R"
+    printf '     %sstart a blind sweep whenever client issues are open. At most one every %s min;\n' "$DIM" "$(( AUTO_HEAL_GAP / 60 ))"
+    printf '     never while a sweep is held for review; after one that fixed nothing, not again\n'
+    printf '     until the count changes. Restarting the board stays your key (X).%s\n' "$R"
+    read_key key
+    $key_eof && return 0
+    case "$key" in
+      1) if [ "$st" = on ]; then setting_set auto_heal off; else setting_set auto_heal on; fi ;;
+      $'\x1b'|q|Q|,) return 0 ;;
+      m|M) to_main=true; return 0 ;;
+    esac
+  done
+}
+
+# maybe_auto_heal — with auto-heal on, start a sweep when one is due (see
+# settings_screen for the rules). $SWEEP_STATE/auto-last is "<epoch> <count>"
+# for the last sweep it started. Quiet: the library line shows the hearts.
+maybe_auto_heal() {
+  [ "$(setting_get auto_heal)" = on ] || return 0
+  [ -n "$LIB_DIR" ] && [ -x "$HERE/lv-library-sweep.sh" ] || return 0
+  sweep_running && return 0
+  local n="" res="" last="" now t c
+  read_stamp n "$SWEEP_STATE/lvis"
+  [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null || return 0
+  read_stamp res "$SWEEP_STATE/result"
+  case "$res" in *"held for review"*) return 0 ;; esac
+  now=$(date +%s)
+  read_stamp last "$SWEEP_STATE/auto-last"
+  if [ -n "$last" ]; then
+    t=${last%% *}; c=${last#* }
+    [ $(( now - t )) -lt "$AUTO_HEAL_GAP" ] && return 0
+    case "$res" in "fixed 0 "*|refused*|failed*) [ "$c" = "$n" ] && return 0 ;; esac
+  fi
+  printf '%s %s\n' "$now" "$n" > "$SWEEP_STATE/auto-last"
+  "$HERE/lv-library-sweep.sh" start "$LIB_DIR" "$SWEEP_STATE" >/dev/null 2>&1 || true
+}
+
+# restart_board — `X`: the board again, on the newest deployed version.
+restart_board() {
+  [ -n "$refresh_pid" ] && kill "$refresh_pid" 2>/dev/null
+  printf '\033[?25h\033[2J\033[H'
+  if [ -x "$COORD_DIR/scripts/lv-exec.sh" ]; then
+    exec "$COORD_DIR/scripts/lv-exec.sh" lv-rack.sh ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
+  fi
+  exec "$HERE/lv-rack.sh" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
+}
+
+# library_enter — Enter on the library line: restart when a deploy is
+# waiting on one, else heal when there is anything to heal.
+library_enter() {
+  if sweep_running; then
+    local log=""; read_stamp log "$SWEEP_STATE/latest"
+    [ -n "$log" ] && [ -f "$log" ] && view_file "blind sweep" "$log" true
+    return 0
+  fi
+  restart_needed && restart_board
+  printf '\033[2J\033[H'
+  sweep_library
+  printf '\n  (press any key to continue) '; read_key key
 }
 
 # sweep_library — `W`: start a blind sweep. Exit 0 started, 3 refused (the
@@ -1567,8 +1714,27 @@ deploy_library() {
     if [ -s "$SWEEP_STATE/pending" ] && [ -x "$HERE/lv-library-sweep.sh" ]; then
       "$HERE/lv-library-sweep.sh" resolve-pending "$LIB_DIR" "$SWEEP_STATE" 2>&1 | sed 's/^/  /'
     fi
+    publish_library
   else printf '\n  %sdeploy-all.sh exited %s%s\n' "$RED" "$rc" "$R"; fi
   return "$rc"
+}
+
+# publish_library — the library-publish hook after `U` deploys, as a sweep
+# does. No publisher (exit 3) says so and is not a failure.
+publish_library() {
+  local rc
+  printf '\n  publishing...\n'
+  if [ -n "${LV_SWEEP_PUBLISH:-}" ]; then
+    (cd "$LIB_DIR" && bash -c "$LV_SWEEP_PUBLISH") 2>&1 < /dev/null | sed 's/^/  /'
+  else
+    "$HERE/lv-hook.sh" library-publish "$LIB_DIR" 2>&1 < /dev/null | sed 's/^/  /'
+  fi
+  rc=${PIPESTATUS[0]}
+  case "$rc" in
+    0) printf '  %spublished%s\n' "$GRN" "$R" ;;
+    3) printf '  %sno publisher — nothing published%s\n' "$DIM" "$R" ;;
+    *) printf '  %spublish failed (exit %s) — the deploy stands%s\n' "$RED" "$rc" "$R" ;;
+  esac
 }
 
 # run_library_suite — every tests/*.sh in the library, naming each failure.
@@ -1622,7 +1788,7 @@ render_frame() {
     # The legend is the three shades themselves, drawn in the shades they
     # name: "fresh → aging → stale" spelled out in white, grey and dark grey
     # explains the tint in less space than a sentence about it would.
-    new_lines+=("$(printf '%s%ss poll — %sfresh%s %s→ aging%s %s→ stale%s%s — arrows move the cell, enter opens it, d %s %s, a acts on it, 1-%d project, m all %d, s/R all daemons, z on/dormant, v services, q quit%s' \
+    new_lines+=("$(printf '%s%ss poll — %sfresh%s %s→ aging%s %s→ stale%s%s — arrows move the cell, enter opens it, d %s %s, a acts on it, 1-%d project, m all %d, s/R all daemons, z on/dormant, v services, W heal, X restart, , settings, q quit%s' \
       "$DIM" "$watch_secs" \
       "$AGE0" "$R" "$AGE1" "$R" "$AGE2" "$R" "$DIM" \
       "$([ "${f_daemon[$sel_idx]}" = "running" ] && echo "stops" || echo "starts")" \
@@ -3188,6 +3354,7 @@ if $watch_mode; then
     # refresh buys here — same synchronous collect-then-sleep as before.
     while true; do
       collect_all; compute_shown
+      maybe_auto_heal
       render_frame
       sleep "$watch_secs"
     done
@@ -3242,6 +3409,12 @@ if $watch_mode; then
       if [ "$new_sig" != "$age_sig" ]; then age_sig="$new_sig"; repaint_tick=true; fi
       # Bash 3.2's read -t takes whole seconds only, so the rainbow steps once a tick.
       if any_cooking; then rainbow_phase=$(( (rainbow_phase + 1) % ${#RAINBOW[@]} )); repaint_tick=true; fi
+      # The library line: hearts step while a sweep runs; a sweep ending, a
+      # deploy landing or the count moving repaints it once.
+      maybe_auto_heal
+      sweep_running && heart_i=$(( (heart_i + 1) % ${#HEART_FRAMES[@]} ))
+      new_lsig=$(library_sweep_line)
+      if [ "$new_lsig" != "${lib_sig:-}" ]; then lib_sig="$new_lsig"; repaint_tick=true; fi
       $repaint_tick && render_frame
       continue
     fi
@@ -3265,14 +3438,15 @@ if $watch_mode; then
         fi
         render_frame ;;
       $'\x1b[A')                        # up — previous metric row
-        sel_row=$(( (sel_row - 1 + ${#ROW_LABELS[@]}) % ${#ROW_LABELS[@]} ))
+        sel_row=$(( (sel_row - 1 + NAV_ROWS) % NAV_ROWS ))
         render_frame ;;
       $'\x1b[B')                        # down — next metric row
-        sel_row=$(( (sel_row + 1) % ${#ROW_LABELS[@]} ))
+        sel_row=$(( (sel_row + 1) % NAV_ROWS ))
         render_frame ;;
       ''|$'\n')                         # enter — open the highlighted CELL
         printf '\033[?25h'
-        case "${ROW_LABELS[$sel_row]}" in
+        case "${ROW_LABELS[$sel_row]:-library}" in
+          library)  library_enter ;;
           daemon)   daemon_menu "$sel_idx" ;;
           services) services_screen "${paths[$sel_idx]}" ;;
           *)        drill_browse "$sel_idx" "${ROW_LABELS[$sel_row]}" "row ${ROW_LABELS[$sel_row]}" ;;
@@ -3350,6 +3524,15 @@ if $watch_mode; then
         printf '\033[?25h\033[2J\033[H'
         sweep_library
         printf '\n  (press any key to continue) '; read_key key
+        resume_board
+        age_sig=$(age_signature)
+        ;;
+      X)                                # restart on the newest deployed version
+        restart_board
+        ;;
+      ,)                                # the board's settings: auto-heal
+        printf '\033[?25h'
+        settings_screen
         resume_board
         age_sig=$(age_signature)
         ;;
