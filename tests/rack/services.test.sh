@@ -125,6 +125,16 @@ kill -0 "$W" 2>/dev/null && bad "stop: signal sends TERM" || ok "stop: signal se
 ck "and its record is gone" "$(ls "$LV_SERVICES_DIR/alpha" | grep -c '^worker\.' )" "0"
 svc "$P" start worker --checkout "$FEAT" >/dev/null 2>&1
 has "a window start opens the chosen checkout" "$(tail -1 "$FIX/opened" 2>/dev/null)" "cd $FEAT && tools/worker.sh"
+cp "$P/levain.yml" "$FIX/levain.yml.orig"
+awk '{ print } /compose: "alpha-nothing-runs-here"/ {
+  print "  held:"; print "    start: \"tools/held.sh\""; print "    stop: signal"
+  print "  detaches:"; print "    start: \"echo detached > detached.txt\""; print "    stop: signal"; print "    window: false"
+}' "$FIX/levain.yml.orig" > "$P/levain.yml"
+svc "$P" start held >/dev/null 2>&1
+has "a signal-stopped service with no window: still opens one (LVI-045)" "$(tail -1 "$FIX/opened" 2>/dev/null)" "cd $MAIN && tools/held.sh"
+svc "$P" start detaches >/dev/null 2>&1
+ck "window: false keeps a signal-stopped start in this terminal" "$(cat "$MAIN/detached.txt" 2>/dev/null)" "detached"
+cp "$FIX/levain.yml.orig" "$P/levain.yml"
 svc "$P" console >/dev/null 2>&1
 has "console opens the project's own board" "$(tail -1 "$FIX/opened")" "tools/board.sh"
 

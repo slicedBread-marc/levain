@@ -27,7 +27,8 @@
 #       label: "Web + tunnel"
 #       start: "tools/run-web.sh up"     # run from the chosen checkout
 #       stop: "tools/run-web.sh down"    # or "signal": TERM to each live beacon's pid
-#       window: true                     # start in a new Terminal window (it reads keys)
+#       window: true                     # start in a new Terminal window (it reads keys);
+#                                        # the default when stop: is signal or absent
 #       checkout: main                   # main (the default) | any
 #       health: "http://127.0.0.1:8080/health"   # up while it answers 200-499
 #       compose: "myapp-web"             # or: up while this compose project has containers;
@@ -35,6 +36,11 @@
 #       heartbeat: 120                   # a beacon not refreshed for this long is stale
 #       needs: "web"                     # ids that must be up before this one starts
 #   services_console: "tools/board.sh"   # the project's own board, for what the rack does not do
+#
+# A service stopped by signal (stop: signal, or no stop:) is the process its start: runs, so
+# it starts in a window unless the manifest says `window: false` (a launcher that detaches and
+# returns). Run in the foreground it held the rack's own terminal until it was killed — every
+# one of a client's five such services did (the coordinator's LVI-045).
 #
 # A service with no start: is status-only. With no health: or compose:, a service is up while
 # a beacon names a live pid. A URL behind a login wall (Cloudflare Access) answers 302 whether
@@ -264,6 +270,19 @@ open_window() {
     -e 'end run' "$cmd" >/dev/null
 }
 
+# wants_window <id> — `window:` when the manifest sets it; else true for a service stopped by
+# signal, whose start: is the long-running process itself.
+wants_window() {
+  local w stop
+  w=$(svc "$1" window)
+  case "$w" in
+    true) return 0 ;;
+    false) return 1 ;;
+  esac
+  stop=$(svc "$1" stop)
+  [ -z "$stop" ] || [ "$stop" = signal ]
+}
+
 start() {
   local id="" co="" cmd mode main need running
   while [ $# -gt 0 ]; do
@@ -296,7 +315,7 @@ start() {
   done
   running=$(status_of "$id" | awk -F'\t' '$2 != "down" { print ($4 == "-" ? "outside the rack" : $4) }' | head -1)
   [ -z "$running" ] || die 6 "$id is already running ($running); stop it first"
-  if [ "$(svc "$id" window)" = true ]; then
+  if wants_window "$id"; then
     open_window "$co" "$cmd"
     printf '%s: started in a new window, from %s\n' "$id" "$co"
   else
