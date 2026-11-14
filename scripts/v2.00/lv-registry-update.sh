@@ -798,6 +798,7 @@ if [ "$to_state" = "complete" ] && [ -n "$slug" ] \
     sed 's/^#/###/' "$tp"; } >> "$pf"
   rm -f "$tp"
   git add -A -- "$tp" "$pf" 2>/dev/null || true
+  folded_tp="$tp"
   add_files+=("$pf" "$tp")
 fi
 
@@ -830,10 +831,34 @@ git add "$REGISTRY" 2>/dev/null || true
 # committed REGISTRY.md alone and left the findings behind (clients' LVI-013,
 # LVI-052). A bare name that is not at the root but is in the plan's folder
 # means that file; one that is nowhere is said out loud.
+#
+# Said out loud only when it is true (a client's LVI-048, LVI-050):
+#   - one argument holding several paths (`--add "$FILES"`) is split into
+#     them when it is not itself a path. It was reported as matching nothing,
+#     whole, and neither file was committed.
+#   - a path this script removed itself (test-progress.md, folded into
+#     progress.md at `complete`, above) or a tracked file being deleted is a
+#     change the commit carries. It was reported as matching nothing and then
+#     committed.
+folded_tp="${folded_tp:-}"
 if [ "${#add_files[@]}" -gt 0 ]; then
+  split_files=()
+  for f in "${add_files[@]}"; do
+    if [ ! -e "$f" ] && [[ "$f" =~ [[:space:]] ]]; then
+      read -r -a words <<< "$f"
+      split_files+=("${words[@]+"${words[@]}"}")
+    else
+      split_files+=("$f")
+    fi
+  done
+  add_files=("${split_files[@]+"${split_files[@]}"}")
   for i in "${!add_files[@]}"; do
     f="${add_files[$i]}"
     [ -e "$f" ] && continue
+    if [ -n "${folded_tp:-}" ]; then
+      case "$f" in "$folded_tp"|test-progress.md) continue ;; esac
+    fi
+    git cat-file -e "HEAD:$f" 2>/dev/null && continue
     case "$f" in
       */*) ;;
       *) if [ -n "$slug" ] && [ -e "plans/${plan_id}-${slug}/$f" ]; then

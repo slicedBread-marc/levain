@@ -800,6 +800,12 @@ assert_eq "lv-attend reads the review instead of commissioning it" "true" \
   "$(grep -q 'do not re-run a review step 1 already found current' "$LIB_ROOT/skills/lv-attend/SKILL.md" && echo true || echo false)"
 assert_eq "and a batch drain does not re-review what already has a verdict" "true" \
   "$(grep -q 'Read the verdicts that are already there' "$LIB_ROOT/skills/lv-attend/SKILL.md" && echo true || echo false)"
+# A client's LVI-048: a needs-input answer that completes a plan cannot close
+# last — `-> complete` refuses while the gate is open — so the row says claim,
+# close, transition, unclaim.
+assert_eq "lv-attend: a needs-input answer that completes the plan closes under a claim" "true" \
+  "$(awk '/^### `needs-input`/, /^## After each gate/' "$LIB_ROOT/skills/lv-attend/SKILL.md" \
+     | grep -q 'completes the plan, hold a claim across the close' && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
 section "The consistency closure reaches the docs the plans cite (client-a WFI-029)"

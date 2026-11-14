@@ -203,6 +203,17 @@ LV_ALLOW_ACCEPT=1 "$S/lv-registry-update.sh" PLN-042 testing accept --commit "ac
 assert_has "a bare --add name commits the plan's own file" "${d42}findings.md" "$(git show --stat --format= HEAD)"
 "$S/lv-registry-update.sh" PLN-042 accept testing >/dev/null 2>&1
 
+# A client's LVI-050: two paths passed as ONE argument were reported, whole,
+# as matching nothing, and neither was committed.
+printf '\n## Acceptance — second finding\n' >> "${d42}findings.md"
+printf '# Test Progress — PLN-042\n' > "${d42}test-progress.md"
+out=$(LV_ALLOW_ACCEPT=1 "$S/lv-registry-update.sh" PLN-042 testing accept --commit "accept(PLN-042): one-arg --add" \
+  --add "${d42}findings.md ${d42}test-progress.md" 2>&1)
+assert_not "a space-joined --add is not reported as matching nothing" "matches nothing" "$out"
+assert_has "…its first path is committed" "${d42}findings.md" "$(git show --stat --format= HEAD)"
+assert_has "…and its second" "${d42}test-progress.md" "$(git show --stat --format= HEAD)"
+"$S/lv-registry-update.sh" PLN-042 accept testing >/dev/null 2>&1
+
 # ── 4. lv-list-acceptable ──────────────────────────────────────────────────
 echo ""
 echo "4. lv-list-acceptable.sh lists what waits on a human"
@@ -248,8 +259,13 @@ echo "7. -> complete moves test-progress.md into progress.md (client LVI-043)"
 printf '# Test Progress — PLN-047\n\n| Criterion | Result |\n|-|-|\n| reads clearly | PASS |\n' \
   > plans/PLN-047-plain/test-progress.md
 git add plans/PLN-047-plain/test-progress.md && git commit -qm "progress"
-LV_ALLOW_UNMERGED=1 LV_ALLOW_UNTESTED=1 "$S/lv-registry-update.sh" PLN-047 testing complete - >/dev/null 2>&1
+# A client's LVI-048: naming test-progress.md in --add, as /lv-test's exit
+# does, printed "matches nothing" for the file this script had just folded —
+# and then committed its deletion.
+out=$(LV_ALLOW_UNMERGED=1 LV_ALLOW_UNTESTED=1 "$S/lv-registry-update.sh" PLN-047 testing complete - \
+  --commit "test(PLN-047): complete" --add plans/PLN-047-plain/test-progress.md 2>&1)
 assert_eq "the transition lands" complete "$(state_of PLN-047)"
+assert_not "the folded test-progress.md is not reported as matching nothing" "matches nothing" "$out"
 assert_eq "test-progress.md is gone from disk" false \
   "$([ -f plans/PLN-047-plain/test-progress.md ] && echo true || echo false)"
 assert_eq "…and from HEAD, in the transition's commit" "" \

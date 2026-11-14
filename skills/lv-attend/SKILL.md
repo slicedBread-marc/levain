@@ -119,7 +119,7 @@ Once the user picks one, read the gate's `<context>` file if it has one, then fo
 
 **Closing the gate is always the last act.** An open gate is what keeps the orchestrator off the plan, so every commit, state transition and file move the decision implies lands *first*, and `lv-gate-close.sh` runs only once they have. Close it early and the dispatcher's very next sweep — up to a minute before your work is committed — reads the plan as free and still in its old state, and launches a worker into the decision you are in the middle of making. That is how client-a got an unattended tester onto a plan already routed back to its planner, which then re-gated it and blocked it entirely (WFI-079). Each row below is written in the safe order; do not reorder it.
 
-**The one gate this reads backwards for is `spec-approval`, and it is not an exception to the rule above — it is the rule met by a different guard.** Closing that gate is a *precondition* of its transition, not a record of one, so both scripts that can perform it refuse until the gate reads answered (`lv-registry-update.sh` on `draft → ready`, WFI-012; `lv-replan-target.sh --apply` on a gating-tagged replan, WFI-021). What the ordering above actually requires is that no window exist in which the plan is unguarded *and* stale — and a claim guards that window exactly as well as an open gate does. So there, and only there, take the claim first and let it cover the gap: claim, close, transition, unclaim.
+**The one gate this reads backwards for is `spec-approval`, and it is not an exception to the rule above — it is the rule met by a different guard.** Closing that gate is a *precondition* of its transition, not a record of one, so both scripts that can perform it refuse until the gate reads answered (`lv-registry-update.sh` on `draft → ready`, WFI-012; `lv-replan-target.sh --apply` on a gating-tagged replan, WFI-021). What the ordering above actually requires is that no window exist in which the plan is unguarded *and* stale — and a claim guards that window exactly as well as an open gate does. So there take the claim first and let it cover the gap: claim, close, transition, unclaim. The same holds for any question gate whose answer completes the plan, because `→ complete` refuses while one is open (see the `needs-input` row).
 
 **If the answer settles a finding, tick the finding in the same breath.** Pass `--resolves "<some distinctive words from the finding>"` (or `--resolves all` when the answer clears every open item) to `lv-gate-close.sh`, and it checks the box and commits it as part of the close. This matters because `lv-findings-route.sh` routes on checkboxes and cannot read your resolution text: a consistency escalation answered here and written up in full still routed PLN-254 back to `draft` on the strength of an empty box, past a clean build and 961 passing tests, and a verify worker had to tick it by hand (WFI-233, WFI-237). When a close leaves unchecked findings behind, the script says so on stderr — read that line rather than scrolling past it.
 
@@ -493,7 +493,17 @@ scripts/lv-exec.sh lv-gate-close.sh <PLN-ID> "<the answer, and that it sends the
 # …then hand off to /lv-spec, which opens its own gate on the replanned plan
 ```
 
+**If applying the answer completes the plan, hold a claim across the close.** `lv-registry-update.sh` refuses `<state> → complete` while any question gate is open on the plan (a client's LVI-008), so this gate cannot close last here: its close is a precondition of the transition, exactly as with `spec-approval`. Take the claim first and let it cover the gap — claim, close, transition, unclaim — and run them one at a time, stopping at the first that fails (a `lv-claim.sh` exit 2 means a live worker holds the plan: do not close, transition or unclaim; see the `spec-approval` row). A client's PLN-034 hit the refusal following the close-last order (LVI-048).
+
+```bash
+scripts/lv-exec.sh lv-claim.sh <plan-name>
+scripts/lv-exec.sh lv-gate-close.sh <PLN-ID> "<the answer, and that it completes the plan>" --only needs-input
+scripts/lv-exec.sh lv-registry-update.sh <PLN-ID> <from-state> complete --commit "<message>" --add <the plan files the answer changed>
+scripts/lv-exec.sh lv-unclaim.sh <plan-name>
+```
+
 Everywhere else in this skill the gate still closes last.
+
 **If the answer disposes of a bug, use the scripted close.** A `needs-input` gate often resolves as "this bug is a duplicate", "this one is already fixed", or "we are not fixing this", and each has a verb — none of them needs a plan, and none of them should be a hand-edit plus a `git mv`:
 
 ```bash

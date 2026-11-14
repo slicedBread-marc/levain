@@ -112,6 +112,7 @@ transition check first:
 |-|-|-|
 | `draft → ready`, any plan | `lv-registry-update.sh` | exit 1 (client-b WFI-012) |
 | a gating-tagged **replan**, to `ready`/`active`/`testing` | `lv-replan-target.sh --apply` | exit 2 (WFI-178, WFI-021) |
+| `<any> → complete`, with **any** question gate open (`needs-input` included) | `lv-registry-update.sh` | exit 1 (a client's LVI-008); `/lv-attend` hit it completing PLN-034 from a `needs-input` answer (LVI-048) |
 
 Transition-then-close is impossible on either — the ordinary way to make a gate read
 `GATE_ANSWERED=true` is to close it, which the rule above says to do only *after* a transition
