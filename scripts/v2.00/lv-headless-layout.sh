@@ -32,6 +32,11 @@
 #              scroll (overflow-x not auto/scroll) and does not truncate on
 #              purpose (text-overflow: ellipsis).
 #
+#   Every check skips an element hidden on purpose: display none, visibility
+#   hidden, opacity 0, and the visually-hidden (screen-reader-only) pattern —
+#   a zero-area clip, clip-path inset(50%), or overflow hidden on a box 1px or
+#   less — on the element or any ancestor.
+#
 # actions-json (optional) runs before the audit at every size, to reach the
 # state in question; the vocabulary is lv-headless-eval.sh's (see its header).
 #
@@ -95,11 +100,32 @@ const minTarget = Number(minTargetArg);
 function audit(minTarget) {
   const out = [];
   const de = document.documentElement;
+  // The visually-hidden pattern (position absolute, a 1px box, overflow
+  // hidden, clip rect(0 0 0 0) or clip-path inset(50%)) keeps an element for
+  // screen readers on purpose. Its text overflows a 1px box by design: a
+  // client's landing <h1> failed every page it was on (LVI-047). Judged on
+  // the element and every ancestor, since the text may sit inside one.
+  const zeroClip = (cs) => {
+    if (!['absolute', 'fixed'].includes(cs.position)) return false;
+    const m = /^rect\(\s*(-?[\d.]+)px[ ,]+(-?[\d.]+)px[ ,]+(-?[\d.]+)px[ ,]+(-?[\d.]+)px\s*\)$/.exec(cs.clip || '');
+    return !!m && (Number(m[3]) <= Number(m[1]) || Number(m[2]) <= Number(m[4]));
+  };
+  const visuallyHidden = (el) => {
+    for (let a = el; a && a !== document.documentElement; a = a.parentElement) {
+      const cs = getComputedStyle(a);
+      if (zeroClip(cs)) return true;
+      if (/^inset\(\s*(50|100)%/.test(cs.clipPath || '')) return true;
+      const r = a.getBoundingClientRect();
+      if (['hidden', 'clip'].includes(cs.overflowX) && ['hidden', 'clip'].includes(cs.overflowY)
+          && (r.width <= 1 || r.height <= 1)) return true;
+    }
+    return false;
+  };
   const visible = (el) => {
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return false;
     const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
+    return r.width > 0 && r.height > 0 && !visuallyHidden(el);
   };
   const name = (el) => {
     let s = el.tagName.toLowerCase();

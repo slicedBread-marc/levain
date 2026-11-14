@@ -139,7 +139,11 @@ HTML
   cat > "$TEST_DIR/www/layout-good.html" <<'HTML'
 <!doctype html><html><head><meta name="viewport" content="width=device-width"><style>
 body{margin:0;padding:16px;font:16px/1.5 sans-serif} button,a.btn{display:inline-block;min-height:44px;padding:10px} label{display:flex;gap:8px;align-items:center;min-height:32px}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.cp{position:absolute;clip-path:inset(50%);width:1px;height:1px;white-space:nowrap}
 </style></head><body>
+<h1 class="sr">A landing heading kept for screen readers only (LVI-047)</h1>
+<div class="cp">Skip to the main content of this page</div>
 <p>Read the <a href="/g">guide</a> before you start the round today.</p>
 <a class="btn" href="/x">Start</a> <button>Check</button>
 <form><label><input type="radio" name="q"> A long answer that wraps over more than one line at phone width easily enough</label>
@@ -278,7 +282,7 @@ PY
 
   echo "  layout (LVI-044)"
   L="http://127.0.0.1:$PORT"
-  assert_eq "a clean page passes at both widths"          "0|PASS layout 390x844 1280x800: no overflow, targets >= 24px, radios and checkboxes on their label's line, no text overflow" \
+  assert_eq "a clean page passes at both widths, visually-hidden text included"          "0|PASS layout 390x844 1280x800: no overflow, targets >= 24px, radios and checkboxes on their label's line, no text overflow" \
     "$(run lv-headless-layout.sh "$L/layout-good.html")"
   lay=$(bash "$SD/lv-headless-layout.sh" "$L/layout-bad.html" 2>/dev/null); rc=$?
   assert_eq "a page with defects is FAIL, exit 1"          1 "$rc"
