@@ -3036,25 +3036,36 @@ dormant_screen() {
 # project's own `lv-services.sh status`; this file knows no service by name.
 
 # sv_counts <project_path> — "<declared> <up>": how many services its levain.yml declares, and
-# how many distinct ones have a live beacon. The board asks on every frame, so the declared
-# count and the beacon directory are read once per collect (SVC_KEY/SVC_VAL), and the up count
-# is builtins only: a glob and kill -0, no probe. A detached record (pid 0) counts as up until
+# how many distinct ones are up. The board asks on every frame, so the manifest is read once
+# per collect (SVC_KEY/SVC_VAL), and with it each health: URL is probed once — a service the
+# project's daemon or a terminal started has no beacon, yet answers, and `v` calls it up. Per
+# frame the rest is builtins: a glob and kill -0. A detached record (pid 0) counts as up until
 # `v` or --services probes it and removes it.
 SVC_KEY=(); SVC_VAL=()
 sv_counts() {
-  local p="$1" k v="" decl dir f pid id seen=" " up=0
+  local p="$1" k v="" decl dir f pid id seen=" " up=0 rest slug probed="" hid hurl code
   for k in "${!SVC_KEY[@]}"; do [ "${SVC_KEY[$k]}" = "$p" ] && { v="${SVC_VAL[$k]}"; break; }; done
   if [ -z "$v" ]; then
     v=$(awk -v base="$(basename "$p")" '
         /^project_slug:/ { s=$0; sub(/^project_slug:[ \t]*/, "", s); gsub(/["\047]/, "", s); sub(/[ \t]*#.*$/, "", s); slug=s }
         /^[^ #]/ { insv = ($0 ~ /^services:[ \t]*$/) ; next }
-        insv && /^  [A-Za-z0-9_-]+:/ { n++ }
-        END { if (slug == "") slug = base; printf "%d\t%s", n, slug }' "$p/levain.yml" 2>/dev/null)
-    [ -n "$v" ] || v="0"$'\t'"$(basename "$p")"
+        insv && /^  [A-Za-z0-9_-]+:/ { n++; cur=$1; sub(/:$/, "", cur) }
+        insv && /^    health:/ { h=$0; sub(/^    health:[ \t]*/, "", h); sub(/[ \t]+#.*$/, "", h); gsub(/["\047]/, "", h)
+                               if (h != "") hs = hs " " cur "=" h }
+        END { if (slug == "") slug = base; printf "%d\t%s\t%s", n, slug, hs }' "$p/levain.yml" 2>/dev/null)
+    [ -n "$v" ] || v="0"$'\t'"$(basename "$p")"$'\t'
+    rest="${v#*$'\t'}"
+    for k in ${rest#*$'\t'}; do
+      hid="${k%%=*}"; hurl="${k#*=}"
+      code=$(curl -s -o /dev/null -w '%{http_code}' --max-time "${LV_SERVICES_PROBE_SECS:-1}" "$hurl" 2>/dev/null || true)
+      [ "${code:-0}" -ge 200 ] 2>/dev/null && [ "$code" -lt 500 ] && probed="$probed $hid"
+    done
+    v="${v%%$'\t'*}"$'\t'"${rest%%$'\t'*}"$'\t'"$probed"
     SVC_KEY+=("$p"); SVC_VAL+=("$v")
   fi
-  decl="${v%%$'\t'*}"
-  dir="${LV_SERVICES_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/levain/services}/${v#*$'\t'}"
+  decl="${v%%$'\t'*}"; rest="${v#*$'\t'}"; slug="${rest%%$'\t'*}"; probed="${rest#*$'\t'}"
+  for id in $probed; do up=$((up + 1)); seen="$seen$id "; done
+  dir="${LV_SERVICES_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/levain/services}/$slug"
   for f in "$dir"/*.rec; do
     [ -e "$f" ] || continue
     f="${f##*/}"; f="${f%.rec}"; pid="${f##*.}"; id="${f%.*}"
@@ -3064,21 +3075,21 @@ sv_counts() {
   printf '%s %s\n' "$decl" "$up"
 }
 
-sv_reset() { SV_P=(); SV_NAME=(); SV_ID=(); SV_STATE=(); SV_DETAIL=(); SV_CO=(); SV_BRANCH=(); SV_COMMIT=(); SV_SINCE=(); SV_FLAGS=(); }
+sv_reset() { SV_P=(); SV_NAME=(); SV_ID=(); SV_STATE=(); SV_DETAIL=(); SV_CO=(); SV_BRANCH=(); SV_COMMIT=(); SV_SINCE=(); SV_FLAGS=(); SV_URL=(); }
 
 # sv_collect [project_path] — every project's services, or only that one's.
 sv_collect() {
-  local only="${1:-}" p out id st de co br cm si pid fl
+  local only="${1:-}" p out id st de co br cm si pid fl url
   sv_reset
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     [ -z "$only" ] || [ "$p" = "$only" ] || continue
     has_harness "$p" || continue
     out=$(cd "$p" && hx lv-services.sh status 2>/dev/null) || continue
-    while IFS=$'\t' read -r id st de co br cm si pid fl; do
+    while IFS=$'\t' read -r id st de co br cm si pid fl url; do
       [ -n "$id" ] || continue
       SV_P+=("$p"); SV_NAME+=("$(basename "$p")"); SV_ID+=("$id"); SV_STATE+=("$st"); SV_DETAIL+=("$de")
-      SV_CO+=("$co"); SV_BRANCH+=("$br"); SV_COMMIT+=("$cm"); SV_SINCE+=("$si"); SV_FLAGS+=("$fl")
+      SV_CO+=("$co"); SV_BRANCH+=("$br"); SV_COMMIT+=("$cm"); SV_SINCE+=("$si"); SV_FLAGS+=("$fl"); SV_URL+=("${url:--}")
     done <<< "$out"
   done <<< "$(each_project)"
 }
@@ -3108,8 +3119,8 @@ sv_line() { # sv_line <i> <selected:true|false>
   local i="$1" c state
   c=$(sv_color "${SV_STATE[$i]}")
   state="${SV_STATE[$i]} ${SV_DETAIL[$i]}"; [ "${SV_DETAIL[$i]}" = - ] && state="${SV_STATE[$i]}"
-  if $2; then printf '  %s> %-16s %-12s%s %s%-14s%s %-34s %s\n' "$REV" "${SV_NAME[$i]}" "${SV_ID[$i]}" "$R" "$c" "$state" "$R" "$(sv_where "$i")" "$(sv_age "${SV_SINCE[$i]}")"
-  else printf '    %-16s %-12s %s%-14s%s %-34s %s\n' "${SV_NAME[$i]}" "${SV_ID[$i]}" "$c" "$state" "$R" "$(sv_where "$i")" "$(sv_age "${SV_SINCE[$i]}")"; fi
+  if $2; then printf '  %s> %-16s %-12s%s %s%-14s%s %-34s %-6s %s\n' "$REV" "${SV_NAME[$i]}" "${SV_ID[$i]}" "$R" "$c" "$state" "$R" "$(sv_where "$i")" "$(sv_age "${SV_SINCE[$i]}")" "${SV_URL[$i]:--}"
+  else printf '    %-16s %-12s %s%-14s%s %-34s %-6s %s\n' "${SV_NAME[$i]}" "${SV_ID[$i]}" "$c" "$state" "$R" "$(sv_where "$i")" "$(sv_age "${SV_SINCE[$i]}")" "${SV_URL[$i]:--}"; fi
 }
 
 sv_table() {
@@ -3117,7 +3128,7 @@ sv_table() {
   if [ "${#SV_ID[@]}" -eq 0 ]; then
     printf '  %sno project declares services: in levain.yml%s\n' "$DIM" "$R"; return 0
   fi
-  printf '    %s%-16s %-12s %-14s %-34s %s%s\n' "$B" PROJECT SERVICE STATE CHECKOUT SINCE "$R"
+  printf '    %s%-16s %-12s %-14s %-34s %-6s %s%s\n' "$B" PROJECT SERVICE STATE CHECKOUT SINCE URL "$R"
   for i in "${!SV_ID[@]}"; do sv_line "$i" false; done
 }
 
@@ -3142,30 +3153,50 @@ sv_pick_worktree() {
   sv_run "$i" start "${SV_ID[$i]}" --checkout "${wts[$((choice - 1))]%%$'\t'*}"
 }
 
+# sv_copy <text> — onto the clipboard: LV_CLIPBOARD (a command reading stdin), else pbcopy,
+# wl-copy or xclip. Fails when none is there.
+sv_copy() {
+  local c="${LV_CLIPBOARD:-}"
+  if [ -z "$c" ]; then
+    for c in pbcopy wl-copy "xclip -selection clipboard" ""; do
+      [ -n "$c" ] && command -v "${c%% *}" >/dev/null 2>&1 && break
+    done
+  fi
+  [ -n "$c" ] || return 1
+  printf '%s' "$1" | $c 2>/dev/null
+}
+
 # services_screen [project_path] — the list behind `v`, or behind Enter on one project's
 # services cell, scoped to that project (`v` there widens it to every project).
-# ↑↓ move, u start from main, w start from a worktree, x stop, o the project's own console,
-# r refresh, esc back, m main.
+# ↑↓ move, enter copy the service's URL, u start from main, w start from a worktree, x stop,
+# o the project's own console, r refresh, esc back, m main.
 services_screen() {
-  local only="${1:-}" key sel=0 i n title widen=""
+  local only="${1:-}" key sel=0 i n title widen="" note=""
   printf '\033[2J\033[H  %scollecting services…%s\n' "$DIM" "$R"
   sv_collect "$only"
   while true; do
     n="${#SV_ID[@]}"
     title="SERVICES"; widen=""
     [ -n "$only" ] && { title="SERVICES — $(basename "$only")"; widen=" · v all projects"; }
-    printf '\033[2J\033[H%s%s%s  %s↑↓ move · u start · w start from a worktree · x stop · o console · r refresh%s · esc back · m main%s\n\n' "$B" "$title" "$R" "$DIM" "$widen" "$R"
+    printf '\033[2J\033[H%s%s%s  %s↑↓ move · enter copy url · u start · w start from a worktree · x stop · o console · r refresh%s · esc back · m main%s\n\n' "$B" "$title" "$R" "$DIM" "$widen" "$R"
     if [ "$n" -eq 0 ]; then
       if [ -n "$only" ]; then printf '  %s%s declares no services: in levain.yml%s\n' "$DIM" "$(basename "$only")" "$R"
       else printf '  %sno project declares services: in levain.yml%s\n' "$DIM" "$R"; fi
     else
-      printf '    %s%-16s %-12s %-14s %-34s %s%s\n' "$B" PROJECT SERVICE STATE CHECKOUT SINCE "$R"
+      printf '    %s%-16s %-12s %-14s %-34s %-6s %s%s\n' "$B" PROJECT SERVICE STATE CHECKOUT SINCE URL "$R"
       [ "$sel" -lt "$n" ] || sel=0
       for i in "${!SV_ID[@]}"; do if [ "$i" -eq "$sel" ]; then sv_line "$i" true; else sv_line "$i" false; fi; done
     fi
+    [ -n "$note" ] && printf '\n  %s\n' "$note"
+    note=""
     read_key key
     $key_eof && break
     case "$key" in
+      ''|$'\n') [ "$n" -gt 0 ] && case "${SV_URL[$sel]:--}" in
+             -) note="${DIM}${SV_ID[$sel]} has no url: or health: to copy${R}" ;;
+             *) if sv_copy "${SV_URL[$sel]}"; then note="${GRN}copied${R} ${SV_URL[$sel]}"
+                else note="${YEL}no clipboard tool${R} — ${SV_URL[$sel]}"; fi ;;
+           esac ;;
       $'\x1b[A'|k) [ "$n" -gt 0 ] && sel=$(( (sel - 1 + n) % n )) ;;
       $'\x1b[B'|j) [ "$n" -gt 0 ] && sel=$(( (sel + 1) % n )) ;;
       u|U) [ "$n" -gt 0 ] && { sv_run "$sel" start "${SV_ID[$sel]}"; sv_collect "$only"; } ;;

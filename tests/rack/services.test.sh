@@ -58,6 +58,7 @@ services:
     window: true
     checkout: any
     heartbeat: 60
+    url: "http://worker.test/queue"
   gated:
     start: "true"
     needs: "web"
@@ -163,6 +164,20 @@ has "a worker off main shows as its branch, flagged" "$table" "PLN-9-x ⚠"
 has "a down service shows down" "$(grep ' web ' <<< "$table")" "down"
 ck "the board's services cell: declared, then distinct ids up" "$(sv_counts "$P")" "4 1"
 ck "a project with no services: block declares none" "$(sv_counts "$FIX/no-harness")" "0 0"
+ck "status ends in the url: health:'s origin" "$(svc "$P" status | awk -F'\t' '$1=="web"{print $10}')" "http://127.0.0.1:9/"
+ck "url: wins over the origin" "$(svc "$P" status | awk -F'\t' '$1=="worker"{print $10; exit}')" "http://worker.test/queue"
+ck "and a service with neither has none" "$(svc "$P" status | awk -F'\t' '$1=="probe"{print $10}')" "-"
+B2="$FIX/beta"; mkdir -p "$B2"
+printf 'project_slug: beta\nservices:\n  site:\n    start: "true"\n    health: "http://beta.test/"\n  other:\n    start: "true"\n' > "$B2/levain.yml"
+printf '#!/usr/bin/env bash\ncase "$*" in *beta.test*) printf 302 ;; *) printf 000 ;; esac\n' > "$FIX/bin/curl"; chmod +x "$FIX/bin/curl"
+ck "a service up by health: with no beacon counts on the grid" "$(PATH="$FIX/bin:$PATH" sv_counts "$B2")" "2 1"
+SVC_KEY=(); SVC_VAL=()
+rm -f "$FIX/bin/curl"
+sv_collect "$P"
+out=$(printf '\n\x1b' | LV_CLIPBOARD="tee $FIX/clip" services_screen "$P" 2>&1)
+ck "enter copies the selected service's url" "$(cat "$FIX/clip" 2>/dev/null)" "${SV_URL[0]}"
+has "and says so" "$out" "copied"
+has "the screen has a url column" "$out" "URL"
 sv_collect "$P"
 ck "a services cell scopes the list to its project" "${#SV_ID[@]}" "4"
 sv_collect "$FIX/no-harness"

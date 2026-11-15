@@ -31,6 +31,8 @@
 #                                        # the default when stop: is signal or absent
 #       checkout: main                   # main (the default) | any
 #       health: "http://127.0.0.1:8080/health"   # up while it answers 200-499
+#       url: "http://127.0.0.1:8080/"    # what the rack shows and copies on Enter;
+#                                        # defaults to health:'s origin
 #       compose: "myapp-web"             # or: up while this compose project has containers;
 #                                        # "myapp-web/cloudflared" narrows it to one compose service
 #       heartbeat: 120                   # a beacon not refreshed for this long is stale
@@ -62,12 +64,13 @@
 #
 # ── STATUS ─────────────────────────────────────────────────────────────────
 #
-#   <id>\t<state>\t<detail>\t<checkout>\t<branch>\t<commit>\t<since>\t<pid>\t<flags>
+#   <id>\t<state>\t<detail>\t<checkout>\t<branch>\t<commit>\t<since>\t<pid>\t<flags>\t<url>
 #
 #   state   up | down | stale (heartbeat older than heartbeat:)
 #   detail  the health code, `N containers`, or the heartbeat age (`♥12s`)
 #   since   seconds since the beacon's up; `-` with no beacon
 #   flags   comma-separated: offmain (not main's worktree), behind=N (commits behind main)
+#   url     url:, else health:'s scheme://host[:port]/, else `-`
 #
 # Exit codes: 0 ok · 1 usage · 2 refused under an agent, or guard found a live service ·
 # 3 that checkout is not allowed · 4 no main worktree · 5 a need is not up · 6 already running
@@ -223,16 +226,27 @@ flags_for() { # flags_for <checkout> <commit>
   printf '%s' "${fl:--}"
 }
 
+# url_of <id> — where the service is reached: url:, else health:'s origin, else -.
+url_of() {
+  local u h
+  u=$(svc "$1" url)
+  if [ -z "$u" ]; then
+    h=$(svc "$1" health)
+    [[ "$h" =~ ^(https?://[^/?#]+) ]] && u="${BASH_REMATCH[1]}/"
+  fi
+  printf '%s' "${u:--}"
+}
+
 # status_of <id> — the status lines for one service.
 status_of() {
-  local id="$1" hb now f pid state detail age recs
-  hb=$(svc "$id" heartbeat)
+  local id="$1" hb now f pid state detail age recs url
+  hb=$(svc "$id" heartbeat); url=$(url_of "$id")
   now=$(date +%s)
   probe "$id"
   recs=$(live_records "$id")
   if [ -z "$recs" ]; then
     case "$P_STATE" in none) state=down ;; *) state="$P_STATE" ;; esac
-    printf '%s\t%s\t%s\t-\t-\t-\t-\t-\t-\n' "$id" "$state" "${P_DETAIL:--}"
+    printf '%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t%s\n' "$id" "$state" "${P_DETAIL:--}" "$url"
     return 0
   fi
   while IFS= read -r f; do
@@ -240,7 +254,7 @@ status_of() {
     # A detached record outlives what it started; once the probe says down, it is history.
     if [ "$pid" = 0 ] && [ "$P_STATE" = down ]; then
       rm -f "$f"
-      printf '%s\tdown\t%s\t-\t-\t-\t-\t-\t-\n' "$id" "${P_DETAIL:--}"
+      printf '%s\tdown\t%s\t-\t-\t-\t-\t-\t-\t%s\n' "$id" "${P_DETAIL:--}" "$url"
       continue
     fi
     state="$P_STATE"; detail="$P_DETAIL"
@@ -250,10 +264,10 @@ status_of() {
       detail="♥${age}s"
       [ -n "$hb" ] && [ "$age" -gt "$hb" ] && state=stale
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$state" "${detail:--}" \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$state" "${detail:--}" \
       "$(rec_get "$f" checkout)" "$(rec_get "$f" branch)" "$(rec_get "$f" commit)" \
       "$(( now - $(rec_get "$f" started) ))" "$pid" \
-      "$(flags_for "$(rec_get "$f" checkout)" "$(rec_get "$f" commit)")"
+      "$(flags_for "$(rec_get "$f" checkout)" "$(rec_get "$f" commit)")" "$url"
   done <<< "$recs"
 }
 
