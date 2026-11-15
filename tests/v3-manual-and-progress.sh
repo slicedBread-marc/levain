@@ -652,6 +652,8 @@ cat >> levain.yml <<'Y'
 test_account_note: "open /learners/new, fill input #Form_FirstName and #Form_Age, then save"   # the recipe
 plain_with_comment: just text # a comment
 single_quoted: 'it''s #1'
+escaped_quotes: "cd \"$HOME/dev/x\" && exec npm run serve"
+escaped_other: "a\\b \.ts$"
 hashList:
   - "a #b"   # c
   - plain # d
@@ -659,6 +661,8 @@ Y
 assert_eq "a double-quoted value keeps its ' #'" "open /learners/new, fill input #Form_FirstName and #Form_Age, then save" "$("$SCRIPT_DIR/lv-config-get.sh" test_account_note)"
 assert_eq "an unquoted value still drops its comment" "just text" "$("$SCRIPT_DIR/lv-config-get.sh" plain_with_comment)"
 assert_eq "a single-quoted value, '' and all" "it's #1" "$("$SCRIPT_DIR/lv-config-get.sh" single_quoted)"
+assert_eq "\\\" in double quotes is a quote (the coordinator's LVI-046)" 'cd "$HOME/dev/x" && exec npm run serve' "$("$SCRIPT_DIR/lv-config-get.sh" escaped_quotes)"
+assert_eq "\\\\ is a backslash, any other escape is kept" 'a\b \.ts$' "$("$SCRIPT_DIR/lv-config-get.sh" escaped_other)"
 assert_eq "a list item keeps a quoted ' #'" "a #b|plain" "$("$SCRIPT_DIR/lv-config-get.sh" hashList --list | paste -sd'|' -)"
 
 # ── Summary ────────────────────────────────────────────────────────────

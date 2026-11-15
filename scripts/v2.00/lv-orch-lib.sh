@@ -840,8 +840,12 @@ wf_read1() {
 # quote, so a ` #` inside it is text, not a comment: a test_account_note
 # holding a CSS selector (`input #Form_FirstName`) was cut at 480 of ~1000
 # characters (a client's LVI-011/012/016). Only an unquoted value has a
-# trailing comment stripped. Escapes inside double quotes are kept verbatim,
-# as before; '' inside single quotes is one quote, as YAML has it.
+# trailing comment stripped. Inside double quotes \" is a quote and \\ a
+# backslash, as YAML has them: a services start: of "cd \"$HOME/x\" && ..."
+# reached the shell with its backslashes and cd failed (the coordinator's
+# LVI-046). Any other escape is kept verbatim, backslash and all, so a
+# pattern written as "\.ts$" still means what it did. '' inside single
+# quotes is one quote.
 _WF_YSCALAR_AWK='
   function yscalar(v,    q, i, c, out, n) {
     gsub(/^[ \t]+/, "", v)
@@ -850,7 +854,11 @@ _WF_YSCALAR_AWK='
       out = ""; n = length(v)
       for (i = 2; i <= n; i++) {
         c = substr(v, i, 1)
-        if (q == "\"" && c == "\\" && i < n) { out = out c substr(v, i + 1, 1); i++; continue }
+        if (q == "\"" && c == "\\" && i < n) {
+          c = substr(v, i + 1, 1); i++
+          out = out ((c == "\"" || c == "\\") ? c : "\\" c)
+          continue
+        }
         if (c == q) {
           if (q == "\047" && substr(v, i + 1, 1) == q) { out = out q; i++; continue }
           return out
