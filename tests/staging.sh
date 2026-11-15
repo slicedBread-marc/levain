@@ -400,6 +400,26 @@ Y
   has "and names the holder"                            "$(cat "$TEST_DIR/stage.err")" "PID $squatter"
   kill "$squatter" 2>/dev/null; wait "$squatter" 2>/dev/null; sleep 0.2
 
+  # A client's LVI-052/053/059: the implement-commit hook left this worktree's
+  # own dev server on the plan's port, and the tester refused it as a stranger.
+  mkdir -p .claude
+  sed -e 's|{{local_start_command}}||' \
+      -e 's|{{local_deploy_command}}|cd www \&\& exec python3 -m http.server $PORT --bind 127.0.0.1|' \
+      -e 's|{{local_stop_command}}||' -e 's|{{project_slug}}|demo|' \
+      "$REPO_ROOT/templates/on-implement-commit.sh" > .claude/on-implement-commit.sh
+  chmod +x .claude/on-implement-commit.sh
+  FEATURE_PORT=$((8100 + n)) PORT=$((8100 + n)) .claude/on-implement-commit.sh deploy >/dev/null 2>&1
+  for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$((8100 + n))/health" >/dev/null 2>&1 && break; sleep 0.1; done
+  hook_pg=$(tr -d '[:space:]' < .claude/local-env-run.pid 2>/dev/null)
+  stage lv-docker-up.sh
+  assert_eq "the worktree's own implement-commit server is replaced, not refused" "0" "$RC"
+  has "…and the tester is told why"                     "$(cat "$TEST_DIR/stage.err")" "implement-commit environment"
+  assert_eq "…the hook's run is gone"                    "false" \
+    "$([ -n "$hook_pg" ] && kill -0 "$hook_pg" 2>/dev/null && echo true || echo false)"
+  "$SD/lv-docker-down.sh" >/dev/null 2>&1; sleep 0.2
+  ( .claude/on-implement-commit.sh stop ) >/dev/null 2>&1
+  rm -rf .claude
+
   printf 'project_slug: "demo"\nlocal_start_command: "docker compose -f docker/docker-compose.yml up -d"\n' > levain.yml
   stage lv-docker-up.sh
   assert_eq "a compose command with no compose file exits 3" "3" "$RC"

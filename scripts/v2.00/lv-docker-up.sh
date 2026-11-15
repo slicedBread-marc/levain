@@ -68,6 +68,36 @@ port_holder() {
     printf 'PID %s: %s%s\n' "$pid" "$cmd" "${cwd:+ (in $cwd)}"
   done
 }
+# own_env_release — free the port if this worktree's own implement-commit
+# environment holds it. The post-commit hook (.claude/on-implement-commit.sh)
+# starts the app on the plan's leased port after every implement( commit and
+# leaves it up for an hour, orphaned once the implementer exits; the tester
+# arrives minutes later and found the port busy — six plans in one day, each
+# parked on a needs-input gate (a client's LVI-052/053/059). That server is
+# this tree's, started from this tree's command, so it is replaced, as a
+# restart replaces our own native run. Only when a holder's process group is
+# the one the hook recorded: anything else is still refused and named.
+own_env_release() {
+  local root run_pid pgid pid
+  root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  [ -x "$root/.claude/on-implement-commit.sh" ] || return 0
+  [ -f "$root/.claude/local-env-run.pid" ] || return 0
+  run_pid=$(tr -d '[:space:]' < "$root/.claude/local-env-run.pid")
+  [ -n "$run_pid" ] || return 0
+  command -v lsof >/dev/null 2>&1 || return 0
+  for pid in $(lsof -nP -iTCP:"$FEATURE_PORT" -sTCP:LISTEN -t 2>/dev/null | sort -u); do
+    pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+    if [ "$pgid" = "$run_pid" ]; then
+      echo "lv-docker-up: port $FEATURE_PORT is held by this worktree's implement-commit environment (pgid $run_pid) — stopping it to start the plan's app" >&2
+      ( cd "$root" && .claude/on-implement-commit.sh stop ) >&2 2>&1 || true
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        [ -z "$(lsof -nP -iTCP:"$FEATURE_PORT" -sTCP:LISTEN -t 2>/dev/null)" ] && break
+        sleep 0.5
+      done
+      return 0
+    fi
+  done
+}
 port_refuse() {
   echo "lv-docker-up: port $FEATURE_PORT is already in use, so this plan's app cannot start on it:" >&2
   printf '%s\n' "$1" | sed 's/^/      /' >&2
@@ -121,6 +151,7 @@ if [ ! -f docker/docker-compose.yml ]; then
   esac
   # A restart (after an edit) replaces the previous run, never stacks on it.
   "$SCRIPT_DIR/lv-docker-down.sh" "$plan_folder" --native-only >/dev/null 2>&1 || true
+  own_env_release
   holder=$(port_holder)
   [ -z "$holder" ] || port_refuse "$holder"
   app_log="${TMPDIR:-/tmp}/lv-app-$COMPOSE_PROJECT_NAME.log"
@@ -171,6 +202,7 @@ attempt=1
 # replaces them. Anything else holding it makes `up` fail on the bind.
 if [ -f docker/docker-compose.yml ] \
    && [ -z "$(docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" 2>/dev/null)" ]; then
+  own_env_release
   holder=$(port_holder)
   [ -z "$holder" ] || port_refuse "$holder"
 fi
