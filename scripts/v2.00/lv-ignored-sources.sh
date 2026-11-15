@@ -20,10 +20,14 @@
 #   - every listed path that exists in the worktree, is untracked, and is
 #     ignored;
 #   - every ignored, untracked file directly inside the directory of a listed
-#     path, when it shares an extension with some listed path — the builder's
-#     sibling file the plan did not name (DebugReportSetup.cs beside the two
-#     it did). Direct children only, so `bin/` and `obj/` under a project
-#     directory are not read; the root is skipped, so `.env` is not either.
+#     path, when it shares an extension with a path listed in THAT directory —
+#     the builder's sibling file the plan did not name (DebugReportSetup.cs
+#     beside the two it did). Direct children only, so `bin/` and `obj/` under
+#     a project directory are not read; the root is skipped, so `.env` is not
+#     either. The extensions are per directory, never pooled: a plan listing
+#     brainstorm/README.md and surface/index.html flagged brainstorm/*.html,
+#     a deliberately ignored build output it never wrote, on seven plans
+#     running (a client's LVI-044..LVI-056).
 #
 # Read by lv-registry-update.sh's `active -> verify` guard, and by /lv-test
 # before it removes a worktree.
@@ -79,7 +83,9 @@ fi
 files=$(wf_plan_files "$plan_md")
 [ -n "$files" ] || exit 0
 
-exts=$(printf '%s\n' "$files" | awk -F/ '{ n = $NF; i = match(n, /\.[^.]+$/); if (i > 1) print substr(n, i) }' | sort -u)
+# "<dir>\t<.ext>" for every listed path with an extension.
+dir_exts=$(printf '%s\n' "$files" | awk '{ n = $0; d = ""; j = match(n, /\/[^\/]*$/); if (j > 0) { d = substr(n, 1, j - 1); n = substr(n, j + 1) }
+  i = match(n, /\.[^.]+$/); if (i > 1) print d "\t" substr(n, i) }' | sort -u)
 
 found=$(
   cd "$wt" || exit 0
@@ -98,7 +104,9 @@ found=$(
     [ -n "$p" ] || continue
     if [ -f "$p" ] && ! harness "$p" && ignored "$p"; then printf '%s\n' "$p"; fi
     d="${p%/*}"
-    [ "$d" != "$p" ] && [ -d "$d" ] && [ -n "$exts" ] || continue
+    [ "$d" != "$p" ] && [ -d "$d" ] || continue
+    exts=$(printf '%s\n' "$dir_exts" | awk -F'\t' -v d="$d" '$1 == d { print $2 }')
+    [ -n "$exts" ] || continue
     git ls-files --others --ignored --exclude-standard -- "$d" 2>/dev/null \
       | awk -v d="$d/" 'index($0, d) == 1 && index(substr($0, length(d) + 1), "/") == 0' \
       | while IFS= read -r f; do

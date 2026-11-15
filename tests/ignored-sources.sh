@@ -38,7 +38,8 @@ git config user.email t@t; git config user.name "Op Erator"
 printf 'project_slug: "ignored-test"\n' > levain.yml
 mkdir -p "plans/$P-$SLUG" src/App .claude/orchestrator
 printf 'class Program {}\n' > src/App/Program.cs
-printf '.claude/orchestrator/\nfeature-branches/\n[Dd]ebug/\n[Bb]in/\n.env\n' > .gitignore
+printf '.claude/orchestrator/\nfeature-branches/\n[Dd]ebug/\n[Bb]in/\n.env\nsite/*.html\n' > .gitignore
+mkdir -p web site; printf '<p>\n' > web/index.html; printf 'site\n' > site/README.md
 cat > "plans/$P-$SLUG/plan.md" <<'PLAN'
 # Debug report
 
@@ -49,6 +50,9 @@ A debug report.
 
 ### Step 1: Store
 - **Files:** create `src/App/Debug/Store.cs`, `Options.cs`; modify `src/App/Program.cs`, `README.md`.
+
+### Step 2: Page
+- **Files:** create `web/index.html`; modify `site/README.md`.
 PLAN
 printf '# Plan Registry\n\n| ID | Slug | State | Priority | Branch | Updated | WF | Tags | Deps |\n|-|-|-|-|-|-|-|-|-|\n' > plans/REGISTRY.md
 printf '| %s | %s | active | — | %s | 2026-10-05 | 15.0.3 | — | — |\n' "$P" "$SLUG" "$BR" >> plans/REGISTRY.md
@@ -64,6 +68,7 @@ printf 'class Setup {}\n'   > "$WT/src/App/Debug/Setup.cs"
 printf 'notes\n'            > "$WT/src/App/Debug/notes.txt"
 printf 'gen\n'              > "$WT/src/App/bin/Debug/Gen.cs"
 printf 'K=v\n'              > "$WT/.env"
+printf '<p>gen</p>\n'       > "$WT/site/index.html"
 
 echo "ignored-sources.sh"
 echo "=================="
@@ -79,6 +84,7 @@ assert_has "…with the rule that hides it" ".gitignore:3:[Dd]ebug/" "$out"
 assert_not "not a sibling of another extension" "notes.txt" "$out"
 assert_not "not build output under bin/" "bin/Debug" "$out"
 assert_not "not a root .env" ".env" "$out"
+assert_not "not a sibling whose extension is listed only in another folder (LVI-044..056)" "site/index.html" "$out"
 
 echo ""
 echo "1b. A Files line's quoted code is not a file (a client's LVI-044)"
