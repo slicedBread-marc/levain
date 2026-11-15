@@ -6836,6 +6836,37 @@ printf '# PLN-009\n\n## Goal\nBuilds on T99 from PLN-020, which is not ours.\n' 
 eval "$(id_next)"
 assert_eq "prose does not reserve an id" "82" "$TEST_ID_HIGHEST"
 
+# An amendment reserving an id as a bullet that opens with it, no table row
+# (a client's LVI-051: PLN-116's A-1 held T669 and PLN-118 was handed it).
+mkdir -p plans/PLN-016-surface-run
+cat > plans/PLN-016-surface-run/plan.md <<'P016'
+# PLN-016
+
+## Tests
+
+| ID | Type | Description | Command |
+|-|-|-|-|
+| T83 | Unit | the stream | `node --test` |
+
+### A-1
+
+- **T84** (new, Unit/Integration): the log path, never served, capped.
+- T85: plain too.
+- Verification Checklist now reads "including T80-T83 and T99".
+- **T83** restated by the amendment.
+P016
+eval "$(id_next --count 2)"
+assert_eq "a bullet opening with an id reserves it (LVI-051)" "85" "$TEST_ID_HIGHEST"
+assert_eq "…and the next range starts past it" "T86-T87" "$TEST_ID_RANGE"
+out=$(id_next --verify T84-T85 2>&1; echo "rc=$?")
+assert_eq "--verify refuses a range a bullet holds" "true" \
+  "$(printf '%s' "$out" | grep -q 'T84.*plans/PLN-016' && printf '%s' "$out" | grep -q 'rc=3' && echo true || echo false)"
+assert_eq "an id later in a bullet is a reference, not a reservation" "0" \
+  "$("$SCRIPT_DIR/lv-test-id-next.sh" --verify T99-T99 >/dev/null 2>&1; echo $?)"
+assert_eq "a bullet restating its own table row is not a second row (per-plan)" "0" \
+  "$("$SCRIPT_DIR/lv-test-id-next.sh" --scope per-plan --plan PLN-016 --verify T83-T85 >/dev/null 2>&1; echo $?)"
+rm -rf plans/PLN-016-surface-run
+
 # A project with no test ids at all starts at 1 rather than erroring.
 rm -rf tests plans/PLN-010-mock-record-and-thread plans/PLN-009-idea-threads
 eval "$(id_next)"

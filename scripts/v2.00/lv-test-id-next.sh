@@ -160,14 +160,34 @@ fi
 # reservation lives in an amendment and `tests/` cannot answer either — the
 # test file defining it exists only on the feature branch. Emphasis and code
 # ticks are formatting; strip them before matching.
+#
+# An amendment can also reserve an id as a list item that OPENS with it —
+# `- **T669** (new, Unit/Integration): …` — with no table row at all. That was
+# read as prose, so PLN-118 was handed T669-T670 while an active plan's A-1
+# held T669 and its branch already defined the test; only the spec review
+# caught it (a client's LVI-051). A list item whose first token is the id is a
+# reservation; an id later in the item is still a reference. A bullet naming an
+# id the same plan's table already holds is not counted again, so per-plan
+# scope's duplicate-row check does not fire on an amendment restating a row.
 plan_ids() {
   awk -F'|' -v f="$1" -v px="$2" '
     function trim(x) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", x); return x }
     function unmark(x) { gsub(/[*_`]/, "", x); return x }
     NF >= 3 {
       cell = trim(unmark(trim($2)))
-      if (cell ~ "^" px "[0-9]+$") print f ":" cell
+      if (cell ~ "^" px "[0-9]+$") { print f ":" cell; row[cell] = 1 }
+      next
     }
+    /^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+/ {
+      item = $0
+      sub(/^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+/, "", item)
+      item = unmark(item)
+      if (match(item, "^" px "[0-9]+") && substr(item, RLENGTH + 1, 1) !~ /[[:alnum:]-]/) {
+        id = substr(item, 1, RLENGTH)
+        if (!(id in bullet)) { bullet[id] = 1; order[++nb] = id }
+      }
+    }
+    END { for (i = 1; i <= nb; i++) if (!(order[i] in row)) print f ":" order[i] }
   ' "$1"
 }
 
