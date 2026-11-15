@@ -67,11 +67,12 @@
 #
 # Exit codes (the output contract callers parse — identical to
 # lv-headless-eval.sh, deliberately):
-#   0 — expression evaluated truthy.  stdout: "PASS <value>"
-#   1 — expression evaluated falsy.   stdout: "FAIL <value>"
+#   0 — expression returned true.     stdout: "PASS true"
+#   1 — expression returned false.    stdout: "FAIL false"
 #   2 — no result was produced: no node/npm, the browser install failed, a
 #       navigation or action step failed, the session JSON is malformed, or
-#       the expression threw. stdout: "ERROR <reason>". This is "a recorded
+#       the expression threw or returned something other than true or false
+#       (LVI-054). stdout: "ERROR <reason>". This is "a recorded
 #       reason it could not run" (lv-test step 3c) — never a FAIL.
 
 set -uo pipefail
@@ -102,7 +103,7 @@ RUNNER="$CACHE_DIR/run-session.mjs"
 
 cat > "$RUNNER" <<'NODE'
 import { chromium } from 'playwright';
-import { runActions, exprScope, exprFunction } from './actions.mjs';
+import { runActions, exprScope, exprFunction, verdict } from './actions.mjs';
 
 const [, , specJson] = process.argv;
 
@@ -170,12 +171,7 @@ try {
   const value = await target.page.evaluate(exprFunction(spec.expr.js), exprScope(target.page, target.consoleErrors));
 
   await browser.close();
-  if (value) {
-    console.log(`PASS ${JSON.stringify(value)}`);
-    process.exit(0);
-  }
-  console.log(`FAIL ${JSON.stringify(value)}`);
-  process.exit(1);
+  process.exit(verdict(value));
 } catch (err) {
   if (browser) { try { await browser.close(); } catch {} }
   console.log(`ERROR ${String((err && err.message) || err).split('\n')[0]}`);

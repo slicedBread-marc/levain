@@ -175,8 +175,20 @@ HTML
     "$(run lv-headless-eval.sh "$U" "document.getElementById('t').textContent === 'hello'")"
   assert_eq "a false one: FAIL, exit 1"                '1|FAIL false' \
     "$(run lv-headless-eval.sh "$U" "document.title === 'nope'")"
-  assert_eq "the value is reported, not just its truth" '0|PASS "hello"' \
+  # A value that is not true or false is a probe, not a verdict: a truthy
+  # JSON string printed PASS (a client's LVI-054). It is ERROR, carrying it.
+  assert_eq "a string is ERROR, not a truthy PASS, and carries the value" '2|ERROR expression returned string, not true or false: "hello"' \
     "$(run lv-headless-eval.sh "$U" "document.getElementById('t').textContent")"
+  assert_eq "a JSON.stringify probe is ERROR too"      '2|ERROR expression returned string, not true or false: "{\"n\":0}"' \
+    "$(run lv-headless-eval.sh "$U" "JSON.stringify({n: 0})")"
+  assert_eq "a number is ERROR"                        '2|ERROR expression returned number, not true or false: 390' \
+    "$(run lv-headless-eval.sh "$U" "window.innerWidth")"
+  assert_eq "a falsy non-boolean is ERROR, not FAIL"   '2|ERROR expression returned null, not true or false: null' \
+    "$(run lv-headless-eval.sh "$U" "document.querySelector('#missing')")"
+  assert_eq "undefined is ERROR"                       '2|ERROR expression returned undefined, not true or false: undefined' \
+    "$(run lv-headless-eval.sh "$U" "void 0")"
+  assert_eq "a promise of true is awaited"             '0|PASS true' \
+    "$(run lv-headless-eval.sh "$U" "Promise.resolve(true)")"
   r=$(run lv-headless-eval.sh "$U" "document.querySelector('#missing').textContent")
   assert_eq "an expression that throws is ERROR (2), never FAIL" "2" "${r%%|*}"
   assert_eq "actions run before the expression (click)" '0|PASS true' \
@@ -195,28 +207,30 @@ HTML
     "$(run lv-headless-eval.sh "$U" "document.getElementById('v').textContent === '2'" '[{"type":"reload"}]')"
   assert_eq "consoleErrors holds the page's errors"    '0|PASS true' \
     "$(run lv-headless-eval.sh "$U" "consoleErrors.some(e => e.includes('boom from the page'))")"
-  assert_eq "the default viewport is mobile, 390 wide" '0|PASS 390' \
-    "$(run lv-headless-eval.sh "$U" "window.innerWidth")"
-  assert_eq "width and height set a breakpoint"        '0|PASS 1280' \
-    "$(run lv-headless-eval.sh "$U" "window.innerWidth" '[]' 1280 800)"
+  assert_eq "the default viewport is mobile, 390 wide" '0|PASS true' \
+    "$(run lv-headless-eval.sh "$U" "window.innerWidth === 390")"
+  assert_eq "width and height set a breakpoint"        '0|PASS true' \
+    "$(run lv-headless-eval.sh "$U" "window.innerWidth === 1280" '[]' 1280 800)"
   # Downloads, uploads and the clipboard: an unattended tester had no verb for
   # any of them and recorded all 7 of a plan's criteria as "needs: device"
   # (LVI-036).
   F="http://127.0.0.1:$PORT/files.html"
   assert_eq "download: the file is kept, with its name and text" '0|PASS true' \
     "$(run lv-headless-eval.sh "$F" "downloads.length === 1 && downloads[0].filename === 'scores.csv' && downloads[0].text.startsWith('name,score')" '[{"type":"download","selector":"#dl"}]')"
-  assert_eq "download: its size is reported"          '0|PASS 18' \
-    "$(run lv-headless-eval.sh "$F" "downloads[0].size" '[{"type":"download","selector":"#dl"}]')"
-  assert_eq "upload: inline content into a file input" '0|PASS "a.csv:x,y"' \
-    "$(run lv-headless-eval.sh "$F" "document.getElementById('out').textContent" '[{"type":"upload","selector":"#f","files":[{"name":"a.csv","mimeType":"text/csv","text":"x,y"}]},{"type":"waitForSelector","selector":"#out:not(:empty)"}]')"
+  assert_eq "download: its size is reported"          '0|PASS true' \
+    "$(run lv-headless-eval.sh "$F" "downloads[0].size === 18" '[{"type":"download","selector":"#dl"}]')"
+  assert_eq "upload: inline content into a file input" '0|PASS true' \
+    "$(run lv-headless-eval.sh "$F" "document.getElementById('out').textContent === 'a.csv:x,y'" '[{"type":"upload","selector":"#f","files":[{"name":"a.csv","mimeType":"text/csv","text":"x,y"}]},{"type":"waitForSelector","selector":"#out:not(:empty)"}]')"
   printf 'from disk' > "$TEST_DIR/note.txt"
-  assert_eq "upload: a path, through the chooser a button opens" '0|PASS "note.txt:from disk"' \
-    "$(run lv-headless-eval.sh "$F" "document.getElementById('out').textContent" '[{"type":"upload","click":"#pick","files":["'"$TEST_DIR/note.txt"'"]},{"type":"waitForSelector","selector":"#out:not(:empty)"}]')"
-  assert_eq "clipboard: what a copy button wrote"     '0|PASS "share-code-42"' \
-    "$(run lv-headless-eval.sh "$F" "clipboard" '[{"type":"click","selector":"#copy"},{"type":"clipboard"}]')"
-  assert_eq "clipboardWrite seeds a paste"            '0|PASS "pasted-in"' \
-    "$(run lv-headless-eval.sh "$F" "document.getElementById('paste').value" '[{"type":"clipboardWrite","text":"pasted-in"},{"type":"focus","selector":"#paste"},{"type":"keyboard","key":"ControlOrMeta+V"}]')"
-  assert_eq "session exprs see downloads too"         '0|PASS "scores.csv"' \
+  assert_eq "upload: a path, through the chooser a button opens" '0|PASS true' \
+    "$(run lv-headless-eval.sh "$F" "document.getElementById('out').textContent === 'note.txt:from disk'" '[{"type":"upload","click":"#pick","files":["'"$TEST_DIR/note.txt"'"]},{"type":"waitForSelector","selector":"#out:not(:empty)"}]')"
+  assert_eq "clipboard: what a copy button wrote"     '0|PASS true' \
+    "$(run lv-headless-eval.sh "$F" "clipboard === 'share-code-42'" '[{"type":"click","selector":"#copy"},{"type":"clipboard"}]')"
+  assert_eq "clipboardWrite seeds a paste"            '0|PASS true' \
+    "$(run lv-headless-eval.sh "$F" "document.getElementById('paste').value === 'pasted-in'" '[{"type":"clipboardWrite","text":"pasted-in"},{"type":"focus","selector":"#paste"},{"type":"keyboard","key":"ControlOrMeta+V"}]')"
+  assert_eq "session exprs see downloads too"         '0|PASS true' \
+    "$(run lv-headless-session.sh '{"contexts":[{"name":"a","url":"'"$F"'","actions":[{"type":"download","selector":"#dl"}]}],"expr":{"context":"a","js":"downloads[0].filename === \"scores.csv\""}}')"
+  assert_eq "a session expr that is not true or false is ERROR" '2|ERROR expression returned string, not true or false: "scores.csv"' \
     "$(run lv-headless-session.sh '{"contexts":[{"name":"a","url":"'"$F"'","actions":[{"type":"download","selector":"#dl"}]}],"expr":{"context":"a","js":"downloads[0].filename"}}')"
   r=$(run lv-headless-eval.sh "$U" "true" '[{"type":"wave"}]')
   assert_eq "an unknown action is ERROR, naming it"    "2|ERROR unknown action type: wave" "$r"
@@ -262,22 +276,22 @@ PY
   NAV_PID=$!; disown "$NAV_PID" 2>/dev/null
   for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$NPORT/" >/dev/null 2>&1 && break; sleep 0.1; done
   N="http://127.0.0.1:$NPORT"
-  assert_eq "a click whose submit starts late: the expression sees the new page" '0|PASS "/signin/sent"' \
-    "$(run lv-headless-eval.sh "$N/js" "location.pathname" '[{"type":"click","selector":"#go"}]')"
-  assert_eq "…and a goto after it does not abort the POST"  '0|PASS "got"' \
-    "$(run lv-headless-eval.sh "$N/js" "document.getElementById('mail').textContent" '[{"type":"click","selector":"#go"},{"type":"goto","url":"'"$N"'/mail"}]')"
-  assert_eq "a form submit by Enter lands too"              '0|PASS "/signin/sent"' \
-    "$(run lv-headless-eval.sh "$N/" "location.pathname" '[{"type":"fill","selector":"#e","value":"a@b"},{"type":"press","selector":"#e","key":"Enter"}]')"
+  assert_eq "a click whose submit starts late: the expression sees the new page" '0|PASS true' \
+    "$(run lv-headless-eval.sh "$N/js" "location.pathname === '/signin/sent'" '[{"type":"click","selector":"#go"}]')"
+  assert_eq "…and a goto after it does not abort the POST"  '0|PASS true' \
+    "$(run lv-headless-eval.sh "$N/js" "document.getElementById('mail').textContent === 'got'" '[{"type":"click","selector":"#go"},{"type":"goto","url":"'"$N"'/mail"}]')"
+  assert_eq "a form submit by Enter lands too"              '0|PASS true' \
+    "$(run lv-headless-eval.sh "$N/" "location.pathname === '/signin/sent'" '[{"type":"fill","selector":"#e","value":"a@b"},{"type":"press","selector":"#e","key":"Enter"}]')"
   assert_eq "waitForURL names where it lands"               '0|PASS true' \
     "$(run lv-headless-eval.sh "$N/js" "!!document.getElementById('sent')" '[{"type":"click","selector":"#go","navGrace":0},{"type":"waitForURL","url":"**/signin/sent"}]')"
   assert_eq "waitForURL takes a /regex/"                    '0|PASS true' \
     "$(run lv-headless-eval.sh "$N/js" "!!document.getElementById('sent')" '[{"type":"click","selector":"#go","navGrace":0},{"type":"waitForURL","url":"/signin.sent$/"}]')"
   r=$(run lv-headless-eval.sh "$N/js" "true" '[{"type":"waitForURL","url":"**/never","timeout":400}]')
   assert_eq "waitForURL that never arrives is ERROR"        "2" "${r%%|*}"
-  assert_eq "a click that navigates nowhere still just clicks" '0|PASS "stayed"' \
-    "$(run lv-headless-eval.sh "$N/js" "document.getElementById('stay').textContent" '[{"type":"click","selector":"#stay"}]')"
-  assert_eq "a session step waits for the navigation too"   '0|PASS "/signin/sent"' \
-    "$(run lv-headless-session.sh '{"contexts":[{"name":"a","url":"'"$N"'/js"}],"steps":[{"context":"a","actions":[{"type":"click","selector":"#go"}]}],"expr":{"context":"a","js":"location.pathname"}}')"
+  assert_eq "a click that navigates nowhere still just clicks" '0|PASS true' \
+    "$(run lv-headless-eval.sh "$N/js" "document.getElementById('stay').textContent === 'stayed'" '[{"type":"click","selector":"#stay"}]')"
+  assert_eq "a session step waits for the navigation too"   '0|PASS true' \
+    "$(run lv-headless-session.sh '{"contexts":[{"name":"a","url":"'"$N"'/js"}],"steps":[{"context":"a","actions":[{"type":"click","selector":"#go"}]}],"expr":{"context":"a","js":"location.pathname === \"/signin/sent\""}}')"
   kill "$NAV_PID" 2>/dev/null
 
   echo "  layout (LVI-044)"

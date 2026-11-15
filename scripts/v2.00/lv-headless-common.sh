@@ -17,7 +17,8 @@
 #     keyboard, check/uncheck or selectOption that starts a navigation waits
 #     for the new page to load before the next step (LVI-043). It also
 #     exports exprScope(page, consoleErrors): what an expression can name —
-#     consoleErrors, downloads, clipboard — and exprFunction(js), which builds the function evaluated in the page.
+#     consoleErrors, downloads, clipboard — exprFunction(js), which builds the function evaluated in the page,
+#     and verdict(value), which prints PASS/FAIL for true/false and ERROR for anything else.
 #   - Sets (unprefixed, in the caller's shell — this is sourced, not
 #     subshelled) CACHE_DIR for the caller to build runner/output paths from.
 #
@@ -108,6 +109,21 @@ export function exprScope(page, consoleErrors) {
 // so `navigator.clipboard.readText().then(t => t === "x")` works as well.
 export function exprFunction(js) {
   return new Function('__lv', `const { consoleErrors, downloads, clipboard } = __lv; return (${js});`);
+}
+
+// The verdict an expression's value is: only true and false are one. A string,
+// a number, an object or undefined is a probe, not an assertion, and used to
+// print PASS whenever it was truthy: a tester's expression that returned
+// JSON.stringify({...}) for a look at the state got `PASS "{...}"` (a client's
+// LVI-054). It is ERROR (exit 2), carrying the value, so the caller sees what
+// came back and writes the comparison the criterion means.
+export function verdict(value) {
+  const shown = value === undefined ? 'undefined' : JSON.stringify(value);
+  if (value === true) { console.log(`PASS ${shown}`); return 0; }
+  if (value === false) { console.log(`FAIL ${shown}`); return 1; }
+  const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+  console.log(`ERROR expression returned ${kind}, not true or false: ${String(shown).slice(0, 300)}`);
+  return 2;
 }
 
 // A file for setInputFiles: a path (relative to the cwd), or inline content

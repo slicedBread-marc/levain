@@ -18,7 +18,9 @@
 # Usage: lv-headless-eval.sh <url> <js-boolean-expression> [actions-json] [width] [height]
 #   The expression runs inside page.evaluate() after the page reaches
 #   'load', a short settle wait, and any actions-json steps, and must
-#   return something coercible to boolean. A `consoleErrors` array
+#   return true or false (a promise of one is awaited). Any other value — a
+#   string, a number, an element, null — is ERROR, not a truthy PASS: write
+#   the comparison (`el.textContent === 'x'`, `n > 0`, `!!el`) (LVI-054). A `consoleErrors` array
 #   (strings, collected from console and page errors since navigation
 #   start, including any raised during the actions) is in scope for
 #   "no console errors" style criteria. `downloads` (what download steps
@@ -78,11 +80,13 @@
 #   See lv-headless-common.sh's actions.mjs for the canonical definitions.
 #
 # Exit codes (this is the output contract callers parse):
-#   0 — expression evaluated truthy.  stdout: "PASS <value>"
-#   1 — expression evaluated falsy.   stdout: "FAIL <value>"
+#   0 — expression returned true.     stdout: "PASS true"
+#   1 — expression returned false.    stdout: "FAIL false"
 #   2 — no result was produced: no node/npm on this machine, the browser
 #       install failed (no network), navigation failed, an action step
-#       failed (e.g. selector never appeared), or the expression threw.
+#       failed (e.g. selector never appeared), the expression threw, or
+#       it returned something other than true or false (the value is in
+#       the reason).
 #       stdout: "ERROR <reason>". This is "a recorded reason it could not
 #       run" (lv-test SKILL.md step 3) — never a FAIL, and never silently
 #       treated as untested.
@@ -109,7 +113,7 @@ RUNNER="$CACHE_DIR/run-eval.mjs"
 
 cat > "$RUNNER" <<'NODE'
 import { chromium } from 'playwright';
-import { runActions, exprScope, exprFunction } from './actions.mjs';
+import { runActions, exprScope, exprFunction, verdict } from './actions.mjs';
 
 const [, , url, expr, actionsJson, width, height] = process.argv;
 
@@ -125,13 +129,7 @@ try {
   await runActions(page, JSON.parse(actionsJson || '[]'));
   const value = await page.evaluate(exprFunction(expr), exprScope(page, consoleErrors));
   await browser.close();
-  if (value) {
-    console.log(`PASS ${JSON.stringify(value)}`);
-    process.exit(0);
-  } else {
-    console.log(`FAIL ${JSON.stringify(value)}`);
-    process.exit(1);
-  }
+  process.exit(verdict(value));
 } catch (err) {
   if (browser) { try { await browser.close(); } catch {} }
   console.log(`ERROR ${String((err && err.message) || err).split('\n')[0]}`);
