@@ -1692,6 +1692,26 @@ rc=0; lock status >/dev/null 2>&1 || rc=$?
 assert_eq "a live PID with the wrong start time is stale, not a holder" "3" "$rc"
 kill "$IMPOSTOR" 2>/dev/null; wait "$IMPOSTOR" 2>/dev/null || true
 
+# ── The holder is our own session, however the call was wrapped ─────────
+#
+# session_pid climbs only through shells, so a take and a release from the
+# same session can resolve to different PIDs when something that is not a
+# shell stands between (the coordinator's LVI-047: release refused as another
+# live session's lock). Here the recorded holder is this test's own shell,
+# and lock.sh runs under perl, so the walk stops at perl — only the ancestry
+# says the lock is ours.
+self_start=$(ps -o lstart= -p $$ 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^ *//; s/ *$//')
+sed "s/^\*\*Session PID:\*\* .*/**Session PID:** $$/; s|^<!-- pid-start: .*|<!-- pid-start: $self_start -->|" \
+  "$LOCK_FILE" > "$LOCK_FILE.t" && mv "$LOCK_FILE.t" "$LOCK_FILE"
+wrapped_lock() {
+  env -u LV_SESSION_PID -u WF_SESSION_PID -u CLAUDE_PID LV_LOCK_FILE="$LOCK_FILE" \
+    perl -e 'exit(system(@ARGV) >> 8)' "$LIB_ROOT/lock.sh" "$@"
+}
+rc=0; wrapped_lock status >/dev/null 2>&1 || rc=$?
+assert_eq "a holder that is our ancestor reads as ours (exit 2), whatever wraps the call" "2" "$rc"
+rc=0; wrapped_lock release >/dev/null 2>&1 || rc=$?
+assert_eq "and its release is not refused as another session's" "0" "$rc"
+
 lock take library "done" --steal >/dev/null 2>&1
 lock release >/dev/null 2>&1
 assert_eq "release takes the switch back down" "false" \

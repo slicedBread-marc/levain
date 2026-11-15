@@ -108,6 +108,26 @@ proc_start() {
   ps -o lstart= -p "$1" 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^ *//; s/ *$//'
 }
 
+# is_ancestor <pid> → 0 when <pid> is this process or one of its ancestors.
+#
+# session_pid's walk climbs only through shells, so its answer depends on how
+# the tool call happened to be wrapped: a take and a release from the same
+# Claude Code session resolved differently, and the release was refused as
+# "another live session's lock" (the coordinator's LVI-047). A holder that is
+# above us in the process tree is our own session, whatever stands between —
+# so ownership is also read from the full ancestry, not only from the walk.
+is_ancestor() {
+  local want=$1 cur=$$ parent
+  [ -n "$want" ] || return 1
+  for _ in $(seq 1 64); do
+    [ "$cur" = "$want" ] && return 0
+    parent=$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d ' ')
+    [ -n "$parent" ] && [ "$parent" -gt 1 ] 2>/dev/null || return 1
+    cur=$parent
+  done
+  return 1
+}
+
 field() { grep -m1 "^\*\*$1:\*\* " "$LOCK" 2>/dev/null | sed "s/^\*\*$1:\*\* //"; }
 started_field() { grep -m1 '^<!-- pid-start: ' "$LOCK" 2>/dev/null | sed 's/^<!-- pid-start: //; s/ -->$//'; }
 
@@ -120,6 +140,12 @@ probe() {
   [ "$pid" = "$(session_pid)" ] && return 2
   [ -n "$pid" ] || return 1
   kill -0 "$pid" 2>/dev/null || return 3
+  if is_ancestor "$pid"; then
+    # Our own ancestor — unless the start time says the number was reused.
+    if [ -z "$started" ] || [ "$(proc_start "$pid")" = "$started" ]; then
+      return 2
+    fi
+  fi
   # A recycled PID is somebody else's process wearing the holder's number. With
   # no recorded start time — a lock written by hand — liveness is all we have.
   if [ -n "$started" ]; then
