@@ -10,6 +10,7 @@
 #   lv-services.sh start <id> [--checkout <path>]
 #   lv-services.sh stop <id>
 #   lv-services.sh log <id> [--path]    follow a detached service's log in a new window
+#   lv-services.sh progress <id>        the progress file's facts and detail lines
 #   lv-services.sh console              open the project's own console (services_console:)
 #   lv-services.sh guard <path>         exit 2 when a live service runs from <path>
 #   lv-services.sh beacon up|beat|down <id> (--pid <pid> | --detached)
@@ -75,12 +76,29 @@
 # ── STATUS ─────────────────────────────────────────────────────────────────
 #
 #   <id>\t<state>\t<detail>\t<checkout>\t<branch>\t<commit>\t<since>\t<pid>\t<flags>\t<url>
+#     \t<progress>\t<p.age>\t<summary>\t<control>\t<reported>
 #
-#   state   up | down | stale (heartbeat older than heartbeat:)
-#   detail  the health code, `N containers`, or the heartbeat age (`♥12s`)
-#   since   seconds since the beacon's up; `-` with no beacon
-#   flags   comma-separated: offmain (not main's worktree), behind=N (commits behind main)
-#   url     url:, else health:'s scheme://host[:port]/, else `-`
+#   state     up | down | stale (heartbeat older than heartbeat:)
+#   detail    the health code, `N containers`, or the heartbeat age (`♥12s`)
+#   since     seconds since the beacon's up; `-` with no beacon
+#   flags     comma-separated: offmain (not main's worktree), behind=N (commits behind main)
+#   url       url:, else health:'s scheme://host[:port]/, else `-`
+#   progress  ok | stale (updatedAt older than heartbeat:) | undated | missing | unreadable,
+#             or `-` with no progress: declared
+#   p.age     seconds since the progress file's updatedAt, else `-`
+#   summary   the progress file's one-line summary, else `-`
+#   control   the control file's state (run | pause | stop-for-day), `run` with no control
+#             file, `-` with no throttle: declared
+#   reported  the progress file's own `state` (what the service says it is doing), else `-`
+#
+# Fields are only ever appended: the rack reads them by position. `progress <id>` prints the
+# same five, after a `file` line, followed by the progress file's detail lines.
+#
+# ── PROGRESS AND THROTTLE ──────────────────────────────────────────────────
+#
+#       progress: "synth.status.json"    # a JSON file the service writes: summary (one line),
+#                                        # detail (array of short lines), updatedAt (ISO 8601);
+#                                        # relative to $LV_SERVICES_DIR/<project_slug>/
 #
 # Exit codes: 0 ok · 1 usage · 2 refused under an agent, or guard found a live service ·
 # 3 that checkout is not allowed · 4 no main worktree · 5 a need is not up · 6 already running
@@ -93,7 +111,7 @@ source "$(dirname "$0")/lv-orch-lib.sh"
 
 SERVICES_DIR="${LV_SERVICES_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/levain/services}"
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
+usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
 die() { local rc="$1"; shift; echo "lv-services: $*" >&2; exit "$rc"; }
 
 # Starting or stopping runs the project's own launchers, which read keys in the operator's
@@ -251,14 +269,15 @@ url_of() {
 
 # status_of <id> — the status lines for one service.
 status_of() {
-  local id="$1" hb now f pid state detail age recs url
+  local id="$1" hb now f pid state detail age recs url facts
   hb=$(svc "$id" heartbeat); url=$(url_of "$id")
   now=$(date +%s)
   probe "$id"
+  facts=$(facts_line "$id")
   recs=$(live_records "$id")
   if [ -z "$recs" ]; then
     case "$P_STATE" in none) state=down ;; *) state="$P_STATE" ;; esac
-    printf '%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t%s\n' "$id" "$state" "${P_DETAIL:--}" "$url"
+    printf '%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t%s\t%s\n' "$id" "$state" "${P_DETAIL:--}" "$url" "$facts"
     return 0
   fi
   while IFS= read -r f; do
@@ -266,7 +285,7 @@ status_of() {
     # A detached record outlives what it started; once the probe says down, it is history.
     if [ "$pid" = 0 ] && [ "$P_STATE" = down ]; then
       rm -f "$f"
-      printf '%s\tdown\t%s\t-\t-\t-\t-\t-\t-\t%s\n' "$id" "${P_DETAIL:--}" "$url"
+      printf '%s\tdown\t%s\t-\t-\t-\t-\t-\t-\t%s\t%s\n' "$id" "${P_DETAIL:--}" "$url" "$facts"
       continue
     fi
     state="$P_STATE"; detail="$P_DETAIL"
@@ -276,14 +295,107 @@ status_of() {
       detail="♥${age}s"
       [ -n "$hb" ] && [ "$age" -gt "$hb" ] && state=stale
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$state" "${detail:--}" \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$state" "${detail:--}" \
       "$(rec_get "$f" checkout)" "$(rec_get "$f" branch)" "$(rec_get "$f" commit)" \
       "$(( now - $(rec_get "$f" started) ))" "$pid" \
-      "$(flags_for "$(rec_get "$f" checkout)" "$(rec_get "$f" commit)")" "$url"
+      "$(flags_for "$(rec_get "$f" checkout)" "$(rec_get "$f" commit)")" "$url" "$facts"
   done <<< "$recs"
 }
 
 is_up() { status_of "$1" | cut -f2 | grep -qx up; }
+
+# ── Progress and throttle ───────────────────────────────────────────────────
+#
+# Both are small JSON files a service shares with the rack, in its project's state dir:
+#
+#   progress: <file>   the service writes it, the rack reads it (the coordinator's LVI-052)
+#   <id>.control.json  the rack writes it, the service reads it (throttle:, LVI-041)
+#
+# Read with python3, which also parses updatedAt's ISO time; without it, progress reads as
+# unreadable.
+
+# progress_path <id> — the declared progress: file, resolved; nothing when none is declared.
+progress_path() {
+  local p; p=$(svc "$1" progress)
+  [ -n "$p" ] || return 0
+  case "$p" in /*) ;; "~/"*) p="$HOME/${p#\~/}" ;; *) p="$(pdir)/$p" ;; esac
+  printf '%s' "$p"
+}
+control_path() { printf '%s/%s.control.json' "$(pdir)" "$1"; }
+has_throttle() { [ -n "$(wf_cfg_keys "services.$1.throttle")" ]; }
+
+# json_facts <progress-file|-> <heartbeat|-> <control-file|-> — one TSV line:
+#   <progress: ok|stale|undated|missing|unreadable|-> <age secs|-> <summary|-> <control state|->
+#   <reported state|->
+# then the progress file's detail lines. Never fails: a file that cannot be read says so.
+JSON_FACTS_PY='
+import json, re, sys, time, datetime
+pf, hb, cf = sys.argv[1:4]
+def clean(x): return re.sub(r"[\t\r\n]+", " ", str(x)).strip()
+def age_of(u):
+    if not isinstance(u, str): return None
+    t = re.sub(r"Z$", "+00:00", u.strip()); t = re.sub(r"(\.\d{6})\d+", r"\1", t)
+    try: dt = datetime.datetime.fromisoformat(t)
+    except ValueError: return None
+    if dt.tzinfo is None: dt = dt.astimezone()
+    return max(0, int(time.time() - dt.timestamp()))
+pst, age, summ, rep, detail = "-", "-", "-", "-", []
+if pf != "-":
+    try:
+        with open(pf) as h: d = json.load(h)
+        if not isinstance(d, dict): raise ValueError("not an object")
+    except FileNotFoundError: pst = "missing"
+    except Exception: pst = "unreadable"
+    else:
+        summ = clean(d.get("summary") or "") or "-"
+        rep = clean(d.get("state") or "") or "-"
+        a = age_of(d.get("updatedAt"))
+        if a is None: pst = "undated"
+        else:
+            age = str(a)
+            pst = "stale" if hb.isdigit() and a > int(hb) else "ok"
+        det = d.get("detail")
+        if isinstance(det, str): det = [det]
+        if isinstance(det, list): detail = [clean(x) for x in det[:100]]
+cst = "-"
+if cf != "-":
+    cst = "run"
+    try:
+        with open(cf) as h: c = json.load(h)
+        if isinstance(c, dict) and c.get("state"): cst = clean(c["state"])
+    except FileNotFoundError: pass
+    except Exception: cst = "unreadable"
+print("\t".join([pst, age, summ, cst, rep]))
+for x in detail: print(x)
+'
+json_facts() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf '%s\t-\t-\t%s\t-\n' "$([ "$1" = - ] && echo - || echo unreadable)" "$([ "$3" = - ] && echo - || echo unreadable)"
+    return 0
+  fi
+  python3 -c "$JSON_FACTS_PY" "$@" 2>/dev/null || printf 'unreadable\t-\t-\t-\t-\n'
+}
+
+# facts_line <id> — the five progress and throttle fields status appends, tab-separated.
+facts_line() {
+  local pf cf
+  pf=$(progress_path "$1"); cf=-
+  has_throttle "$1" && cf=$(control_path "$1")
+  if [ -z "$pf" ] && [ "$cf" = - ]; then printf -- '-\t-\t-\t-\t-'; return 0; fi
+  json_facts "${pf:--}" "$(svc "$1" heartbeat -)" "$cf" | head -1
+}
+
+# progress <id> — the progress file's facts, then its detail lines.
+progress() {
+  local id="${1:-}" pf cf=-
+  [ -n "$id" ] || usage 1
+  has_svc "$id" || die 7 "no service '$id' in levain.yml services:"
+  pf=$(progress_path "$id")
+  has_throttle "$id" && cf=$(control_path "$id")
+  [ -n "$pf" ] || [ "$cf" != - ] || die 7 "$id declares no progress: or throttle:"
+  printf 'file\t%s\n' "${pf:--}"
+  json_facts "${pf:--}" "$(svc "$id" heartbeat -)" "$cf"
+}
 
 # ── Actions ─────────────────────────────────────────────────────────────────
 
@@ -506,6 +618,7 @@ case "${1:-}" in
   console) console ;;
   guard) shift; guard "$@" ;;
   log) shift; log_window "$@" ;;
+  progress) shift; progress "$@" ;;
   beacon) shift; beacon "$@" ;;
   -h|--help) usage 0 ;;
   *) usage 1 ;;
