@@ -3134,23 +3134,81 @@ sv_counts() {
   printf '%s %s\n' "$decl" "$up"
 }
 
-sv_reset() { SV_P=(); SV_NAME=(); SV_ID=(); SV_STATE=(); SV_DETAIL=(); SV_CO=(); SV_BRANCH=(); SV_COMMIT=(); SV_SINCE=(); SV_FLAGS=(); SV_URL=(); }
+sv_reset() {
+  SV_P=(); SV_NAME=(); SV_ID=(); SV_STATE=(); SV_DETAIL=(); SV_CO=(); SV_BRANCH=(); SV_COMMIT=(); SV_SINCE=(); SV_FLAGS=(); SV_URL=()
+  SV_PST=(); SV_PAGE=(); SV_SUM=(); SV_CTL=(); SV_REP=()
+}
 
-# sv_collect [project_path] — every project's services, or only that one's.
+# sv_collect [project_path] — every project's services, or only that one's. Fields 11-15 are
+# progress (the coordinator's LVI-052) and throttle (LVI-041); an older harness prints none,
+# which reads as `-`.
 sv_collect() {
-  local only="${1:-}" p out id st de co br cm si pid fl url
+  local only="${1:-}" p out id st de co br cm si pid fl url pst pag sum ctl rep
   sv_reset
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     [ -z "$only" ] || [ "$p" = "$only" ] || continue
     has_harness "$p" || continue
     out=$(cd "$p" && hx lv-services.sh status 2>/dev/null) || continue
-    while IFS=$'\t' read -r id st de co br cm si pid fl url; do
+    while IFS=$'\t' read -r id st de co br cm si pid fl url pst pag sum ctl rep; do
       [ -n "$id" ] || continue
       SV_P+=("$p"); SV_NAME+=("$(basename "$p")"); SV_ID+=("$id"); SV_STATE+=("$st"); SV_DETAIL+=("$de")
       SV_CO+=("$co"); SV_BRANCH+=("$br"); SV_COMMIT+=("$cm"); SV_SINCE+=("$si"); SV_FLAGS+=("$fl"); SV_URL+=("${url:--}")
+      SV_PST+=("${pst:--}"); SV_PAGE+=("${pag:--}"); SV_SUM+=("${sum:--}"); SV_CTL+=("${ctl:--}"); SV_REP+=("${rep:--}")
     done <<< "$out"
   done <<< "$(each_project)"
+}
+
+# sv_has_more <i> — does the service declare progress: or throttle:, so there is a drill?
+sv_has_more() { [ "${SV_PST[$1]:--}" != - ] || [ "${SV_CTL[$1]:--}" != - ]; }
+
+# sv_refresh_progress — re-read only the progress and throttle facts, for the services that have
+# them: no health probe, so a poll tick costs a file read per such service, not a curl timeout.
+sv_refresh_progress() {
+  local i facts pst pag sum ctl rep
+  for i in "${!SV_ID[@]}"; do
+    sv_has_more "$i" || continue
+    facts=$(cd "${SV_P[$i]}" && hx lv-services.sh progress "${SV_ID[$i]}" 2>/dev/null | sed -n '2p')
+    [ -n "$facts" ] || continue
+    IFS=$'\t' read -r pst pag sum ctl rep <<< "$facts"
+    SV_PST[$i]="${pst:--}"; SV_PAGE[$i]="${pag:--}"; SV_SUM[$i]="${sum:--}"; SV_CTL[$i]="${ctl:--}"; SV_REP[$i]="${rep:--}"
+  done
+}
+
+# sv_ctl_tag <control state> — the throttle's word for the row, nothing while it runs.
+sv_ctl_tag() {
+  case "$1" in
+    pause) printf '%s⏸ paused%s ' "$YEL" "$R" ;;
+    stop-for-day) printf '%s⏹ stopped for the day%s ' "$YEL" "$R" ;;
+    unreadable) printf '%scontrol file unreadable%s ' "$RED" "$R" ;;
+  esac
+}
+
+# sv_prog_text <i> [width] — the progress cell: the throttle's tag, then the summary, dim when
+# it is stale (older than heartbeat:). Width 0 or none means no limit.
+sv_prog_text() {
+  local i="$1" w="${2:-0}" t="" c=""
+  case "${SV_PST[$i]:--}" in
+    -) ;;
+    missing) t="no progress yet"; c="$DIM" ;;
+    unreadable) t="progress unreadable"; c="$DIM" ;;
+    stale) t="${SV_SUM[$i]} ($(sv_age "${SV_PAGE[$i]}") old)"; c="$DIM" ;;
+    undated) t="${SV_SUM[$i]} (undated)"; c="$DIM" ;;
+    *) t="${SV_SUM[$i]}" ;;
+  esac
+  [ "$t" = - ] && t=""
+  [ "$w" -gt 1 ] 2>/dev/null && [ "${#t}" -gt "$w" ] && t="${t:0:$((w - 1))}…"
+  printf '%s%s%s%s' "$(sv_ctl_tag "${SV_CTL[$i]:--}")" "$c" "$t" "$R"
+}
+
+# SV_PW — the width left for the progress cell beside the row; under 20, it goes on a line of its
+# own beneath. 0 is unlimited (--plain, a pipe).
+SV_PW=0
+sv_width() {
+  local cols
+  if $plain || [ ! -t 1 ]; then SV_PW=0; return; fi
+  cols=$(term_cols); SV_PW=$(( cols - 118 ))
+  [ "$SV_PW" -ge 20 ] || SV_PW=$(( -(cols - 10) ))
 }
 
 sv_age() {
@@ -3175,20 +3233,127 @@ sv_color() {
 }
 
 sv_line() { # sv_line <i> <selected:true|false>
-  local i="$1" c state
+  local i="$1" c state prog="" below=""
   c=$(sv_color "${SV_STATE[$i]}")
   state="${SV_STATE[$i]} ${SV_DETAIL[$i]}"; [ "${SV_DETAIL[$i]}" = - ] && state="${SV_STATE[$i]}"
-  if $2; then printf '  %s> %-16s %-12s%s %s%-14s%s %-34s %-6s %s\n' "$REV" "${SV_NAME[$i]}" "${SV_ID[$i]}" "$R" "$c" "$state" "$R" "$(sv_where "$i")" "$(sv_age "${SV_SINCE[$i]}")" "${SV_URL[$i]:--}"
-  else printf '    %-16s %-12s %s%-14s%s %-34s %-6s %s\n' "${SV_NAME[$i]}" "${SV_ID[$i]}" "$c" "$state" "$R" "$(sv_where "$i")" "$(sv_age "${SV_SINCE[$i]}")" "${SV_URL[$i]:--}"; fi
+  if sv_has_more "$i"; then
+    if [ "$SV_PW" -lt 0 ]; then below=$(sv_prog_text "$i" $(( -SV_PW ))); else prog=$(sv_prog_text "$i" "$SV_PW"); fi
+  fi
+  if $2; then printf '  %s> %-16s %-12s%s %s%-14s%s %-34s %-6s %-26s %s\n' "$REV" "${SV_NAME[$i]}" "${SV_ID[$i]}" "$R" "$c" "$state" "$R" "$(sv_where "$i")" "$(sv_age "${SV_SINCE[$i]}")" "${SV_URL[$i]:--}" "$prog"
+  else printf '    %-16s %-12s %s%-14s%s %-34s %-6s %-26s %s\n' "${SV_NAME[$i]}" "${SV_ID[$i]}" "$c" "$state" "$R" "$(sv_where "$i")" "$(sv_age "${SV_SINCE[$i]}")" "${SV_URL[$i]:--}" "$prog"; fi
+  [ -z "$below" ] || printf '      ↳ %s\n' "$below"
 }
+
+sv_header() { printf '    %s%-16s %-12s %-14s %-34s %-6s %-26s %s%s\n' "$B" PROJECT SERVICE STATE CHECKOUT SINCE URL PROGRESS "$R"; }
 
 sv_table() {
   local i
   if [ "${#SV_ID[@]}" -eq 0 ]; then
     printf '  %sno project declares services: in levain.yml%s\n' "$DIM" "$R"; return 0
   fi
-  printf '    %s%-16s %-12s %-14s %-34s %-6s %s%s\n' "$B" PROJECT SERVICE STATE CHECKOUT SINCE URL "$R"
+  sv_width
+  sv_header
   for i in "${!SV_ID[@]}"; do sv_line "$i" false; done
+}
+
+# sv_do <i> <lv-services args...> — one quick action in that project; its output becomes the
+# screen's note instead of a screen of its own.
+sv_do() {
+  local i="$1" out rc; shift
+  out=$(cd "${SV_P[$i]}" && hx lv-services.sh "$@" 2>&1); rc=$?
+  out="${out%%$'\n'*}"
+  if [ "$rc" -eq 0 ]; then SV_NOTE="${GRN}${out}${R}"; else SV_NOTE="${RED}${out:-lv-services.sh $1 failed (exit $rc)}${R}"; fi
+  return "$rc"
+}
+
+# sv_toggle_pause <i> — pause a throttled service, or resume a paused (or stopped-for-the-day) one.
+sv_toggle_pause() {
+  local i="$1"
+  case "${SV_CTL[$i]:--}" in
+    -) SV_NOTE="${DIM}${SV_ID[$i]} declares no throttle:${R}"; return 1 ;;
+    pause|stop-for-day) sv_do "$i" throttle "${SV_ID[$i]}" resume ;;
+    *) sv_do "$i" throttle "${SV_ID[$i]}" pause ;;
+  esac
+}
+
+# sv_set_value <i> — choose one of the throttle's declared keys, then type its new value.
+sv_set_value() {
+  local i="$1" line n choice val; local -a keys=() vals=()
+  while IFS=$'\t' read -r line val _; do
+    case "$line" in ''|control|state|updatedAt) continue ;; esac
+    keys+=("$line"); vals+=("$val")
+  done <<< "$(cd "${SV_P[$i]}" && hx lv-services.sh throttle "${SV_ID[$i]}" show 2>/dev/null)"
+  [ "${#keys[@]}" -gt 0 ] || { SV_NOTE="${DIM}${SV_ID[$i]} declares no throttle: values${R}"; return 0; }
+  printf '\033[2J\033[H%sTHROTTLE %s / %s%s\n\n' "$B" "${SV_NAME[$i]}" "${SV_ID[$i]}" "$R"
+  for n in "${!keys[@]}"; do printf '  %d) %-14s %s\n' "$((n + 1))" "${keys[$n]}" "${vals[$n]}"; done
+  printf '\n  number, or enter to cancel: '
+  printf '\033[?25h'; IFS= read -r choice || return 0
+  [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#keys[@]}" ] || return 0
+  printf '  new %s (now %s), or enter to cancel: ' "${keys[$((choice - 1))]}" "${vals[$((choice - 1))]}"
+  IFS= read -r val || return 0
+  [ -n "$val" ] || return 0
+  sv_do "$i" throttle "${SV_ID[$i]}" set "${keys[$((choice - 1))]}" "$val"
+}
+
+# sv_detail <i> — one service's progress and throttle, re-read every two seconds: the summary,
+# the detail lines, how old they are, and the throttle as the control file and the manifest set
+# it. p pause/resume · d stop for the day · s set a value · l follow its log · esc back.
+sv_detail() {
+  local i="$1" key prog thr pfile facts pst pag sum ctl rep line k v src n=0
+  SV_NOTE=""
+  while true; do
+    prog=$(cd "${SV_P[$i]}" && hx lv-services.sh progress "${SV_ID[$i]}" 2>/dev/null)
+    thr=""; [ "${SV_CTL[$i]:--}" != - ] && thr=$(cd "${SV_P[$i]}" && hx lv-services.sh throttle "${SV_ID[$i]}" show 2>/dev/null)
+    pfile=$(sed -n 's/^file\t//p' <<< "$prog" | head -1)
+    facts=$(sed -n '2p' <<< "$prog")
+    IFS=$'\t' read -r pst pag sum ctl rep <<< "$facts"
+    SV_PST[$i]="${pst:--}"; SV_PAGE[$i]="${pag:--}"; SV_SUM[$i]="${sum:--}"; SV_CTL[$i]="${ctl:--}"; SV_REP[$i]="${rep:--}"
+    printf '\033[2J\033[H%s%s / %s%s  %s' "$B" "${SV_NAME[$i]}" "${SV_ID[$i]}" "$R" "$(sv_color "${SV_STATE[$i]}")${SV_STATE[$i]}${R}"
+    printf '  %s%s · l log · esc back · m main%s\n\n' "$DIM" "$([ "${SV_CTL[$i]}" != - ] && echo 'p pause/resume · d stop for the day · s set a value')" "$R"
+    if [ "${SV_PST[$i]}" != - ]; then
+      printf '  %sPROGRESS%s  %s%s%s\n' "$B" "$R" "$DIM" "${pfile:--}" "$R"
+      case "${SV_PST[$i]}" in
+        missing)    printf '    %sno progress yet: the file is not there%s\n' "$DIM" "$R" ;;
+        unreadable) printf '    %sthe file does not parse as a JSON object%s\n' "$DIM" "$R" ;;
+        *)
+          printf '    %s\n' "$(sv_prog_text "$i")"
+          case "${SV_PST[$i]}" in
+            stale)   printf '    %supdated %s ago, longer than its heartbeat:%s\n' "$DIM" "$(sv_age "${SV_PAGE[$i]}")" "$R" ;;
+            undated) printf '    %sno readable updatedAt%s\n' "$DIM" "$R" ;;
+            *)       printf '    %supdated %s ago%s\n' "$DIM" "$(sv_age "${SV_PAGE[$i]}")" "$R" ;;
+          esac
+          [ "${SV_REP[$i]}" != - ] && printf '    %sit reports:%s %s\n' "$DIM" "$R" "${SV_REP[$i]}"
+          n=0
+          while IFS= read -r line; do
+            [ "$n" -eq 0 ] && printf '\n'
+            n=$((n + 1)); printf '    %s\n' "$line"
+          done < <(sed -n '3,$p' <<< "$prog")
+          ;;
+      esac
+      printf '\n'
+    fi
+    if [ -n "$thr" ]; then
+      printf '  %sTHROTTLE%s  %s%s%s\n' "$B" "$R" "$DIM" "$(sed -n 's/^control\t//p' <<< "$thr")" "$R"
+      while IFS=$'\t' read -r k v src; do
+        case "$k" in ''|control) continue ;; esac
+        if [ "$k" = state ]; then printf '    %-14s %s%s%s %s(%s)%s\n' "$k" "$( [ "$v" = run ] && echo "$GRN" || echo "$YEL")" "$v" "$R" "$DIM" "$src" "$R"
+        else printf '    %-14s %s %s(%s)%s\n' "$k" "$v" "$DIM" "$src" "$R"; fi
+      done <<< "$thr"
+    fi
+    [ -n "$SV_NOTE" ] && printf '\n  %s\n' "$SV_NOTE"
+    read_key key 2
+    $key_eof && return 0
+    [ "$key_rc" -eq 0 ] || continue
+    SV_NOTE=""
+    case "$key" in
+      p|P) sv_toggle_pause "$i" ;;
+      d|D) [ "${SV_CTL[$i]}" != - ] && sv_do "$i" throttle "${SV_ID[$i]}" stop-for-day ;;
+      s|S) [ "${SV_CTL[$i]}" != - ] && sv_set_value "$i" ;;
+      l|L) sv_do "$i" log "${SV_ID[$i]}" ;;
+      $'\x1b'|$'\x1b[D'|b) return 0 ;;
+      m|M) to_main=true; return 0 ;;
+    esac
+  done
 }
 
 # sv_run <i> <lv-services args...> — one action, in that project, then wait for a key.
@@ -3227,8 +3392,11 @@ sv_copy() {
 
 # services_screen [project_path] — the list behind `v`, or behind Enter on one project's
 # services cell, scoped to that project (`v` there widens it to every project).
-# ↑↓ move, enter copy the service's URL, u start from main, w start from a worktree, x stop,
-# o the project's own console, r refresh, esc back, m main.
+# ↑↓ move, enter copy the service's URL (or, with none, open its progress), i its progress and
+# throttle (sv_detail), p pause or resume a throttled one, u start from main, w start from a
+# worktree, x stop, l follow a detached start's log, o the project's own console, r refresh,
+# esc back, m main. Every five seconds without a key, the progress and throttle cells are
+# re-read (sv_refresh_progress); the rest waits for r.
 services_screen() {
   local only="${1:-}" key sel=0 i n title widen="" note=""
   printf '\033[2J\033[H  %scollecting services…%s\n' "$DIM" "$R"
@@ -3237,22 +3405,30 @@ services_screen() {
     n="${#SV_ID[@]}"
     title="SERVICES"; widen=""
     [ -n "$only" ] && { title="SERVICES — $(basename "$only")"; widen=" · v all projects"; }
-    printf '\033[2J\033[H%s%s%s  %s↑↓ move · enter copy url · u start · w start from a worktree · x stop · o console · r refresh%s · esc back · m main%s\n\n' "$B" "$title" "$R" "$DIM" "$widen" "$R"
+    printf '\033[2J\033[H%s%s%s  %s↑↓ move · enter copy url · i progress · p pause/resume · u start · w start from a worktree · x stop · l log · o console · r refresh%s · esc back · m main%s\n\n' "$B" "$title" "$R" "$DIM" "$widen" "$R"
     if [ "$n" -eq 0 ]; then
       if [ -n "$only" ]; then printf '  %s%s declares no services: in levain.yml%s\n' "$DIM" "$(basename "$only")" "$R"
       else printf '  %sno project declares services: in levain.yml%s\n' "$DIM" "$R"; fi
     else
-      printf '    %s%-16s %-12s %-14s %-34s %-6s %s%s\n' "$B" PROJECT SERVICE STATE CHECKOUT SINCE URL "$R"
+      sv_width
+      sv_header
       [ "$sel" -lt "$n" ] || sel=0
       for i in "${!SV_ID[@]}"; do if [ "$i" -eq "$sel" ]; then sv_line "$i" true; else sv_line "$i" false; fi; done
     fi
     [ -n "$note" ] && printf '\n  %s\n' "$note"
     note=""
-    read_key key
+    # Polled, so a service's progress keeps moving while the list is open.
+    read_key key 5
     $key_eof && break
+    if [ "$key_rc" -ne 0 ]; then sv_refresh_progress; continue; fi
     case "$key" in
+      i|I) [ "$n" -gt 0 ] && if sv_has_more "$sel"; then sv_detail "$sel"; $to_main && break; sv_collect "$only"
+           else note="${DIM}${SV_ID[$sel]} declares no progress: or throttle:${R}"; fi ;;
+      p|P) [ "$n" -gt 0 ] && { sv_toggle_pause "$sel"; note="$SV_NOTE"; sv_collect "$only"; } ;;
+      l|L) [ "$n" -gt 0 ] && { sv_do "$sel" log "${SV_ID[$sel]}"; note="$SV_NOTE"; } ;;
       ''|$'\n') [ "$n" -gt 0 ] && case "${SV_URL[$sel]:--}" in
-             -) note="${DIM}${SV_ID[$sel]} has no url: or health: to copy${R}" ;;
+             -) if sv_has_more "$sel"; then sv_detail "$sel"; $to_main && break; sv_collect "$only"
+                else note="${DIM}${SV_ID[$sel]} has no url: or health: to copy${R}"; fi ;;
              *) if sv_copy "${SV_URL[$sel]}"; then note="${GRN}copied${R} ${SV_URL[$sel]}"
                 else note="${YEL}no clipboard tool${R} — ${SV_URL[$sel]}"; fi ;;
            esac ;;

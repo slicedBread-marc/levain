@@ -9,6 +9,9 @@
 #   lv-services.sh worktrees            <path>\t<branch>, one per worktree, main's first
 #   lv-services.sh start <id> [--checkout <path>]
 #   lv-services.sh stop <id>
+#   lv-services.sh log <id> [--path]    follow a detached service's log in a new window
+#   lv-services.sh progress <id>        the progress file's facts and detail lines
+#   lv-services.sh throttle <id> [show|pause|resume|stop-for-day|set <key> <value>|unset <key>]
 #   lv-services.sh console              open the project's own console (services_console:)
 #   lv-services.sh guard <path>         exit 2 when a live service runs from <path>
 #   lv-services.sh beacon up|beat|down <id> (--pid <pid> | --detached)
@@ -27,8 +30,9 @@
 #       label: "Web + tunnel"
 #       start: "tools/run-web.sh up"     # run from the chosen checkout
 #       stop: "tools/run-web.sh down"    # or "signal": TERM to each live beacon's pid
-#       window: true                     # start in a new Terminal window (it reads keys);
-#                                        # the default when stop: is signal or absent
+#       window: true                     # start detached, its output in a log that a new
+#                                        # Terminal window follows; the default when stop:
+#                                        # is signal or absent
 #       checkout: main                   # main (the default) | any
 #       health: "http://127.0.0.1:8080/health"   # up while it answers 200-499
 #       url: "http://127.0.0.1:8080/"    # what the rack shows and copies on Enter;
@@ -40,9 +44,19 @@
 #   services_console: "tools/board.sh"   # the project's own board, for what the rack does not do
 #
 # A service stopped by signal (stop: signal, or no stop:) is the process its start: runs, so
-# it starts in a window unless the manifest says `window: false` (a launcher that detaches and
+# it starts detached unless the manifest says `window: false` (a launcher that detaches and
 # returns). Run in the foreground it held the rack's own terminal until it was killed — every
 # one of a client's five such services did (the coordinator's LVI-045).
+#
+# Detached means: in a session of its own, stdin closed, stdout and stderr to
+# $LV_SERVICES_DIR/<project_slug>/<id>.log (the previous run's kept as <id>.log.1), its pid in
+# <id>.launch. The window that opens only runs `tail -F` on that log, so a prompt from the
+# operator's shell startup blocks the tail, never the service (the coordinator's LVI-049), and
+# closing the window stops nothing (`log <id>` reopens it). A launcher therefore cannot read
+# the terminal; one that asks a question must take its answer another way. A start that dies
+# within LV_SERVICES_SETTLE_SECS (0.5) prints its log's end and exits 8.
+#
+# Detached starts, progress: and throttle: are explained in docs/services.md.
 #
 # A service with no start: is status-only. With no health: or compose:, a service is up while
 # a beacon names a live pid. A URL behind a login wall (Cloudflare Access) answers 302 whether
@@ -65,16 +79,36 @@
 # ── STATUS ─────────────────────────────────────────────────────────────────
 #
 #   <id>\t<state>\t<detail>\t<checkout>\t<branch>\t<commit>\t<since>\t<pid>\t<flags>\t<url>
+#     \t<progress>\t<p.age>\t<summary>\t<control>\t<reported>
 #
-#   state   up | down | stale (heartbeat older than heartbeat:)
-#   detail  the health code, `N containers`, or the heartbeat age (`♥12s`)
-#   since   seconds since the beacon's up; `-` with no beacon
-#   flags   comma-separated: offmain (not main's worktree), behind=N (commits behind main)
-#   url     url:, else health:'s scheme://host[:port]/, else `-`
+#   state     up | down | stale (heartbeat older than heartbeat:)
+#   detail    the health code, `N containers`, or the heartbeat age (`♥12s`)
+#   since     seconds since the beacon's up; `-` with no beacon
+#   flags     comma-separated: offmain (not main's worktree), behind=N (commits behind main)
+#   url       url:, else health:'s scheme://host[:port]/, else `-`
+#   progress  ok | stale (updatedAt older than heartbeat:) | undated | missing | unreadable,
+#             or `-` with no progress: declared
+#   p.age     seconds since the progress file's updatedAt, else `-`
+#   summary   the progress file's one-line summary, else `-`
+#   control   the control file's state (run | pause | stop-for-day), `run` with no control
+#             file, `-` with no throttle: declared
+#   reported  the progress file's own `state` (what the service says it is doing), else `-`
+#
+# Fields are only ever appended: the rack reads them by position. `progress <id>` prints the
+# same five, after a `file` line, followed by the progress file's detail lines.
+#
+# ── PROGRESS AND THROTTLE ──────────────────────────────────────────────────
+#
+#       progress: "synth.status.json"    # a JSON file the service writes: summary (one line),
+#                                        # detail (array of short lines), updatedAt (ISO 8601);
+#                                        # relative to $LV_SERVICES_DIR/<project_slug>/
+#       throttle:                        # the service honours <id>.control.json beside its
+#         rate: 20/hour                  # beacons; these are its defaults, and the keys the
+#         budget: 400k tokens/5h         # rack may change (docs/services.md § Throttle)
 #
 # Exit codes: 0 ok · 1 usage · 2 refused under an agent, or guard found a live service ·
 # 3 that checkout is not allowed · 4 no main worktree · 5 a need is not up · 6 already running
-# · 7 no such service, or nothing to run.
+# · 7 no such service, or nothing to run · 8 a detached start exited at once · 9 a control file does not parse, or no python3.
 
 set -euo pipefail
 
@@ -83,7 +117,7 @@ source "$(dirname "$0")/lv-orch-lib.sh"
 
 SERVICES_DIR="${LV_SERVICES_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/levain/services}"
 
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
 die() { local rc="$1"; shift; echo "lv-services: $*" >&2; exit "$rc"; }
 
 # Starting or stopping runs the project's own launchers, which read keys in the operator's
@@ -241,14 +275,15 @@ url_of() {
 
 # status_of <id> — the status lines for one service.
 status_of() {
-  local id="$1" hb now f pid state detail age recs url
+  local id="$1" hb now f pid state detail age recs url facts
   hb=$(svc "$id" heartbeat); url=$(url_of "$id")
   now=$(date +%s)
   probe "$id"
+  facts=$(facts_line "$id")
   recs=$(live_records "$id")
   if [ -z "$recs" ]; then
     case "$P_STATE" in none) state=down ;; *) state="$P_STATE" ;; esac
-    printf '%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t%s\n' "$id" "$state" "${P_DETAIL:--}" "$url"
+    printf '%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t%s\t%s\n' "$id" "$state" "${P_DETAIL:--}" "$url" "$facts"
     return 0
   fi
   while IFS= read -r f; do
@@ -256,7 +291,7 @@ status_of() {
     # A detached record outlives what it started; once the probe says down, it is history.
     if [ "$pid" = 0 ] && [ "$P_STATE" = down ]; then
       rm -f "$f"
-      printf '%s\tdown\t%s\t-\t-\t-\t-\t-\t-\t%s\n' "$id" "${P_DETAIL:--}" "$url"
+      printf '%s\tdown\t%s\t-\t-\t-\t-\t-\t-\t%s\t%s\n' "$id" "${P_DETAIL:--}" "$url" "$facts"
       continue
     fi
     state="$P_STATE"; detail="$P_DETAIL"
@@ -266,14 +301,202 @@ status_of() {
       detail="♥${age}s"
       [ -n "$hb" ] && [ "$age" -gt "$hb" ] && state=stale
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$state" "${detail:--}" \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$state" "${detail:--}" \
       "$(rec_get "$f" checkout)" "$(rec_get "$f" branch)" "$(rec_get "$f" commit)" \
       "$(( now - $(rec_get "$f" started) ))" "$pid" \
-      "$(flags_for "$(rec_get "$f" checkout)" "$(rec_get "$f" commit)")" "$url"
+      "$(flags_for "$(rec_get "$f" checkout)" "$(rec_get "$f" commit)")" "$url" "$facts"
   done <<< "$recs"
 }
 
 is_up() { status_of "$1" | cut -f2 | grep -qx up; }
+
+# ── Progress and throttle ───────────────────────────────────────────────────
+#
+# Both are small JSON files a service shares with the rack, in its project's state dir:
+#
+#   progress: <file>   the service writes it, the rack reads it (the coordinator's LVI-052)
+#   <id>.control.json  the rack writes it, the service reads it (throttle:, LVI-041)
+#
+# Read and written with python3, which also parses updatedAt's ISO time; without it, progress
+# reads as unreadable and a throttle write refuses (exit 9).
+
+# progress_path <id> — the declared progress: file, resolved; nothing when none is declared.
+progress_path() {
+  local p; p=$(svc "$1" progress)
+  [ -n "$p" ] || return 0
+  case "$p" in /*) ;; "~/"*) p="$HOME/${p#\~/}" ;; *) p="$(pdir)/$p" ;; esac
+  printf '%s' "$p"
+}
+control_path() { printf '%s/%s.control.json' "$(pdir)" "$1"; }
+has_throttle() { [ -n "$(wf_cfg_keys "services.$1.throttle")" ]; }
+
+# json_facts <progress-file|-> <heartbeat|-> <control-file|-> — one TSV line:
+#   <progress: ok|stale|undated|missing|unreadable|-> <age secs|-> <summary|-> <control state|->
+#   <reported state|->
+# then the progress file's detail lines. Never fails: a file that cannot be read says so.
+JSON_FACTS_PY='
+import json, re, sys, time, datetime
+pf, hb, cf = sys.argv[1:4]
+def clean(x): return re.sub(r"[\t\r\n]+", " ", str(x)).strip()
+def age_of(u):
+    if not isinstance(u, str): return None
+    t = re.sub(r"Z$", "+00:00", u.strip()); t = re.sub(r"(\.\d{6})\d+", r"\1", t)
+    try: dt = datetime.datetime.fromisoformat(t)
+    except ValueError: return None
+    if dt.tzinfo is None: dt = dt.astimezone()
+    return max(0, int(time.time() - dt.timestamp()))
+pst, age, summ, rep, detail = "-", "-", "-", "-", []
+if pf != "-":
+    try:
+        with open(pf) as h: d = json.load(h)
+        if not isinstance(d, dict): raise ValueError("not an object")
+    except FileNotFoundError: pst = "missing"
+    except Exception: pst = "unreadable"
+    else:
+        summ = clean(d.get("summary") or "") or "-"
+        rep = clean(d.get("state") or "") or "-"
+        a = age_of(d.get("updatedAt"))
+        if a is None: pst = "undated"
+        else:
+            age = str(a)
+            pst = "stale" if hb.isdigit() and a > int(hb) else "ok"
+        det = d.get("detail")
+        if isinstance(det, str): det = [det]
+        if isinstance(det, list): detail = [clean(x) for x in det[:100]]
+cst = "-"
+if cf != "-":
+    cst = "run"
+    try:
+        with open(cf) as h: c = json.load(h)
+        if isinstance(c, dict) and c.get("state"): cst = clean(c["state"])
+    except FileNotFoundError: pass
+    except Exception: cst = "unreadable"
+print("\t".join([pst, age, summ, cst, rep]))
+for x in detail: print(x)
+'
+json_facts() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf '%s\t-\t-\t%s\t-\n' "$([ "$1" = - ] && echo - || echo unreadable)" "$([ "$3" = - ] && echo - || echo unreadable)"
+    return 0
+  fi
+  python3 -c "$JSON_FACTS_PY" "$@" 2>/dev/null || printf 'unreadable\t-\t-\t-\t-\n'
+}
+
+# facts_line <id> — the five progress and throttle fields status appends, tab-separated.
+facts_line() {
+  local pf cf
+  pf=$(progress_path "$1"); cf=-
+  has_throttle "$1" && cf=$(control_path "$1")
+  if [ -z "$pf" ] && [ "$cf" = - ]; then printf -- '-\t-\t-\t-\t-'; return 0; fi
+  json_facts "${pf:--}" "$(svc "$1" heartbeat -)" "$cf" | head -1
+}
+
+# The throttle vocabulary the library knows the shape of (docs/services.md § Throttle). A key a
+# service declares beyond these is passed through as a string, unchecked.
+throttle_valid() { # throttle_valid <key> <value>
+  case "$1" in
+    rate)        [[ "$2" =~ ^[1-9][0-9]*/hour$ ]] ;;
+    concurrency) [[ "$2" =~ ^[1-9][0-9]*$ ]] ;;
+    budget)      [[ "$2" =~ ^[0-9]+[km]?\ tokens/[1-9][0-9]*h$ ]] ;;
+    hours)       [[ "$2" =~ ^[0-9]{1,2}:[0-5][0-9]-[0-9]{1,2}:[0-5][0-9]$ ]] ;;
+    ai_share)    [[ "$2" =~ ^[0-9]+(\.[0-9]+)?%$ ]] ;;
+    *)           [[ "$2" != *$'\t'* && "$2" != *$'\n'* && -n "$2" ]] ;;
+  esac
+}
+
+# control_write <file> <key=value | -key>... — merge into the control file through a rename,
+# keeping every field it does not name, and stamp updatedAt (UTC). Refuses a file that does not
+# parse rather than overwrite what someone wrote by hand.
+CONTROL_WRITE_PY='
+import json, os, re, sys, tempfile, datetime
+path, edits = sys.argv[1], sys.argv[2:]
+try:
+    with open(path) as h: d = json.load(h)
+    if not isinstance(d, dict): raise ValueError("not an object")
+except FileNotFoundError: d = {}
+except Exception as e:
+    sys.stderr.write("lv-services: %s does not parse (%s); fix or remove it\n" % (path, e)); sys.exit(9)
+for op in edits:
+    if op.startswith("-"): d.pop(op[1:], None); continue
+    k, v = op.split("=", 1)
+    d[k] = int(v) if re.fullmatch(r"[0-9]+", v) else v
+d["updatedAt"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+os.makedirs(os.path.dirname(path), exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=os.path.basename(path) + ".")
+with os.fdopen(fd, "w") as h: json.dump(d, h); h.write("\n")
+os.replace(tmp, path)
+'
+control_write() {
+  command -v python3 >/dev/null 2>&1 || die 9 "writing a control file needs python3"
+  python3 -c "$CONTROL_WRITE_PY" "$@"
+}
+
+# throttle <id> [show | pause | resume | stop-for-day | set <key> <value> | unset <key>]
+throttle() {
+  local id="${1:-}" action="${2:-show}" key="${3:-}" val="${4:-}" cf k v src
+  [ -n "$id" ] || usage 1
+  has_svc "$id" || die 7 "no service '$id' in levain.yml services:"
+  has_throttle "$id" || die 7 "$id declares no throttle:"
+  cf=$(control_path "$id")
+  case "$action" in
+    show)
+      command -v python3 >/dev/null 2>&1 || die 9 "reading a control file needs python3"
+      printf 'control\t%s\n' "$cf"
+      # state first, then each declared key: the control file's value, else the manifest's.
+      while IFS= read -r k; do [ -n "$k" ] && printf '%s\t%s\n' "$k" "$(svc "$id" "throttle.$k")"; done \
+        <<< "$(wf_cfg_keys "services.$id.throttle")" | python3 -c '
+import json, sys
+cf = sys.argv[1]
+try:
+    with open(cf) as h: c = json.load(h)
+    if not isinstance(c, dict): c = {}
+except Exception: c = {}
+print("state\t%s\t%s" % (c.get("state", "run"), "control" if "state" in c else "default"))
+decl = [l.rstrip("\n").split("\t", 1) for l in sys.stdin if "\t" in l]
+for k, v in decl:
+    print("%s\t%s\tcontrol" % (k, c[k]) if k in c else "%s\t%s\tmanifest" % (k, v))
+names = [k for k, _ in decl]
+for k in c:
+    if k not in names and k not in ("state", "updatedAt"): print("%s\t%s\tcontrol" % (k, c[k]))
+if "updatedAt" in c: print("updatedAt\t%s\tcontrol" % c["updatedAt"])
+' "$cf"
+      return 0 ;;
+    pause|stop-for-day)
+      control_write "$cf" "state=$action"
+      printf '%s: %s (%s)\n' "$id" "$action" "$cf" ;;
+    resume)
+      refuse_agent "resume"
+      control_write "$cf" "state=run"
+      printf '%s: resumed (%s)\n' "$id" "$cf" ;;
+    set)
+      refuse_agent "set"
+      [ -n "$key" ] && [ -n "$val" ] || usage 1
+      [ "$key" != state ] && [ "$key" != updatedAt ] || die 1 "use pause, resume or stop-for-day for state"
+      wf_cfg_keys "services.$id.throttle" | grep -qxF -- "$key" \
+        || die 1 "$id's throttle: declares no '$key' (declared: $(wf_cfg_keys "services.$id.throttle" | tr '\n' ' '))"
+      throttle_valid "$key" "$val" || die 1 "'$val' is not a valid $key (docs/services.md § Throttle)"
+      control_write "$cf" "$key=$val"
+      printf '%s: %s = %s (%s)\n' "$id" "$key" "$val" "$cf" ;;
+    unset)
+      refuse_agent "unset"
+      [ -n "$key" ] || usage 1
+      control_write "$cf" "-$key"
+      printf '%s: %s back to the manifest'"'"'s (%s)\n' "$id" "$key" "$cf" ;;
+    *) usage 1 ;;
+  esac
+}
+
+# progress <id> — the progress file's facts, then its detail lines.
+progress() {
+  local id="${1:-}" pf cf=-
+  [ -n "$id" ] || usage 1
+  has_svc "$id" || die 7 "no service '$id' in levain.yml services:"
+  pf=$(progress_path "$id")
+  has_throttle "$id" && cf=$(control_path "$id")
+  [ -n "$pf" ] || [ "$cf" != - ] || die 7 "$id declares no progress: or throttle:"
+  printf 'file\t%s\n' "${pf:--}"
+  json_facts "${pf:--}" "$(svc "$id" heartbeat -)" "$cf"
+}
 
 # ── Actions ─────────────────────────────────────────────────────────────────
 
@@ -331,12 +554,83 @@ start() {
   done
   running=$(status_of "$id" | awk -F'\t' '$2 != "down" { print ($4 == "-" ? "outside the rack" : $4) }' | head -1)
   [ -z "$running" ] || die 6 "$id is already running ($running); stop it first"
+  running=$(launch_pid "$id") && die 6 "$id is already running (detached, pid $running); stop it first"
   if wants_window "$id"; then
-    open_window "$co" "$cmd"
-    printf '%s: started in a new window, from %s\n' "$id" "$co"
+    detach "$id" "$co" "$cmd"
   else
     (cd "$co" && bash -c "$cmd")
   fi
+}
+
+# log_of <id> — where a detached start writes the service's stdout and stderr.
+log_of() { printf '%s/%s.log' "$(pdir)" "$1"; }
+launch_of() { printf '%s/%s.launch' "$(pdir)" "$1"; }
+
+# launch_detached <dir> <command> <log> — <command> from <dir> in a session of its own, stdin
+# closed, stdout and stderr appended to <log>. Prints its pid. setsid(1) where there is one;
+# macOS has none, so perl's POSIX::setsid, which it ships; nohup when neither is there.
+launch_detached() {
+  (
+    cd "$1" || exit 1
+    if command -v setsid >/dev/null 2>&1; then
+      setsid bash -c "$2" </dev/null >>"$3" 2>&1 &
+    elif command -v perl >/dev/null 2>&1; then
+      perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec: $!\n"' bash -c "$2" </dev/null >>"$3" 2>&1 &
+    else
+      nohup bash -c "$2" </dev/null >>"$3" 2>&1 &
+    fi
+    printf '%s\n' "$!"
+  )
+}
+
+# detach <id> <checkout> <command> — start a long-running service detached from any terminal,
+# then open a window that only follows its log. The command used to be typed into a fresh
+# interactive shell, whose startup prompt (oh-my-zsh's update question) ate the line, and the
+# service never started (the coordinator's LVI-049). A prompt now blocks the tail, not the
+# service. The pid is recorded in <id>.launch so stop: signal reaches it even before, or
+# without, the launcher's own beacon.
+detach() {
+  local id="$1" co="$2" cmd="$3" log pid
+  log=$(log_of "$id")
+  mkdir -p "$(pdir)"
+  [ -f "$log" ] && mv -f "$log" "$log.1"
+  printf '── %s started %s from %s ──\n' "$id" "$(date '+%Y-%m-%d %H:%M:%S')" "$co" > "$log"
+  pid=$(launch_detached "$co" "$cmd" "$log")
+  rec_write "$(launch_of "$id")" "service=$id" "pid=$pid" "checkout=$co" "log=$log" "started=$(date +%s)"
+  sleep "${LV_SERVICES_SETTLE_SECS:-0.5}"
+  if ! pid_alive "$pid"; then
+    rm -f "$(launch_of "$id")"
+    printf 'lv-services: %s exited at once; the end of its log (%s):\n' "$id" "$log" >&2
+    tail -n 20 "$log" >&2
+    exit 8
+  fi
+  open_window "$co" "tail -n 200 -F $(printf '%q' "$log")" \
+    || printf '%s: no window opened; follow it with: tail -F %s\n' "$id" "$log"
+  printf '%s: started detached (pid %s), from %s; a new window follows %s\n' "$id" "$pid" "$co" "$log"
+}
+
+# launch_pid <id> — the pid a detached start recorded, while it lives; a dead one's record goes.
+launch_pid() {
+  local f pid; f=$(launch_of "$1")
+  [ -f "$f" ] || return 1
+  pid=$(rec_get "$f" pid)
+  if pid_alive "$pid"; then printf '%s' "$pid"; else rm -f "$f"; return 1; fi
+}
+
+# log_window <id> [--path] — follow a detached service's log again in a new window (closing
+# that window never stopped the service), or print where the log is.
+log_window() {
+  local id="" path=false log
+  while [ $# -gt 0 ]; do
+    case "$1" in --path) path=true; shift ;; -*) usage 1 ;; *) id="$1"; shift ;; esac
+  done
+  [ -n "$id" ] || usage 1
+  has_svc "$id" || die 7 "no service '$id' in levain.yml services:"
+  log=$(log_of "$id")
+  if $path; then printf '%s\n' "$log"; return 0; fi
+  refuse_agent "log"
+  [ -f "$log" ] || die 7 "$id has no log yet (only a detached start writes one)"
+  open_window "$(pdir)" "tail -n 200 -F $(printf '%q' "$log")"
 }
 
 stop() {
@@ -349,13 +643,19 @@ stop() {
   # down with the service whose launcher brought it up).
   [ -n "$cmd" ] || [ -n "$(svc "$id" start)" ] || die 7 "$id is status-only (no start: or stop:) — stop whatever starts it"
   if [ -z "$cmd" ] || [ "$cmd" = signal ]; then
+    # The beacons' pids, and the pid a detached start recorded: never a window's shell.
+    local sent=" " lp
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       pid=$(rec_get "$f" pid)
       [ "$pid" = 0 ] && continue
-      kill -TERM "$pid" 2>/dev/null && n=$((n + 1))
+      kill -TERM "$pid" 2>/dev/null && { n=$((n + 1)); sent="$sent$pid "; }
       rm -f "$f"
     done <<< "$(live_records "$id")"
+    if lp=$(launch_pid "$id"); then
+      case "$sent" in *" $lp "*) ;; *) kill -TERM "$lp" 2>/dev/null && n=$((n + 1)) ;; esac
+      rm -f "$(launch_of "$id")"
+    fi
     [ "$n" -gt 0 ] || die 7 "$id: nothing running to signal"
     printf '%s: TERM sent to %s process(es)\n' "$id" "$n"
     return 0
@@ -418,6 +718,9 @@ case "${1:-}" in
   stop) shift; stop "$@" ;;
   console) console ;;
   guard) shift; guard "$@" ;;
+  log) shift; log_window "$@" ;;
+  progress) shift; progress "$@" ;;
+  throttle) shift; throttle "$@" ;;
   beacon) shift; beacon "$@" ;;
   -h|--help) usage 0 ;;
   *) usage 1 ;;

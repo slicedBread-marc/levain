@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # services.test.sh — lv-services.sh and the rack's services view: the manifest is read from
 # levain.yml, a beacon says what runs and from which checkout, a dead pid's record goes, a
-# stale heartbeat shows, start and stop refuse what they should, a worktree a service runs
-# from cannot be drained, and `v`'s table shows a worker running off main as its branch.
+# stale heartbeat shows, start and stop refuse what they should, a window start runs detached
+# with only a tail in the window, a worktree a service runs from cannot be drained, and `v`'s
+# table shows a worker running off main as its branch.
 #
 #   tests/rack/services.test.sh
 #
@@ -20,7 +21,12 @@ SVC="$SCRIPTS/lv-services.sh"
 
 FIX="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/lv-rack-services.XXXXXX")" && pwd -P)"
 PIDS=()
-cleanup() { local p; for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; rm -rf "$FIX"; return 0; }
+cleanup() {
+  local p f
+  for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done
+  for f in "$FIX"/state/*/*.launch; do [ -f "$f" ] && kill "$(sed -n 's/^pid=//p' "$f")" 2>/dev/null; done
+  rm -rf "$FIX"; return 0
+}
 trap cleanup EXIT
 
 fails=0
@@ -124,17 +130,78 @@ svc "$P" stop worker >/dev/null 2>&1
 sleep 0.3
 kill -0 "$W" 2>/dev/null && bad "stop: signal sends TERM" || ok "stop: signal sends TERM"
 ck "and its record is gone" "$(ls "$LV_SERVICES_DIR/alpha" | grep -c '^worker\.' )" "0"
+
+echo "── a window start runs detached; the window only follows its log (LVI-049) ──"
+# wait_for <secs> <command...> — poll until the command succeeds.
+wait_for() { local n=$(( $1 * 10 )); shift; while [ "$n" -gt 0 ]; do "$@" && return 0; sleep 0.1; n=$((n - 1)); done; return 1; }
+mkdir -p "$FEAT/tools" "$MAIN/tools"
+cat > "$FEAT/tools/worker.sh" <<SH
+#!/usr/bin/env bash
+pwd -P > ran-from.txt
+if [ -t 0 ]; then echo tty > stdin.txt; else echo notty > stdin.txt; fi
+echo "worker says hi"; echo "worker complains" >&2
+"$SVC" beacon up worker --pid \$\$
+trap '"$SVC" beacon down worker --pid \$\$; exit 0' TERM
+while :; do sleep 0.2; done
+SH
+printf '#!/usr/bin/env bash\nwhile :; do sleep 0.2; done\n' > "$MAIN/tools/held.sh"
+printf '#!/usr/bin/env bash\necho "no key for you" >&2; exit 3\n' > "$MAIN/tools/refuses.sh"
+chmod +x "$FEAT/tools/worker.sh" "$MAIN/tools/held.sh" "$MAIN/tools/refuses.sh"
+LOG="$LV_SERVICES_DIR/alpha/worker.log"
+out=$(svc "$P" start worker --checkout "$FEAT" 2>&1); rc=$?
+ck "a window start succeeds" "$rc" "0"
+has "and says it runs detached" "$out" "started detached"
+ck "the window is given only a tail of the service's log" "$(tail -1 "$FIX/opened" 2>/dev/null)" "cd $FEAT && tail -n 200 -F $LOG"
+wait_for 3 test -s "$FEAT/ran-from.txt"
+ck "the command ran from the chosen checkout, with no window's shell involved" "$(cat "$FEAT/ran-from.txt" 2>/dev/null)" "$FEAT"
+ck "with stdin closed, not a terminal" "$(cat "$FEAT/stdin.txt" 2>/dev/null)" "notty"
+wait_for 3 grep -q "worker complains" "$LOG"
+has "stdout reaches the log" "$(cat "$LOG" 2>/dev/null)" "worker says hi"
+has "and so does stderr" "$(cat "$LOG" 2>/dev/null)" "worker complains"
+LP=$(sed -n 's/^pid=//p' "$LV_SERVICES_DIR/alpha/worker.launch" 2>/dev/null)
+kill -0 "${LP:-0}" 2>/dev/null && ok "the launch record names a live pid" || bad "the launch record names a live pid"
+ck "in a session and process group of its own" "$(ps -o pgid= -p "${LP:-0}" 2>/dev/null | tr -d ' ')" "$LP"
+(cd "$P" && wait_for 3 bash -c '"$0" status | grep -q "^worker	up"' "$SVC")
+ck "its own beacon reports it up" "$(svc "$P" status | awk -F'\t' '$1=="worker"{print $2 $8}')" "up$LP"
+out=$(svc "$P" start worker --checkout "$FEAT" 2>&1); ck "a second start is refused" "$?" "6"
+ck "log --path names the log" "$(svc "$P" log worker --path)" "$LOG"
+svc "$P" log worker >/dev/null 2>&1
+ck "log reopens a window on it" "$(tail -1 "$FIX/opened")" "cd $LV_SERVICES_DIR/alpha && tail -n 200 -F $LOG"
+out=$(svc "$P" stop worker 2>&1); rc=$?
+ck "stop: signal stops it" "$rc" "0"
+wait_for 3 bash -c "! kill -0 $LP 2>/dev/null"
+kill -0 "$LP" 2>/dev/null && bad "TERM reached the detached pid" || ok "TERM reached the detached pid"
+ck "and the launch record is gone" "$(ls "$LV_SERVICES_DIR/alpha" | grep -c '^worker\.launch')" "0"
 svc "$P" start worker --checkout "$FEAT" >/dev/null 2>&1
-has "a window start opens the chosen checkout" "$(tail -1 "$FIX/opened" 2>/dev/null)" "cd $FEAT && tools/worker.sh"
+LP=$(sed -n 's/^pid=//p' "$LV_SERVICES_DIR/alpha/worker.launch" 2>/dev/null)
+[ -f "$LOG.1" ] && ok "a restart keeps the previous log as .log.1" || bad "a restart keeps the previous log as .log.1"
+svc "$P" stop worker >/dev/null 2>&1; wait_for 3 bash -c "! kill -0 ${LP:-0} 2>/dev/null"
 cp "$P/levain.yml" "$FIX/levain.yml.orig"
 awk '{ print } /compose: "alpha-nothing-runs-here"/ {
   print "  held:"; print "    start: \"tools/held.sh\""; print "    stop: signal"
+  print "  refuses:"; print "    start: \"tools/refuses.sh\""
   print "  detaches:"; print "    start: \"echo detached > detached.txt\""; print "    stop: signal"; print "    window: false"
 }' "$FIX/levain.yml.orig" > "$P/levain.yml"
 svc "$P" start held >/dev/null 2>&1
-has "a signal-stopped service with no window: still opens one (LVI-045)" "$(tail -1 "$FIX/opened" 2>/dev/null)" "cd $MAIN && tools/held.sh"
+has "a signal-stopped service with no window: still runs detached and opens a window (LVI-045)" "$(tail -1 "$FIX/opened" 2>/dev/null)" "cd $MAIN && tail -n 200 -F $LV_SERVICES_DIR/alpha/held.log"
+HP=$(sed -n 's/^pid=//p' "$LV_SERVICES_DIR/alpha/held.launch" 2>/dev/null)
+out=$(svc "$P" start held 2>&1); ck "a launcher that leaves no beacon still refuses a second start" "$?" "6"
+out=$(svc "$P" stop held 2>&1); ck "and stop: signal reaches it by its launch pid" "$?" "0"
+wait_for 3 bash -c "! kill -0 ${HP:-0} 2>/dev/null"
+kill -0 "${HP:-0}" 2>/dev/null && bad "the beaconless launcher is stopped" || ok "the beaconless launcher is stopped"
+n_open=$(wc -l < "$FIX/opened")
+out=$(svc "$P" start refuses 2>&1); rc=$?
+ck "a start that dies at once exits 8" "$rc" "8"
+has "and shows the end of its log" "$out" "no key for you"
+ck "and opens no window" "$(wc -l < "$FIX/opened")" "$n_open"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$FIX/opener-fails"; chmod +x "$FIX/opener-fails"
+out=$(LV_SERVICES_OPENER="$FIX/opener-fails" svc "$P" start held 2>&1); rc=$?
+ck "a window that cannot open does not fail a start that runs" "$rc" "0"
+has "and says how to follow it" "$out" "tail -F"
+svc "$P" stop held >/dev/null 2>&1
 svc "$P" start detaches >/dev/null 2>&1
 ck "window: false keeps a signal-stopped start in this terminal" "$(cat "$MAIN/detached.txt" 2>/dev/null)" "detached"
+[ -f "$LV_SERVICES_DIR/alpha/detaches.launch" ] && bad "window: false records no launch" || ok "window: false records no launch"
 cp "$FIX/levain.yml.orig" "$P/levain.yml"
 svc "$P" console >/dev/null 2>&1
 has "console opens the project's own board" "$(tail -1 "$FIX/opened")" "tools/board.sh"
