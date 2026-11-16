@@ -44,6 +44,12 @@
 # and oldest first), with a "(+N)" tail for the rest — enough to act on
 # without opening a terminal there first.
 #
+# The INTAKE row is bugs in bugs/open/ — filed and not yet specced, so on no
+# plan-state row — with the live intake group naming them (`6 prep-surface`,
+# `+N` for more groups). Enter lists them, grouped, lead first, `*` on the one
+# a spec worker or session holds (`lv-tray-drill.sh row intake`, LVI-050). The
+# RUNNING row names the IDs its workers hold after the count.
+#
 # The RELEASE row is plans complete on `develop` that have never been
 # carried through /lv-release — no REGISTRY state shows this, since a plan
 # reads `complete` the moment its PR merges to develop, whether /lv-release
@@ -407,7 +413,7 @@ sel_name=""
 # `services` opens services_screen for that one project. Both used to be
 # reachable only by a letter (`d`, `v`), and `services` was drawn on the grid
 # but skipped by the cursor.
-ROW_LABELS=(daemon services running gates attn ideas draft ready active verify testing
+ROW_LABELS=(daemon services running gates attn intake ideas draft ready active verify testing
             accept complete abandoned release deploy registry)
 sel_row=""
 # One stop past the grid's rows: the library line under it (heal, restart).
@@ -478,6 +484,9 @@ f_daemon=(); f_running=()
 f_gates=(); f_gates_stuck=(); f_gates_blocked=()
 f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
 f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_claims=()
+# f_running_ids: the IDs the running row counts (PLN-121, BUG-122). f_intake /
+# f_intake_group: open bugs and the live intake group naming them (LVI-050).
+f_running_ids=(); f_intake=(); f_intake_group=()
 # f_ts: when THIS project's numbers were collected, per project rather than
 # per frame. A collect walks every client in turn and a menu action re-fetches
 # exactly one, so "the frame's age" is several different ages — and the column
@@ -514,7 +523,7 @@ fetch_one() {
   local tok key val
   local daemon="-" running=0 gates=0 gates_stuck=0 gates_blocked=0
   local draft=0 ready=0 active=0 verify=0 testing=0 accept=0 complete=0 abandoned=0 registry="-" attn="" release="-" deploy="-"
-  local ideas=0 ideas_drift=0 claims=""
+  local ideas=0 ideas_drift=0 claims="" running_ids="" intake=0 intake_group="" intake_groups=0
   IFS=$'\t' read -ra _toks <<< "$line"
   for tok in "${_toks[@]}"; do
     key="${tok%%=*}"; val="${tok#*=}"
@@ -547,6 +556,12 @@ fetch_one() {
       # Live claims held by an attended session (lv-tray.sh). An older client
       # emits no key; empty stands in and the board shows no work in hand.
       claims)       claims="$val" ;;
+      # The IDs behind `running`, and filed bugs not yet specced (LVI-050).
+      # An older client emits none of these; the defaults stand.
+      running_ids)  running_ids="$val" ;;
+      intake)       intake="$val" ;;
+      intake_group) intake_group="$val" ;;
+      intake_groups) intake_groups="$val" ;;
     esac
   done
   # The collection time is the LAST field, so a record written by an older
@@ -554,10 +569,14 @@ fetch_one() {
   # short and defaults, rather than shifting every field along by one. Claims
   # ride AFTER it for the same reason: a record without them is one field
   # short, and the timestamp stays where every older reader looks for it.
-  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+  # One group names the cell; `+N` says how many more are live.
+  [ -n "$intake_group" ] && [ "${intake_groups:-0}" -gt 1 ] 2>/dev/null \
+    && intake_group="$intake_group+$((intake_groups - 1))"
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
     "$status" "$daemon" "$running" "$gates" "$gates_stuck" "$gates_blocked" \
     "$draft" "$ready" "$active" "$verify" "$testing" "$complete" "$abandoned" \
-    "$registry" "$attn" "$release" "$deploy" "$ideas" "$ideas_drift" "$accept" "$(date +%s)" "$claims"
+    "$registry" "$attn" "$release" "$deploy" "$ideas" "$ideas_drift" "$accept" "$(date +%s)" "$claims" \
+    "$running_ids" "$intake" "$intake_group"
 }
 
 # apply_record <record> <append|index> — write a fetch_one record into the
@@ -580,6 +599,7 @@ apply_record() {
     f_accept+=("${f[19]:-0}")
     f_ts+=("${f[20]:-0}")
     f_claims+=("${f[21]:-}")
+    f_running_ids+=("${f[22]:-}"); f_intake+=("${f[23]:-}"); f_intake_group+=("${f[24]:-}")
   else
     local idx="$where"
     statuses[$idx]="${f[0]}"
@@ -592,6 +612,7 @@ apply_record() {
     f_accept[$idx]="${f[19]:-0}"
     f_ts[$idx]="${f[20]:-0}"
     f_claims[$idx]="${f[21]:-}"
+    f_running_ids[$idx]="${f[22]:-}"; f_intake[$idx]="${f[23]:-}"; f_intake_group[$idx]="${f[24]:-}"
   fi
 }
 
@@ -617,13 +638,14 @@ gate_in_hand() {
 # naming all twenty fields a second time.
 project_record() {
   local i="$1"
-  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' \
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' \
     "${statuses[$i]}" "${f_daemon[$i]}" "${f_running[$i]}" \
     "${f_gates[$i]}" "${f_gates_stuck[$i]}" "${f_gates_blocked[$i]}" \
     "${f_draft[$i]}" "${f_ready[$i]}" "${f_active[$i]}" "${f_verify[$i]}" \
     "${f_testing[$i]}" "${f_complete[$i]}" "${f_abandoned[$i]}" \
     "${f_registry[$i]}" "${f_attn[$i]}" "${f_release[$i]}" "${f_deploy[$i]}" \
-    "${f_ideas[$i]}" "${f_ideas_drift[$i]}" "${f_accept[$i]:-0}" "${f_ts[$i]:-0}" "${f_claims[$i]:-}"
+    "${f_ideas[$i]}" "${f_ideas_drift[$i]}" "${f_accept[$i]:-0}" "${f_ts[$i]:-0}" "${f_claims[$i]:-}" \
+    "${f_running_ids[$i]:-}" "${f_intake[$i]:-}" "${f_intake_group[$i]:-}"
 }
 
 # refresh_one <index> — re-fetch and overwrite just that project's fields.
@@ -669,6 +691,7 @@ sort_projects_by_activity() {
   local -a o_gates=() o_gates_stuck=() o_gates_blocked=()
   local -a o_draft=() o_ready=() o_active=() o_verify=() o_testing=() o_complete=() o_abandoned=()
   local -a o_registry=() o_attn=() o_release=() o_deploy=() o_ideas=() o_ideas_drift=() o_accept=() o_ts=() o_claims=()
+  local -a o_running_ids=() o_intake=() o_intake_group=()
   while IFS= read -r idx; do
     o_names+=("${names[$idx]}"); o_paths+=("${paths[$idx]}"); o_statuses+=("${statuses[$idx]}")
     o_daemon+=("${f_daemon[$idx]}"); o_running+=("${f_running[$idx]}")
@@ -680,6 +703,7 @@ sort_projects_by_activity() {
     o_accept+=("${f_accept[$idx]:-0}")
     o_ts+=("${f_ts[$idx]:-0}")
     o_claims+=("${f_claims[$idx]:-}")
+    o_running_ids+=("${f_running_ids[$idx]:-}"); o_intake+=("${f_intake[$idx]:-}"); o_intake_group+=("${f_intake_group[$idx]:-}")
   done <<< "$order"
   names=("${o_names[@]}"); paths=("${o_paths[@]}"); statuses=("${o_statuses[@]}")
   f_daemon=("${o_daemon[@]}"); f_running=("${o_running[@]}")
@@ -691,6 +715,7 @@ sort_projects_by_activity() {
   f_accept=("${o_accept[@]}")
   f_ts=("${o_ts[@]}")
   f_claims=("${o_claims[@]}")
+  f_running_ids=("${o_running_ids[@]}"); f_intake=("${o_intake[@]}"); f_intake_group=("${o_intake_group[@]}")
 }
 
 # fit_cols — MAX_COLS from the terminal width: the 11-column row label, then
@@ -783,7 +808,8 @@ snapshot_save() {
           release: .[17], deploy: .[18], ideas: .[19], ideas_drift: .[20],
           accept: .[21],
           fetched_at: ((.[22] | tonumber?) // 0),
-          claims: (.[23] // "")
+          claims: (.[23] // ""),
+          running_ids: (.[24] // ""), intake: (.[25] // ""), intake_group: (.[26] // "")
         }))}' > "$tmp" 2>/dev/null; then
     mv -f "$tmp" "$GRID_SNAPSHOT" 2>/dev/null || rm -f "$tmp"
   else
@@ -809,7 +835,8 @@ snapshot_load() {
        .registry, .attn, .release, .deploy, .ideas, .ideas_drift,
        (.accept // "0"),
        (.fetched_at | tostring),
-       (.claims // "")]
+       (.claims // ""),
+       (.running_ids // ""), (.intake // ""), (.intake_group // "")]
       | map(. // "") | join("\u001f")' "$GRID_SNAPSHOT" 2>/dev/null) || return 1
   [ -n "$rows" ] || return 1
 
@@ -818,6 +845,7 @@ snapshot_load() {
   f_gates=(); f_gates_stuck=(); f_gates_blocked=()
   f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
   f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=(); f_claims=()
+  f_running_ids=(); f_intake=(); f_intake_group=()
   local line rec
   while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -1037,6 +1065,7 @@ collect_all() {
   f_gates=(); f_gates_stuck=(); f_gates_blocked=()
   f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
   f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=(); f_claims=()
+  f_running_ids=(); f_intake=(); f_intake_group=()
   collect
   SVC_KEY=(); SVC_VAL=()
   snapshot_save
@@ -1081,6 +1110,7 @@ finish_refresh() {
   f_gates=(); f_gates_stuck=(); f_gates_blocked=()
   f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
   f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=(); f_claims=()
+  f_running_ids=(); f_intake=(); f_intake_group=()
   if [ -f "$refresh_file" ]; then
     local name path rec
     while IFS=$'\x1e' read -r name path rec; do
@@ -1242,6 +1272,48 @@ render_text() {
     else f_attn_color[$i]="$YEL"; fi
     [ "${#shown}" -gt "$cw" ] && cw="${#shown}"
   done
+
+  # RUNNING and INTAKE cell text, precomputed for the same reason as attn's:
+  # both carry names now, and a name must widen the column, not overrun it.
+  # Running: the count, then the IDs held (LVI-050) — one spelled out
+  # (`1 PLN-121`), two as bare numbers (`2 121 122`), more as `+N` — then
+  # what attended sessions claim (`+RELEASE`). Intake: open bugs, then the
+  # live intake group naming them (`6 prep-surface`).
+  local -a f_run_disp=() f_intake_disp=()
+  for ((i = win_start; i < win_end; i++)); do
+    local rd="${f_running[$i]}" rids="${f_running_ids[$i]:-}" rc="${f_claims[$i]:-}"
+    if [ "${statuses[$i]}" = "ok" ]; then
+      if [ -n "$rids" ]; then
+        local -a rl; IFS=',' read -ra rl <<< "$rids"
+        if [ "${#rl[@]}" -eq 1 ]; then
+          rd="$rd ${rl[0]}"
+        else
+          local rk
+          for ((rk = 0; rk < ${#rl[@]} && rk < 2; rk++)); do
+            local rn_="${rl[$rk]}"; rn_="${rn_##*-}"
+            case "$rn_" in ''|*[!0-9]*) rn_="${rl[$rk]}" ;; esac
+            rd="$rd $rn_"
+          done
+          [ "${#rl[@]}" -gt 2 ] && rd="$rd +$((${#rl[@]} - 2))"
+        fi
+      fi
+      if [ -n "$rc" ]; then
+        local -a cl; IFS=',' read -ra cl <<< "$rc"
+        rd="$rd +${cl[0]}"
+        [ "${#cl[@]}" -gt 1 ] && rd="$rd +$((${#cl[@]} - 1))"
+      fi
+    fi
+    f_run_disp[$i]="$rd"
+    [ "${#rd}" -gt "$cw" ] && cw="${#rd}"
+
+    local iv="${f_intake[$i]:-}" ig="${f_intake_group[$i]:-}"
+    if [ "${statuses[$i]}" != "ok" ] || [ -z "$iv" ]; then
+      f_intake_disp[$i]="-"
+    else
+      f_intake_disp[$i]="$iv${ig:+ $ig}"
+    fi
+    [ "${#f_intake_disp[$i]}" -gt "$cw" ] && cw="${#f_intake_disp[$i]}"
+  done
   cw=$((cw + 1))
 
   # ── Header row ────────────────────────────────────────────────────────
@@ -1315,16 +1387,13 @@ render_text() {
   row_label "running"
   for ((i = win_start; i < win_end; i++)); do
     local rsel=""; sel_cell "running" "$i" && rsel="$REV"
-    local rn="${f_running[$i]}" rc="${f_claims[$i]:-}"
+    local rc="${f_claims[$i]:-}"
     if [ "${statuses[$i]}" != "ok" ]; then
-      cell "$cw" "$rn" "${DIM}${rsel}"
+      cell "$cw" "${f_run_disp[$i]}" "${DIM}${rsel}"
     elif [ -n "$rc" ]; then
-      local -a cl; IFS=',' read -ra cl <<< "$rc"
-      local ctxt="+${cl[0]}"
-      [ "${#cl[@]}" -gt 1 ] && ctxt="$ctxt +$((${#cl[@]} - 1))"
-      cell "$cw" "$rn $ctxt" "${CYN}${rsel}"
+      cell "$cw" "${f_run_disp[$i]}" "${CYN}${rsel}"
     else
-      cell "$cw" "$rn" "${col_age[$i]}${rsel}"
+      cell "$cw" "${f_run_disp[$i]}" "${col_age[$i]}${rsel}"
     fi
   done
   printf '\n'
@@ -1355,6 +1424,23 @@ render_text() {
   for ((i = win_start; i < win_end; i++)); do
     local asel=""; sel_cell "attn" "$i" && asel="$REV"
     cell "$cw" "${f_attn_disp[$i]}" "${f_attn_color[$i]}${asel}"
+  done
+  printf '\n'
+
+  # INTAKE: bugs filed and not yet specced, named by the live intake group
+  # holding them (LVI-050). Every row below is a plan state, and a bug has no
+  # registry row until /lv-spec takes it, so a batch filed as one group was
+  # on no row at all. Enter lists them for the project (`row intake`). Dim at
+  # zero: an empty queue is the quiet case.
+  row_label "intake"
+  for ((i = win_start; i < win_end; i++)); do
+    local ksel=""; sel_cell "intake" "$i" && ksel="$REV"
+    local kv="${f_intake_disp[$i]}"
+    if [ "$kv" = "-" ] || [ "$kv" = "0" ]; then
+      cell "$cw" "$kv" "${DIM}${ksel}"
+    else
+      cell "$cw" "$kv" "${col_age[$i]}${ksel}"
+    fi
   done
   printf '\n\n'
 
@@ -2252,6 +2338,7 @@ drill_rows_lines() {
       gates)    val="${f_gates[$i]}"
                 [ "${f_gates_stuck[$i]:-0}" -gt 0 ] 2>/dev/null && val="$val (${f_gates_stuck[$i]} stuck)" ;;
       attn)     val="${f_attn[$i]:--}" ;;
+      intake)   val="${f_intake[$i]:-0}${f_intake_group[$i]:+ ${f_intake_group[$i]}}" ;;
       ideas)    val="${f_ideas[$i]}"
                 [ "${f_ideas_drift[$i]:-0}" -gt 0 ] 2>/dev/null && val="$val (+${f_ideas_drift[$i]} not indexed)" ;;
       draft)    val="${f_draft[$i]}" ;;

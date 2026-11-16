@@ -40,7 +40,12 @@
 #                 main, or `-` if this project has no release/main split>,
 #                 and claims=<live claims held by a session that is not a
 #                 daemon worker — RELEASE, DEPLOY or a bare number — so an
-#                 attended /lv-release reads as work in progress>.
+#                 attended /lv-release reads as work in progress>,
+#                 running_ids=<the IDs the running workers hold, comma-
+#                 separated: PLN-121, or BUG-122 for a spec on a bug with no
+#                 plan yet>, and intake=<open bugs> intake_group=<the live
+#                 intake group with most of them> intake_groups=<live groups
+#                 holding any> (lv-list-intake.sh --fields, LVI-050).
 #   --plans       the full view plus the plan-by-plan picture (PLANS: each
 #                 plan by what it is waiting for, bugs, done-by-tag) and one
 #                 ranked NEXT action — what /lv-tray shows. Ignored by
@@ -92,6 +97,21 @@ REGISTRY="$ROOT/plans/REGISTRY.md"
 
 has_ref() { git -C "$ROOT" rev-parse --verify "$1" >/dev/null 2>&1; }
 
+# bug_of_number <num> — the open or triaged bug carrying that number, matched
+# by value across padding; empty when none does. A pidfile is keyed on the
+# number alone, and a spec worker on a bug has no registry row to name it by.
+bug_of_number() {
+  local num="$1" d id
+  case "$num" in ''|*[!0-9]*) return 0 ;; esac
+  for d in "$ROOT"/bugs/open/*/ "$ROOT"/bugs/triaged/*/; do
+    [ -f "$d/bug.md" ] || continue
+    id=$(basename "$d" | grep -oE "^($LV_BUG_RE)-[0-9]+" || true)
+    [ -n "$id" ] || continue
+    [ $((10#${id##*-})) -eq $((10#$num)) ] && { printf '%s' "$id"; return 0; }
+  done
+  return 0
+}
+
 # plans_ahead <a> <b> — how many DISTINCT plan IDs appear in commits on <a>
 # that are not on <b>.
 #
@@ -112,6 +132,48 @@ plans_ahead() {
       }
     }
     END { print n + 0 }'
+}
+
+# intake_group_note <slug> — the group heading's parenthesis: whether it is
+# still being written or ready, and who leads it.
+intake_group_note() {
+  local st lead lplan loc lst=""
+  st=$(wf_group_field "$1" Status)
+  lead=$(wf_group_field "$1" Lead)
+  lplan=$(wf_group_field "$1" "Lead plan" | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+  # A lead already specced is named by its plan, so the heading says where
+  # the group's work went rather than pointing at a bug no longer open.
+  if [ -z "$lplan" ] && [ -n "$lead" ]; then
+    loc=$(wf_bug_md "$lead")
+    if [ -n "$loc" ] && [ "${loc%%$'\t'*}" != "open" ]; then
+      lplan=$(wf_bug_field "${loc#*$'\t'}" Plan | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+    fi
+  fi
+  [ -n "$lplan" ] && lst=$(wf_state_of "$lplan" 2>/dev/null || true)
+  case "$st" in
+    Open)   printf 'open — nothing is offered until: lv-bug-group.sh seal %s' "$1" ;;
+    Sealed) printf 'sealed, lead %s%s' "${lead:-?}" "${lplan:+ → $lplan${lst:+ $lst}}" ;;
+    *)      printf '%s' "${st:-?}" ;;
+  esac
+}
+
+# intake_note <role> <held> <blocked> — the marks lv-list-intake.sh reports,
+# in words: the bug's place in its group, who holds it, and a block.
+intake_note() {
+  local n=""
+  case "$1" in
+    -)        ;;
+    lead)     n="lead — carries the rest" ;;
+    carried)  n="carried with the lead" ;;
+    amends:*) n="amends ${1#amends:}" ;;
+    waiting)  n="waiting for the seal" ;;
+  esac
+  case "$2" in
+    worker) n="${n:+$n · }spec worker" ;;
+    claim)  n="${n:+$n · }claimed by a session" ;;
+  esac
+  [ -n "$3" ] && n="${n:+$n · }blocked"
+  printf '%s' "$n"
 }
 
 # ── --plans: the plan-by-plan picture and one ranked next action ─────────
@@ -523,7 +585,7 @@ render() {
   local budget_used; budget_used=$(cat "$ORCH/spawns-$(date +%Y%m%d%H)" 2>/dev/null || echo 0)
   local budget_max;  budget_max=$(wf_cfg orchestrator.max_spawns_per_hour 20)
 
-  local running_n=0 pf pid base role artifact age running_roles="" worker_pids=" "
+  local running_n=0 pf pid base role artifact age running_roles="" worker_pids=" " running_ids=""
   local -a running_lines=()
   for pf in "$ORCH/logs"/*.pid; do
     [ -f "$pf" ] || continue
@@ -546,8 +608,17 @@ render() {
           split(id, a, "-")
           if (a[2] + 0 == n + 0) { print id "-" trim($3); exit }
         }' "$ROOT/plans/REGISTRY.md" 2>/dev/null || true)
+      # Not in the registry yet: a spec worker on a bug that has no plan. Name
+      # it by its bug, so RUNNING reads BUG-122 rather than a bare 122 nobody
+      # can look up (the coordinator's LVI-050).
+      [ -n "$artifact" ] || artifact=$(bug_of_number "${base%-*}")
       [ -n "$artifact" ] || artifact="${base%-*}"
     fi
+    # The ID alone, for the rack's running cell: PLN-121 from PLN-121-slug.
+    local rid
+    rid=$(printf '%s' "$artifact" | grep -oE "^($LV_WORK_RE)-[0-9]+" || true)
+    [ -n "$rid" ] || rid="$artifact"
+    [[ ",$running_ids," == *",$rid,"* ]] || running_ids="${running_ids:+$running_ids,}$rid"
     age=$(( now - $(wf_file_mtime "$pf") ))
     running_lines+=("$(printf '  %s%-11s%s %-34s %s  %spid %s%s' \
       "$CYN" "$role" "$R" "$artifact" "$(wf_human_age "$age")" "$DIM" "$pid" "$R")")
@@ -713,6 +784,18 @@ render() {
     [ -n "$registry_n" ] || registry_n=-1
   fi
 
+  # ── Intake ──────────────────────────────────────────────────────────
+  # Filed bugs not yet specced (the coordinator's LVI-050). Every row above
+  # is a plan state, and a bug has no registry row until /lv-spec takes it,
+  # so a batch filed into an intake group was invisible on every surface
+  # until each was specced. lv-list-intake.sh holds the order and the marks.
+  local intake_list="" intake_fields=$'intake=0\tintake_group=\tintake_groups=0'
+  intake_list=$("$SELF_DIR/lv-list-intake.sh" 2>/dev/null || true)
+  if [ -n "$intake_list" ]; then
+    intake_fields=$("$SELF_DIR/lv-list-intake.sh" --fields 2>/dev/null || true)
+    [ -n "$intake_fields" ] || intake_fields=$'intake=0\tintake_group=\tintake_groups=0'
+  fi
+
   if $fields_mode; then
     # One line, tab-separated key=value, no colour — for another script to
     # parse (coordinator' lv-rack builds a cross-project grid from this rather
@@ -723,13 +806,14 @@ render() {
     [ "$release_field" -lt 0 ] 2>/dev/null && release_field="-"
     local deploy_field="$deploy_pending"
     [ "$deploy_field" -lt 0 ] 2>/dev/null && deploy_field="-"
-    printf 'daemon=%s\tenabled=%s\tspawns=%s/%s\trunning=%s\tgates=%s\tgates_stuck=%s\tgates_blocked=%s\tdraft=%s\tready=%s\tactive=%s\tverify=%s\ttesting=%s\tcomplete=%s\trolled_back=%s\tabandoned=%s\tregistry=%s\tattn=%s\trelease_pending=%s\tdeploy_pending=%s\tbrainstorms=%s\tbrainstorms_drift=%s\taccept=%s\tclaims=%s\n' \
+    printf 'daemon=%s\tenabled=%s\tspawns=%s/%s\trunning=%s\tgates=%s\tgates_stuck=%s\tgates_blocked=%s\tdraft=%s\tready=%s\tactive=%s\tverify=%s\ttesting=%s\tcomplete=%s\trolled_back=%s\tabandoned=%s\tregistry=%s\tattn=%s\trelease_pending=%s\tdeploy_pending=%s\tbrainstorms=%s\tbrainstorms_drift=%s\taccept=%s\tclaims=%s\trunning_ids=%s\t%s\n' \
       "$daemon_raw" "$enabled" "$budget_used" "$budget_max" \
       "$running_n" "$gates_n" "$gates_stuck" "$gates_blocked" \
       "$st_draft" "$st_ready" "$st_active" "$st_verify" "$st_testing" \
       "$st_complete" "$st_rolled_back" "$st_abandoned" \
       "$registry_field" "$attn" "$release_field" "$deploy_field" \
-      "$brainstorms" "$brainstorms_drift" "$st_accept" "$claims"
+      "$brainstorms" "$brainstorms_drift" "$st_accept" "$claims" \
+      "$running_ids" "$intake_fields"
     return
   fi
 
@@ -810,6 +894,31 @@ render() {
       printf '%s' "$dlines"
       printf '\n'
     fi
+  fi
+
+  # ── Intake ──────────────────────────────────────────────────────────
+  # Filed bugs waiting to be specced, in the order dispatch reaches them: a
+  # live group under its own heading, lead first, the rest indented beneath.
+  # `*` marks the one a spec worker or a session holds right now. Printed only
+  # when something is open, like DIRECTIVES.
+  if ! $stats_only && [ -n "$intake_list" ]; then
+    printf '%s\n' "${B}INTAKE${R} ${DIM}— filed bugs not yet specced, in dispatch order (* held now)${R}"
+    local i_id i_slug i_grp i_role i_held i_blk i_last="" i_note i_mark i_ind
+    while IFS=$'\t' read -r i_id i_slug i_grp i_role i_held i_blk; do
+      [ -n "$i_id" ] || continue
+      [ "$i_grp" = "-" ] && i_grp=""
+      [ "$i_held" = "-" ] && i_held=""
+      [ "$i_blk" = "-" ] && i_blk=""
+      if [ -n "$i_grp" ] && [ "$i_grp" != "$i_last" ]; then
+        printf '  %sgroup %s%s %s(%s)%s\n' "$B" "$i_grp" "$R" "$DIM" "$(intake_group_note "$i_grp")" "$R"
+      fi
+      i_last="$i_grp"
+      i_ind=""; [ -n "$i_grp" ] && i_ind="  "
+      i_mark=" "; [ -n "$i_held" ] && i_mark="${CYN}*${R}"
+      i_note=$(intake_note "$i_role" "$i_held" "$i_blk")
+      printf '  %s%s %-11s %-40s %s\n' "$i_ind" "$i_mark" "$i_id" "$i_slug" "$i_note"
+    done <<< "$intake_list"
+    printf '\n'
   fi
 
   # ── Pipeline ────────────────────────────────────────────────────────
