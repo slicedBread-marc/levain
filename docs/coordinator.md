@@ -186,7 +186,10 @@ A coordinator is where one person oversees several pipelines (LVI-014). Beyond f
   with its id, client and question. Its projects come from the `project-registry` hook: the owner's pack, else
   the library's `deployments.txt` (found through `.claude/workflow-source`), else this
   coordinator's `coordinates:` list. Its own state, the suspend record, the dormant set and the snapshot cache,
-  lives in the coordinator's gitignored `.claude/orchestrator/`.
+  lives in the coordinator's gitignored `.claude/orchestrator/`. The grid is collected by one
+  process, `lv-rack.sh --collect`, which a board starts when none is running and which exits
+  after a few idle minutes; every open board, and `--plain`, only reads its snapshot
+  ([rack-collector.md](rack-collector.md)).
 - **A vision**, through `/lv-vision`. The library ships a contract, not a vision:
   [vision-spec.md](vision-spec.md) defines the modes, the file tree, the rules and the output
   formats. The `overseer-vision` hook names the owner's skill: a pack's, or
