@@ -42,6 +42,11 @@ pack, else the library's `deployments.txt`, else this coordinator's `coordinates
 project's declared `services:`, up or down, and the checkout each runs from. A row flagged `⚠` runs
 from a branch other than main. Starting and stopping a service is the owner's, from `v` on the live
 board: the launchers read keys in the owner's own terminal, and `lv-services.sh` refuses under an agent.
+The PROGRESS column is the service's own one-line summary (`progress:`), with `⏸ paused` or
+`⏹ stopped for the day` before it when its `throttle:` control file says so; report it as written,
+and note when it reads stale. A runaway throttled run may be slowed from here with
+`lv-services.sh throttle <id> pause` (or `stop-for-day`) in that project; resuming or raising a
+limit is the owner's and refuses under an agent (`docs/services.md`).
 The grid's `services` row reads running/available per project: `-` for none declared, otherwise
 `N/M` (`0/5` when none run), in green once any has a live beacon.
 

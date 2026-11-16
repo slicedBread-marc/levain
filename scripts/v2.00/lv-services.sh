@@ -11,6 +11,7 @@
 #   lv-services.sh stop <id>
 #   lv-services.sh log <id> [--path]    follow a detached service's log in a new window
 #   lv-services.sh progress <id>        the progress file's facts and detail lines
+#   lv-services.sh throttle <id> [show|pause|resume|stop-for-day|set <key> <value>|unset <key>]
 #   lv-services.sh console              open the project's own console (services_console:)
 #   lv-services.sh guard <path>         exit 2 when a live service runs from <path>
 #   lv-services.sh beacon up|beat|down <id> (--pid <pid> | --detached)
@@ -54,6 +55,8 @@
 # closing the window stops nothing (`log <id>` reopens it). A launcher therefore cannot read
 # the terminal; one that asks a question must take its answer another way. A start that dies
 # within LV_SERVICES_SETTLE_SECS (0.5) prints its log's end and exits 8.
+#
+# Detached starts, progress: and throttle: are explained in docs/services.md.
 #
 # A service with no start: is status-only. With no health: or compose:, a service is up while
 # a beacon names a live pid. A URL behind a login wall (Cloudflare Access) answers 302 whether
@@ -99,10 +102,13 @@
 #       progress: "synth.status.json"    # a JSON file the service writes: summary (one line),
 #                                        # detail (array of short lines), updatedAt (ISO 8601);
 #                                        # relative to $LV_SERVICES_DIR/<project_slug>/
+#       throttle:                        # the service honours <id>.control.json beside its
+#         rate: 20/hour                  # beacons; these are its defaults, and the keys the
+#         budget: 400k tokens/5h         # rack may change (docs/services.md § Throttle)
 #
 # Exit codes: 0 ok · 1 usage · 2 refused under an agent, or guard found a live service ·
 # 3 that checkout is not allowed · 4 no main worktree · 5 a need is not up · 6 already running
-# · 7 no such service, or nothing to run · 8 a detached start exited at once.
+# · 7 no such service, or nothing to run · 8 a detached start exited at once · 9 a control file does not parse, or no python3.
 
 set -euo pipefail
 
@@ -111,7 +117,7 @@ source "$(dirname "$0")/lv-orch-lib.sh"
 
 SERVICES_DIR="${LV_SERVICES_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/levain/services}"
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
 die() { local rc="$1"; shift; echo "lv-services: $*" >&2; exit "$rc"; }
 
 # Starting or stopping runs the project's own launchers, which read keys in the operator's
@@ -311,8 +317,8 @@ is_up() { status_of "$1" | cut -f2 | grep -qx up; }
 #   progress: <file>   the service writes it, the rack reads it (the coordinator's LVI-052)
 #   <id>.control.json  the rack writes it, the service reads it (throttle:, LVI-041)
 #
-# Read with python3, which also parses updatedAt's ISO time; without it, progress reads as
-# unreadable.
+# Read and written with python3, which also parses updatedAt's ISO time; without it, progress
+# reads as unreadable and a throttle write refuses (exit 9).
 
 # progress_path <id> — the declared progress: file, resolved; nothing when none is declared.
 progress_path() {
@@ -383,6 +389,101 @@ facts_line() {
   has_throttle "$1" && cf=$(control_path "$1")
   if [ -z "$pf" ] && [ "$cf" = - ]; then printf -- '-\t-\t-\t-\t-'; return 0; fi
   json_facts "${pf:--}" "$(svc "$1" heartbeat -)" "$cf" | head -1
+}
+
+# The throttle vocabulary the library knows the shape of (docs/services.md § Throttle). A key a
+# service declares beyond these is passed through as a string, unchecked.
+throttle_valid() { # throttle_valid <key> <value>
+  case "$1" in
+    rate)        [[ "$2" =~ ^[1-9][0-9]*/hour$ ]] ;;
+    concurrency) [[ "$2" =~ ^[1-9][0-9]*$ ]] ;;
+    budget)      [[ "$2" =~ ^[0-9]+[km]?\ tokens/[1-9][0-9]*h$ ]] ;;
+    hours)       [[ "$2" =~ ^[0-9]{1,2}:[0-5][0-9]-[0-9]{1,2}:[0-5][0-9]$ ]] ;;
+    ai_share)    [[ "$2" =~ ^[0-9]+(\.[0-9]+)?%$ ]] ;;
+    *)           [[ "$2" != *$'\t'* && "$2" != *$'\n'* && -n "$2" ]] ;;
+  esac
+}
+
+# control_write <file> <key=value | -key>... — merge into the control file through a rename,
+# keeping every field it does not name, and stamp updatedAt (UTC). Refuses a file that does not
+# parse rather than overwrite what someone wrote by hand.
+CONTROL_WRITE_PY='
+import json, os, re, sys, tempfile, datetime
+path, edits = sys.argv[1], sys.argv[2:]
+try:
+    with open(path) as h: d = json.load(h)
+    if not isinstance(d, dict): raise ValueError("not an object")
+except FileNotFoundError: d = {}
+except Exception as e:
+    sys.stderr.write("lv-services: %s does not parse (%s); fix or remove it\n" % (path, e)); sys.exit(9)
+for op in edits:
+    if op.startswith("-"): d.pop(op[1:], None); continue
+    k, v = op.split("=", 1)
+    d[k] = int(v) if re.fullmatch(r"[0-9]+", v) else v
+d["updatedAt"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+os.makedirs(os.path.dirname(path), exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=os.path.basename(path) + ".")
+with os.fdopen(fd, "w") as h: json.dump(d, h); h.write("\n")
+os.replace(tmp, path)
+'
+control_write() {
+  command -v python3 >/dev/null 2>&1 || die 9 "writing a control file needs python3"
+  python3 -c "$CONTROL_WRITE_PY" "$@"
+}
+
+# throttle <id> [show | pause | resume | stop-for-day | set <key> <value> | unset <key>]
+throttle() {
+  local id="${1:-}" action="${2:-show}" key="${3:-}" val="${4:-}" cf k v src
+  [ -n "$id" ] || usage 1
+  has_svc "$id" || die 7 "no service '$id' in levain.yml services:"
+  has_throttle "$id" || die 7 "$id declares no throttle:"
+  cf=$(control_path "$id")
+  case "$action" in
+    show)
+      command -v python3 >/dev/null 2>&1 || die 9 "reading a control file needs python3"
+      printf 'control\t%s\n' "$cf"
+      # state first, then each declared key: the control file's value, else the manifest's.
+      while IFS= read -r k; do [ -n "$k" ] && printf '%s\t%s\n' "$k" "$(svc "$id" "throttle.$k")"; done \
+        <<< "$(wf_cfg_keys "services.$id.throttle")" | python3 -c '
+import json, sys
+cf = sys.argv[1]
+try:
+    with open(cf) as h: c = json.load(h)
+    if not isinstance(c, dict): c = {}
+except Exception: c = {}
+print("state\t%s\t%s" % (c.get("state", "run"), "control" if "state" in c else "default"))
+decl = [l.rstrip("\n").split("\t", 1) for l in sys.stdin if "\t" in l]
+for k, v in decl:
+    print("%s\t%s\tcontrol" % (k, c[k]) if k in c else "%s\t%s\tmanifest" % (k, v))
+names = [k for k, _ in decl]
+for k in c:
+    if k not in names and k not in ("state", "updatedAt"): print("%s\t%s\tcontrol" % (k, c[k]))
+if "updatedAt" in c: print("updatedAt\t%s\tcontrol" % c["updatedAt"])
+' "$cf"
+      return 0 ;;
+    pause|stop-for-day)
+      control_write "$cf" "state=$action"
+      printf '%s: %s (%s)\n' "$id" "$action" "$cf" ;;
+    resume)
+      refuse_agent "resume"
+      control_write "$cf" "state=run"
+      printf '%s: resumed (%s)\n' "$id" "$cf" ;;
+    set)
+      refuse_agent "set"
+      [ -n "$key" ] && [ -n "$val" ] || usage 1
+      [ "$key" != state ] && [ "$key" != updatedAt ] || die 1 "use pause, resume or stop-for-day for state"
+      wf_cfg_keys "services.$id.throttle" | grep -qxF -- "$key" \
+        || die 1 "$id's throttle: declares no '$key' (declared: $(wf_cfg_keys "services.$id.throttle" | tr '\n' ' '))"
+      throttle_valid "$key" "$val" || die 1 "'$val' is not a valid $key (docs/services.md § Throttle)"
+      control_write "$cf" "$key=$val"
+      printf '%s: %s = %s (%s)\n' "$id" "$key" "$val" "$cf" ;;
+    unset)
+      refuse_agent "unset"
+      [ -n "$key" ] || usage 1
+      control_write "$cf" "-$key"
+      printf '%s: %s back to the manifest'"'"'s (%s)\n' "$id" "$key" "$cf" ;;
+    *) usage 1 ;;
+  esac
 }
 
 # progress <id> — the progress file's facts, then its detail lines.
@@ -619,6 +720,7 @@ case "${1:-}" in
   guard) shift; guard "$@" ;;
   log) shift; log_window "$@" ;;
   progress) shift; progress "$@" ;;
+  throttle) shift; throttle "$@" ;;
   beacon) shift; beacon "$@" ;;
   -h|--help) usage 0 ;;
   *) usage 1 ;;
