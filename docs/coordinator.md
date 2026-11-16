@@ -175,7 +175,15 @@ A coordinator is where one person oversees several pipelines (LVI-014). Beyond f
   a green suite deploys and resolves; a red one, or a fix touching the baseline, the denylist or
   the deploy itself, is committed and held for review until `U`. It never reads `--upstream`.
   The line shows `sweeping…`, then one result; the log is under
-  `.claude/orchestrator/library-sweep/logs/`. Its projects come from the `project-registry` hook: the owner's pack, else
+  `.claude/orchestrator/library-sweep/logs/`. A fault the session leaves comes back as
+  `SWEEP_LEFT <id> <client> <class> <reason>`, and the script writes it onto the issue through
+  `sweep-issues.sh --note` as its last line: `**Sweep:** left <date> — <class>: <reason>`, class
+  `needs-operator` (the reason is the question), `not-library` or `unsure` (LVI-051). **While
+  that line is the entry's last non-blank line, the issue waits on an answer:** `heal (N)` and
+  the next sweep's `--sweepable` listing leave it out. Anything written under it, normally the
+  operator's answer, makes it sweepable again. An edit above the note does not count. The line
+  shows the needs-operator ones as `decide (N)`; Enter, or `lv-rack.sh --decide`, lists each
+  with its id, client and question. Its projects come from the `project-registry` hook: the owner's pack, else
   the library's `deployments.txt` (found through `.claude/workflow-source`), else this
   coordinator's `coordinates:` list. Its own state, the suspend record, the dormant set and the snapshot cache,
   lives in the coordinator's gitignored `.claude/orchestrator/`.

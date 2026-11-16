@@ -33,6 +33,10 @@ pack, else the library's `deployments.txt`, else this coordinator's `coordinates
      `W` on the live board starts a blind sweep of the top three. The line reads `heal (N)`, three
      hearts filling while a sweep runs, and `restart required` once a deploy has landed under a
      running board (`X` restarts it). `/lv-sweep` runs the same sweep from a session.
+   - **decide (N)** on the library line counts the issues a sweep left for the owner to decide;
+     `heal (N)` no longer counts any issue a sweep left. When decide is non-zero, run
+     `scripts/lv-exec.sh lv-rack.sh --decide` and list each issue's id, client and question. An
+     answer written under the issue's `**Sweep:**` line makes the next sweep take it again.
 3. Offer the next step for the most urgent item: `/lv-attend <ID>` in that project, or the
    board itself.
 
@@ -50,7 +54,7 @@ daemon's menu — start/stop, sweep, kill, its logs — and on a `services` cell
 for that project alone), daemon toggles (`d`), stop/resume of
 every daemon (`s`/`R`), attend (`t` — on the release or deploy row it starts `/lv-release` or
 `/lv-deploy` instead), the dormant-project toggle (`z`, which offers to stop a running daemon first), the services view (`v`), the library deploy (`U`),
-the blind library sweep (`W`, or Enter on `heal (N)`), the restart (`X`) and the settings screen (`,`, where
+the blind library sweep (`W`, or Enter on `heal (N)`), the decide listing (Enter on `decide (N)`), the restart (`X`) and the settings screen (`,`, where
 auto-heal is turned on) need a real terminal, so point the owner at
 `! scripts/lv-exec.sh lv-rack.sh --watch` rather than running it here. `--stop-all` and
 `--resume` change what every project is doing unattended: run them only when asked.
