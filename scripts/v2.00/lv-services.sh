@@ -209,7 +209,9 @@ probe() {
   elif [ -n "$compose" ]; then
     local -a filt=(--filter "label=com.docker.compose.project=${compose%%/*}")
     case "$compose" in */*) filt+=(--filter "label=com.docker.compose.service=${compose#*/}") ;; esac
-    n=$(docker ps -q "${filt[@]}" 2>/dev/null | wc -l | tr -d ' ')
+    # Docker not running is a down service, not a failed status: under pipefail a failing
+    # `docker ps` would end the whole listing at this service.
+    n=$(docker ps -q "${filt[@]}" 2>/dev/null | wc -l | tr -d ' ') || n=0
     P_DETAIL="$n containers"
     if [ "${n:-0}" -gt 0 ]; then P_STATE=up; else P_STATE=down; fi
   fi
