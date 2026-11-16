@@ -219,7 +219,7 @@ If the user picks a bug BUG-NNN:
    | The member… | It leaves by |
    |-|-|
    | is part of the same change as the lead | folded into this plan: name it in `plan.md`, then `lv-bug-consume.sh BUG-a PLN-NNN-<slug> --folded` ([Bug consumption](#bug-consumption)) |
-   | is separate work that needs this plan first | its own plan with `Deps` on this one — a later `/lv-spec` run; leave it in `bugs/open/` and say so in Design Decisions. **This is the one member that may stay** — and then `consume` below refuses, which is correct: the group stays Sealed until that member is specced |
+   | is separate work that needs this plan first | its own plan with `Deps` on this one — a later `/lv-spec` run. Say so in Design Decisions, **and record it:** `scripts/lv-exec.sh lv-bug-group.sh leave <group-slug> BUG-a --after PLN-NNN "<why>"`. **This is the one member that stays in `bugs/open/`.** The record is what the scripts read, never the prose: `consume` below passes with it, `lv-bug-consume.sh` refuses (exit 2) to fold or amend it into PLN-NNN, and once the group is Consumed the member is offered on its own, its row reading `left for its own plan: Deps PLN-NNN` (a client's LVI-005). Do not draft it in this run |
    | changes an existing `draft`/`ready` plan | an amendment there (step 2b) |
    | is reversed or made moot by another member | `lv-bug-close.sh BUG-a --superseded-by BUG-b --note "<why>"` |
    | names a target whose plan is `active` or later (the row says `target PLN-MMM active`) | a new plan with `Deps PLN-MMM` — never an amendment under a build |
@@ -1088,7 +1088,7 @@ When the plan being created is a fix for a tracked bug:
    ```bash
    scripts/lv-exec.sh lv-bug-group.sh consume <group-slug> PLN-NNN
    ```
-   It commits the group as Consumed. **Exit 2 names the members still open**: fold, amend or close each one you decided to, and run it again. A member you deliberately left for its own plan keeps it at exit 2 — say so in your exit summary and leave the group Sealed; the next `/lv-spec` run picks that member up on its own once the lead is consumed. Never pass a member through by `--force` to make the group close.
+   It commits the group as Consumed. **Exit 2 names the members still open** and not recorded as left: fold, amend or close each one you decided to, record each one you left for its own plan with `lv-bug-group.sh leave <group-slug> BUG-a --after PLN-NNN "<why>"`, and run it again. A left member stays in `bugs/open/`; name it in your exit summary. The next `/lv-spec` run picks it up on its own, with `Deps PLN-NNN`. Never pass a member through by `--force` to make the group close, and never consume a left member into this plan.
 
 ## Rules
 

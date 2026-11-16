@@ -581,6 +581,47 @@ wf_group_members() {
   awk -v re="^- ($LV_BUG_RE)-[0-9]+" '/^## Members/{m=1;next} /^## /{m=0} m && $0 ~ re { sub(/^- /,""); sub(/[ \t].*/,""); print }' "$f"
 }
 
+# wf_group_left <slug> → "<BUG-ID>\t<PLN-ID>" per member the lead's spec run
+# left for its own plan (`lv-bug-group.sh leave`), read from the group's
+# `## Left for their own plans` section. Such a member does not hold the group
+# open, and is not consumed into the plan it was left after (a client's
+# LVI-005).
+wf_group_left() {
+  local f; f="$(wf_group_file "$1")"
+  [ -f "$f" ] || return 0
+  awk -v re="^- ($LV_BUG_RE)-[0-9]+ after ($LV_PLN_RE)-[0-9]+" '
+    /^## Left for their own plans/{m=1;next} /^## /{m=0}
+    m && $0 ~ re { sub(/^- /,""); split($0, w, /[ \t]+/); print w[1] "\t" w[3] }' "$f"
+}
+
+# wf_group_left_after <BUG-ID> → the plan the bug was left after, if its group
+# records it as left for its own plan; empty otherwise.
+wf_group_left_after() {
+  local loc g
+  loc=$(wf_bug_md "$1"); [ -n "$loc" ] || return 0
+  g=$(wf_bug_field "${loc#*$'\t'}" Group); [ -n "$g" ] || return 0
+  wf_group_left "$g" | awk -F'\t' -v b="$1" '$1 == b { print $2; exit }'
+}
+
+# wf_group_lead_in_spec <lead BUG-ID> — 0 when the lead is still open, or a
+# spec run on it is in flight: its claim is held AND no plan of its number has
+# got past draft. Claims key on the number, so the claim a tester holds on the
+# lead's PLN-027 in `testing` is not a spec run — and reading it as one
+# withheld a member left for its own plan for exactly as long as the test ran:
+# lv-plan-id.sh said go at one step and stop at the next (a client's LVI-005).
+wf_group_lead_in_spec() {
+  local loc lp st
+  loc=$(wf_bug_md "$1")
+  [ "${loc%%$'\t'*}" = "open" ] && return 0
+  wf_claim_held "$1" || return 1
+  # The plan the lead was triaged into, else the one its number inherits.
+  lp=$(wf_bug_field "${loc#*$'\t'}" Plan 2>/dev/null | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+  [ -n "$lp" ] || lp=$(wf_plan_id_for_num "${1##*-}")
+  st=$( [ -n "$lp" ] && wf_state_of "$lp")
+  case "$st" in ""|draft) return 0 ;; esac
+  return 1
+}
+
 # wf_group_withholds <BUG-ID> — 0, with the reason on stdout, when the bug's
 # intake group says it is not to be specced on its own right now: the group is
 # Open, or Sealed under another lead still open or being specced. The rule
@@ -609,8 +650,7 @@ wf_group_withholds() {
           printf 'an amendment to %s, the lead plan of sealed intake group %s (step 2b), not a plan of its own' "$lplan" "$g"
           return 0 ;;
       esac
-      loc=$(wf_bug_md "$lead")
-      if [ "${loc%%$'\t'*}" = "open" ] || wf_claim_held "$lead"; then
+      if wf_group_lead_in_spec "$lead"; then
         printf 'carried with %s, the lead of sealed intake group %s' "$lead" "$g"
         return 0
       fi ;;

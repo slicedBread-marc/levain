@@ -189,6 +189,32 @@ if ! $force && [ ! -d "$plan_dir" ]; then
   exit 2
 fi
 
+# ── Left for its own plan? ────────────────────────────────────────────────
+#
+# The lead's spec run records a member that is separate work with
+# `lv-bug-group.sh leave <slug> BUG-a --after PLN-L`. That member stays in
+# bugs/open for its own plan, so it is not folded, amended or consumed into
+# PLN-L — the plan it was left after. A client's LVI-005: the decision lived
+# only in PLN-L's Design Decisions, which no script reads. Its own new plan
+# (any other number) consumes it as usual.
+if ! $already_triaged && ! $force; then
+  lgroup=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Group:\*\*' "$bug_dir/bug.md" 2>/dev/null \
+           | sed -E 's/^.*\*\*Group:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
+  left_after=""
+  if [ -n "$lgroup" ] && [ -f "bugs/groups/$lgroup.md" ]; then
+    left_after=$(awk -v b="$bug_id" '
+      /^## Left for their own plans/ { m = 1; next } /^## / { m = 0 }
+      m && $1 == "-" && $2 == b && $3 == "after" { print $4; exit }' "bugs/groups/$lgroup.md")
+  fi
+  plan_num=$(printf '%s' "$plan_id" | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+  if [ -n "$left_after" ] && [ "$plan_num" = "$left_after" ]; then
+    echo "Error: $bug_id was left for its own plan after $left_after (intake group '$lgroup')." >&2
+    echo "  It stays in bugs/open; its own /lv-spec run plans it with Deps $left_after. Nothing was moved." >&2
+    echo "  Changed your mind and folding it after all? lv-bug-group.sh leave records no undo — --force." >&2
+    exit 2
+  fi
+fi
+
 # ── Is this the bug the plan was drafted from? ────────────────────────────
 #
 # Both checks below are silent when there is nothing to check against. See the

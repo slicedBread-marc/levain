@@ -78,9 +78,25 @@ leaves:
 - closed as superseded (`lv-bug-close.sh --superseded-by`)
 - left for its own plan with `Deps` on the lead's
 
-In the last case the group stays Sealed, and the member is offered on its own
-once the lead is consumed. See `skills/lv-spec/SKILL.md`, Plan from bug step
-1b.
+In the last case the lead's run records it with
+`lv-bug-group.sh leave <slug> BUG-a --after PLN-L "<why>"`, which writes
+`- BUG-a after PLN-L — <why>` under the group's `## Left for their own plans`
+section and commits it. That line is the marker every script reads; the
+Design Decision that says the same thing is for people. With it:
+
+- `consume` passes while the member is still in `bugs/open/`;
+- `lv-bug-consume.sh` refuses (exit 2) to fold, amend or consume the member
+  into PLN-L, the plan it was left after; its own plan consumes it as usual;
+- once the group is Consumed, `lv-bug-consume.sh` and `lv-plan-id.sh` treat
+  it as independent, and the spec list offers it with
+  `GROUP(<slug>) left for its own plan: Deps PLN-L`.
+
+`leave` is a worker's, like `consume`. It refuses (exit 2) the lead, a member
+not in `bugs/open/`, a group that is not Sealed, and an `--after` naming no
+plan. Before it existed the decision was only prose: `consume` refused, the
+group stayed Sealed, and `lv-plan-id.sh` withheld the member as carried with
+the lead whenever anyone held the lead's number. See
+`skills/lv-spec/SKILL.md`, Plan from bug step 1b (a client's LVI-005).
 
 ## A bug grouped after its spec run started
 
@@ -100,7 +116,10 @@ Three places now read the group again after dispatch:
 
 `wf_group_withholds` in `lv-orch-lib.sh` is the rule `lv-plan-id.sh` asks.
 It withholds a member of an Open group, and a member of a Sealed group whose
-lead is still open or claimed. It also withholds every member of a group
+lead is still open or being specced: claimed while no plan of its number has
+got past `draft`. Claims key on the number, so the claim a tester holds on the
+lead's plan in `testing` is not a spec run, and counting it made
+`lv-plan-id.sh` say go at one step and stop at the next (LVI-005). It also withholds every member of a group
 sealed onto a lead plan, because those members amend that plan.
 
 **Sealing onto a lead that was already specced.** `seal --lead` may name a

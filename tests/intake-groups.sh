@@ -18,6 +18,9 @@
 #      seals it with --project.
 #   9. dissolve releases members; list --stale finds a forgotten group.
 #  10. The skills say how.
+#  12. A member the lead's run leaves for its own plan (LVI-005): `leave`
+#      records it, consume passes, lv-bug-consume refuses to fold it into the
+#      lead's plan, and a tester's claim on the lead does not withhold it.
 #  11. A bug grouped after its spec run was dispatched (LVI-026): the run
 #      stands down at lv-plan-id.sh (exit 4) or lv-bug-consume.sh (exit 3);
 #      a plan already drafted is held; seal --lead may name a member whose
@@ -272,8 +275,63 @@ LV_UNATTENDED=1 G consume race PLN-072 >/dev/null 2>&1
 assert_eq "a worker consumes the group" "$?" "0"
 assert_eq "and consume releases the lead plan's hold" "$("$S/lv-direct.sh" status PLN-072 | grep DIRECTIVE_HOLD)" "DIRECTIVE_HOLD=''"
 
+section "12. a member left for its own plan (LVI-005)"
+bug BUG-080 lead-runner
+bug BUG-081 findings-note
+git add -A >/dev/null; git commit -qm "BUG-080, BUG-081"
+G add synth BUG-080 BUG-081 --create "one batch" >/dev/null 2>&1
+G seal synth --lead BUG-080 >/dev/null 2>&1
+assert_eq "the group is Sealed" "$(grep -c '^> \*\*Status:\*\* Sealed' bugs/groups/synth.md)" "1"
+mkdir -p plans/PLN-080-lead-runner
+printf '# PLN-080\n\n> **Bug:** BUG-080\n\n## Goal\nx\n\n## Design Decisions\n- BUG-081 stays in bugs/open for its own plan with Deps PLN-080.\n' \
+  > plans/PLN-080-lead-runner/plan.md
+awk '/^<!-- Counter/ { print "| PLN-080 | lead-runner | draft | — | — | 2026-10-02 | 2.00 | — | — |"; print ""; } { print }' \
+  plans/REGISTRY.md | awk 'NF || !blank { print } { blank = !NF }' > plans/REGISTRY.tmp && mv plans/REGISTRY.tmp plans/REGISTRY.md
+git add -A >/dev/null; git commit -qm "PLN-080 drafted"
+"$S/lv-bug-consume.sh" BUG-080 PLN-080-lead-runner >/dev/null 2>&1
+assert_eq "the lead is consumed into its plan" "$?" "0"
+LV_UNATTENDED=1 G consume synth PLN-080 >/dev/null 2>&1
+assert_eq "consume refuses while the member is open and not left" "$?" "2"
+LV_UNATTENDED=1 G leave synth BUG-080 --after PLN-080 "x" >/dev/null 2>&1
+assert_eq "the lead cannot be left" "$?" "2"
+LV_UNATTENDED=1 G leave synth BUG-081 --after PLN-999 "x" >/dev/null 2>&1
+assert_eq "--after must name a plan here" "$?" "2"
+out=$(LV_UNATTENDED=1 G leave synth BUG-081 --after PLN-080 "separate work: a findings note, needs PLN-080 first" 2>&1); rc=$?
+assert_eq "a worker leaves a member for its own plan" "$rc" "0"
+has "the marker is written in the group" "$(cat bugs/groups/synth.md)" "- BUG-081 after PLN-080 — separate work"
+assert_eq "…and committed" "$(git status --porcelain bugs/groups/synth.md)" ""
+assert_eq "the member stays in bugs/open" "$([ -d bugs/open/BUG-081-findings-note ] && echo open)" "open"
+"$S/lv-bug-consume.sh" BUG-081 PLN-080-lead-runner --folded >/dev/null 2>&1
+assert_eq "it is not folded into the plan it was left after" "$?" "2"
+"$S/lv-bug-consume.sh" BUG-081 PLN-080-lead-runner --amends >/dev/null 2>&1
+assert_eq "…nor amended into it" "$?" "2"
+assert_eq "and nothing moved" "$([ -d bugs/open/BUG-081-findings-note ] && echo open)" "open"
+
+# The claim on the number is not always a spec run: a tester holds it on the
+# lead's plan in testing, and that read as "lead being specced" (LVI-005).
+withholds() { bash -c "source '$S/lv-orch-lib.sh'; wf_group_withholds $1" >/dev/null 2>&1 && echo held || echo free; }
+sleep 300 & holder2=$!
+"$S/lv-claim.sh" BUG-080 --pid "$holder2" >/dev/null 2>&1
+assert_eq "a claim on the lead while its plan is draft still withholds (spec in flight)" "$(withholds BUG-081)" "held"
+sed -i.bak 's/| PLN-080 | lead-runner | draft |/| PLN-080 | lead-runner | testing |/' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak
+assert_eq "a claim on the lead while its plan is testing does not" "$(withholds BUG-081)" "free"
+kill "$holder2" 2>/dev/null; wait "$holder2" 2>/dev/null
+"$S/lv-unclaim.sh" BUG-080 >/dev/null 2>&1 || true
+git checkout -q -- plans/REGISTRY.md
+
+out=$(LV_UNATTENDED=1 G consume synth PLN-080 2>&1); rc=$?
+assert_eq "consume passes once the open member is recorded as left" "$rc" "0"
+has "and names it" "$out" "left for their own plans, offered on their own now: BUG-081"
+has "the member is offered on its own, with the Deps it needs" "$(row BUG-081)" "GROUP(synth) left for its own plan: Deps PLN-080"
+mkdir -p plans/PLN-081-findings-note
+printf '# PLN-081\n\n> **Bug:** BUG-081\n\n## Goal\nx\n' > plans/PLN-081-findings-note/plan.md
+git add -A >/dev/null; git commit -qm "PLN-081 drafted"
+"$S/lv-bug-consume.sh" BUG-081 PLN-081-findings-note >/dev/null 2>&1
+assert_eq "its own plan consumes it as usual" "$?" "0"
+
 section "10. the skills say how"
 grep -q 'lv-bug-group.sh' "$LIB_ROOT/skills/lv-spec/SKILL.md" && ok "lv-spec consumes a sealed group" || bad "lv-spec consumes a sealed group"
+grep -q 'lv-bug-group.sh leave' "$LIB_ROOT/skills/lv-spec/SKILL.md" && ok "lv-spec records a member left for its own plan" || bad "lv-spec records a member left for its own plan"
 grep -q -- '--group' "$LIB_ROOT/skills/lv-dep-notify/SKILL.md" && ok "lv-dep-notify files a batch into a group" || bad "lv-dep-notify files a batch into a group"
 grep -q -- '--group' "$LIB_ROOT/skills/lv-bug/SKILL.md" && ok "lv-bug files a batch into a group" || bad "lv-bug files a batch into a group"
 grep -q 'lv-bug-group.sh' "$LIB_ROOT/install.sh" && ok "a coordinator gets lv-bug-group.sh" || bad "a coordinator gets lv-bug-group.sh"
