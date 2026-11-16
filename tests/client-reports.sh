@@ -6959,6 +6959,30 @@ printf '# BUG-012\n' > "$XDEP/provider/bugs/closed/BUG-012-tokens/bug.md"
 assert_eq "and lifts once that bug (a folder) is closed there" "clear" "$(blk)"
 rm -rf plans/briefs "$XDEP/provider/bugs/closed/BUG-012-tokens"
 
+# A same-repo `--on PLN-126` block ("PLN-126 — why") lifts the same way once
+# that plan is complete HERE; only the `(in proj)` form was re-checked, so it
+# held until a hand --clear (a client's LVI-058).
+mkdir -p plans/briefs
+printf '# BRF-031\n\n> **Status:** Open\n> **Blocked:** PLN-026 — waits on the spike\n' \
+  > plans/briefs/BRF-031-render.md
+blk2() { bash -c "source '$SCRIPT_DIR/lv-orch-lib.sh'; wf_brief_blocked plans/briefs/BRF-031-render.md" >/dev/null 2>&1 && echo blocked || echo clear; }
+cp plans/REGISTRY.md plans/REGISTRY.md.keep
+awk '/<!-- Counter:/ && !d { print "| PLN-026 | spike | active | — | — | 2026-09-21 | 2.00 | — | — |"; d=1 } { print }' \
+  plans/REGISTRY.md > plans/R.tmp && mv plans/R.tmp plans/REGISTRY.md
+assert_eq "a same-repo plan block holds while the plan is active" "blocked" "$(blk2)"
+sed -i.bak 's/| PLN-026 | spike | active |/| PLN-026 | spike | abandoned |/' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak
+assert_eq "…and while it is abandoned" "blocked" "$(blk2)"
+sed -i.bak 's/| PLN-026 | spike | abandoned |/| PLN-026 | spike | complete |/' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak
+assert_eq "and lifts once the plan is complete here" "clear" "$(blk2)"
+printf '# BRF-031\n\n> **Status:** Open\n> **Blocked:** PLN-026 (in client-d) — theirs, not ours\n' \
+  > plans/briefs/BRF-031-render.md
+assert_eq "a cross-repo block is not lifted by a local plan of that number" "blocked" "$(blk2)"
+printf '# BRF-031\n\n> **Status:** Open\n> **Blocked:** BUG-026 — a bug is not re-checked\n' \
+  > plans/briefs/BRF-031-render.md
+assert_eq "a same-repo non-plan blocker still waits for --clear" "blocked" "$(blk2)"
+mv plans/REGISTRY.md.keep plans/REGISTRY.md
+rm -rf plans/briefs
+
 # A dependency this cannot resolve is not a satisfied one. Reporting it clear
 # would dispatch exactly the plan the operator parked.
 mv "$XDEP/provider" "$XDEP/provider-moved"

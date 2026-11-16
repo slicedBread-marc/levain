@@ -51,7 +51,10 @@
 # else in the pipeline changes. Clearing it puts the brief straight back on the
 # list.
 #
-#   --on <artifact>   the blocking artifact, e.g. BUG-002, PLN-014, BRF-018
+#   --on <artifact>   the blocking artifact, e.g. BUG-002, PLN-014, BRF-018.
+#                     A block on a plan — here, or with --repo there — lifts by
+#                     itself once that plan is complete (LVI-036, LVI-058);
+#                     any other blocker waits for --clear
 #   --repo <name>     the project that artifact belongs to, when it is not
 #                     this one — a cross-repo blocker is the common case
 #   --clear           the blocker lifted; remove the field

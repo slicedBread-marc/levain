@@ -527,6 +527,18 @@ wf_brief_blocked() {
       return 1
     fi
   fi
+  # A block on a plan in THIS repo, as `lv-brief-block.sh --on PLN-126` writes
+  # it ("PLN-126 — why"), lifts the same way once that plan is complete here.
+  # Only the cross-repo form was re-checked, so a same-repo block stayed until
+  # someone ran --clear by hand (a client's LVI-058). Abandoned or any other
+  # state still holds.
+  if [[ "$field" =~ ^(($LV_PLN_RE)-[0-9]+)([[:space:]]|$) ]]; then
+    art="${BASH_REMATCH[1]}"
+    case "$field" in
+      "$art (in "*) ;;   # cross-repo, answered above
+      *) [ "$(wf_registry_field "$art" state)" = "complete" ] && return 1 ;;
+    esac
+  fi
   printf '%s' "$field"; return 0
 }
 
