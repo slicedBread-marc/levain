@@ -100,6 +100,24 @@ assert_not "a namespace is not" "X.Tests.Auth.Dev" "$listed"
 assert_not "an enum value is not" "CookieSecurePolicy.Always" "$listed"
 
 echo ""
+echo "1c. A path levain.yml declares derived is never reported (a client's LVI-057)"
+mkdir -p "$WT/site"; printf 'page\n' > "$WT/site/page.html"
+printf '%s\n' '- **Files:** modify `site/page.html`.' >> "plans/$P-$SLUG/plan.md"
+( cd "$WT" && printf '!site/page.html\n' >> .gitignore )
+out=$("$S/lv-ignored-sources.sh" "$P" 2>&1)
+assert_has "undeclared: a same-folder sibling of a listed .html is reported" "site/index.html" "$out"
+cp levain.yml levain.yml.orig
+printf 'ignoredSources:\n  derived:\n    - "site/index.html"\n    - "src/App/Debug/Set*.cs"\n' >> levain.yml
+out=$("$S/lv-ignored-sources.sh" "$P" 2>&1); rc=$?
+assert_eq "still exit 1: other sources remain" 1 "$rc"
+assert_not "a declared sibling is not reported" "site/index.html" "$out"
+assert_not "…nor one matched by a glob" "src/App/Debug/Setup.cs" "$out"
+assert_has "an undeclared source still is" "src/App/Debug/Store.cs" "$out"
+mv levain.yml.orig levain.yml
+( cd "$WT" && git checkout -q -- .gitignore && rm -f site/page.html )
+sed -i.bak '$d' "plans/$P-$SLUG/plan.md" && rm -f "plans/$P-$SLUG/plan.md.bak"
+
+echo ""
 echo "2. active -> verify is refused while they are"
 out=$("$S/lv-registry-update.sh" "$P" active verify 2>&1); rc=$?
 assert_eq "the transition is refused" 1 "$rc"

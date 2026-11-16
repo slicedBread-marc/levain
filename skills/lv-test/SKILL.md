@@ -1016,7 +1016,11 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
      --description "<the lines lv-ignored-sources.sh printed>; the copies are in feature-branches/PLN-NNN-<slug>, which was kept"
    ```
    Then finish the rest of the exit, and say in the summary that the worktree
-   was kept and why. Exit `0` or `3` — go on.
+   was kept and why. A listed path the build or start command writes on every
+   run is not a lost source: file no bug for it, keep the worktree all the
+   same, and name it in the summary as one to declare under `levain.yml`
+   `ignoredSources.derived:` — a human's edit, never yours (a client's
+   LVI-057). Exit `0` or `3` — go on.
    ```bash
    git worktree remove feature-branches/PLN-NNN-<slug> --force 2>/dev/null || true
    git branch -d "$CURRENT_BRANCH" 2>/dev/null || true
