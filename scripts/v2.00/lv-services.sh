@@ -9,6 +9,7 @@
 #   lv-services.sh worktrees            <path>\t<branch>, one per worktree, main's first
 #   lv-services.sh start <id> [--checkout <path>]
 #   lv-services.sh stop <id>
+#   lv-services.sh log <id> [--path]    follow a detached service's log in a new window
 #   lv-services.sh console              open the project's own console (services_console:)
 #   lv-services.sh guard <path>         exit 2 when a live service runs from <path>
 #   lv-services.sh beacon up|beat|down <id> (--pid <pid> | --detached)
@@ -27,8 +28,9 @@
 #       label: "Web + tunnel"
 #       start: "tools/run-web.sh up"     # run from the chosen checkout
 #       stop: "tools/run-web.sh down"    # or "signal": TERM to each live beacon's pid
-#       window: true                     # start in a new Terminal window (it reads keys);
-#                                        # the default when stop: is signal or absent
+#       window: true                     # start detached, its output in a log that a new
+#                                        # Terminal window follows; the default when stop:
+#                                        # is signal or absent
 #       checkout: main                   # main (the default) | any
 #       health: "http://127.0.0.1:8080/health"   # up while it answers 200-499
 #       url: "http://127.0.0.1:8080/"    # what the rack shows and copies on Enter;
@@ -40,9 +42,17 @@
 #   services_console: "tools/board.sh"   # the project's own board, for what the rack does not do
 #
 # A service stopped by signal (stop: signal, or no stop:) is the process its start: runs, so
-# it starts in a window unless the manifest says `window: false` (a launcher that detaches and
+# it starts detached unless the manifest says `window: false` (a launcher that detaches and
 # returns). Run in the foreground it held the rack's own terminal until it was killed — every
 # one of a client's five such services did (the coordinator's LVI-045).
+#
+# Detached means: in a session of its own, stdin closed, stdout and stderr to
+# $LV_SERVICES_DIR/<project_slug>/<id>.log (the previous run's kept as <id>.log.1), its pid in
+# <id>.launch. The window that opens only runs `tail -F` on that log, so a prompt from the
+# operator's shell startup blocks the tail, never the service (the coordinator's LVI-049), and
+# closing the window stops nothing (`log <id>` reopens it). A launcher therefore cannot read
+# the terminal; one that asks a question must take its answer another way. A start that dies
+# within LV_SERVICES_SETTLE_SECS (0.5) prints its log's end and exits 8.
 #
 # A service with no start: is status-only. With no health: or compose:, a service is up while
 # a beacon names a live pid. A URL behind a login wall (Cloudflare Access) answers 302 whether
@@ -74,7 +84,7 @@
 #
 # Exit codes: 0 ok · 1 usage · 2 refused under an agent, or guard found a live service ·
 # 3 that checkout is not allowed · 4 no main worktree · 5 a need is not up · 6 already running
-# · 7 no such service, or nothing to run.
+# · 7 no such service, or nothing to run · 8 a detached start exited at once.
 
 set -euo pipefail
 
@@ -83,7 +93,7 @@ source "$(dirname "$0")/lv-orch-lib.sh"
 
 SERVICES_DIR="${LV_SERVICES_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/levain/services}"
 
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
 die() { local rc="$1"; shift; echo "lv-services: $*" >&2; exit "$rc"; }
 
 # Starting or stopping runs the project's own launchers, which read keys in the operator's
@@ -331,12 +341,83 @@ start() {
   done
   running=$(status_of "$id" | awk -F'\t' '$2 != "down" { print ($4 == "-" ? "outside the rack" : $4) }' | head -1)
   [ -z "$running" ] || die 6 "$id is already running ($running); stop it first"
+  running=$(launch_pid "$id") && die 6 "$id is already running (detached, pid $running); stop it first"
   if wants_window "$id"; then
-    open_window "$co" "$cmd"
-    printf '%s: started in a new window, from %s\n' "$id" "$co"
+    detach "$id" "$co" "$cmd"
   else
     (cd "$co" && bash -c "$cmd")
   fi
+}
+
+# log_of <id> — where a detached start writes the service's stdout and stderr.
+log_of() { printf '%s/%s.log' "$(pdir)" "$1"; }
+launch_of() { printf '%s/%s.launch' "$(pdir)" "$1"; }
+
+# launch_detached <dir> <command> <log> — <command> from <dir> in a session of its own, stdin
+# closed, stdout and stderr appended to <log>. Prints its pid. setsid(1) where there is one;
+# macOS has none, so perl's POSIX::setsid, which it ships; nohup when neither is there.
+launch_detached() {
+  (
+    cd "$1" || exit 1
+    if command -v setsid >/dev/null 2>&1; then
+      setsid bash -c "$2" </dev/null >>"$3" 2>&1 &
+    elif command -v perl >/dev/null 2>&1; then
+      perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec: $!\n"' bash -c "$2" </dev/null >>"$3" 2>&1 &
+    else
+      nohup bash -c "$2" </dev/null >>"$3" 2>&1 &
+    fi
+    printf '%s\n' "$!"
+  )
+}
+
+# detach <id> <checkout> <command> — start a long-running service detached from any terminal,
+# then open a window that only follows its log. The command used to be typed into a fresh
+# interactive shell, whose startup prompt (oh-my-zsh's update question) ate the line, and the
+# service never started (the coordinator's LVI-049). A prompt now blocks the tail, not the
+# service. The pid is recorded in <id>.launch so stop: signal reaches it even before, or
+# without, the launcher's own beacon.
+detach() {
+  local id="$1" co="$2" cmd="$3" log pid
+  log=$(log_of "$id")
+  mkdir -p "$(pdir)"
+  [ -f "$log" ] && mv -f "$log" "$log.1"
+  printf '── %s started %s from %s ──\n' "$id" "$(date '+%Y-%m-%d %H:%M:%S')" "$co" > "$log"
+  pid=$(launch_detached "$co" "$cmd" "$log")
+  rec_write "$(launch_of "$id")" "service=$id" "pid=$pid" "checkout=$co" "log=$log" "started=$(date +%s)"
+  sleep "${LV_SERVICES_SETTLE_SECS:-0.5}"
+  if ! pid_alive "$pid"; then
+    rm -f "$(launch_of "$id")"
+    printf 'lv-services: %s exited at once; the end of its log (%s):\n' "$id" "$log" >&2
+    tail -n 20 "$log" >&2
+    exit 8
+  fi
+  open_window "$co" "tail -n 200 -F $(printf '%q' "$log")" \
+    || printf '%s: no window opened; follow it with: tail -F %s\n' "$id" "$log"
+  printf '%s: started detached (pid %s), from %s; a new window follows %s\n' "$id" "$pid" "$co" "$log"
+}
+
+# launch_pid <id> — the pid a detached start recorded, while it lives; a dead one's record goes.
+launch_pid() {
+  local f pid; f=$(launch_of "$1")
+  [ -f "$f" ] || return 1
+  pid=$(rec_get "$f" pid)
+  if pid_alive "$pid"; then printf '%s' "$pid"; else rm -f "$f"; return 1; fi
+}
+
+# log_window <id> [--path] — follow a detached service's log again in a new window (closing
+# that window never stopped the service), or print where the log is.
+log_window() {
+  local id="" path=false log
+  while [ $# -gt 0 ]; do
+    case "$1" in --path) path=true; shift ;; -*) usage 1 ;; *) id="$1"; shift ;; esac
+  done
+  [ -n "$id" ] || usage 1
+  has_svc "$id" || die 7 "no service '$id' in levain.yml services:"
+  log=$(log_of "$id")
+  if $path; then printf '%s\n' "$log"; return 0; fi
+  refuse_agent "log"
+  [ -f "$log" ] || die 7 "$id has no log yet (only a detached start writes one)"
+  open_window "$(pdir)" "tail -n 200 -F $(printf '%q' "$log")"
 }
 
 stop() {
@@ -349,13 +430,19 @@ stop() {
   # down with the service whose launcher brought it up).
   [ -n "$cmd" ] || [ -n "$(svc "$id" start)" ] || die 7 "$id is status-only (no start: or stop:) — stop whatever starts it"
   if [ -z "$cmd" ] || [ "$cmd" = signal ]; then
+    # The beacons' pids, and the pid a detached start recorded: never a window's shell.
+    local sent=" " lp
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       pid=$(rec_get "$f" pid)
       [ "$pid" = 0 ] && continue
-      kill -TERM "$pid" 2>/dev/null && n=$((n + 1))
+      kill -TERM "$pid" 2>/dev/null && { n=$((n + 1)); sent="$sent$pid "; }
       rm -f "$f"
     done <<< "$(live_records "$id")"
+    if lp=$(launch_pid "$id"); then
+      case "$sent" in *" $lp "*) ;; *) kill -TERM "$lp" 2>/dev/null && n=$((n + 1)) ;; esac
+      rm -f "$(launch_of "$id")"
+    fi
     [ "$n" -gt 0 ] || die 7 "$id: nothing running to signal"
     printf '%s: TERM sent to %s process(es)\n' "$id" "$n"
     return 0
@@ -418,6 +505,7 @@ case "${1:-}" in
   stop) shift; stop "$@" ;;
   console) console ;;
   guard) shift; guard "$@" ;;
+  log) shift; log_window "$@" ;;
   beacon) shift; beacon "$@" ;;
   -h|--help) usage 0 ;;
   *) usage 1 ;;
