@@ -11,6 +11,7 @@
 #   lv-rack.sh --sleep <name>    make a project dormant: no column, no scan
 #   lv-rack.sh --wake <name>     put a dormant project back on the board
 #   lv-rack.sh --services        every project's services: state, checkout, how long up
+#   lv-rack.sh --decide          the issues a blind sweep left for the operator (LVI-051)
 #
 # --watch repaints only the rows that changed, not the whole screen — no
 # flicker.
@@ -341,6 +342,7 @@ while [ $# -gt 0 ]; do
     --list-daemons) mode="list-daemons"; shift ;;
     --dormant) mode="dormant"; shift ;;
     --services) mode="services"; shift ;;
+    --decide) mode="decide"; shift ;;
     --sleep|--wake)
       [ -n "${2:-}" ] || { echo "lv-rack: $1 needs a project name" >&2; usage 1; }
       mode="${1#--}"; mode_arg="$2"; shift 2 ;;
@@ -1507,16 +1509,63 @@ library_version() {
 
 # refresh_library_count — the summed count into $SWEEP_STATE/lvis, or the file
 # removed when there is no answer. Runs inside the background refresh, so it
-# writes a file: a subshell cannot set the board's variables.
+# writes files: a subshell cannot set the board's variables. The count leaves
+# out the issues a sweep left and nobody has answered (LVI-051); those go to
+# $SWEEP_STATE/left.tsv, and how many need the operator to $SWEEP_STATE/decide.
 refresh_library_count() {
   [ -n "$LIB_DIR" ] && [ -x "$HERE/lv-library-sweep.sh" ] || return 0
   mkdir -p "$SWEEP_STATE" 2>/dev/null || return 0
-  local n
+  local n left
   if n=$("$HERE/lv-library-sweep.sh" count "$LIB_DIR" 2>/dev/null) && [ -n "$n" ]; then
     printf '%s\n' "$n" > "$SWEEP_STATE/lvis"
   else
     rm -f "$SWEEP_STATE/lvis"
   fi
+  if left=$("$HERE/lv-library-sweep.sh" left "$LIB_DIR" 2>/dev/null); then
+    printf '%s\n' "$left" | grep . > "$SWEEP_STATE/left.tsv"
+    awk -F'\t' '$3 == "needs-operator" { n++ } END { print n + 0 }' "$SWEEP_STATE/left.tsv" > "$SWEEP_STATE/decide"
+  else
+    rm -f "$SWEEP_STATE/left.tsv" "$SWEEP_STATE/decide"
+  fi
+}
+
+# decide_list — what the sweeps left, from $SWEEP_STATE/left.tsv: each
+# needs-operator issue with its id, client and question first, then the rest
+# by class, and how an answer gets it swept again. Plain text, so `--decide`
+# and the screen behind decide (N) print the same thing.
+decide_list() {
+  local f="$SWEEP_STATE/left.tsv" client id cls date reason n
+  n=$(awk -F'\t' '$3 == "needs-operator"' "$f" 2>/dev/null | grep -c .)
+  printf '%sDECIDE%s  %s%s issue(s) a blind sweep left for you%s\n\n' "$B" "$R" "$DIM" "${n:-0}" "$R"
+  if [ "${n:-0}" -eq 0 ]; then
+    printf '  nothing waits on a decision\n'
+  else
+    while IFS=$'\t' read -r client id cls date reason; do
+      [ "$cls" = needs-operator ] || continue
+      printf '  %s%s%s  %s  %sleft %s%s\n      %s\n' "$B" "$id" "$R" "$client" "$DIM" "${date%%T*}" "$R" "$reason"
+    done < "$f"
+  fi
+  if awk -F'\t' '$3 != "needs-operator"' "$f" 2>/dev/null | grep -q .; then
+    printf '\n%salso left, waiting on an answer:%s\n' "$DIM" "$R"
+    while IFS=$'\t' read -r client id cls date reason; do
+      [ "$cls" = needs-operator ] && continue
+      printf '  %s  %s  %s — %s\n' "$id" "$client" "$cls" "$reason"
+    done < "$f"
+  fi
+  printf '\n%sAnswer under the **Sweep:** line in that client'"'"'s WORKFLOW-ISSUES.md;\n' "$DIM"
+  printf 'the next sweep takes the issue again.%s\n' "$R"
+}
+
+# decide_screen — Enter on decide (N): the listing; W heals from here too.
+decide_screen() {
+  local key
+  printf '\033[2J\033[H'
+  decide_list
+  printf '\n  %sW%s heal · any other key back ' "$B" "$R"
+  read_key key
+  case "$key" in
+    W) printf '\033[2J\033[H'; sweep_library; printf '\n  (press any key to continue) '; read_key key ;;
+  esac
 }
 
 # sweep_running — a blind sweep's PID is live.
@@ -1539,21 +1588,28 @@ restart_needed() {
 # Enter on this line does — carries <selected-attr> when the cursor is here:
 #   ♥♥♡                 a sweep running (HEART_FRAMES, one step a tick)
 #   restart required    a deploy landed after the board started; Enter or X
-#   heal (N)            N open client issues; Enter or W sweeps them
-# then the last sweep's result, and "auto-heal" while that setting is on.
+#   decide (N)          N issues a sweep left for the operator; Enter lists them
+#   heal (N)            N open client issues a sweep may take; Enter or W sweeps
+# Heal is still shown beside decide, and W still sweeps. Then the last sweep's
+# result, and "auto-heal" while that setting is on.
 library_sweep_line() {
-  local sa="${1:-}" n="" res="" tok=""
+  local sa="${1:-}" n="" d="" res="" tok="" heal=""
   read_stamp n "$SWEEP_STATE/lvis"
+  read_stamp d "$SWEEP_STATE/decide"
+  [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null && heal="${YEL}heal ($n)"
   if sweep_running; then
     tok="${RED}${HEART_FRAMES[$heart_i]}"
   elif restart_needed; then
     tok="${YEL}restart required"
-  elif [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null; then
-    tok="${YEL}heal ($n)"
+  elif [ -n "$d" ] && [ "$d" -gt 0 ] 2>/dev/null; then
+    tok="${YEL}decide ($d)"
+  elif [ -n "$heal" ]; then
+    tok="$heal"; heal=""
   elif [ -n "$sa" ]; then
     tok="healthy"
   fi
   [ -n "$tok" ] && printf ' · %s%s%s%s' "${R}${sa}" "$tok" "$R" "$DIM"
+  case "$tok" in *"decide ("*) [ -n "$heal" ] && printf ' · %s%s%s' "$heal" "$R" "$DIM" ;; esac
   if ! sweep_running; then
     read_stamp res "$SWEEP_STATE/result"
     [ -n "$res" ] && printf ' · last sweep: %s' "$res"
@@ -1642,7 +1698,8 @@ restart_board() {
 }
 
 # library_enter — Enter on the library line: restart when a deploy is
-# waiting on one, else heal when there is anything to heal.
+# waiting on one, else list what waits on a decision, else heal when there is
+# anything to heal.
 library_enter() {
   if sweep_running; then
     local log=""; read_stamp log "$SWEEP_STATE/latest"
@@ -1650,6 +1707,8 @@ library_enter() {
     return 0
   fi
   restart_needed && restart_board
+  local d=""; read_stamp d "$SWEEP_STATE/decide"
+  if [ -n "$d" ] && [ "$d" -gt 0 ] 2>/dev/null; then decide_screen; return 0; fi
   printf '\033[2J\033[H'
   sweep_library
   printf '\n  (press any key to continue) '; read_key key
@@ -3364,6 +3423,7 @@ case "$mode" in
   list-daemons) list_daemons; exit $? ;;
   dormant)      list_dormant; exit 0 ;;
   services)     sv_collect; sv_table; exit 0 ;;
+  decide)       refresh_library_count; decide_list; exit 0 ;;
   sleep|wake)
     target=$(resolve_project "$mode_arg") || { echo "lv-rack: '$mode_arg' is not in the project registry" >&2; exit 1; }
     if [ "$mode" = sleep ]; then set_dormant "$target" on; else set_dormant "$target" off; fi

@@ -33,7 +33,12 @@ script refuses anything unsafe on its own.
    `SWEEP_LEFT` lines of the log named in `latest`:
    - what was fixed, which client each issue came from, and how many are left
    - the version deployed, and whether it was published
-   - what was left and why
+   - what was left, its class (`needs-operator`, `not-library` or `unsure`) and why. The sweep
+     writes each one onto the issue as a `**Sweep:** left` line, and later sweeps skip it until
+     somebody writes an answer under that line
+   - **decide (N):** run `scripts/lv-exec.sh lv-rack.sh --decide` and give its count. When N is
+     above 0, list each issue's id, client and question, and say that an answer written under
+     the `**Sweep:**` line in that client's `WORKFLOW-ISSUES.md` lets the next sweep take it again
    - whether the sweep was held, and the reason
    For a held sweep, the operator reviews it and presses `U` on the board, which deploys and
    publishes it. After a deploy, say that a running board shows **restart required** and that `X`
@@ -46,5 +51,6 @@ script refuses anything unsafe on its own.
 ```text
 /lv-sweep            heal: sweep, deploy, publish, report
 /lv-sweep help       this block
-On the board:  heal (N) on the library line, Enter or W · `,` settings → auto-heal
+On the board:  heal (N) on the library line, Enter or W · decide (N), Enter lists the
+               questions a sweep left for you · `,` settings → auto-heal
 ```

@@ -1594,6 +1594,47 @@ assert_eq "the footer count equals the entries printed" "true" \
 printf '%s\n%s\n%s\n' "$SWEEP_A" "$TEST_DIR/gone" "$SWEEP_B" > "$TEST_DIR/deployments.txt"
 assert_eq "a missing client is skipped, others still counted" "2" \
   "$(sweep --count 2>/dev/null | wc -l | xargs)"
+
+# LVI-051: what a blind sweep leaves is written onto the issue, and the issue
+# waits for an answer while that note is its last line.
+printf '%s\n%s\n' "$SWEEP_A" "$SWEEP_B" > "$TEST_DIR/deployments.txt"
+for d in "$SWEEP_A" "$SWEEP_B"; do
+  git -C "$d" init -q && git -C "$d" add -A && git -C "$d" -c user.name=t -c user.email=t@t commit -qm init
+done
+mk_issue "$SWEEP_A" WFI-004 open
+git -C "$SWEEP_A" add -A && git -C "$SWEEP_A" -c user.name=t -c user.email=t@t commit -qm more
+gitid() { GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t "$@"; }
+assert_fails "--note needs --client" sweep --note WFI-001 "unsure: x"
+gitid "$LIB_ROOT/sweep-issues.sh" --note WFI-001 --client client-a "needs-operator: which way should it go?" >/dev/null 2>&1
+note_entry=$(awk -v RS='\n## ' '/^WFI-001 /' "$SWEEP_A/WORKFLOW-ISSUES.md")
+assert_eq "the note is the entry's last line" "true" \
+  "$(printf '%s' "$note_entry" | grep . | tail -1 | grep -qE '^\*\*Sweep:\*\* left [0-9TZ:-]+ — needs-operator: which way should it go\?$' && echo true || echo false)"
+assert_eq "it lands under that entry, not the next one" "0" \
+  "$(awk -v RS='\n## ' '/^WFI-004 /' "$SWEEP_A/WORKFLOW-ISSUES.md" | grep -c 'Sweep:' | xargs)"
+assert_eq "only client-a's copy is noted" "0" "$(grep -c 'Sweep:' "$SWEEP_B/WORKFLOW-ISSUES.md" | xargs)"
+assert_eq "the note is committed in that client" "chore(workflow): WFI-001 left by a blind sweep" \
+  "$(git -C "$SWEEP_A" log -1 --format=%s)"
+assert_eq "and nothing is left dirty" "" "$(git -C "$SWEEP_A" status --porcelain)"
+assert_eq "--count still counts it open" "2" "$(sweep --count | awk -F': ' '$1 == "client-a" { print $2 }')"
+assert_eq "--count --sweepable leaves it out" "1" "$(sweep --count --sweepable | awk -F': ' '$1 == "client-a" { print $2 }')"
+assert_eq "--sweepable lists only the other client's WFI-001" "1" "$(sweep --sweepable 2>/dev/null | grep -c '^## WFI-001 ' | xargs)"
+left_line=$(sweep --left | grep 'WFI-001')
+assert_eq "--left gives client, id and class" "client-a	WFI-001	needs-operator" "$(printf '%s' "$left_line" | cut -f1-3)"
+assert_eq "and the question" "which way should it go?" "$(printf '%s' "$left_line" | cut -f5)"
+# The operator answers under the note.
+awk '{ print } /^\*\*Sweep:\*\* left / { print ""; print "Operator: go the second way." }' "$SWEEP_A/WORKFLOW-ISSUES.md" > "$TEST_DIR/answered" \
+  && mv "$TEST_DIR/answered" "$SWEEP_A/WORKFLOW-ISSUES.md"
+assert_eq "an answer under the note makes it sweepable again" "2" \
+  "$(sweep --count --sweepable | awk -F': ' '$1 == "client-a" { print $2 }')"
+assert_eq "and it is no longer waiting" "" "$(sweep --left | grep WFI-001)"
+gitid "$LIB_ROOT/sweep-issues.sh" --note WFI-001 --client client-a "unsure: still stuck" >/dev/null 2>&1
+assert_eq "a later note goes under the answer" "Operator: go the second way." \
+  "$(awk -v RS='\n## ' '/^WFI-001 /' "$SWEEP_A/WORKFLOW-ISSUES.md" | grep . | tail -2 | head -1)"
+assert_eq "and waits again" "unsure" "$(sweep --left | grep WFI-001 | cut -f3)"
+before=$(cat "$SWEEP_B/WORKFLOW-ISSUES.md")
+assert_fails "a resolved entry is not noted" "$LIB_ROOT/sweep-issues.sh" --note WFI-002 --client client-b "unsure: x"
+assert_eq "and its file is untouched" "$before" "$(cat "$SWEEP_B/WORKFLOW-ISSUES.md")"
+assert_fails "an unknown id is not noted" "$LIB_ROOT/sweep-issues.sh" --note WFI-404 --client client-b "unsure: x"
 unset LV_DEPLOYMENTS
 
 section "One writer at a time in the library (lock.sh)"

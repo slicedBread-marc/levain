@@ -2,7 +2,12 @@
 # lv-library-sweep.sh — a blind library sweep: the library's top open client
 # issues, fixed by a headless session nobody watches, started from the rack (LVI-031).
 #
-#   lv-library-sweep.sh count  <library>            open client issues, summed
+#   lv-library-sweep.sh count  <library>            open client issues a sweep may
+#                                                   take, summed (not those left
+#                                                   and waiting on an answer)
+#   lv-library-sweep.sh left   <library>            those waiting, one TSV line each:
+#                                                   client, id, class, date, reason
+#   lv-library-sweep.sh decide <library>            how many of them need the operator
 #   lv-library-sweep.sh start  <library> <state>    preflight, then detach a run
 #   lv-library-sweep.sh run    <library> <state>    the detached body (start calls it)
 #   lv-library-sweep.sh resolve-pending <library> <state>
@@ -42,6 +47,19 @@
 # is editing, so a sweep that touches the guard is not guarded by its own edit.
 # No guard on disk, no sweep.
 #
+# WHAT IS LEFT (LVI-051)
+#
+# A fault the session leaves comes back as `SWEEP_LEFT <id> <client> <class>
+# <reason>`, and this process writes it onto the issue itself through
+# sweep-issues.sh --note: `**Sweep:** left <date> — <class>: <reason>`. The
+# classes are needs-operator (the reason is the question for the operator),
+# not-library (the fault is the client's own) and unsure; a line without a
+# known class is noted as unsure. While that note is the entry's last line the
+# issue is waiting on an answer: `count` leaves it out, so heal (N) does not
+# count it and the next sweep is never shown it (`--sweepable`). Writing an
+# answer under the note makes it sweepable again. The rack shows the
+# needs-operator ones as decide (N) (`left`, `decide`).
+#
 # NEVER --upstream. Public issues and pull requests are applied only after the
 # operator has read every line (docs/upstream-intake.md). The prompt says so,
 # and nothing here offers the session that list.
@@ -72,7 +90,7 @@ GUARD_PATHS_RE='^(scripts/v[0-9.]+/lv-guard-baseline\.sh|scripts/v[0-9.]+/lv-lib
 # Top N faults per sweep; duplicates of one fault across clients are one slot.
 SLOTS=3
 
-usage() { sed -n '2,12p' "$SELF" | sed 's/^# \{0,1\}//' >&2; exit 1; }
+usage() { sed -n '2,17p' "$SELF" | sed 's/^# \{0,1\}//' >&2; exit 1; }
 
 cmd="${1:-}"; LIB="${2:-}"; STATE="${3:-}"
 [ -n "$cmd" ] && [ -n "$LIB" ] || usage
@@ -83,10 +101,42 @@ cmd="${1:-}"; LIB="${2:-}"; STATE="${3:-}"
 count() {
   [ -x "$LIB/sweep-issues.sh" ] || return 1
   local out
-  out=$(cd "$LIB" && ./sweep-issues.sh --count 2>/dev/null)
+  out=$(cd "$LIB" && ./sweep-issues.sh --count --sweepable 2>/dev/null)
   # Exit 1 means "every client is clean", which is an answer; no output is not.
   [ -n "$out" ] || return 1
   printf '%s\n' "$out" | awk -F': *' 'NF >= 2 && $2 ~ /^[0-9]+$/ { s += $2 } END { print s + 0 }'
+}
+
+# left — the open issues waiting on an answer to a sweep's note, as
+# sweep-issues.sh --left prints them. Nothing when the library cannot say.
+left() {
+  [ -x "$LIB/sweep-issues.sh" ] || return 1
+  (cd "$LIB" && ./sweep-issues.sh --left 2>/dev/null)
+  return 0
+}
+
+# decide — how many of those are needs-operator: the board's decide (N).
+decide() {
+  local out
+  out=$(left) || return 1
+  printf '%s\n' "$out" | awk -F'\t' '$3 == "needs-operator" { n++ } END { print n + 0 }'
+}
+
+# note_left <session output> — each SWEEP_LEFT line written onto its issue,
+# once per issue and client, unless the same pair was also reported fixed.
+note_left() {
+  local id client cls reason
+  printf '%s\n' "$1" | grep -E '^SWEEP_LEFT [^ ]+ [^ ]+' | sort -u -k2,3 \
+    | while read -r _ id client cls reason; do
+        case "$cls" in
+          needs-operator|not-library|unsure) ;;
+          *) reason="${cls}${reason:+ $reason}"; cls=unsure ;;
+        esac
+        [ -n "$reason" ] || reason="no reason given"
+        printf '%s\n' "$fixed" | grep -q "^${id}	${client}	" && continue
+        printf '== left %s (%s): %s\n' "$id" "$client" "$cls"
+        (cd "$LIB" && ./sweep-issues.sh --note "$id" --client "$client" "$cls: $reason") < /dev/null 2>&1 | sed 's/^/   /'
+      done
 }
 
 refuse() { printf 'refused — %s\n' "$1"; exit 3; }
@@ -141,8 +191,10 @@ Your working directory is the harness library. Read its CLAUDE.md first.
 LIBRARY-LOCK.md is already held for you (holder: blind-sweep); \`./lock.sh status\`
 reports it as yours. Do not take, steal or release it.
 
-1. Run \`./sweep-issues.sh\`. NEVER pass --upstream: public issues and pull
-   requests are never applied unread.
+1. Run \`./sweep-issues.sh --sweepable\`. NEVER pass --upstream: public issues
+   and pull requests are never applied unread. --sweepable already leaves out
+   the issues an earlier sweep left that nobody has answered yet; do not go
+   looking for them.
 2. Choose at most ${SLOTS} faults, OLDEST FIRST by the timestamp in each issue's
    heading. The same fault reported by several clients is one slot.
 3. For each, in that order: diagnose it and fix the cause in this library,
@@ -153,7 +205,13 @@ reports it as yours. Do not take, steal or release it.
    CLAUDE.md says to do after a commit.
 4. A fault you cannot fix with confidence, or that needs the operator to
    decide something, you leave open: revert your edits for it and say why.
-   Do not take another fault in its place.
+   Do not take another fault in its place. Give each one a class:
+     needs-operator  a call only the operator can make. Write the reason as
+                     the question they must answer, in one line.
+     not-library     the fault is in the client's own code or config, not here.
+     unsure          anything else.
+   The process that started you writes that onto the issue; do not edit any
+   WORKFLOW-ISSUES.md yourself.
 5. NEVER run ./deploy-all.sh, ./sweep-issues.sh --resolve, or git push. The
    process that started you deploys and resolves after you exit, and only
    when every check it runs holds.
@@ -163,7 +221,7 @@ End your final message with one line per fix you committed, and one per
 client when a fault was reported by several:
 SWEEP_FIXED <issue-id> <client> <commit-sha>
 and one line per fault you looked at and left:
-SWEEP_LEFT <issue-id> <client> <one-line reason>
+SWEEP_LEFT <issue-id> <client> <needs-operator|not-library|unsure> <one-line reason>
 EOF
 }
 
@@ -209,6 +267,7 @@ run() {
           && printf '%s\t%s\t%s\n' "$id" "$client" "$full"
       done)
   n_fixed=$(printf '%s' "$fixed" | grep -c .)
+  note_left "$out"
 
   if [ -n "$(git -C "$LIB" status --porcelain --untracked-files=no)" ]; then
     git -C "$LIB" status --short --untracked-files=no
@@ -286,6 +345,8 @@ resolve_pending() {
 
 case "$cmd" in
   count) count ;;
+  left) left ;;
+  decide) decide ;;
   start)
     [ -n "$STATE" ] || usage
     mkdir -p "$STATE/logs" || exit 1

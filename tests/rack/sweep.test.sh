@@ -42,8 +42,10 @@ new_lib() {
   cat > "$LIB/sweep-issues.sh" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in
-  --count) printf 'alpha: %s\nbeta: 0\n' "${STUB_COUNT:-2}" ;;
+  --count) echo "count $*" >> "$CALLS"; printf 'alpha: %s\nbeta: 0\n' "${STUB_COUNT:-2}" ;;
   --resolve) echo "resolve $2 $4 $5" >> "$CALLS" ;;
+  --note) echo "note $2 $4 $5" >> "$CALLS" ;;
+  --left) [ -n "${STUB_LEFT:-}" ] && printf '%s\n' "$STUB_LEFT" ;;
 esac
 STUB
   printf '#!/usr/bin/env bash\necho deployed >> "$CALLS"\n' > "$LIB/deploy-all.sh"
@@ -60,11 +62,14 @@ cat > "$FIX/claude" <<'STUB'
 { echo "claude unattended=${LV_UNATTENDED:-} $*" | head -c 200; echo; } >> "$CALLS"
 ./lock.sh status >/dev/null 2>&1; echo "lock-status $?" >> "$CALLS"
 for a in "$@"; do case "$a" in *--upstream*NEVER*|*NEVER\ pass\ --upstream*) echo "told-no-upstream" >> "$CALLS" ;; esac; done
-[ -n "${STUB_TOUCH:-}" ] || { echo "nothing to do"; exit 0; }
+for a in "$@"; do case "$a" in *"./sweep-issues.sh --sweepable"*) echo "told-sweepable" >> "$CALLS" ;; esac; done
+for a in "$@"; do case "$a" in *"SWEEP_LEFT <issue-id> <client> <needs-operator|not-library|unsure>"*) echo "told-class" >> "$CALLS" ;; esac; done
+[ -n "${STUB_TOUCH:-}" ] || { echo "nothing to do"; [ -n "${STUB_LEFT_LINES:-}" ] && printf '%s\n' "$STUB_LEFT_LINES"; exit 0; }
 mkdir -p "$(dirname "$STUB_TOUCH")"; echo fix >> "$STUB_TOUCH"
 git add -A && git -c user.name=t -c user.email=t@t commit -qm "fix(x): LVI-001"
 echo "SWEEP_FIXED LVI-001 alpha $(git rev-parse --short HEAD)"
 echo "SWEEP_FIXED LVI-009 alpha $(git rev-parse --short HEAD~1)"
+[ -n "${STUB_LEFT_LINES:-}" ] && printf '%s\n' "$STUB_LEFT_LINES"
 STUB
 chmod +x "$FIX/claude"
 export LV_SWEEP_CLAUDE="$FIX/claude" LV_RACK_SUITE="exit 0"
@@ -72,6 +77,7 @@ export LV_SWEEP_CLAUDE="$FIX/claude" LV_RACK_SUITE="exit 0"
 echo "── count ──"
 new_lib
 ck "the open issues of every client, summed" "$("$SWEEP" count "$LIB")" "2"
+has "counting only the ones a sweep may take" "$(grep '^count' "$CALLS")" "--count --sweepable"
 
 echo "── a sweep that fixes, deploys and resolves ──"
 STUB_TOUCH=scripts/v2.00/lv-foo.sh "$SWEEP" run "$LIB" "$STATE" >/dev/null 2>&1; rc=$?
@@ -90,6 +96,31 @@ has "the result line" "$(cat "$STATE/result")" "fixed 1 · left 2 · deployed v1
 ck "the lock is released" "$([ -f "$LIB/LIBRARY-LOCK.md" ] && echo held || echo free)" "free"
 ck "no pid is left behind" "$([ -f "$STATE/pid" ] && echo yes || echo no)" "no"
 ck "nothing is left pending" "$([ -f "$STATE/pending" ] && echo yes || echo no)" "no"
+
+echo "── what a sweep leaves is written onto the issue (LVI-051) ──"
+new_lib
+STUB_LEFT_LINES="$(printf '%s\n' \
+  'SWEEP_LEFT LVI-041 coord needs-operator Should the rack page or the skill own it?' \
+  'SWEEP_LEFT LVI-041 coord needs-operator Should the rack page or the skill own it?' \
+  'SWEEP_LEFT LVI-002 gamma not-library the csproj pins a missing SDK' \
+  'SWEEP_LEFT LVI-007 beta could not reproduce' \
+  'SWEEP_LEFT LVI-001 alpha unsure fixed after all')" \
+  "$SWEEP" run "$LIB" "$STATE" >/dev/null 2>&1
+ck "the session is told to list with --sweepable" "$(grep -c told-sweepable "$CALLS")" "1"
+ck "and to give each left fault a class" "$(grep -c told-class "$CALLS")" "1"
+ck "a needs-operator fault is noted with its question" \
+  "$(grep -c '^note LVI-041 coord needs-operator: Should the rack page or the skill own it?$' "$CALLS")" "1"
+ck "a not-library fault keeps its class" "$(grep -c '^note LVI-002 gamma not-library: the csproj pins a missing SDK$' "$CALLS")" "1"
+ck "a line with no known class is noted as unsure" "$(grep -c '^note LVI-007 beta unsure: could not reproduce$' "$CALLS")" "1"
+ck "each issue and client is noted once" "$(grep -c '^note' "$CALLS")" "4"
+new_lib
+STUB_LEFT_LINES='SWEEP_LEFT LVI-001 alpha unsure half of it' STUB_TOUCH=scripts/v2.00/lv-foo.sh \
+  "$SWEEP" run "$LIB" "$STATE" >/dev/null 2>&1
+ck "an issue the same sweep fixed for that client is not noted" "$(grep -c '^note' "$CALLS")" "0"
+STUB_LEFT="$(printf 'coord\tLVI-041\tneeds-operator\t2026-11-16T00:00:00Z\tWhich?\ngamma\tLVI-002\tnot-library\t2026-11-16T00:00:00Z\tcsproj')"
+export STUB_LEFT
+ck "left lists what waits on an answer" "$("$SWEEP" left "$LIB" | cut -f2 | tr '\n' ' ')" "LVI-041 LVI-002 "
+ck "decide counts the needs-operator ones" "$("$SWEEP" decide "$LIB")" "1"
 
 echo "── a fix to a guard file is committed, never deployed ──"
 new_lib
@@ -147,6 +178,22 @@ source "$BOARD"
 refresh_library_count
 has "the library line offers to heal the count" "$(library_sweep_line)" "heal (2)"
 has "and the last result" "$(library_sweep_line)" "last sweep: fixed 1 · left 2 · deployed v1.0.0"
+ck "the refresh records how many need the operator" "$(cat "$STATE/decide")" "1"
+has "the line shows decide (N) first" "$(library_sweep_line)" " · decide (1) · heal (2) · last sweep:"
+has "selected, the cursor is on decide" "$(library_sweep_line SEL)" " · SELdecide (1)"
+out=$(decide_list)
+has "the listing names the id, client and question" "$out" "LVI-041  coord  left 2026-11-16
+      Which?"
+has "the other classes are listed apart" "$out" "also left, waiting on an answer:
+  LVI-002  gamma  not-library — csproj"
+has "and it says how to answer" "$out" "Answer under the **Sweep:** line"
+case "$out" in *"LVI-002  gamma  left"*) bad "a not-library issue is not a decision" ;; *) ok "a not-library issue is not a decision" ;; esac
+out=$(LV_SWEEP_STATE="$STATE" LV_LIBRARY_DIR="$LIB" LV_RACK_LIB= bash "$BOARD" --decide 2>&1)
+has "--decide prints the same listing" "$out" "DECIDE  1 issue(s)"
+has "with the question" "$out" "Which?"
+unset STUB_LEFT; refresh_library_count
+case "$(library_sweep_line)" in *decide*) bad "nothing left: no decide" ;; *) ok "nothing left: no decide" ;; esac
+has "and decide_list says so" "$(decide_list)" "nothing waits on a decision"
 printf '%s\n' "$LIVE" > "$STATE/pid"
 has "a live sweep reads as hearts" "$(library_sweep_line)" "♡♡♡"
 heart_i=2
