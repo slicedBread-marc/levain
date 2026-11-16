@@ -55,6 +55,17 @@ test_command: ""
 # every plan exit, and an accepted cost of finding merge breaks at deploy.
 postMergeCheck: full
 
+# Git-ignored files the build or start command regenerates (LVI-057).
+# lv-ignored-sources.sh refuses active -> verify, and /lv-test keeps the
+# worktree, when a plan's folder holds an ignored, untracked file of an
+# extension the plan lists there: it may be a source git never saw. A file
+# the build writes on every run is not one; declare it here so it is never
+# reported. Globs, worktree-relative, `*` crosses `/`.
+# ignoredSources:
+#   derived:
+#     - "site/index.html"
+#     - "site/*.js"
+
 # Suite receipts (LVI-035). Every lv-suite-run.sh run records a receipt keyed on
 # the tree (HEAD^{tree}), the resolved build and test commands, the toolchain
 # versions and the Levain version. lv-verify, /lv-test step 4 and the post-merge

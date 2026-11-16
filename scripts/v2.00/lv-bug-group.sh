@@ -8,6 +8,7 @@
 #   lv-bug-group.sh seal     <slug> [--lead <BUG-ID>]
 #   lv-bug-group.sh dissolve <slug> ["<why>"]
 #   lv-bug-group.sh consume  <slug> <PLN-ID>
+#   lv-bug-group.sh leave    <slug> <BUG-ID> --after <PLN-ID> "<why>"
 #   lv-bug-group.sh list     [--all] [--stale]
 #   lv-bug-group.sh show     <slug>
 #   lv-bug-group.sh of       <BUG-ID>
@@ -61,7 +62,18 @@
 #   consume   /lv-spec's exit: Status Consumed, naming the lead's plan, any
 #             hold still placed released. Refused
 #             (exit 2) while any member is still in bugs/open — the group's
-#             done-condition is that every member has left it.
+#             done-condition is that every member has left it, or was left
+#             for its own plan.
+#   leave     /lv-spec's, for the lead's run: record that a member is
+#             separate work for its own later plan with Deps on the lead's
+#             (--after). It stays in bugs/open, it no longer holds `consume`
+#             back, lv-bug-consume.sh refuses to fold or amend it into the
+#             plan it was left after, and once the group is Consumed it is
+#             offered on its own. Written as `- BUG-a after PLN-L — why`
+#             under `## Left for their own plans`, the marker every reader
+#             checks — never the prose in Design Decisions (a client's
+#             LVI-005: the decision was prose, consume refused, the group
+#             stayed Sealed, and the member was withheld as carried).
 #   list      Groups not yet finished (--all: every group). --stale: only Open
 #             groups older than bugs.groupStaleAfter hours (default 24).
 #   show      One group, readable.
@@ -74,12 +86,13 @@
 # terminal here, or a coordinator through --project. Under LV_UNATTENDED=1 they
 # refuse (exit 6) — a worker that could seal its own group could release its
 # own hold. consume is a worker's, because /lv-spec is what finishes a group.
-# list, show and of read only.
+# leave is a worker's too, for the same reason. list, show and of read only.
 #
 # Exit codes:
 #   0  done
 #   1  usage, unknown group or bug
-#   2  consume refused — members still open
+#   2  consume refused — members still open; leave refused — not an open,
+#      non-lead member of a Sealed group, or --after names no plan
 #   4  add refused — the member's plan is built (active or later)
 #   5  the develop checkout is not on develop — nothing written
 #   6  refused — not an overseer
@@ -93,13 +106,14 @@ source "$SELF_DIR/lv-orch-lib.sh"
 # Options may sit on either side of the command — `--project proj seal x`
 # reads as naturally as `seal x --project proj`.
 [ $# -gt 0 ] || { wf_usage "$0"; exit 1; }
-project="" lead="" create_why="" all=false stale=false
+project="" lead="" create_why="" after="" all=false stale=false
 pos=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --project) project="${2:?--project requires a name from coordinates:}"; shift 2 ;;
     --lead)    lead="${2:?--lead requires a bug ID}"; shift 2 ;;
     --create)  create_why="${2?--create requires the why}"; shift 2 ;;
+    --after)   after="${2:?--after requires the lead plan ID}"; shift 2 ;;
     --all)     all=true; shift ;;
     --stale)   stale=true; shift ;;
     -h|--help) wf_usage "$0"; exit 0 ;;
@@ -110,7 +124,7 @@ done
 
 cmd="${pos[0]:-}"
 case "$cmd" in
-  open|add|remove|seal|dissolve|consume|list|show|of) pos=("${pos[@]:1}") ;;
+  open|add|remove|seal|dissolve|consume|leave|list|show|of) pos=("${pos[@]:1}") ;;
   "") wf_usage "$0" >&2; exit 1 ;;
   *) wf_bad_option "$cmd" ;;
 esac
@@ -137,6 +151,7 @@ if [ -n "$project" ]; then
   args=("$cmd" "${pos[@]+"${pos[@]}"}")
   [ -n "$lead" ] && args+=(--lead "$lead")
   [ -n "$create_why" ] && args+=(--create "$create_why")
+  [ -n "$after" ] && args+=(--after "$after")
   $all && args+=(--all)
   $stale && args+=(--stale)
   cd "$path" && LV_GROUP_FROM="coordinator:$me" exec scripts/lv-exec.sh lv-bug-group.sh "${args[@]}"
@@ -553,12 +568,15 @@ case "$cmd" in
     [ -n "$plan" ] || { echo "Usage: lv-bug-group.sh consume <slug> <PLN-ID>" >&2; exit 1; }
     st=$(wf_group_field "$slug" Status)
     [ "$st" = "Sealed" ] || { echo "lv-bug-group: group '$slug' is $st — only a Sealed group is consumed" >&2; exit 1; }
-    still=$(open_members "$slug")
+    left=$(wf_group_left "$slug" | cut -f1)
+    still=$(open_members "$slug" | while IFS= read -r m; do
+              printf '%s\n' "$left" | grep -qxF "$m" || printf '%s\n' "$m"; done)
     if [ -n "$still" ]; then
       echo "lv-bug-group: refused — still in bugs/open: $(printf '%s\n' "$still" | join_csv)." >&2
       echo "  Every member leaves bugs/open in the pass that consumes the group: folded into the lead's" >&2
       echo "  plan (lv-bug-consume.sh --folded), its own plan with Deps, an amendment (--amends), or" >&2
       echo "  closed as superseded (lv-bug-close.sh) — each with its reason in Design Decisions." >&2
+      echo "  A member left for its own plan is recorded first: lv-bug-group.sh leave $slug <BUG-ID> --after $plan \"<why>\"." >&2
       exit 2
     fi
     set_field "$file" Status Consumed
@@ -567,5 +585,40 @@ case "$cmd" in
     commit "bug-group($slug): consumed by $plan" "$rel"
     wf_event bug-group "$slug" "consumed by $plan"
     echo "group $slug consumed by $plan"
+    [ -n "$left" ] && echo "  left for their own plans, offered on their own now: $(printf '%s\n' "$left" | join_csv)"
+    exit 0 ;;
+
+  leave)
+    require_group
+    bug="${pos[1]:-}"; why="${pos[2]:-}"
+    if [ -z "$bug" ] || [ -z "$after" ] || [ -z "$why" ]; then
+      echo "Usage: lv-bug-group.sh leave <slug> <BUG-ID> --after <PLN-ID> \"<why>\"" >&2; exit 1
+    fi
+    st=$(wf_group_field "$slug" Status)
+    [ "$st" = "Sealed" ] || { echo "lv-bug-group: refused — group '$slug' is $st; only a Sealed group's member is left for its own plan" >&2; exit 2; }
+    wf_group_members "$slug" | grep -qxF "$bug" || { echo "lv-bug-group: refused — $bug is not a member of '$slug'" >&2; exit 2; }
+    [ "$bug" != "$(wf_group_field "$slug" Lead)" ] || { echo "lv-bug-group: refused — $bug is the lead; the lead becomes the plan, it is not left" >&2; exit 2; }
+    loc=$(wf_bug_md "$bug")
+    [ "${loc%%$'\t'*}" = "open" ] || { echo "lv-bug-group: refused — $bug is not in bugs/open (${loc%%$'\t'*}); it has already left" >&2; exit 2; }
+    after_id=$(printf '%s' "$after" | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+    if [ -z "$after_id" ] || { [ -z "$(wf_registry_field "$after_id" state)" ] && ! compgen -G "$root/plans/$after_id-*/plan.md" >/dev/null; }; then
+      echo "lv-bug-group: refused — --after $after names no plan here (no REGISTRY row, no plans/$after_id-*/plan.md)" >&2; exit 2
+    fi
+    if wf_group_left "$slug" | cut -f1 | grep -qxF "$bug"; then
+      echo "$bug already left for its own plan in $slug — nothing to do"; exit 0
+    fi
+    grep -q '^## Left for their own plans' "$file" || printf '\n## Left for their own plans\n' >> "$file"
+    tmp=$(mktemp)
+    # The line goes at the end of the Left section (ENVIRON, not -v: the why
+    # is human-written and -v expands escapes).
+    LV_L="- $bug after $after_id — $why" awk '
+      BEGIN { line = ENVIRON["LV_L"] }
+      /^## Left for their own plans/ { inl = 1; print; next }
+      inl && /^## / { print line; inl = 0; done = 1 }
+      { print }
+      END { if (inl && !done) print line }' "$file" > "$tmp" && mv "$tmp" "$file"
+    commit "bug-group($slug): $bug left for its own plan after $after_id" "$rel"
+    wf_event bug-group "$slug" "$bug left for its own plan after $after_id"
+    echo "$bug left for its own plan after $after_id — it stays in bugs/open and no longer holds '$slug' open"
     exit 0 ;;
 esac

@@ -363,11 +363,17 @@ intake_skip() {
           intake_note="GROUP($g) ${carried:++$carried — }spec together (lv-bug-group.sh show $g); "
           return 1
         fi
-        if [ -n "$lead" ] && { is_open_bug "$lead" || wf_claim_held "$lead"; }; then
+        if [ -n "$lead" ] && wf_group_lead_in_spec "$lead"; then
           not_offered "$id" "carried with $lead, the lead of sealed group $g"
           return 0
         fi
         intake_note="GROUP($g) lead ${lead:-—} already specced; "
+        return 1 ;;
+      Consumed)
+        # Left by the lead's run for a plan of its own (LVI-005): say which
+        # plan it depends on, so its spec run sets Deps without re-deriving it.
+        lplan=$(wf_group_left "$g" | awk -F'\t' -v b="$id" '$1 == b { print $2; exit }')
+        [ -n "$lplan" ] && intake_note="GROUP($g) left for its own plan: Deps $lplan; "
         return 1 ;;
     esac
   fi

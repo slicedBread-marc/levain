@@ -20,6 +20,7 @@
 #              plan.md must already carry the amendment, i.e. name this bug
 #              outside its own `**Bug:**` field. Exit 2 if it does not.
 #
+# Exit 2: refused — no plans/<plan-id>/ folder (LVI-004), or a check below.
 # Exit 3: the bug is in an intake group still Open (LVI-026) — nothing moved.
 #
 # THE NUMBER IS NOT THE IDENTITY, AND FOR ONE RUN IT WAS NOT EVEN STABLE
@@ -161,6 +162,56 @@ if ! $already_triaged && ! $force; then
     echo "  Nothing was moved. Leave $plan_id as it is, unclaim, and stop: the overseer seals the group" >&2
     echo "  (lv-bug-group.sh seal $group), and the group's lead carries this bug." >&2
     exit 3
+  fi
+fi
+
+# ── Does the plan exist at all? ───────────────────────────────────────────
+#
+# Every check below reads plans/<plan-id>/, and each is silent when the folder
+# is missing — so a plan argument naming no folder passed them all and wrote
+# that name into the bug's Plan: field. A client's LVI-004: a doubled prefix,
+# `PLN-026-PLN-026-synth-choose-personas`, triaged BUG-026 to a plan that does
+# not exist, exit 0. lv-spec consumes after the plan is moved into plans/
+# (step 5a), so a real consume always has the folder; one that does not is a
+# wrong argument, and the refusal names the folder its number does have.
+# --force is for an operator linking by hand.
+if ! $force && [ ! -d "$plan_dir" ]; then
+  num=$(printf '%s' "$plan_id" | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+  echo "Error: $plan_id names no plan folder — $plan_dir does not exist." >&2
+  if [ -n "$num" ]; then
+    for d in plans/"$num"-*/; do
+      [ -d "$d" ] && echo "  $num is plans/$(basename "$d") — pass that." >&2
+    done
+  else
+    echo "  A plan argument is the folder name under plans/, e.g. ${LV_PLN:-PLN}-005-login-crash." >&2
+  fi
+  echo "  Nothing was moved. Write the plan into plans/ first (lv-spec step 5a); --force links it anyway." >&2
+  exit 2
+fi
+
+# ── Left for its own plan? ────────────────────────────────────────────────
+#
+# The lead's spec run records a member that is separate work with
+# `lv-bug-group.sh leave <slug> BUG-a --after PLN-L`. That member stays in
+# bugs/open for its own plan, so it is not folded, amended or consumed into
+# PLN-L — the plan it was left after. A client's LVI-005: the decision lived
+# only in PLN-L's Design Decisions, which no script reads. Its own new plan
+# (any other number) consumes it as usual.
+if ! $already_triaged && ! $force; then
+  lgroup=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Group:\*\*' "$bug_dir/bug.md" 2>/dev/null \
+           | sed -E 's/^.*\*\*Group:\*\*[[:space:]]*//; s/[[:space:]]*$//' || true)
+  left_after=""
+  if [ -n "$lgroup" ] && [ -f "bugs/groups/$lgroup.md" ]; then
+    left_after=$(awk -v b="$bug_id" '
+      /^## Left for their own plans/ { m = 1; next } /^## / { m = 0 }
+      m && $1 == "-" && $2 == b && $3 == "after" { print $4; exit }' "bugs/groups/$lgroup.md")
+  fi
+  plan_num=$(printf '%s' "$plan_id" | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+  if [ -n "$left_after" ] && [ "$plan_num" = "$left_after" ]; then
+    echo "Error: $bug_id was left for its own plan after $left_after (intake group '$lgroup')." >&2
+    echo "  It stays in bugs/open; its own /lv-spec run plans it with Deps $left_after. Nothing was moved." >&2
+    echo "  Changed your mind and folding it after all? lv-bug-group.sh leave records no undo — --force." >&2
+    exit 2
   fi
 fi
 
