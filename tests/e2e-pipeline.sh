@@ -583,7 +583,9 @@ BUG
 
 git add -A && git commit -q -m "bug: BUG-002 filed"
 
-# Consume bug (triaged by lv-spec)
+# Consume bug (triaged by lv-spec, once the plan is in plans/ — LVI-004)
+mkdir -p plans/PLN-004-bug-002-test-crash
+printf '# test crash\n\n> **Bug:** BUG-002 — test crash\n' > plans/PLN-004-bug-002-test-crash/plan.md
 "$SCRIPT_DIR/lv-bug-consume.sh" BUG-002 PLN-004-bug-002-test-crash
 assert_exit "bug consumed" 0 test -d "bugs/triaged/BUG-002-test-crash"
 assert_exit "bug removed from open" 1 test -d "bugs/open/BUG-002-test-crash"

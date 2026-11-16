@@ -1351,6 +1351,8 @@ cat > bugs/open/BUG-017-landing-copy/bug.md <<'BUG17'
 Copy says "beta".
 BUG17
 
+mkdir -p plans/PLN-017-landing-copy
+printf '# Landing copy\n\n> **Bug:** BUG-017 — landing copy\n' > plans/PLN-017-landing-copy/plan.md
 assert_ok "an untracked bug can be consumed at all" \
   "$SCRIPT_DIR/lv-bug-consume.sh" BUG-017 PLN-017-landing-copy
 assert_eq "the bug moved to triaged" "true" \
@@ -5108,6 +5110,23 @@ assert_ok "the bug the plan was drafted from is consumed normally" \
   "$SCRIPT_DIR/lv-bug-consume.sh" BUG-270 PLN-270-devops-api-version
 assert_eq "and it landed in triaged" "true" \
   "$([ -f bugs/triaged/BUG-270-devops-api-version/bug.md ] && echo true || echo false)"
+
+# A client's LVI-004: a plan argument naming no folder passed every check,
+# because each is silent on a missing plan.md, and the bug was triaged to it.
+mkdir -p bugs/open/BUG-273-typo-target
+printf '# typo target\n\n> **Status:** Open\n> **ID:** BUG-273\n> **Plan:** _(none)_\n' \
+  > bugs/open/BUG-273-typo-target/bug.md
+git add -A >/dev/null 2>&1; git commit -qm "BUG-273 filed" >/dev/null 2>&1
+out=$("$SCRIPT_DIR/lv-bug-consume.sh" BUG-273 PLN-270-PLN-270-devops-api-version 2>&1); rc=$?
+assert_eq "a plan argument naming no folder is refused with exit 2" "2" "$rc"
+assert_eq "…naming the folder its number does have" "true" \
+  "$(printf '%s' "$out" | grep -q 'plans/PLN-270-devops-api-version' && echo true || echo false)"
+assert_eq "…and nothing moved" "true" \
+  "$([ -f bugs/open/BUG-273-typo-target/bug.md ] && ! grep -q 'Triaged' bugs/open/BUG-273-typo-target/bug.md && echo true || echo false)"
+assert_eq "--amends and --folded refuse a missing folder too" "2 2" \
+  "$("$SCRIPT_DIR/lv-bug-consume.sh" BUG-273 PLN-999-nope --amends >/dev/null 2>&1; echo -n "$? "; "$SCRIPT_DIR/lv-bug-consume.sh" BUG-273 PLN-999-nope --folded >/dev/null 2>&1; echo $?)"
+rm -rf bugs/open/BUG-273-typo-target
+git add -A >/dev/null 2>&1; git commit -qm "drop BUG-273" >/dev/null 2>&1
 
 # The renumber: a different bug takes the freed number.
 mkdir -p bugs/open/BUG-270-onprem-rendered-text

@@ -20,6 +20,7 @@
 #              plan.md must already carry the amendment, i.e. name this bug
 #              outside its own `**Bug:**` field. Exit 2 if it does not.
 #
+# Exit 2: refused — no plans/<plan-id>/ folder (LVI-004), or a check below.
 # Exit 3: the bug is in an intake group still Open (LVI-026) — nothing moved.
 #
 # THE NUMBER IS NOT THE IDENTITY, AND FOR ONE RUN IT WAS NOT EVEN STABLE
@@ -162,6 +163,30 @@ if ! $already_triaged && ! $force; then
     echo "  (lv-bug-group.sh seal $group), and the group's lead carries this bug." >&2
     exit 3
   fi
+fi
+
+# ── Does the plan exist at all? ───────────────────────────────────────────
+#
+# Every check below reads plans/<plan-id>/, and each is silent when the folder
+# is missing — so a plan argument naming no folder passed them all and wrote
+# that name into the bug's Plan: field. A client's LVI-004: a doubled prefix,
+# `PLN-026-PLN-026-synth-choose-personas`, triaged BUG-026 to a plan that does
+# not exist, exit 0. lv-spec consumes after the plan is moved into plans/
+# (step 5a), so a real consume always has the folder; one that does not is a
+# wrong argument, and the refusal names the folder its number does have.
+# --force is for an operator linking by hand.
+if ! $force && [ ! -d "$plan_dir" ]; then
+  num=$(printf '%s' "$plan_id" | grep -oE "^($LV_PLN_RE)-[0-9]+" || true)
+  echo "Error: $plan_id names no plan folder — $plan_dir does not exist." >&2
+  if [ -n "$num" ]; then
+    for d in plans/"$num"-*/; do
+      [ -d "$d" ] && echo "  $num is plans/$(basename "$d") — pass that." >&2
+    done
+  else
+    echo "  A plan argument is the folder name under plans/, e.g. ${LV_PLN:-PLN}-005-login-crash." >&2
+  fi
+  echo "  Nothing was moved. Write the plan into plans/ first (lv-spec step 5a); --force links it anyway." >&2
+  exit 2
 fi
 
 # ── Is this the bug the plan was drafted from? ────────────────────────────
