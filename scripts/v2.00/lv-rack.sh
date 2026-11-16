@@ -1680,6 +1680,8 @@ render_text() {
     head+="  ${DIM}$(head_age_phrase)${R}"
   else
     head+="  ${DIM}$(rack_clock)${R}"
+    # The numbers are the collector's snapshot (LVI-048), so say how old.
+    [ "$total_n" -gt 0 ] && head+="  ${DIM}collected $(age_phrase "$(newest_visible_ts)")${R}"
     if [ "$total_n" -gt "$shown_n" ]; then
       head+="  ${DIM}showing $shown_n of $total_n by activity — --all for full${R}"
     fi

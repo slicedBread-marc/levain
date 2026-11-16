@@ -17,6 +17,13 @@ pack, else the library's `deployments.txt`, else this coordinator's `coordinates
    scripts/lv-exec.sh lv-rack.sh --plain --all
    ```
 
+   It prints the collector's last snapshot (`docs/rack-collector.md`). When a collector is
+   already running, from an open board or an earlier `/lv-rack`, that is instant. When none is
+   running, it starts one and waits for the first collect, which takes as long as the slowest
+   project. A column's numbers are as old as its last collect, at most about a minute while the
+   collector runs. The collector is a background process that exits by itself after a few idle
+   minutes. Do not stop it, and do not start `--collect` yourself.
+
 2. Report, in this order and briefly:
    - **In progress:** a RUNNING cell names the IDs its workers hold after the count
      (`1 PLN-121`, `2 121 122`; a bug still in spec is named by its bug). A `+ID` tail is work an
@@ -64,7 +71,8 @@ for that project alone), daemon toggles (`d`), stop/resume of
 every daemon (`s`/`R`), attend (`t` — on the release or deploy row it starts `/lv-release` or
 `/lv-deploy` instead), the dormant-project toggle (`z`, which offers to stop a running daemon first), the services view (`v`), the library deploy (`U`),
 the blind library sweep (`W`, or Enter on `heal (N)`), the decide listing (Enter on `decide (N)`), the restart (`X`) and the settings screen (`,`, where
-auto-heal is turned on) need a real terminal, so point the owner at
+auto-heal is turned on) need a real terminal. Any number of boards can be open at once and
+they share one collector, so point the owner at
 `! scripts/lv-exec.sh lv-rack.sh --watch` rather than running it here. `--stop-all` and
 `--resume` change what every project is doing unattended: run them only when asked.
 
