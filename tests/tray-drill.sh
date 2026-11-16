@@ -183,6 +183,91 @@ out=$("$DRILL" row ideas)
 assert_shape    "an idea's prose blurb keeps the 3-field shape" "$out"
 assert_contains "an idea points at its brief file" "$out" "BRF-003-wide.md"
 
+# ── intake: filed bugs not yet specced (the coordinator's LVI-050) ──────
+# A sealed group's lead and carried member, an Open group's member, a bug on
+# its own that a spec worker holds, and a dissolved group's member, which is
+# independent again. Folder order is dispatch order; a group lists where its
+# first open member falls, lead first.
+TRAY="$REPO_ROOT/scripts/v2.00/lv-tray.sh"
+INTAKE="$REPO_ROOT/scripts/v2.00/lv-list-intake.sh"
+out=$("$INTAKE"); rc=$?
+assert_eq "no open bugs: the intake list exits 1" 1 "$rc"
+assert_contains "no open bugs: --fields still reports zero" "$("$INTAKE" --fields)" "intake=0"
+
+# ibug <id> <slug> [group] [blocked]
+ibug() {
+  mkdir -p "bugs/open/$1-$2"
+  printf '# %s\n\n> **Status:** Open\n> **ID:** %s\n> **Severity:** Medium\n> **Plan:** _(none)_\n> **Group:** %s\n> **Blocked:** %s\n\n## Description\nx\n' \
+    "$2" "$1" "${3:-_(none)_}" "${4:-_(none)_}" > "bugs/open/$1-$2/bug.md"
+}
+# igroup <slug> <status> <lead> <member>...
+igroup() {
+  local slug="$1" st="$2" lead="$3" m; shift 3
+  mkdir -p bugs/groups
+  { printf '# Intake group — %s\n\n> **Status:** %s\n> **Opened:** 2026-11-15T01:09:55Z by t\n> **Lead:** %s\n> **Holds:** —\n\n## Members\n' "$slug" "$st" "$lead"
+    for m in "$@"; do printf -- '- %s\n' "$m"; done; } > "bugs/groups/$slug.md"
+}
+ibug BUG-010 lone-one
+ibug BUG-020 surface-lead surface
+ibug BUG-021 surface-carried surface "PLN-001 — not until alpha lands"
+ibug BUG-030 draft-batch drafting
+ibug BUG-040 held-by-spec
+ibug BUG-050 was-grouped gone
+ibug BUG-019 surface-early surface
+igroup surface Sealed BUG-020 BUG-019 BUG-020 BUG-021
+igroup drafting Open "" BUG-030
+igroup gone Dissolved "" BUG-050
+echo "$SLEEPER" > .claude/orchestrator/logs/40-spec.pid
+
+out=$("$INTAKE")
+assert_eq "intake lists in dispatch order, a group lead first where it first falls" \
+  "BUG-010 BUG-020 BUG-019 BUG-021 BUG-030 BUG-040 BUG-050" "$(printf '%s\n' "$out" | cut -f1 | tr '\n' ' ' | sed 's/ $//')"
+assert_contains "every field is filled, - for empty"    "$out" "$(printf 'BUG-010\tlone-one\t-\t-\t-\t-')"
+assert_contains "the sealed group's lead is the lead"   "$out" "$(printf 'BUG-020\tsurface-lead\tsurface\tlead\t-\t-')"
+assert_contains "the rest are carried with it"          "$out" "$(printf 'BUG-019\tsurface-early\tsurface\tcarried')"
+assert_contains "a Blocked: field marks it blocked"     "$out" "$(printf 'BUG-021\tsurface-carried\tsurface\tcarried\t-\tblocked')"
+assert_contains "an Open group's member waits for seal" "$out" "$(printf 'BUG-030\tdraft-batch\tdrafting\twaiting')"
+assert_contains "a live spec worker holds its bug"      "$out" "$(printf 'BUG-040\theld-by-spec\t-\t-\tworker')"
+assert_contains "a dissolved group binds nobody"        "$out" "$(printf 'BUG-050\twas-grouped\t-\t-')"
+assert_eq "--count is the open bugs" 7 "$("$INTAKE" --count)"
+assert_eq "--fields names the biggest live group and counts the live ones" \
+  "$(printf 'intake=7\tintake_group=surface\tintake_groups=2')" "$("$INTAKE" --fields)"
+
+out=$("$DRILL" row intake); rc=$?
+assert_eq       "row intake exits 0 with bugs open" 0 "$rc"
+assert_shape    "row intake lines are well shaped" "$out"
+assert_contains "row intake heads a group with its status and lead" "$out" "group surface — Sealed, lead BUG-020"
+assert_contains "the heading opens the group file" "$out" "bugs/groups/surface.md"
+assert_contains "an Open group's heading says how to release it" "$out" "lv-bug-group.sh seal drafting"
+assert_contains "members are indented under it, lead marked" "$out" "    BUG-020     surface-lead"
+assert_contains "the held bug is starred" "$out" "* BUG-040"
+assert_contains "a bug descends to its artifact" "$out" "$(printf '\tlist\tartifact BUG-021')"
+out=$("$DRILL" artifact BUG-021)
+assert_contains "an unspecced bug's artifact offers its bug.md" "$out" "bugs/open/BUG-021-surface-carried/bug.md"
+out=$("$DRILL" row running)
+assert_contains "a spec worker on an unspecced bug is named by its bug" "$out" "worker 40-spec BUG-040"
+
+out=$("$TRAY" --fields)
+assert_contains "the tray's fields carry the intake count" "$out" "$(printf '\tintake=7\t')"
+assert_contains "and the group naming it"                  "$out" "$(printf '\tintake_group=surface\t')"
+assert_contains "and the IDs the running count holds"      "$out" "$(printf '\trunning_ids=PLN-001,BUG-040\t')"
+out=$("$TRAY" --plain)
+assert_contains "the tray has an INTAKE section" "$out" "INTAKE — filed bugs not yet specced"
+assert_contains "it heads the sealed group with its lead" "$out" "group surface (sealed, lead BUG-020)"
+assert_contains "it heads the Open group with the way to seal it" "$out" "group drafting (open — nothing is offered until: lv-bug-group.sh seal drafting)"
+assert_contains "it says who carries the rest" "$out" "lead — carries the rest"
+assert_contains "it stars the held bug and says by what" "$out" "* BUG-040"
+assert_contains "the held bug's note names a spec worker" "$out" "spec worker"
+assert_contains "RUNNING names the spec by its bug, not a bare number" "$out" "BUG-040"
+case "$("$TRAY" --plain --stats)" in *INTAKE*) fail "--stats keeps its fixed shape: no INTAKE" ;; *) pass "--stats keeps its fixed shape: no INTAKE" ;; esac
+rm -f .claude/orchestrator/logs/40-spec.pid
+
+# A session's claim holds a bug just as a worker does, and says so.
+"$REPO_ROOT/scripts/v2.00/lv-claim.sh" BUG-010 --pid "$SLEEPER" >/dev/null 2>&1
+assert_contains "a live claim holds its bug" "$("$INTAKE")" "$(printf 'BUG-010\tlone-one\t-\t-\tclaim')"
+assert_contains "and the drill says it is claimed" "$("$DRILL" row intake)" "* BUG-010     lone-one"
+rm -rf .claude/orchestrator/claims
+
 echo
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

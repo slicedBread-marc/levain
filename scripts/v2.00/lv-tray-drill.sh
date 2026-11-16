@@ -28,7 +28,7 @@
 # NODES
 #
 #   row <metric>     the items behind one grid row: daemon, running, gates,
-#                    attn, ideas, draft, ready, active, verify, testing,
+#                    attn, intake, ideas, draft, ready, active, verify, testing,
 #                    complete, rolled-back, abandoned, release, deploy,
 #                    registry
 #   artifact <ID>    one plan/bug/brief: its files, its logs, its gate
@@ -135,6 +135,14 @@ id_of_number() {
       if (a[2] + 0 == n + 0) { print id; exit }
     }' "$REGISTRY" 2>/dev/null || true)
   [ -n "$id" ] && { printf '%s' "$id"; return 0; }
+  # No registry row: a spec worker on a bug not yet specced. Its bug, if one
+  # is open or triaged, before a plan id that exists nowhere (LVI-050).
+  local d bid
+  for d in "$ROOT"/bugs/open/*/ "$ROOT"/bugs/triaged/*/; do
+    [ -f "$d/bug.md" ] || continue
+    bid=$(basename "$d" | grep -oE "^($LV_BUG_RE)-[0-9]+" || true)
+    [ -n "$bid" ] && [ $((10#${bid##*-})) -eq $((10#$num)) ] && { printf '%s' "$bid"; return 0; }
+  done
   printf '%s-%s' "$LV_PLN" "$num"
 }
 
@@ -198,6 +206,42 @@ row_ideas() {
       emit "$(printf '%-11s %-11s %s' "$id" "$detail" "${desc:-$name}")" none ""
     fi
   done < <("$SELF_DIR/lv-list-brainstorms.sh" 2>/dev/null || true)
+}
+
+# row_intake — filed bugs not yet specced, in dispatch order: a live intake
+# group's heading, then its open members lead first, indented; `*` on the one
+# a spec worker or a session holds now. The same list and the same marks as
+# the tray's INTAKE section, both from lv-list-intake.sh (the coordinator's
+# LVI-050).
+row_intake() {
+  local id slug grp role held blk last="" ind mark note st lead
+  while IFS=$'\t' read -r id slug grp role held blk; do
+    [ -n "$id" ] || continue
+    [ "$grp" = "-" ] && grp=""
+    if [ -n "$grp" ] && [ "$grp" != "$last" ]; then
+      st=$(wf_group_field "$grp" Status); lead=$(wf_group_field "$grp" Lead)
+      case "$st" in
+        Open) emit "group $grp — open, nothing offered until: lv-bug-group.sh seal $grp" file "$(wf_group_file "$grp")" ;;
+        *)    emit "group $grp — ${st:-?}${lead:+, lead $lead}" file "$(wf_group_file "$grp")" ;;
+      esac
+    fi
+    last="$grp"
+    ind=""; [ -n "$grp" ] && ind="  "
+    mark=" "; [ "$held" != "-" ] && mark="*"
+    note=""
+    case "$role" in
+      lead)     note="lead" ;;
+      carried)  note="carried" ;;
+      amends:*) note="amends ${role#amends:}" ;;
+      waiting)  note="waiting for the seal" ;;
+    esac
+    case "$held" in
+      worker) note="${note:+$note · }spec worker" ;;
+      claim)  note="${note:+$note · }claimed" ;;
+    esac
+    [ "$blk" = "blocked" ] && note="${note:+$note · }blocked"
+    emit "$(printf '%s%s %-11s %-40s %s' "$ind" "$mark" "$id" "$slug" "$note")" list "artifact $id"
+  done < <("$SELF_DIR/lv-list-intake.sh" 2>/dev/null || true)
 }
 
 row_state() {
@@ -356,6 +400,7 @@ case "$node" in
       running)  row_running ;;
       gates|attn) row_gates ;;
       ideas)    row_ideas ;;
+      intake)   row_intake ;;
       draft|ready|active|verify|testing|accept|complete|rolled-back|abandoned)
                 row_state "$metric" ;;
       release)  row_promotable develop release ;;
@@ -396,6 +441,9 @@ case "$node" in
     fi
     bf=$(brief_file "$id")
     [ -n "$bf" ] && emit "brief — the thinking this came from" file "$bf"
+    # A bug not yet specced has no plan folder; its bug.md is the whole record.
+    bloc=$(wf_bug_md "$id" 2>/dev/null || true)
+    [ -n "$bloc" ] && emit "bug.md — the report (${bloc%%$'\t'*})" file "${bloc#*$'\t'}"
     gf=$(wf_gate_file "$id" 2>/dev/null || true)
     [ -n "$gf" ] && [ -f "$gf" ] && emit "gate — open, waiting on a human" file "$gf"
     if [ -n "$(artifact_logs "$id" | head -1)" ]; then

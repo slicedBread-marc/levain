@@ -18,12 +18,16 @@ pack, else the library's `deployments.txt`, else this coordinator's `coordinates
    ```
 
 2. Report, in this order and briefly:
-   - **In progress:** a RUNNING cell with a `+ID` tail is work an attended session holds a claim
-     on right now (`0 +RELEASE`: someone is mid-`/lv-release`). An ATTN id marked `*` is a gate
+   - **In progress:** a RUNNING cell names the IDs its workers hold after the count
+     (`1 PLN-121`, `2 121 122`; a bug still in spec is named by its bug). A `+ID` tail is work an
+     attended session holds a claim on right now (`0 +RELEASE`: someone is mid-`/lv-release`). An ATTN id marked `*` is a gate
      that work is answering — RELEASE and DEPLOY count as one promotion — so report it here,
      not as waiting, and do not offer to start that skill in a second session.
    - **Waiting on a human:** each project's gates, naming the plans the ATTN row lists. A
      `stuck` gate first — it does not resolve by waiting.
+   - **Queued:** a non-zero INTAKE cell is bugs filed and not yet specced, named by the live intake
+     group holding them (`6 prep-surface`; `+N` for more groups). Name the group, so "where are
+     the tasks I filed" has an answer; Enter on the cell lists them, lead first.
    - **Ready to ship:** non-zero RELEASE and DEPLOY rows.
    - **Idle:** daemons off in projects with queued work.
    - A dashed column means that project's harness is missing or too old; say which.
