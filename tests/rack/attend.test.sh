@@ -164,6 +164,11 @@ else ok "the stale in-flight refresh is dropped"; fi
 if ! $refreshing && ! $back_to_board && [ "$next_refresh_at" -eq 0 ]; then
   ok "and a new refresh is due on the next tick"
 else bad "and a new refresh is due on the next tick (refreshing=$refreshing back=$back_to_board next=$next_refresh_at)"; fi
+# With a collector (LVI-048) the board asks it for that refresh instead.
+if $USE_COLLECTOR; then
+  if [ -e "$LV_BOARD_CACHE/requests/refresh-all" ]; then ok "and the collector is asked for a full refresh"
+  else bad "and the collector is asked for a full refresh"; fi
+fi
 
 [ "$fails" -eq 0 ] && { echo "all passed"; exit 0; }
 echo "$fails failed"; exit 1

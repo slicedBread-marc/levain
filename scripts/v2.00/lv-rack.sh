@@ -12,6 +12,7 @@
 #   lv-rack.sh --wake <name>     put a dormant project back on the board
 #   lv-rack.sh --services        every project's services: state, checkout, how long up
 #   lv-rack.sh --decide          the issues a blind sweep left for the operator (LVI-051)
+#   lv-rack.sh --collect         the collector: keep the snapshot every board reads (LVI-048)
 #
 # --watch repaints only the rows that changed, not the whole screen — no
 # flicker.
@@ -153,6 +154,18 @@
 # reload. Without jq the cache is simply skipped — the board still works,
 # it just re-collects on a cold start like it used to.
 #
+# ── Two processes: the collector and its boards (LVI-048) ───────────────
+#
+# The grid is collected by ONE process per coordinator, `lv-rack.sh
+# --collect`, and every board — --watch, --plain, the picker, however many are
+# open — only reads grid.json and paints it. A board starts the collector when
+# no fresh heartbeat exists, and the collector exits after LV_RACK_IDLE_SECS
+# (300) with no reader. Action results reach it as request files
+# (requests/refresh-<project>), so a daemon toggled on one board shows on all
+# of them. --plain is instant when a collector is already running. Drill
+# levels are still fetched by the board on demand. See "The collector" below
+# and docs/rack-collector.md.
+#
 # Reading the board is read-only; the menu is not — starting or killing a
 # daemon, sweeping, or killing workers all change what that project's harness
 # is doing unattended, all routed through that project's own
@@ -282,16 +295,51 @@ GRID_SNAPSHOT="$CACHE_DIR/grid.json"
 # `coordinates:` list. Written once per run into the cache, so every reader
 # below keeps reading a plain file. A failing hook leaves no file, and the
 # board says it found no registry rather than drawing a wrong one.
+# The collector re-reads it before every full collect (registry_refresh), since
+# it outlives any one board.
+REGISTRY_FROM_HOOK=false
+registry_refresh() {
+  $REGISTRY_FROM_HOOK || return 0
+  local lib="" tmp="$DEPLOYMENTS.tmp.$$"
+  [ -f "$COORD_DIR/.claude/workflow-source" ] && lib=$(head -1 "$COORD_DIR/.claude/workflow-source")
+  mkdir -p "$CACHE_DIR" 2>/dev/null
+  CLAUDE_PROJECT_DIR="$COORD_DIR" LV_LIBRARY="$lib" "$HERE/lv-hook.sh" project-registry \
+    </dev/null > "$tmp" 2>/dev/null \
+    && mv -f "$tmp" "$DEPLOYMENTS" || rm -f "$DEPLOYMENTS" "$tmp"
+}
 if [ -z "$DEPLOYMENTS" ]; then
   DEPLOYMENTS="$CACHE_DIR/registry.txt"
-  _lib=""; [ -f "$COORD_DIR/.claude/workflow-source" ] && _lib=$(head -1 "$COORD_DIR/.claude/workflow-source")
-  mkdir -p "$CACHE_DIR" 2>/dev/null
-  CLAUDE_PROJECT_DIR="$COORD_DIR" LV_LIBRARY="$_lib" "$HERE/lv-hook.sh" project-registry \
-    </dev/null > "$DEPLOYMENTS.tmp" 2>/dev/null \
-    && mv -f "$DEPLOYMENTS.tmp" "$DEPLOYMENTS" || rm -f "$DEPLOYMENTS" "$DEPLOYMENTS.tmp"
-  unset _lib
+  REGISTRY_FROM_HOOK=true
+  registry_refresh
 fi
 HAVE_JQ=false; command -v jq >/dev/null 2>&1 && HAVE_JQ=true
+
+# ── The collector and its readers (LVI-048) ─────────────────────────────
+# One process per coordinator collects; every board reads. The files, all in
+# CACHE_DIR:
+#   grid.json         the snapshot (see "Snapshots"), written atomically
+#   collector.hb      "<pid> <started> <beat> <idle|collecting> <seq>", rewritten
+#                     every tick; seq counts the snapshots this collector saved
+#   collector.lock/   mkdir-held; pid inside names the one collector
+#   readers/<pid>     one per open board ("plain-<pid>" for --plain), carrying
+#                     "interval=<s> dormant=<0|1>"
+#   requests/refresh-<project>[@<token>], requests/refresh-all[@<token>]
+#   served/<token>    written once the snapshot answering that request is saved
+# The LV_RACK_* knobs are for tests and the impatient; the defaults are the board's.
+COLLECTOR_HB="$CACHE_DIR/collector.hb"
+COLLECTOR_LOCK="$CACHE_DIR/collector.lock"
+COLLECTOR_LOG="$CACHE_DIR/collector.log"
+REQ_DIR="$CACHE_DIR/requests"
+SERVED_DIR="$CACHE_DIR/served"
+READERS_DIR="$CACHE_DIR/readers"
+COLLECT_SECS="${LV_RACK_COLLECT_SECS:-60}"      # a full collect, when no reader asks for faster
+COLLECTOR_IDLE="${LV_RACK_IDLE_SECS:-300}"      # exit after this long with no reader
+COLLECTOR_STALE="${LV_RACK_STALE_SECS:-15}"     # a heartbeat older than this is a dead collector
+COLLECTOR_TICK="${LV_RACK_TICK:-1}"
+# No jq, no JSON, so no collector: the board then collects in-process as it did
+# before LVI-048. LV_RACK_COLLECTOR=off forces that.
+USE_COLLECTOR=false
+$HAVE_JQ && [ "${LV_RACK_COLLECTOR:-on}" != off ] && USE_COLLECTOR=true
 
 # A coordinator runs no pipeline and has no lv-tray.sh, so it is never a
 # column. A registry lists it all the same when it names every install (the
@@ -349,6 +397,7 @@ while [ $# -gt 0 ]; do
     --dormant) mode="dormant"; shift ;;
     --services) mode="services"; shift ;;
     --decide) mode="decide"; shift ;;
+    --collect) mode="collect"; shift ;;
     --sleep|--wake)
       [ -n "${2:-}" ] || { echo "lv-rack: $1 needs a project name" >&2; usage 1; }
       mode="${1#--}"; mode_arg="$2"; shift 2 ;;
@@ -444,7 +493,9 @@ win_start=0
 win_end=0
 shown_n=0
 
-# Background refresh state (hybrid --watch only). A full collect_all()
+# Background refresh state (hybrid --watch only, and only without a
+# collector — no jq, or LV_RACK_COLLECTOR=off; with one, `refreshing` follows
+# the collector's heartbeat instead). A full collect_all()
 # shells out to every client's lv-tray.sh --fields — real subprocess
 # work that can take a few seconds — so it now runs in a backgrounded
 # subshell that serializes its findings to refresh_file, while the main
@@ -489,11 +540,29 @@ f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(
 # f_running_ids: the IDs the running row counts (PLN-121, BUG-122). f_intake /
 # f_intake_group: open bugs and the live intake group naming them (LVI-050).
 f_running_ids=(); f_intake=(); f_intake_group=()
+# f_svc: the services manifest and health probe ("<declared>\t<slug>\t<ids up by
+# health>"), taken by the collector so a frame never curls. f_tray: the raw
+# `lv-tray.sh --fields` line, every key, so a key the grid does not draw yet
+# reaches the snapshot without a collector change (docs/proposals/rack-rows.md).
+# f_dormant: 1 when the project is dormant and was scanned only because a reader
+# asked for --include-dormant; the UI drops it otherwise.
+f_svc=(); f_tray=(); f_dormant=()
 # f_ts: when THIS project's numbers were collected, per project rather than
 # per frame. A collect walks every client in turn and a menu action re-fetches
 # exactly one, so "the frame's age" is several different ages — and the column
 # that was just refreshed is precisely the one you want to see go white again.
 f_ts=()
+
+# reset_fields — every project-keyed array emptied, in one place.
+reset_fields() {
+  names=(); paths=(); statuses=()
+  f_daemon=(); f_running=()
+  f_gates=(); f_gates_stuck=(); f_gates_blocked=()
+  f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
+  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=(); f_claims=()
+  f_running_ids=(); f_intake=(); f_intake_group=()
+  f_svc=(); f_tray=(); f_dormant=()
+}
 
 # fetch_one <project_path> — one project's status line, as a single
 # 0x1f-separated record (status first, then the same fields lv-tray.sh
@@ -517,8 +586,13 @@ fetch_one() {
     status="failed"
   fi
 
+  # Fields 25-27 ride after everything an older reader knows: the services
+  # manifest and probe, the raw --fields line, and the dormant flag.
+  local svc="" dormant=0
+  [ "$status" != missing ] && svc=$(sv_manifest "$project_path")
+  is_dormant "$project_path" && ! daemon_alive "$project_path" && dormant=1
   if [ "$status" != "ok" ]; then
-    printf '%s\x1f-\x1f-\x1f-\x1f0\x1f0\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f%s\n' "$status" "$(date +%s)"
+    printf '%s\x1f-\x1f-\x1f-\x1f0\x1f0\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f-\x1f0\x1f%s\x1f\x1f\x1f\x1f\x1f%s\x1f\x1f%s\n' "$status" "$(date +%s)" "$svc" "$dormant"
     return 0
   fi
 
@@ -574,11 +648,11 @@ fetch_one() {
   # One group names the cell; `+N` says how many more are live.
   [ -n "$intake_group" ] && [ "${intake_groups:-0}" -gt 1 ] 2>/dev/null \
     && intake_group="$intake_group+$((intake_groups - 1))"
-  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
     "$status" "$daemon" "$running" "$gates" "$gates_stuck" "$gates_blocked" \
     "$draft" "$ready" "$active" "$verify" "$testing" "$complete" "$abandoned" \
     "$registry" "$attn" "$release" "$deploy" "$ideas" "$ideas_drift" "$accept" "$(date +%s)" "$claims" \
-    "$running_ids" "$intake" "$intake_group"
+    "$running_ids" "$intake" "$intake_group" "$svc" "$line" "$dormant"
 }
 
 # apply_record <record> <append|index> — write a fetch_one record into the
@@ -602,6 +676,7 @@ apply_record() {
     f_ts+=("${f[20]:-0}")
     f_claims+=("${f[21]:-}")
     f_running_ids+=("${f[22]:-}"); f_intake+=("${f[23]:-}"); f_intake_group+=("${f[24]:-}")
+    f_svc+=("${f[25]:-}"); f_tray+=("${f[26]:-}"); f_dormant+=("${f[27]:-0}")
   else
     local idx="$where"
     statuses[$idx]="${f[0]}"
@@ -615,6 +690,7 @@ apply_record() {
     f_ts[$idx]="${f[20]:-0}"
     f_claims[$idx]="${f[21]:-}"
     f_running_ids[$idx]="${f[22]:-}"; f_intake[$idx]="${f[23]:-}"; f_intake_group[$idx]="${f[24]:-}"
+    f_svc[$idx]="${f[25]:-}"; f_tray[$idx]="${f[26]:-}"; f_dormant[$idx]="${f[27]:-0}"
   fi
 }
 
@@ -640,18 +716,23 @@ gate_in_hand() {
 # naming all twenty fields a second time.
 project_record() {
   local i="$1"
-  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' \
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' \
     "${statuses[$i]}" "${f_daemon[$i]}" "${f_running[$i]}" \
     "${f_gates[$i]}" "${f_gates_stuck[$i]}" "${f_gates_blocked[$i]}" \
     "${f_draft[$i]}" "${f_ready[$i]}" "${f_active[$i]}" "${f_verify[$i]}" \
     "${f_testing[$i]}" "${f_complete[$i]}" "${f_abandoned[$i]}" \
     "${f_registry[$i]}" "${f_attn[$i]}" "${f_release[$i]}" "${f_deploy[$i]}" \
     "${f_ideas[$i]}" "${f_ideas_drift[$i]}" "${f_accept[$i]:-0}" "${f_ts[$i]:-0}" "${f_claims[$i]:-}" \
-    "${f_running_ids[$i]:-}" "${f_intake[$i]:-}" "${f_intake_group[$i]:-}"
+    "${f_running_ids[$i]:-}" "${f_intake[$i]:-}" "${f_intake_group[$i]:-}" \
+    "${f_svc[$i]:-}" "${f_tray[$i]:-}" "${f_dormant[$i]:-0}"
 }
 
 # refresh_one <index> — re-fetch and overwrite just that project's fields.
+# With a collector it is a request: the collector fetches, saves, and says so,
+# and every open board gets the new numbers, not just this one. Fetched here
+# only when no collector answers.
 refresh_one() {
+  if collector_refresh "${names[$1]}" && snapshot_apply_in_place; then return 0; fi
   apply_record "$(fetch_one "${paths[$1]}")" "$1"
 }
 
@@ -693,7 +774,7 @@ sort_projects_by_activity() {
   local -a o_gates=() o_gates_stuck=() o_gates_blocked=()
   local -a o_draft=() o_ready=() o_active=() o_verify=() o_testing=() o_complete=() o_abandoned=()
   local -a o_registry=() o_attn=() o_release=() o_deploy=() o_ideas=() o_ideas_drift=() o_accept=() o_ts=() o_claims=()
-  local -a o_running_ids=() o_intake=() o_intake_group=()
+  local -a o_running_ids=() o_intake=() o_intake_group=() o_svc=() o_tray=() o_dormant=()
   while IFS= read -r idx; do
     o_names+=("${names[$idx]}"); o_paths+=("${paths[$idx]}"); o_statuses+=("${statuses[$idx]}")
     o_daemon+=("${f_daemon[$idx]}"); o_running+=("${f_running[$idx]}")
@@ -706,6 +787,7 @@ sort_projects_by_activity() {
     o_ts+=("${f_ts[$idx]:-0}")
     o_claims+=("${f_claims[$idx]:-}")
     o_running_ids+=("${f_running_ids[$idx]:-}"); o_intake+=("${f_intake[$idx]:-}"); o_intake_group+=("${f_intake_group[$idx]:-}")
+    o_svc+=("${f_svc[$idx]:-}"); o_tray+=("${f_tray[$idx]:-}"); o_dormant+=("${f_dormant[$idx]:-0}")
   done <<< "$order"
   names=("${o_names[@]}"); paths=("${o_paths[@]}"); statuses=("${o_statuses[@]}")
   f_daemon=("${o_daemon[@]}"); f_running=("${o_running[@]}")
@@ -718,6 +800,7 @@ sort_projects_by_activity() {
   f_ts=("${o_ts[@]}")
   f_claims=("${o_claims[@]}")
   f_running_ids=("${o_running_ids[@]}"); f_intake=("${o_intake[@]}"); f_intake_group=("${o_intake_group[@]}")
+  f_svc=("${o_svc[@]}"); f_tray=("${o_tray[@]}"); f_dormant=("${o_dormant[@]}")
 }
 
 # fit_cols — MAX_COLS from the terminal width: the 11-column row label, then
@@ -768,14 +851,41 @@ compute_shown() {
   fi
 }
 
+# fetch_many — the paths on stdin, fetched in parallel subshells, printed as
+# "name<0x1e>path<0x1e>fetch_one-record" lines in the order they came in. One
+# slow client used to hold up every column behind it; now a collect takes as
+# long as the slowest one. LV_RACK_JOBS caps how many run at once (default 8):
+# each is a `lv-tray.sh --fields`, a handful of git and jq forks.
+fetch_many() {
+  local jobs="${LV_RACK_JOBS:-8}" dir p i=0 n=0 j
+  case "$jobs" in ''|*[!0-9]*|0) jobs=8 ;; esac
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/lv-rack-fetch.XXXXXX") || return 1
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    ( printf '%s\x1e%s\x1e%s\n' "$(basename "$p")" "$p" "$(fetch_one "$p")" > "$dir/$i" ) </dev/null &
+    i=$((i + 1)); n=$((n + 1))
+    # Bash 3.2 has no `wait -n`, so the cap is a batch: wait for the lot.
+    if [ "$n" -ge "$jobs" ]; then wait; n=0; fi
+  done
+  wait
+  for ((j = 0; j < i; j++)); do [ -f "$dir/$j" ] && cat "$dir/$j"; done
+  rm -rf "$dir"
+}
+
+# absorb_lines <file> — fetch_many's lines appended to the arrays.
+absorb_lines() {
+  local name path rec
+  while IFS=$'\x1e' read -r name path rec; do
+    [ -n "$name" ] || continue
+    names+=("$name"); paths+=("$path")
+    apply_record "$rec" "append"
+  done < "$1"
+}
+
 collect() {
-  local project_path name
-  while IFS= read -r project_path; do
-    [ -n "$project_path" ] || continue
-    name=$(basename "$project_path")
-    names+=("$name"); paths+=("$project_path")
-    apply_record "$(fetch_one "$project_path")" "append"
-  done <<< "$(scan_projects)"
+  local tmp; tmp=$(mktemp "${TMPDIR:-/tmp}/lv-rack-collect.XXXXXX") || return 1
+  scan_projects | fetch_many > "$tmp"
+  absorb_lines "$tmp"; rm -f "$tmp"
   sort_projects_by_activity
 }
 
@@ -794,14 +904,17 @@ collect() {
 # the next run and nothing else.
 snapshot_save() {
   $HAVE_JQ || return 0
-  [ "${#names[@]}" -gt 0 ] || return 0
   mkdir -p "$CACHE_DIR" 2>/dev/null || return 0
   local tmp i
   tmp=$(mktemp "$CACHE_DIR/.grid.XXXXXX" 2>/dev/null) || return 0
-  if for i in "${!names[@]}"; do
+  # An empty portfolio is saved too: a reader waiting on the collector's first
+  # snapshot must get one, and the registry message is the UI's to draw.
+  if for i in ${names[@]+"${!names[@]}"}; do
        printf '%s\x1f%s\x1f%s\n' "${names[$i]}" "${paths[$i]}" "$(project_record "$i")"
-     done | jq -R -s --argjson now "$(date +%s)" '
-       {schema: 1, saved_at: $now,
+     done | jq -R -s --argjson now "$(date +%s)" --argjson incd "$include_dormant" \
+              --argjson cpid "${COLLECTOR_PID:-0}" --argjson cstart "${COLLECTOR_STARTED:-0}" '
+       {schema: 1, saved_at: $now, include_dormant: $incd,
+        collector: {pid: $cpid, started: $cstart},
         projects: (split("\n") | map(select(length > 0)) | map(split("\u001f")) | map({
           name: .[0], path: .[1], status: .[2], daemon: .[3], running: .[4],
           gates: .[5], gates_stuck: .[6], gates_blocked: .[7],
@@ -811,7 +924,11 @@ snapshot_save() {
           accept: .[21],
           fetched_at: ((.[22] | tonumber?) // 0),
           claims: (.[23] // ""),
-          running_ids: (.[24] // ""), intake: (.[25] // ""), intake_group: (.[26] // "")
+          running_ids: (.[24] // ""), intake: (.[25] // ""), intake_group: (.[26] // ""),
+          services: (.[27] // ""),
+          tray: ((.[28] // "") | split("\t") | map(select(index("=")))
+                 | map({key: .[0:index("=")], value: .[index("=") + 1:]}) | from_entries),
+          dormant: ((.[29] // "0") == "1")
         }))}' > "$tmp" 2>/dev/null; then
     mv -f "$tmp" "$GRID_SNAPSHOT" 2>/dev/null || rm -f "$tmp"
   else
@@ -827,32 +944,39 @@ snapshot_save() {
 # The per-project fetched_at comes back with it, which is the point: a
 # snapshot from four minutes ago paints instantly AND paints dark grey, so the
 # first frame of a cold start is never mistaken for live numbers.
-snapshot_load() {
+# snapshot_rows — the saved grid as one "name<0x1f>path<0x1f>record" line per
+# project, the record in fetch_one's field order.
+snapshot_rows() {
   $HAVE_JQ || return 1
   [ -s "$GRID_SNAPSHOT" ] || return 1
-  local rows
-  rows=$(jq -r 'select(.schema == 1) | .projects[]? |
+  jq -r 'select(.schema == 1) | .projects[]? |
       [.name, .path, .status, .daemon, .running, .gates, .gates_stuck, .gates_blocked,
        .draft, .ready, .active, .verify, .testing, .complete, .abandoned,
        .registry, .attn, .release, .deploy, .ideas, .ideas_drift,
        (.accept // "0"),
        (.fetched_at | tostring),
        (.claims // ""),
-       (.running_ids // ""), (.intake // ""), (.intake_group // "")]
-      | map(. // "") | join("\u001f")' "$GRID_SNAPSHOT" 2>/dev/null) || return 1
+       (.running_ids // ""), (.intake // ""), (.intake_group // ""),
+       (.services // ""),
+       ((.tray // {}) | to_entries | map("\(.key)=\(.value)") | join("\t")),
+       (if .dormant then "1" else "0" end)]
+      | map(. // "") | join("\u001f")' "$GRID_SNAPSHOT" 2>/dev/null
+}
+
+snapshot_load() {
+  local rows
+  rows=$(snapshot_rows) || return 1
   [ -n "$rows" ] || return 1
 
-  names=(); paths=(); statuses=()
-  f_daemon=(); f_running=()
-  f_gates=(); f_gates_stuck=(); f_gates_blocked=()
-  f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
-  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=(); f_claims=()
-  f_running_ids=(); f_intake=(); f_intake_group=()
+  reset_fields
+  SVC_KEY=(); SVC_VAL=()
   local line rec
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     local -a f; IFS=$'\x1f' read -ra f <<< "$line"
     [ "${#f[@]}" -ge 3 ] || continue
+    # Scanned for another reader's --include-dormant; not this board's column.
+    if ! $include_dormant && [ "${f[29]:-0}" = 1 ]; then continue; fi
     names+=("${f[0]}"); paths+=("${f[1]}")
     rec=$(printf '%s' "$line" | cut -d$'\x1f' -f3-)
     apply_record "$rec" "append"
@@ -903,6 +1027,399 @@ node_cache_load() {
   jq -r 'select(.schema == 1) |
          ((.fetched_at | tostring) + "\u001f" + (.rc | tostring)),
          (.lines[]?)' "$file" 2>/dev/null
+}
+
+# ── The collector (LVI-048) ─────────────────────────────────────────────
+#
+# The rack is two processes joined by grid.json. `lv-rack.sh --collect` is the
+# only thing that shells into clients for the grid: it collects every project
+# in parallel subshells, saves the snapshot, beats a heartbeat, and takes
+# requests as files. Every board, however many are open, reads the snapshot
+# and paints it. A board starts the collector when no fresh heartbeat exists;
+# the collector exits once no reader has been seen for COLLECTOR_IDLE seconds.
+# There is no launchd service and no collector per project: one coordinator,
+# one cache, one collector.
+#
+# Drill levels are still fetched by the board on demand (node_job_start): they
+# are one project's one list, asked for by one person, and caching them per
+# board was already enough.
+
+# file_mtime <file> — epoch seconds, BSD stat or GNU stat.
+file_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+
+# hb_read — the heartbeat into HB_PID HB_STARTED HB_BEAT HB_STATE HB_SEQ.
+# Builtins only: a board calls it every tick.
+hb_read() {
+  HB_PID=""; HB_STARTED=0; HB_BEAT=0; HB_STATE=""; HB_SEQ=0
+  [ -f "$COLLECTOR_HB" ] || return 1
+  read -r HB_PID HB_STARTED HB_BEAT HB_STATE HB_SEQ < "$COLLECTOR_HB" 2>/dev/null || [ -n "$HB_PID" ] || return 1
+  case "$HB_PID$HB_BEAT" in ''|*[!0-9]*) HB_PID=""; return 1 ;; esac
+  case "$HB_SEQ" in ''|*[!0-9]*) HB_SEQ=0 ;; esac
+  return 0
+}
+
+# collector_live — a collector is running and has beaten within COLLECTOR_STALE.
+# A heartbeat whose pid is gone is dead at once, however recent its beat.
+collector_live() {
+  hb_read || return 1
+  kill -0 "$HB_PID" 2>/dev/null || return 1
+  [ $(( $(date +%s) - HB_BEAT )) -le "$COLLECTOR_STALE" ]
+}
+
+# is_collector_proc <pid> — that pid is an lv-rack collector, so it is safe to
+# signal. A pid recorded by a dead collector may since belong to anything.
+is_collector_proc() {
+  ps -p "$1" -o command= 2>/dev/null | grep -q 'lv-rack\.sh.*--collect'
+}
+
+collector_log() { printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" "$*" >> "$COLLECTOR_LOG" 2>/dev/null; }
+
+# collector_owns — the lock still names this process. A replacement takes the
+# lock by rewriting its pid; the one it replaced sees that on its next tick and
+# leaves, so two collectors converge on one within a tick.
+collector_owns() {
+  local p=""
+  [ -f "$COLLECTOR_LOCK/pid" ] && read -r p < "$COLLECTOR_LOCK/pid"
+  [ "$p" = "$$" ]
+}
+
+# collector_claim — 0 when this process is now the collector. The lock is a
+# directory, so the first claim is atomic. A held lock is honoured while its
+# holder is alive and either beating or just started; anything else is stale:
+# a dead holder is replaced, and a live one that has gone silent is stopped
+# first when it is a collector (a hung one), left alone when its pid now
+# belongs to something else.
+collector_claim() {
+  mkdir -p "$CACHE_DIR" "$REQ_DIR" "$SERVED_DIR" "$READERS_DIR" 2>/dev/null || return 1
+  if mkdir "$COLLECTOR_LOCK" 2>/dev/null; then
+    printf '%s\n' "$$" > "$COLLECTOR_LOCK/pid"
+    return 0
+  fi
+  local old="" age
+  [ -f "$COLLECTOR_LOCK/pid" ] && read -r old < "$COLLECTOR_LOCK/pid"
+  if [ -n "$old" ] && [ "$old" != "$$" ] && kill -0 "$old" 2>/dev/null; then
+    if collector_live && [ "$HB_PID" = "$old" ]; then return 1; fi
+    age=$(( $(date +%s) - $(file_mtime "$COLLECTOR_LOCK" || echo 0) ))
+    [ "$age" -le "$COLLECTOR_STALE" ] && return 1
+    if is_collector_proc "$old"; then
+      collector_log "stopping hung collector $old"
+      kill "$old" 2>/dev/null
+    fi
+  fi
+  collector_log "replacing stale collector ${old:-?}"
+  printf '%s\n' "$$" > "$COLLECTOR_LOCK/pid"
+  touch "$COLLECTOR_LOCK" 2>/dev/null
+  collector_owns
+}
+
+# collector_beat <state> — the heartbeat, atomically.
+collector_beat() {
+  printf '%s %s %s %s %s\n' "$$" "$COLLECTOR_STARTED" "$(date +%s)" "$1" "$c_seq" \
+    > "$COLLECTOR_HB.$$" 2>/dev/null && mv -f "$COLLECTOR_HB.$$" "$COLLECTOR_HB" 2>/dev/null
+}
+
+# collector_readers <now> — who is reading. A reader whose pid is alive is
+# live; one that has exited (every --plain, a board that crashed) counts from
+# its file's mtime until COLLECTOR_IDLE has passed, then its file goes. Sets
+# c_last_read, the fastest interval any reader asked for, and want_dormant.
+collector_readers() {
+  local now="$1" f id pid mt line iv
+  c_interval="$COLLECT_SECS"; want_dormant=false
+  for f in "$READERS_DIR"/*; do
+    [ -e "$f" ] || continue
+    id="${f##*/}"; pid="${id#plain-}"
+    if [ "$pid" = "$id" ] && kill -0 "$pid" 2>/dev/null; then
+      c_last_read="$now"
+    else
+      mt=$(file_mtime "$f"); case "$mt" in ''|*[!0-9]*) mt=0 ;; esac
+      if [ $(( now - mt )) -ge "$COLLECTOR_IDLE" ]; then rm -f "$f"; continue; fi
+      [ "$mt" -gt "$c_last_read" ] && c_last_read="$mt"
+    fi
+    line=""; read -r line < "$f" 2>/dev/null
+    iv="${line#*interval=}"; iv="${iv%% *}"
+    case "$iv" in ''|*[!0-9]*) ;; *) [ "$iv" -lt 2 ] && iv=2; [ "$iv" -lt "$c_interval" ] && c_interval="$iv" ;; esac
+    case "$line" in *dormant=1*) want_dormant=true ;; esac
+  done
+}
+
+# collector_take_requests — move the queued requests into the next job:
+# c_req_all, c_req_paths (newline-separated) and c_req_tokens. A request for a
+# name the registry does not know still has its token served, so nobody waits
+# on it until a timeout.
+collector_take_requests() {
+  local f b tok p wanted=" "
+  c_req_all=false; c_req_paths=""; c_req_tokens=""
+  for f in "$REQ_DIR"/refresh-*; do
+    [ -e "$f" ] || continue
+    b="${f##*/refresh-}"; tok=""
+    case "$b" in *@*) tok="${b#*@}"; b="${b%%@*}" ;; esac
+    rm -f "$f"
+    [ -n "$tok" ] && c_req_tokens="$c_req_tokens $tok"
+    if [ "$b" = all ]; then c_req_all=true; else wanted="$wanted$b "; fi
+  done
+  [ "$wanted" = " " ] && return 0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$wanted" in *" $(basename "$p") "*) c_req_paths="$c_req_paths$p"$'\n' ;; esac
+  done <<< "$(each_project)"
+}
+
+# collector_job_start <all|some> [paths] — one collect, in the background, so
+# the loop keeps beating and taking requests while clients answer.
+collector_job_start() {
+  c_job_kind="$1"
+  c_job_file=$(mktemp "$CACHE_DIR/.job.XXXXXX") || return 1
+  include_dormant="$want_dormant"
+  if [ "$1" = all ]; then
+    ( registry_refresh; scan_projects | fetch_many; refresh_library_count ) > "$c_job_file" 2>/dev/null </dev/null &
+  else
+    ( printf '%s' "$2" | fetch_many ) > "$c_job_file" 2>/dev/null </dev/null &
+  fi
+  c_job_pid=$!
+}
+
+# collector_job_finish — fold the job into the arrays, save, and answer the
+# tokens it carried. A full collect replaces the portfolio; a partial one
+# overwrites only the projects it fetched, by path.
+collector_job_finish() {
+  wait "$c_job_pid" 2>/dev/null
+  if [ "$c_job_kind" = all ]; then
+    reset_fields
+    absorb_lines "$c_job_file"
+    c_last_full=$(date +%s)
+  else
+    local name path rec k hit
+    while IFS=$'\x1e' read -r name path rec; do
+      [ -n "$name" ] || continue
+      hit=""
+      for k in ${paths[@]+"${!paths[@]}"}; do [ "${paths[$k]}" = "$path" ] && { hit="$k"; break; }; done
+      if [ -n "$hit" ]; then apply_record "$rec" "$hit"
+      else names+=("$name"); paths+=("$path"); apply_record "$rec" append; fi
+    done < "$c_job_file"
+  fi
+  rm -f "$c_job_file"
+  sort_projects_by_activity
+  snapshot_save
+  c_seq=$((c_seq + 1))
+  collector_serve "$c_job_tokens"
+  c_job_pid=""; c_job_file=""; c_job_kind=""; c_job_tokens=""
+}
+
+collector_serve() {
+  local tok
+  for tok in $1; do : > "$SERVED_DIR/$tok" 2>/dev/null; done
+}
+
+collector_stop() {
+  if [ -n "${c_job_pid:-}" ]; then kill "$c_job_pid" 2>/dev/null; wait "$c_job_pid" 2>/dev/null; fi
+  [ -n "${c_job_file:-}" ] && rm -f "$c_job_file"
+  rm -f "$COLLECTOR_HB.$$"
+  if collector_owns; then
+    hb_read && [ "$HB_PID" = "$$" ] && rm -f "$COLLECTOR_HB"
+    rm -rf "$COLLECTOR_LOCK"
+  fi
+}
+
+# collector_main — `lv-rack.sh --collect`. Exits 0 when another collector
+# already holds the cache, when it is replaced, when the cache directory goes,
+# and when it has been idle for COLLECTOR_IDLE.
+collector_main() {
+  $HAVE_JQ || { echo "lv-rack --collect: needs jq — the snapshot is JSON" >&2; return 2; }
+  COLLECTOR_PID=$$; COLLECTOR_STARTED=$(date +%s)
+  c_seq=0; c_job_pid=""; c_job_file=""; c_job_kind=""; c_job_tokens=""
+  c_last_full=0; c_last_read="$COLLECTOR_STARTED"; c_interval="$COLLECT_SECS"; want_dormant=false
+  collector_claim || { collector_log "not started: a live collector holds $CACHE_DIR"; return 0; }
+  trap 'collector_stop' EXIT
+  trap 'exit 0' INT TERM HUP
+  collector_log "start (idle ${COLLECTOR_IDLE}s, interval ${COLLECT_SECS}s)"
+  collector_beat idle
+  local now
+  while :; do
+    now=$(date +%s)
+    [ -d "$CACHE_DIR" ] || exit 0
+    collector_owns || { collector_log "replaced; exiting"; exit 0; }
+    collector_readers "$now"
+    if [ $(( now - c_last_read )) -ge "$COLLECTOR_IDLE" ]; then
+      collector_log "idle ${COLLECTOR_IDLE}s with no reader; exiting"
+      exit 0
+    fi
+    if [ -n "$c_job_pid" ] && ! kill -0 "$c_job_pid" 2>/dev/null; then
+      collector_job_finish
+      find "$SERVED_DIR" -type f -mmin +5 -exec rm -f {} + 2>/dev/null
+    fi
+    if [ -z "$c_job_pid" ]; then
+      collector_take_requests
+      if $c_req_all || [ $(( now - c_last_full )) -ge "$c_interval" ]; then
+        c_job_tokens="$c_req_tokens"; collector_job_start all
+      elif [ -n "$c_req_paths" ]; then
+        c_job_tokens="$c_req_tokens"; collector_job_start some "$c_req_paths"
+      else
+        collector_serve "$c_req_tokens"
+      fi
+    fi
+    if [ -n "$c_job_pid" ]; then collector_beat collecting; else collector_beat idle; fi
+    sleep "$COLLECTOR_TICK"
+  done
+}
+
+# ── Reading the collector, from a board ─────────────────────────────────
+
+# reader_touch [plain] — say this board is reading, and how: its poll interval
+# and whether it shows dormant projects. A board rewrites it every few ticks; a
+# --plain leaves one behind that keeps the collector warm for COLLECTOR_IDLE.
+reader_touch() {
+  $USE_COLLECTOR || return 0
+  mkdir -p "$READERS_DIR" 2>/dev/null || return 0
+  local id="$$" iv="$watch_secs" dm=0
+  if [ "${1:-}" = plain ]; then id="plain-$$"; iv="$COLLECT_SECS"; fi
+  $include_dormant && dm=1
+  printf 'interval=%s dormant=%s\n' "$iv" "$dm" > "$READERS_DIR/$id" 2>/dev/null
+}
+reader_drop() { $USE_COLLECTOR && rm -f "$READERS_DIR/$$" 2>/dev/null; return 0; }
+
+# collector_spawn — start a collector, detached: its own session's worth of
+# nohup, stdin from /dev/null and output to the log, so closing this board (or
+# a Ctrl-C in it) leaves it running for the next one. It runs this board's own
+# copy of the script, against this board's coordinator and cache.
+last_spawn_at=0
+collector_spawn() {
+  mkdir -p "$CACHE_DIR" 2>/dev/null || return 1
+  last_spawn_at=$(date +%s)
+  ( LV_RACK_LIB="" WF_BOARD_ALL_LIB="" LV_COORD_DIR="$COORD_DIR" LV_BOARD_CACHE="$CACHE_DIR" \
+      nohup bash "$HERE/lv-rack.sh" --collect </dev/null >>"$COLLECTOR_LOG" 2>&1 & ) 2>/dev/null
+}
+
+# ensure_collector — 0 when a live collector is already there. Otherwise
+# starts one (at most every few seconds, so a collector that dies on start is
+# not respawned every tick) and returns 1: the caller waits for its heartbeat.
+ensure_collector() {
+  $USE_COLLECTOR || return 1
+  collector_live && return 0
+  [ $(( $(date +%s) - last_spawn_at )) -lt 3 ] && return 1
+  collector_spawn
+  return 1
+}
+
+# collector_request <project-name|all> [token] — queue a refresh.
+collector_request() {
+  mkdir -p "$REQ_DIR" 2>/dev/null || return 1
+  : > "$REQ_DIR/refresh-$1${2:+@$2}"
+}
+
+# collector_refresh <project-name|all> — queue a refresh and wait until the
+# snapshot answering it is saved (LV_RACK_REQ_WAIT seconds, default 30). 1 on
+# a timeout or with no live collector, so the caller can fetch for itself.
+collector_refresh() {
+  $USE_COLLECTOR && collector_live || return 1
+  local tok="$$-$RANDOM$RANDOM" deadline
+  deadline=$(( $(date +%s) + ${LV_RACK_REQ_WAIT:-30} ))
+  collector_request "$1" "$tok" || return 1
+  while [ ! -e "$SERVED_DIR/$tok" ]; do
+    [ "$(date +%s)" -ge "$deadline" ] && { rm -f "$REQ_DIR/refresh-$1@$tok"; return 1; }
+    sleep 0.2
+  done
+  rm -f "$SERVED_DIR/$tok"
+}
+
+# snapshot_apply_in_place — every project already on the board takes its
+# record from the snapshot, at the index it already has. Nothing is re-sorted,
+# added or dropped, so a menu holding an index keeps pointing at its project.
+snapshot_apply_in_place() {
+  local rows line i rec
+  rows=$(snapshot_rows) || return 1
+  SVC_KEY=(); SVC_VAL=()
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    for i in ${paths[@]+"${!paths[@]}"}; do
+      if [ "${paths[$i]}" = "$(printf '%s' "$line" | cut -d$'\x1f' -f2)" ]; then
+        rec=$(printf '%s' "$line" | cut -d$'\x1f' -f3-)
+        apply_record "$rec" "$i"
+        break
+      fi
+    done
+  done <<< "$rows"
+}
+
+# snapshot_from_collector — fill the arrays from the collector's snapshot for a
+# one-shot board (--plain, a piped run): at once when a live collector has
+# saved one, else after starting one and waiting for its first
+# (LV_RACK_WAIT_SECS, default 90). 1 means collect in-process instead.
+snapshot_from_collector() {
+  $USE_COLLECTOR || return 1
+  [ -f "$DEPLOYMENTS" ] || return 1
+  reader_touch plain
+  local deadline=$(( $(date +%s) + ${LV_RACK_WAIT_SECS:-90} ))
+  until collector_live && [ "$HB_SEQ" -gt 0 ]; do
+    ensure_collector
+    [ "$(date +%s)" -ge "$deadline" ] && return 1
+    sleep 0.2
+  done
+  # --include-dormant needs a snapshot that scanned them. The reader file just
+  # asked for that; one refresh makes it so.
+  if $include_dormant && [ "$(jq -r '.include_dormant // false' "$GRID_SNAPSHOT" 2>/dev/null)" != true ]; then
+    collector_refresh all || return 1
+  fi
+  snapshot_load || reset_fields
+  return 0
+}
+
+# ui_sig — which snapshot the board last painted: the collector and its count.
+ui_sig=""
+ui_ticks=0
+# ui_tick — a board's turn of reading, in place of a refresh of its own:
+# notice a newer snapshot and load it, keep the reader file fresh, follow the
+# collector's state for the spinner, and start a collector when none is live.
+# Returns 0 when the arrays changed.
+ui_tick() {
+  local changed=1
+  ui_ticks=$((ui_ticks + 1))
+  [ $((ui_ticks % 5)) -eq 1 ] && reader_touch
+  if collector_live; then
+    refreshing=false; [ "$HB_STATE" = collecting ] && refreshing=true
+    if [ "$HB_SEQ" -gt 0 ] && [ "$HB_STARTED.$HB_SEQ" != "$ui_sig" ]; then
+      ui_sig="$HB_STARTED.$HB_SEQ"
+      if snapshot_load; then ui_after_load; changed=0; fi
+    fi
+  else
+    refreshing=true
+    ensure_collector
+  fi
+  return $changed
+}
+
+# ui_wait_first — block, with a line saying so, until the collector has saved
+# its first snapshot. A cold start: no grid.json yet. 1 on a timeout.
+ui_wait_first() {
+  local deadline=$(( $(date +%s) + ${LV_RACK_WAIT_SECS:-90} ))
+  printf '\033[1;1H\033[K%sPORTFOLIO BOARD%s  %scollecting the first snapshot…%s' "$B" "$R" "$DIM" "$R"
+  until collector_live && [ "$HB_SEQ" -gt 0 ]; do
+    ensure_collector
+    [ "$(date +%s)" -ge "$deadline" ] && return 1
+    sleep 0.2
+  done
+  ui_sig="$HB_STARTED.$HB_SEQ"
+  snapshot_load || reset_fields
+}
+
+# ui_after_load — after the arrays were replaced from a snapshot: put the
+# cursor back on the PROJECT it was on, not the slot. The sort is by activity,
+# so a newer snapshot can reorder the columns under a stationary cursor and
+# silently point it at a different project than the one you were about to open.
+ui_after_load() {
+  if [ -n "$sel_idx" ] && [ -n "$sel_name" ]; then
+    local s
+    for s in ${names[@]+"${!names[@]}"}; do
+      if [ "${names[$s]}" = "$sel_name" ]; then sel_idx="$s"; break; fi
+    done
+    # Keep the re-found column on screen: it may have moved out of the
+    # window entirely, in which case the window follows it.
+    if ! $show_all; then
+      [ "$sel_idx" -lt "$win_start" ] && win_start="$sel_idx"
+      [ "$sel_idx" -ge "$((win_start + MAX_COLS))" ] && win_start=$(( sel_idx - MAX_COLS + 1 ))
+      [ "$win_start" -lt 0 ] && win_start=0
+    fi
+  fi
+  compute_shown
 }
 
 # ── Age ─────────────────────────────────────────────────────────────────
@@ -1062,12 +1579,7 @@ row_label() {
 }
 
 collect_all() {
-  names=(); paths=(); statuses=()
-  f_daemon=(); f_running=()
-  f_gates=(); f_gates_stuck=(); f_gates_blocked=()
-  f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
-  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=(); f_claims=()
-  f_running_ids=(); f_intake=(); f_intake_group=()
+  reset_fields
   collect
   SVC_KEY=(); SVC_VAL=()
   snapshot_save
@@ -1083,11 +1595,7 @@ start_refresh_async() {
   $refreshing && return
   refresh_file=$(mktemp "${TMPDIR:-/tmp}/lv-rack.XXXXXX")
   (
-    project_path=""
-    while IFS= read -r project_path; do
-      [ -n "$project_path" ] || continue
-      printf '%s\x1e%s\x1e%s\n' "$(basename "$project_path")" "$project_path" "$(fetch_one "$project_path")"
-    done <<< "$(scan_projects)"
+    scan_projects | fetch_many
     refresh_library_count
   ) >"$refresh_file" 2>/dev/null &
   refresh_pid=$!
@@ -1107,41 +1615,14 @@ refresh_ready() {
 # as a synchronous collect_all would, then clear the in-flight state.
 finish_refresh() {
   wait "$refresh_pid" 2>/dev/null
-  names=(); paths=(); statuses=()
-  f_daemon=(); f_running=()
-  f_gates=(); f_gates_stuck=(); f_gates_blocked=()
-  f_draft=(); f_ready=(); f_active=(); f_verify=(); f_testing=(); f_complete=(); f_abandoned=()
-  f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(); f_accept=(); f_ts=(); f_claims=()
-  f_running_ids=(); f_intake=(); f_intake_group=()
+  reset_fields
   if [ -f "$refresh_file" ]; then
-    local name path rec
-    while IFS=$'\x1e' read -r name path rec; do
-      [ -n "$name" ] || continue
-      names+=("$name"); paths+=("$path")
-      apply_record "$rec" "append"
-    done < "$refresh_file"
+    absorb_lines "$refresh_file"
     rm -f "$refresh_file"
   fi
   sort_projects_by_activity
-  # The cursor follows the PROJECT, not the slot. Refreshes now land while
-  # the board is being read (and while a drill level is open on top of it),
-  # and the sort is by activity — so an unattended refresh can reorder the
-  # columns under a stationary cursor and silently point it at a different
-  # project than the one you were about to open.
-  if [ -n "$sel_idx" ] && [ -n "$sel_name" ]; then
-    local s
-    for s in "${!names[@]}"; do
-      if [ "${names[$s]}" = "$sel_name" ]; then sel_idx="$s"; break; fi
-    done
-    # Keep the re-found column on screen: it may have moved out of the
-    # window entirely, in which case the window follows it.
-    if ! $show_all; then
-      [ "$sel_idx" -lt "$win_start" ] && win_start="$sel_idx"
-      [ "$sel_idx" -ge "$((win_start + MAX_COLS))" ] && win_start=$(( sel_idx - MAX_COLS + 1 ))
-      [ "$win_start" -lt 0 ] && win_start=0
-    fi
-  fi
-  compute_shown
+  # The cursor follows the PROJECT, not the slot (ui_after_load).
+  ui_after_load
   refresh_pid=""; refresh_file=""; refreshing=false
   SVC_KEY=(); SVC_VAL=()
   snapshot_save
@@ -1158,6 +1639,7 @@ finish_refresh() {
 # a caller showing the grid should repaint), 1 otherwise.
 board_tick() {
   $interactive_watch || return 1
+  if $USE_COLLECTOR; then ui_tick; return; fi
   if $refreshing; then
     refresh_ready || return 1
     finish_refresh
@@ -1776,6 +2258,9 @@ maybe_auto_heal() {
 # restart_board — `X`: the board again, on the newest deployed version.
 restart_board() {
   [ -n "$refresh_pid" ] && kill "$refresh_pid" 2>/dev/null
+  # The collector is this version's code too: stop it, and the restarted board
+  # starts the newer one. Any other open board just sees a collector come back.
+  if $USE_COLLECTOR && hb_read && is_collector_proc "$HB_PID"; then kill "$HB_PID" 2>/dev/null; fi
   printf '\033[?25h\033[2J\033[H'
   if [ -x "$COORD_DIR/scripts/lv-exec.sh" ]; then
     exec "$COORD_DIR/scripts/lv-exec.sh" lv-rack.sh ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
@@ -1903,7 +2388,7 @@ run_library_suite() {
 # neither one wrapped in a subshell (the initial non-watch board, and
 # menu_loop's own redraws).
 render() {
-  collect_all
+  snapshot_from_collector || collect_all
   compute_shown
   render_text
 }
@@ -2674,7 +3159,8 @@ drill_browse() {
 # not shuffle the menu out from under itself.
 refresh_all_fields() {
   local k
-  for k in "${!names[@]}"; do refresh_one "$k"; done
+  if collector_refresh all && snapshot_apply_in_place; then return 0; fi
+  for k in "${!names[@]}"; do apply_record "$(fetch_one "${paths[$k]}")" "$k"; done
 }
 
 # pm_action <index> <action> — run one project_menu action. Split out of the
@@ -3019,6 +3505,7 @@ resume_board() {
   to_main=false
   if $back_to_board; then
     back_to_board=false
+    $USE_COLLECTOR && collector_request all
     if [ -n "$refresh_pid" ]; then
       kill "$refresh_pid" 2>/dev/null
       wait "$refresh_pid" 2>/dev/null
@@ -3188,25 +3675,37 @@ dormant_screen() {
 # frame the rest is builtins: a glob and kill -0. A detached record (pid 0) counts as up until
 # `v` or --services probes it and removes it.
 SVC_KEY=(); SVC_VAL=()
+# sv_manifest <project_path> — "<declared>\t<slug>\t<ids up by health>": the half of
+# sv_counts that reads levain.yml and curls each health: URL. The collector runs it inside
+# fetch_one, so the snapshot carries it (field `services`) and a board never probes; a board
+# with no snapshot behind it still runs it here, once per collect.
+sv_manifest() {
+  local p="$1" k v rest probed="" hid hurl code
+  v=$(awk -v base="$(basename "$p")" '
+      /^project_slug:/ { s=$0; sub(/^project_slug:[ \t]*/, "", s); gsub(/["\047]/, "", s); sub(/[ \t]*#.*$/, "", s); slug=s }
+      /^[^ #]/ { insv = ($0 ~ /^services:[ \t]*$/) ; next }
+      insv && /^  [A-Za-z0-9_-]+:/ { n++; cur=$1; sub(/:$/, "", cur) }
+      insv && /^    health:/ { h=$0; sub(/^    health:[ \t]*/, "", h); sub(/[ \t]+#.*$/, "", h); gsub(/["\047]/, "", h)
+                             if (h != "") hs = hs " " cur "=" h }
+      END { if (slug == "") slug = base; printf "%d\t%s\t%s", n, slug, hs }' "$p/levain.yml" 2>/dev/null)
+  [ -n "$v" ] || v="0"$'\t'"$(basename "$p")"$'\t'
+  rest="${v#*$'\t'}"
+  for k in ${rest#*$'\t'}; do
+    hid="${k%%=*}"; hurl="${k#*=}"
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time "${LV_SERVICES_PROBE_SECS:-1}" "$hurl" 2>/dev/null || true)
+    [ "${code:-0}" -ge 200 ] 2>/dev/null && [ "$code" -lt 500 ] && probed="$probed $hid"
+  done
+  v="${v%%$'\t'*}"$'\t'"${rest%%$'\t'*}"$'\t'"$probed"
+  printf '%s' "$v"
+}
+
 sv_counts() {
-  local p="$1" k v="" decl dir f pid id seen=" " up=0 rest slug probed="" hid hurl code
+  local p="$1" k v="" decl dir f pid id seen=" " up=0 rest slug probed=""
   for k in "${!SVC_KEY[@]}"; do [ "${SVC_KEY[$k]}" = "$p" ] && { v="${SVC_VAL[$k]}"; break; }; done
   if [ -z "$v" ]; then
-    v=$(awk -v base="$(basename "$p")" '
-        /^project_slug:/ { s=$0; sub(/^project_slug:[ \t]*/, "", s); gsub(/["\047]/, "", s); sub(/[ \t]*#.*$/, "", s); slug=s }
-        /^[^ #]/ { insv = ($0 ~ /^services:[ \t]*$/) ; next }
-        insv && /^  [A-Za-z0-9_-]+:/ { n++; cur=$1; sub(/:$/, "", cur) }
-        insv && /^    health:/ { h=$0; sub(/^    health:[ \t]*/, "", h); sub(/[ \t]+#.*$/, "", h); gsub(/["\047]/, "", h)
-                               if (h != "") hs = hs " " cur "=" h }
-        END { if (slug == "") slug = base; printf "%d\t%s\t%s", n, slug, hs }' "$p/levain.yml" 2>/dev/null)
-    [ -n "$v" ] || v="0"$'\t'"$(basename "$p")"$'\t'
-    rest="${v#*$'\t'}"
-    for k in ${rest#*$'\t'}; do
-      hid="${k%%=*}"; hurl="${k#*=}"
-      code=$(curl -s -o /dev/null -w '%{http_code}' --max-time "${LV_SERVICES_PROBE_SECS:-1}" "$hurl" 2>/dev/null || true)
-      [ "${code:-0}" -ge 200 ] 2>/dev/null && [ "$code" -lt 500 ] && probed="$probed $hid"
-    done
-    v="${v%%$'\t'*}"$'\t'"${rest%%$'\t'*}"$'\t'"$probed"
+    # The snapshot's probe first, when the collector took one for this project.
+    for k in "${!paths[@]}"; do [ "${paths[$k]}" = "$p" ] && { v="${f_svc[$k]:-}"; break; }; done
+    [ -n "$v" ] || v=$(sv_manifest "$p")
     SVC_KEY+=("$p"); SVC_VAL+=("$v")
   fi
   decl="${v%%$'\t'*}"; rest="${v#*$'\t'}"; slug="${rest%%$'\t'*}"; probed="${rest#*$'\t'}"
@@ -3686,6 +4185,7 @@ case "$mode" in
   list-daemons) list_daemons; exit $? ;;
   dormant)      list_dormant; exit 0 ;;
   services)     sv_collect; sv_table; exit 0 ;;
+  collect)      collector_main; exit $? ;;
   decide)       refresh_library_count; decide_list; exit 0 ;;
   sleep|wake)
     target=$(resolve_project "$mode_arg") || { echo "lv-rack: '$mode_arg' is not in the project registry" >&2; exit 1; }
@@ -3694,7 +4194,7 @@ case "$mode" in
 esac
 
 if $watch_mode; then
-  trap 'printf "\033[?25h\n"; [ -n "$refresh_pid" ] && kill "$refresh_pid" 2>/dev/null; exit 0' INT TERM
+  trap 'printf "\033[?25h\n"; [ -n "$refresh_pid" ] && kill "$refresh_pid" 2>/dev/null; reader_drop; exit 0' INT TERM
   printf '\033[2J\033[?25l'
 
   # Hybrid mode: still auto-refreshes, but a keypress acts without waiting
@@ -3705,9 +4205,11 @@ if $watch_mode; then
 
   if ! $interactive_watch; then
     # No keyboard to stay responsive for, so there's nothing an async
-    # refresh buys here — same synchronous collect-then-sleep as before.
+    # refresh buys here: read the collector's snapshot (or, with none,
+    # collect in-process), paint, sleep.
     while true; do
-      collect_all; compute_shown
+      if $USE_COLLECTOR && snapshot_from_collector; then reader_touch; else collect_all; fi
+      compute_shown
       maybe_auto_heal
       render_frame
       sleep "$watch_secs"
@@ -3724,12 +4226,22 @@ if $watch_mode; then
   # arrow keys, digits and the spinner responsive even while a refresh —
   # several seconds of shelling out to every client's lv-tray.sh — is in
   # flight: navigating and repainting only ever touch the arrays in memory.
+  # With a collector (LVI-048) the board collects nothing itself: it registers
+  # as a reader, makes sure a collector is running, and paints each snapshot
+  # the collector saves. Only without one (no jq, LV_RACK_COLLECTOR=off) does
+  # it fall back to the in-process refresh below.
+  if $USE_COLLECTOR; then reader_touch; ensure_collector; fi
   if snapshot_load; then
     compute_shown
     set_sel_idx "$sel_idx"
     next_refresh_at=0
     render_frame
+  elif $USE_COLLECTOR && ui_wait_first; then
+    compute_shown
+    set_sel_idx "$sel_idx"
+    render_frame
   else
+    USE_COLLECTOR=false
     reload_now
   fi
   set_sel_idx "$sel_idx"
@@ -3737,7 +4249,7 @@ if $watch_mode; then
 
   while true; do
     now=$(date +%s)
-    if ! $refreshing && [ "$now" -ge "$next_refresh_at" ]; then
+    if ! $USE_COLLECTOR && ! $refreshing && [ "$now" -ge "$next_refresh_at" ]; then
       start_refresh_async
     fi
 
@@ -3750,7 +4262,12 @@ if $watch_mode; then
       # else would be a blank diff against an identical frame, once a
       # second, forever.
       repaint_tick=false
-      if $refreshing; then
+      if $USE_COLLECTOR; then
+        was_refreshing=$refreshing
+        ui_tick && repaint_tick=true
+        if $refreshing; then spin_i=$(( (spin_i + 1) % ${#SPIN_FRAMES[@]} )); repaint_tick=true
+        elif $was_refreshing; then repaint_tick=true; fi
+      elif $refreshing; then
         if refresh_ready; then
           finish_refresh
           next_refresh_at=$(( $(date +%s) + watch_secs ))
@@ -3857,7 +4374,7 @@ if $watch_mode; then
         printf '\033[?25h'
         # A change alters which columns exist, so refresh at once rather than
         # at the next interval; the old columns stay until it lands.
-        dormant_screen && next_refresh_at=0
+        if dormant_screen; then next_refresh_at=0; $USE_COLLECTOR && collector_request all; fi
         resume_board
         age_sig=$(age_signature)
         ;;
@@ -3892,6 +4409,7 @@ if $watch_mode; then
         ;;
       q|Q)
         [ -n "$refresh_pid" ] && kill "$refresh_pid" 2>/dev/null
+        reader_drop
         printf '\033[?25h\n'
         exit 0
         ;;

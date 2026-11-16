@@ -43,8 +43,9 @@ f_registry=(); f_attn=(); f_release=(); f_deploy=(); f_ideas=(); f_ideas_drift=(
 apply_record "$rec" append
 ck "the timestamp stays where older readers look" "${f_ts[0]}" "1700000000"
 ck "the claims follow it" "${f_claims[0]}" "RELEASE"
-# Three empty fields after them: running_ids, intake, intake_group (LVI-050).
-ck "project_record round-trips them" "$(project_record 0)" "$rec"$'\x1f\x1f\x1f'
+# Empty fields after them: running_ids, intake, intake_group (LVI-050), then
+# services and the raw tray line, and dormant 0 (LVI-048).
+ck "project_record round-trips them" "$(project_record 0)" "$rec"$'\x1f\x1f\x1f\x1f\x1f\x1f0'
 
 # An older record — no claims field — reads as no work in hand.
 apply_record "$(printf '%s' "$rec" | sed $'s/\x1fRELEASE$//')" 0

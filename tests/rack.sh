@@ -23,6 +23,8 @@ assert_eq() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$3], go
 
 T=$(cd "$(mktemp -d)" && pwd -P); trap 'rm -rf "$T"' EXIT
 export LV_PACKS=""
+# A --plain below starts a collector (LVI-048); let it go quickly.
+export LV_RACK_IDLE_SECS=5
 export LV_COORD_DIR="$T/coord"; mkdir -p "$LV_COORD_DIR"
 
 echo "── the board's own suites ──"
