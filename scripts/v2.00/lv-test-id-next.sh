@@ -170,7 +170,7 @@ fi
 # id the same plan's table already holds is not counted again, so per-plan
 # scope's duplicate-row check does not fire on an amendment restating a row.
 plan_ids() {
-  awk -F'|' -v f="$1" -v px="$2" '
+  LC_ALL=C awk -F'|' -v f="$1" -v px="$2" '
     function trim(x) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", x); return x }
     function unmark(x) { gsub(/[*_`]/, "", x); return x }
     NF >= 3 {
@@ -261,7 +261,7 @@ found=$(ids_found)
 highest=0
 highest_from=""
 if [ -n "$found" ]; then
-  read -r highest highest_from <<<"$(printf '%s\n' "$found" | awk -F: -v px="$prefix" '
+  read -r highest highest_from <<<"$(printf '%s\n' "$found" | LC_ALL=C awk -F: -v px="$prefix" '
     {
       id = $NF
       sub("^" px, "", id)
@@ -290,7 +290,7 @@ if [ -n "$verify" ]; then
     # same id on two rows of ONE plan. A duplicate there is undetectable by
     # any other means — the test command `--test-name-pattern '^T5:'` matches
     # both, and the plan's own test count reads right.
-    dupes=$(printf '%s\n' "$found" | awk -F: -v px="$prefix" -v lo="$lo" -v hi="$hi" '
+    dupes=$(printf '%s\n' "$found" | LC_ALL=C awk -F: -v px="$prefix" -v lo="$lo" -v hi="$hi" '
       { id = $NF; sub("^" px, "", id); n = id + 0
         if (n >= lo && n <= hi) seen[n]++ }
       END { for (n in seen) if (seen[n] > 1) print px n "\t" seen[n] " rows" }
@@ -309,7 +309,7 @@ if [ -n "$verify" ]; then
   # plan that has already written its table, so its own rows must not count as
   # collisions with itself; --plan / LV_VERIFY_SELF names the plan to discount.
   self="$plan_id"
-  clashes=$(printf '%s\n' "$found" | awk -F: -v px="$prefix" -v lo="$lo" -v hi="$hi" -v self="$self" '
+  clashes=$(printf '%s\n' "$found" | LC_ALL=C awk -F: -v px="$prefix" -v lo="$lo" -v hi="$hi" -v self="$self" '
     {
       id = $NF; sub("^" px, "", id); n = id + 0
       if (n < lo || n > hi) next

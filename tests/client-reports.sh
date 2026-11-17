@@ -6880,6 +6880,16 @@ assert_eq "…and the next range starts past it" "T86-T87" "$TEST_ID_RANGE"
 out=$(id_next --verify T84-T85 2>&1; echo "rc=$?")
 assert_eq "--verify refuses a range a bullet holds" "true" \
   "$(printf '%s' "$out" | grep -q 'T84.*plans/PLN-016' && printf '%s' "$out" | grep -q 'rc=3' && echo true || echo false)"
+
+# A plan carrying a byte that is not UTF-8 is read without an awk complaint
+# (a client's LVI-060: macOS awk printed "towc: multibyte conversion failure").
+mkdir -p plans/PLN-017-latin1
+printf '# PLN-017\n\nCaf\351 bar.\n\n| ID | Type |\n|-|-|\n| T88 | Unit |\n' > plans/PLN-017-latin1/plan.md
+err=$(LC_ALL=en_US.UTF-8 "$SCRIPT_DIR/lv-test-id-next.sh" 2>&1 >/dev/null)
+assert_eq "a non-UTF-8 byte in a plan writes nothing to stderr (LVI-060)" "" "$err"
+eval "$(id_next)"
+assert_eq "…and the id beside it still counts" "88" "$TEST_ID_HIGHEST"
+rm -rf plans/PLN-017-latin1
 assert_eq "an id later in a bullet is a reference, not a reservation" "0" \
   "$("$SCRIPT_DIR/lv-test-id-next.sh" --verify T99-T99 >/dev/null 2>&1; echo $?)"
 assert_eq "a bullet restating its own table row is not a second row (per-plan)" "0" \
