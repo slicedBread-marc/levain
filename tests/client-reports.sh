@@ -7001,6 +7001,30 @@ assert_eq "lv-brief-block.sh warns when the blocker cannot be re-checked" "true"
   "$(printf '%s' "$err" | grep -q 'cannot be re-checked' && echo true || echo false)"
 err=$("$SCRIPT_DIR/lv-brief-block.sh" BRF-030 "needs theirs" --on BUG-012 --repo client-d --no-commit 2>&1 >/dev/null)
 assert_eq "and not when the project is declared" "" "$err"
+
+# /lv-attend showed plan gates only, so it said nothing was waiting while a
+# client's BUG-096, BUG-127 and BUG-132 were withheld as Blocked (a client's
+# LVI-054). lv-list-blocked.sh lists them with how each one clears.
+LB="$SCRIPT_DIR/lv-list-blocked.sh"
+assert_eq "a block whose blocker has landed is not listed" "1" \
+  "$("$LB" >/dev/null 2>&1; echo $?)"
+printf '# BRF-030\n\n> **Status:** Open\n> **Blocked:** BUG-012 (in undeclared) — needs their tokens\n' \
+  > plans/briefs/BRF-030-hero.md
+printf '# BRF-032\n\n> **Status:** Open\n> **Blocked:** PLN-077 — waits on the spike\n' \
+  > plans/briefs/BRF-032-spike.md
+printf '# BRF-033\n\n> **Status:** Open\n> **Blocked:** BUG-013 (in client-d) — theirs\n' \
+  > plans/briefs/BRF-033-theirs.md
+lb=$("$LB" 2>/dev/null)
+assert_eq "an undeclared project's block is listed as cleared by hand" "true" \
+  "$(printf '%s\n' "$lb" | grep -q "^BRF-030	briefs	BUG-012 (in undeclared).*	hand$" && echo true || echo false)"
+assert_eq "a local plan block is listed as lifting by itself" "true" \
+  "$(printf '%s\n' "$lb" | grep -q "^BRF-032	briefs	.*	auto:PLN-077$" && echo true || echo false)"
+assert_eq "a readable cross-repo block names where it lifts" "true" \
+  "$(printf '%s\n' "$lb" | grep -q "^BRF-033	briefs	.*	auto:BUG-013 in client-d$" && echo true || echo false)"
+assert_eq "--count counts them" "3" "$("$LB" --count 2>/dev/null)"
+assert_eq "/lv-attend runs it" "true" \
+  "$(grep -q 'lv-exec.sh lv-list-blocked.sh' "$LIB_ROOT/skills/lv-attend/SKILL.md" && echo true || echo false)"
+rm -f plans/briefs/BRF-032-spike.md plans/briefs/BRF-033-theirs.md
 rm -rf plans/briefs "$XDEP/provider/bugs/closed/BUG-012-tokens"
 
 # A same-repo `--on PLN-126` block ("PLN-126 — why") lifts the same way once

@@ -35,6 +35,15 @@ Output is tab-separated: `<id>  <gate>  <opened>  <question>  <context>  <blocki
 
 Then, in the same turn, `scripts/lv-exec.sh lv-bug-group.sh list --stale`. Each line is an **unsealed intake group** older than `bugs.groupStaleAfter` hours (default 24): a batch of bugs held off `/lv-spec` that nobody has said is ready (LVI-024). Nothing else surfaces it — its members appear in no worklist — so list them under the gate table as `<project> group <slug> — N member(s), open <age>` and ask, after the gates: seal it (`lv-bug-group.sh seal <slug>`), or dissolve it (`lv-bug-group.sh dissolve <slug>`) so its members go to `/lv-spec` one by one. Never seal or dissolve without the human's answer — a group is open because someone was still writing it. Exit 1 with no output means there are none; say nothing about it.
 
+Then, in the same turn, `scripts/lv-exec.sh lv-list-blocked.sh`. Each line is a **bug or brief held off `/lv-spec` by a `> **Blocked:**` header**, tab-separated `<id>  <where>  <reason>  <clears>`. A Blocked field is not a gate, so it appears in no gate row, and before this the queue said nothing was waiting while three of a client's bugs sat withheld and the operator could not see why the daemon was not picking them up (a client's LVI-054). List them under the gate table, apart from it, as `<project> <ID> — blocked: <reason>`, followed by how it clears:
+
+| `<clears>` | Show | Ask |
+|-|-|-|
+| `auto:<ART> in <proj>` / `auto:<PLN-ID>` | "lifts by itself when `<ART>` closes in `<proj>`" / "when `<PLN-ID>` is complete" | Nothing — it is waiting on work, not on the human |
+| `hand` | "only a hand clear lifts it", plus the reason's `[not re-checked: …]` note when it has one | After the gates: has this blocker lifted? On **yes**, run `scripts/lv-exec.sh lv-brief-block.sh <ID> --clear`, which commits the field's removal and puts it back on the specable list. On **no**, leave it |
+
+Never clear a block without the human's yes — the reason was recorded by someone who knew something you do not, and the clear dispatches a spec worker on the next sweep. Exit 1 with no output means nothing is blocked; say nothing about it.
+
 `<blocking>` is how many other incomplete plans cannot start until this gate is answered, and the queue is **ordered by it, costliest first** (ties break oldest-first). A gate at the root of a dependency chain holds everything behind it; one blocking nothing costs only the minute it takes to answer. Present them in the order given — do not re-sort by age.
 
 Render it under a heading that names the project, as a numbered table:
@@ -97,7 +106,7 @@ Then, **if the queue has more than one gate**: "Which one? (number, or `all` to 
 
 **If it has exactly one, do not ask which.** Show the table so the human sees the project, the id and the question, then go straight to [Working a gate](#working-a-gate) on that row — the `mismatch` and `stale` checks above still come first. A choice between one option is a wasted round trip (operator, 2026-09-23, on a lone `client-c DEPLOY`). The gate's own decision is still put to the human; only the "which one?" is skipped.
 
-If the script exits non-zero, say "No gates open — nothing is waiting on you" and stop. Do not go looking for work; that's `/lv-tray`.
+If `lv-list-gates.sh` exits non-zero, say "No gates open", then show the blocked list and the stale groups above if either printed anything, and work their questions; when neither did, say "nothing is waiting on you" and stop. "Nothing is waiting" with a Blocked bug in the tree is the LVI-054 report. Do not go looking for work; that's `/lv-tray`.
 
 ### One artifact
 
@@ -108,7 +117,7 @@ scripts/lv-exec.sh lv-list-gates.sh <ID>
 The same row format as the whole queue, for that artifact only — an artifact holds at most one open gate, and the lookup is by number, so `BUG-45` finds the `spec-approval` its plan `PLN-45` opened (WFI-187).
 
 - **Exit 0:** render the one-row table, apply the `mismatch` and `stale` checks above exactly as for a full queue, and go straight to working it — do not ask "which one?".
-- **Exit 1:** say "`<project> <ID>` has no open gate — nothing is waiting on you there." and stop. It was answered, or the plan moved on since the caller looked. **Do not fall back to the whole queue:** the caller asked about one artifact, and showing everything else in its place is answering a question nobody asked. Point at `/lv-attend` (no id) for the queue and `/lv-tray <ID>` for where the artifact stands.
+- **Exit 1:** first check `scripts/lv-exec.sh lv-list-blocked.sh` for that id. Listed? Say "`<project> <ID>` has no open gate; it is blocked: <reason>", and work it by the `<clears>` table above. Otherwise say "`<project> <ID>` has no open gate — nothing is waiting on you there." and stop. It was answered, or the plan moved on since the caller looked. **Do not fall back to the whole queue:** the caller asked about one artifact, and showing everything else in its place is answering a question nobody asked. Point at `/lv-attend` (no id) for the queue and `/lv-tray <ID>` for where the artifact stands.
 - **Exit 2:** the argument is not an id. Say so, quoting it, and stop.
 
 When that gate is answered, the session is done. Say how many gates remain elsewhere (the `GATES: N` line `lv-list-gates.sh` prints on stderr), and do not start on them.
