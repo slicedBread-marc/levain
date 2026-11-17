@@ -28,7 +28,9 @@
 #              first line of its label's text: that line's box overlaps the
 #              input's box vertically.
 #   text       no element whose own text overflows its box: scrollWidth >
-#              clientWidth on an element that holds text directly, does not
+#              clientWidth nominates, and the in-flow text itself
+#              (absolute/fixed descendants left out) must reach past the
+#              padding box, on an element that holds text directly, does not
 #              scroll (overflow-x not auto/scroll) and does not truncate on
 #              purpose (text-overflow: ellipsis).
 #
@@ -197,6 +199,31 @@ function audit(minTarget) {
   }
 
   // text
+  // scrollWidth counts absolutely positioned descendants, so a CTA holding
+  // decorative corner spans at right:-6px read as text 6px too wide for a
+  // label that fit (a client's LVI-017). scrollWidth only nominates; the
+  // verdict is where the element's in-flow text actually lands, measured
+  // from its padding box, skipping any absolute or fixed subtree.
+  const textExtent = (el) => {
+    const origin = el.getBoundingClientRect().left + el.clientLeft;
+    let lo = Infinity, hi = -Infinity;
+    const walk = (node) => {
+      for (const c of node.childNodes) {
+        if (c.nodeType === 3) {
+          if (!c.textContent.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(c);
+          for (const r of range.getClientRects()) {
+            if (r.width > 0) { lo = Math.min(lo, r.left - origin); hi = Math.max(hi, r.right - origin); }
+          }
+        } else if (c.nodeType === 1 && !['absolute', 'fixed'].includes(getComputedStyle(c).position)) {
+          walk(c);
+        }
+      }
+    };
+    walk(el);
+    return hi === -Infinity ? null : { lo, hi };
+  };
   for (const el of document.body.querySelectorAll('*')) {
     if (['INPUT', 'TEXTAREA', 'SELECT', 'SCRIPT', 'STYLE', 'SVG', 'svg'].includes(el.tagName)) continue;
     if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue;
@@ -205,7 +232,10 @@ function audit(minTarget) {
     if (cs.display === 'inline' || cs.display === 'contents') continue;
     if (['auto', 'scroll'].includes(cs.overflowX) || cs.textOverflow === 'ellipsis') continue;
     if (el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1) {
-      out.push({ check: 'text', el: name(el), what: `text is ${el.scrollWidth}px wide in a ${el.clientWidth}px box` });
+      const t = textExtent(el);
+      if (!t || (t.hi <= el.clientWidth + 1 && t.lo >= -1)) continue;
+      const wide = Math.round(Math.max(t.hi, el.clientWidth) - Math.min(t.lo, 0));
+      out.push({ check: 'text', el: name(el), what: `text is ${wide}px wide in a ${el.clientWidth}px box` });
     }
   }
   return out;
