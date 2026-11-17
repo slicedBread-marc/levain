@@ -776,6 +776,7 @@ case "\${STUB_MODE:-advance}" in
     ;;
   gate)  "\$S/lv-gate-open.sh" "\$id" needs-input "2 criteria need eyes" >/dev/null 2>&1 ;;
   noop)  : ;;
+  hold)  sleep "\${STUB_HOLD:-3}" ;;
   fail)  exit 7 ;;
 esac
 exit 0
@@ -919,6 +920,29 @@ assert_eq "a healthy launch is rc 0 again once nohup works" "0" "$rc"
 assert_eq "and a successful spawn clears the daemon's failure count" "false" \
   "$([ -f "$ORCH/launch-fails" ] && echo true || echo false)"
 rm -f "$ORCH/logs/037-consistency.pid"
+
+# --- two callers at once launch one worker
+#
+# The implementer's lv-unclaim.sh serves the deferred verify spawn at the same
+# instant the daemon's sweep finds the plan in `verify`. Both read the pidfile
+# and the claim as free and both launched: two verify workers on PLN-127 in
+# one second, then a third once the first's exit removed the shared claim (a
+# client's LVI-061). The launch is serialized per number now.
+section "Two simultaneous spawns launch one worker (LVI-061)"
+registry_add_row PLN-038 together ready
+rm -f "$ORCH/logs/038-consistency.pid"
+r1="$TEST_DIR/spawn-038-a.rc"; r2="$TEST_DIR/spawn-038-b.rc"
+( rc=0; STUB_MODE=hold "$SCRIPT_DIR/lv-spawn.sh" consistency PLN-038-together >/dev/null 2>&1 || rc=$?; echo "$rc" > "$r1" ) &
+( rc=0; STUB_MODE=hold "$SCRIPT_DIR/lv-spawn.sh" consistency PLN-038-together >/dev/null 2>&1 || rc=$?; echo "$rc" > "$r2" ) &
+wait
+assert_eq "exactly one of the two launches, the other is told it is running" "0 2" \
+  "$(cat "$r1" "$r2" | sort | xargs)"
+assert_eq "one worker started" "1" \
+  "$(grep -c 'role=consistency artifact=PLN-038' "$TEST_DIR/stub-env.log" 2>/dev/null | xargs)"
+assert_eq "the launch lock is not left held" "false" \
+  "$([ -d "$(git rev-parse --git-common-dir)/wf-locks/spawn-038" ] && echo true || echo false)"
+for _ in $(seq 1 50); do [ -f "$ORCH/logs/038-consistency.pid" ] || break; sleep 0.1; done
+rm -f "$ORCH/logs/038-consistency.pid"
 
 section "Dispatcher — spawning (stub claude), continued"
 echo "999999" > "$ORCH/logs/036-implement.pid"  # dead PID

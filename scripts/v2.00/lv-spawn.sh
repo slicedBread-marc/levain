@@ -143,6 +143,33 @@ model="${model_override:-$(wf_cfg "orchestrator.models.$role" "$(default_model "
 # its verdict on top of the other's, leaving plan.md with two contradicting
 # `## Review` blocks.
 pidfile="$ORCH/logs/${num}-${role}.pid"
+
+# ── One launch per number at a time ───────────────────────────────────────
+#
+# Every guard below is check-then-act: read the pidfile, read the claim, and
+# only much later — after the registry, gate and hold reads — write both. Two
+# callers that arrive together both read "free" and both launch. They do arrive
+# together, by design: the implementer's lv-unclaim.sh serves the deferred
+# verify spawn at the same instant the daemon's sweep finds the plan in
+# `verify`. A client watched two verify workers start in one second on
+# PLN-127; the first stood down and its wrapper's exit removed the shared
+# claim, so the next sweep launched a third onto a plan with two live
+# workers, and the one that met the third's claim forced it away (a client's
+# LVI-061).
+#
+# So the window from the first read to the last write is serialized per
+# NUMBER (the identity the claim keys on). The second caller waits, then
+# meets the pidfile or claim the first one wrote and exits 2 like any other
+# already-running case. Released as soon as both are written — never held
+# across a foreground worker's run — and on any exit before that. A dry run
+# writes nothing, so it takes no lock.
+if ! $dry_run; then
+  # shellcheck source=lv-lock.sh
+  source "$SELF_DIR/lv-lock.sh"
+  # The lock root is the git COMMON dir, so every worktree's caller shares it.
+  wf_lock_acquire "spawn-$num" || { echo "lv-spawn: could not take the launch lock for $id" >&2; exit 1; }
+fi
+
 # Adopt a pre-v5.1 pidfile so an upgrade mid-flight does not double-launch.
 legacy_pidfile="$ORCH/logs/${artifact}-${role}.pid"
 [ -f "$legacy_pidfile" ] && [ ! -f "$pidfile" ] && mv "$legacy_pidfile" "$pidfile" 2>/dev/null || true
@@ -439,6 +466,8 @@ if $foreground; then
   wf_event spawn "$id" "$role ($model) foreground"
   echo $$ > "$pidfile"
   wf_claim_write "$claim_dir" $$ "$artifact"
+  # Both written: the next caller now meets them. Not held across the run.
+  wf_lock_release "spawn-$num"
   set +e
   # LV_CLAIM_PID names the claim we just took out FOR this worker, so its own
   # "is this plan free?" check recognises the claim as its own (WFI-073/075).
@@ -514,6 +543,7 @@ echo "$worker_pid" > "$pidfile"
 # The claim names the worker, so it dies with the worker rather than with the
 # shell that launched it.
 wf_claim_write "$claim_dir" "$worker_pid" "$artifact"
+wf_lock_release "spawn-$num"
 disown "$worker_pid" 2>/dev/null || true
 
 # ── Did the worker actually start? ────────────────────────────────────────
