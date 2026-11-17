@@ -6986,6 +6986,21 @@ assert_eq "even when a plan of the same number is complete there" "blocked" "$(b
 mkdir -p "$XDEP/provider/bugs/closed/BUG-012-tokens"
 printf '# BUG-012\n' > "$XDEP/provider/bugs/closed/BUG-012-tokens/bug.md"
 assert_eq "and lifts once that bug (a folder) is closed there" "clear" "$(blk)"
+# A blocker in a project this one does not declare can never be re-read, and
+# said nothing: a client's BUG-096 sat withheld 33 days after its blocker
+# closed (a client's LVI-055). It still holds, but the reason says why.
+printf '# BRF-030\n\n> **Status:** Open\n> **Blocked:** BUG-012 (in undeclared) — needs their tokens\n' \
+  > plans/briefs/BRF-030-hero.md
+why=$(bash -c "source '$SCRIPT_DIR/lv-orch-lib.sh'; wf_brief_blocked plans/briefs/BRF-030-hero.md" 2>/dev/null || true)
+assert_eq "an undeclared project's blocker still holds" "blocked" "$(blk)"
+assert_eq "and its reason says it is not re-checked" "true" \
+  "$(printf '%s' "$why" | grep -q "not re-checked: no 'undeclared' in dependencies:" && echo true || echo false)"
+printf '# BRF-030\n\n> **Status:** Open\n' > plans/briefs/BRF-030-hero.md
+err=$("$SCRIPT_DIR/lv-brief-block.sh" BRF-030 "needs theirs" --on BUG-012 --repo undeclared --no-commit 2>&1 >/dev/null)
+assert_eq "lv-brief-block.sh warns when the blocker cannot be re-checked" "true" \
+  "$(printf '%s' "$err" | grep -q 'cannot be re-checked' && echo true || echo false)"
+err=$("$SCRIPT_DIR/lv-brief-block.sh" BRF-030 "needs theirs" --on BUG-012 --repo client-d --no-commit 2>&1 >/dev/null)
+assert_eq "and not when the project is declared" "" "$err"
 rm -rf plans/briefs "$XDEP/provider/bugs/closed/BUG-012-tokens"
 
 # A same-repo `--on PLN-126` block ("PLN-126 — why") lifts the same way once

@@ -149,6 +149,17 @@ else
   [ -n "$on_artifact" ] && blocked="$on_artifact${on_repo:+ (in $on_repo)} — $why"
   [ -z "$on_artifact" ] && [ -n "$on_repo" ] && blocked="$on_repo — $why"
 
+  # A cross-repo blocker lifts by itself only when this project can read the
+  # other one, through its dependencies: entry. Without it the block holds
+  # until someone remembers to --clear it (a client's LVI-055: 33 days). Say
+  # so now, while the writer can still declare it.
+  if [ -n "$on_artifact" ] && [ -n "$on_repo" ]; then
+    wf_external_dep_state "$on_repo:$on_artifact"
+    if [ "$LV_EXTERNAL_DEP_STATE" = "unknown" ]; then
+      echo "Warning: $on_artifact (in $on_repo) cannot be re-checked ($LV_EXTERNAL_DEP_DETAIL), so this block will not lift by itself. Declare $on_repo under dependencies: in levain.yml, or run --clear when it lands." >&2
+    fi
+  fi
+
   # Rewrite an existing field rather than stacking a second one; insert after
   # Plan: (or at the end of the header blockquote) when there is none.
   LV_BLOCKED="$blocked" awk '

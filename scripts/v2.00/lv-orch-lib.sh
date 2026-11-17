@@ -526,6 +526,15 @@ wf_brief_blocked() {
     if [ "$LV_EXTERNAL_DEP_STATE" = "complete" ] && [ "$LV_EXTERNAL_DEP_DETAIL" != "abandoned" ]; then
       return 1
     fi
+    # A blocker this cannot read can never lift by itself, and said nothing
+    # about it: a client's BUG-096 named a project its levain.yml did not
+    # declare under dependencies:, so the state read `unknown` on every sweep
+    # and the bug sat withheld for 33 days after the blocker closed (a
+    # client's LVI-055). Still held — unknown is not complete — but the
+    # reason now says why it is not re-checked and what would make it so.
+    if [ "$LV_EXTERNAL_DEP_STATE" = "unknown" ]; then
+      field="$field [not re-checked: $LV_EXTERNAL_DEP_DETAIL — declare $proj under dependencies: in levain.yml, or --clear by hand]"
+    fi
   fi
   # A block on a plan in THIS repo, as `lv-brief-block.sh --on PLN-126` writes
   # it ("PLN-126 — why"), lifts the same way once that plan is complete here.
