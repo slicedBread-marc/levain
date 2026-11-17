@@ -56,6 +56,10 @@
 #   CHROME_ERRORED — how many of CHROME_UNTESTED have only a headless ERROR
 #     as their reason. They gate even while pre-launch: an ERROR is no result,
 #     so it is never moved to the end-state review as if tested (LVI-043)
+#   CHROME_TICKED — Chrome-Assisted criteria ticked in plan.md with nothing
+#     behind the tick (no PASS/FAIL that settles it, no `deferred as DC-NNN`,
+#     no SCOPED OUT, no post-ship checklist line). They are counted in the
+#     counts above as if unchecked (a client's LVI-006, LVI-007)
 #   PROGRESS_INCOMPLETE='true|false' — CHROME_UNRECORDED > 0
 #   PROGRESS_MISSING='<criteria, "; "-joined>' — the unrecorded ones
 #   PROGRESS_TREE — the build test-progress.md's `TREE` stamp names
@@ -321,7 +325,18 @@ eval "$("$(dirname "$0")/lv-manual-lint.sh" "$plan_id" --counts ${resolved_args[
 # nothing, and the accept record named a build that was not the one a human
 # was about to look at (LVI-029). With no worktree there is no build to compare
 # against, and any PASS or FAIL counts, as before.
-chrome_out=$(awk -F'|' -v progress="$progress_md" -v sha="$build_sha" -v carried="$resolved_file" '
+#
+# A TICKED box settles a criterion only when something says why it was ticked:
+# a deferral (`— deferred as DC-NNN`), a human's scope-out (`— SCOPED OUT by
+# the operator`), a line on the plan's `## Post-ship checklist` (lv-lane.sh
+# answer), or a settling PASS/FAIL row. A tick with none of those behind it is
+# read exactly as an unchecked box. A client's builder ticked both
+# Chrome-Assisted criteria of PLN-053 on its way to verify; test-progress.md
+# recorded both as a headless ERROR, and this returned GATE=false, CHROME_OPEN=0
+# — the plan would have completed on criteria that never ran on any build
+# (a client's LVI-006, LVI-007). CHROME_TICKED counts those ticks.
+chrome_out=$(awk -F'|' -v progress="$progress_md" -v sha="$build_sha" -v carried="$resolved_file" \
+    -v planmd="$ROOT/plans/$plan_name/plan.md" -v dcre="$LV_DC_RE" '
   function norm(s,   t) {
     t = tolower(s)
     gsub(/[`*_]/, "", t)
@@ -403,12 +418,40 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" -v sha="$build_sha" -v carried
     }
     if (carried != "")
       while ((getline row < carried) > 0) CARRIED[norm(row)] = 1
+    # What lv-lane.sh answer moved to the post-ship checklist, by criterion.
+    while ((getline row < planmd) > 0) {
+      if (row ~ /^##[[:space:]]/) { in_p = (row ~ /^##[[:space:]]+Post-ship checklist([[:space:]]|$)/); continue }
+      if (!in_p || row !~ /^[[:space:]]*-[[:space:]]*\[[ xX]\]/) continue
+      sub(/^[[:space:]]*-[[:space:]]*\[[ xX]\][[:space:]]*/, "", row)
+      sub(/[[:space:]]*_\([^)]*\)_[[:space:]]*$/, "", row)
+      POST[norm(row)] = 1
+    }
+  }
+  function posted(nt,   k) {
+    if (nt in POST) return 1
+    for (k in POST)
+      if (length(nt) >= 24 && length(k) >= 24 && (index(k, nt) > 0 || index(nt, k) > 0)) return 1
+    return 0
+  }
+  # A tick that records its own reason: a deferral or a human scope-out.
+  function backed(text,   l) {
+    if (match(text, "deferred as (" dcre ")-[0-9]+")) return 1
+    l = tolower(text)
+    if (l ~ /scoped out/) return 1
+    return 0
   }
   /^####[[:space:]]*Chrome-Assisted/ { in_c = 1; next }
   /^(#|##|###|####)[[:space:]]/ { in_c = 0 }
   !in_c { next }
-  /^[[:space:]]*-[[:space:]]*\[ \]/ {
-    text = $0; sub(/^[[:space:]]*-[[:space:]]*\[ \][[:space:]]*/, "", text)
+  /^[[:space:]]*-[[:space:]]*\[[xX]\]/ {
+    text = $0; sub(/^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]*/, "", text)
+    if (backed(text) || posted(norm(text))) next
+    k = lookup(norm(text))
+    if (k != "" && settled(k)) next
+    print "K\t" text
+  }
+  /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ {
+    text = $0; sub(/^[[:space:]]*-[[:space:]]*\[[ xX]\][[:space:]]*/, "", text)
     k = lookup(norm(text))
     if (k != "" && settled(k)) print "S\t" text
     else if (k != "" && reasoned(NOTE[k])) print (erroronly(NOTE[k]) ? "X" : "R") "\t" text
@@ -426,6 +469,8 @@ chrome_missing=$(printf '%s\n' "$chrome_out" | sed -n 's/^[UE]	//p' | cut -c1-80
 chrome_blank=$(printf '%s\n' "$chrome_out" | sed -n 's/^U	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
 chrome_excuses=$(printf '%s\n' "$chrome_out" | sed -n 's/^E	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
 chrome_reasoned=$(printf '%s\n' "$chrome_out" | sed -n 's/^[RX]	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
+chrome_ticked=$(printf '%s\n' "$chrome_out" | grep -c '^K	' || true)
+chrome_ticks=$(printf '%s\n' "$chrome_out" | sed -n 's/^K	//p' | cut -c1-80 | paste -sd';' - | sed 's/;/; /g')
 
 # ── How many open criteria actually count toward gating ───────────────────
 open_count="$MANUAL_OPEN_BLOCKING"
@@ -557,6 +602,12 @@ elif [ "$chrome_untested" -gt 0 ]; then
   reason="$chrome_untested Chrome-Assisted criteria untested (reason in test-progress.md): $chrome_reasoned; $reason"
 fi
 
+# A tick nothing backs was counted as open above; say that it was ticked, so
+# whoever reads the verdict knows plan.md's checkbox is not the record (LVI-006).
+if [ "$chrome_ticked" -gt 0 ]; then
+  reason="$chrome_ticked Chrome-Assisted criteria are ticked in plan.md with no PASS, deferral, scope-out or post-ship line behind them, so they are read as open: $chrome_ticks; $reason"
+fi
+
 # Say it in the reason, not only in the counts. Whoever reads this line is
 # deciding whether to believe the verdict, and "3 of them were already passed
 # on this build" is the fact that makes a `false` credible and a `true` worth
@@ -591,6 +642,7 @@ wf_emit CHROME_UNRECORDED    "$chrome_unrecorded"
 wf_emit CHROME_UNTESTED      "$chrome_untested"
 wf_emit CHROME_EXCUSED       "$chrome_excused"
 wf_emit CHROME_ERRORED       "$chrome_errored"
+wf_emit CHROME_TICKED        "$chrome_ticked"
 wf_emit PROGRESS_INCOMPLETE  "$([ "$chrome_unrecorded" -gt 0 ] && echo true || echo false)"
 wf_emit PROGRESS_MISSING     "$chrome_missing"
 

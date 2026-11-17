@@ -735,7 +735,8 @@ answer)
   live_c=$("$SELF_DIR/lv-manual-lint.sh" "$PLAN_ID" --live 2>/dev/null | awk -F'\t' '$2 == "Chrome-Assisted" { print $5 }' || true)
   if [ -n "$live_c" ]; then
     passes=$(wf_test_progress_passes "$(dirname "$PLAN_MD")/test-progress.md" 2>/dev/null || true)
-    chrome=$(LV_LIVE="$live_c" LV_PASS="$passes" LV_PROGRESS="$(dirname "$PLAN_MD")/test-progress.md" awk '
+    chrome=$(LV_LIVE="$live_c" LV_PASS="$passes" LV_PROGRESS="$(dirname "$PLAN_MD")/test-progress.md" \
+      LV_PLANMD="$PLAN_MD" LV_DCRE="$LV_DC_RE" awk '
       function norm(s,   t) {
         t = tolower(s); gsub(/[`*_]/, "", t)
         sub(/^[[:space:]]*-[[:space:]]*\[[ xX]\][[:space:]]*/, "", t)
@@ -772,9 +773,32 @@ answer)
           if (r == "PASS" || r == "FAIL") continue
           NOTE[norm(c[3])] = c[6]
         }
+        f = ENVIRON["LV_PLANMD"]
+        while ((getline row < f) > 0) {
+          if (row ~ /^##[[:space:]]/) { in_p = (row ~ /^##[[:space:]]+Post-ship checklist([[:space:]]|$)/); continue }
+          if (!in_p || row !~ /^[[:space:]]*-[[:space:]]*\[[ xX]\]/) continue
+          sub(/[[:space:]]*_\([^)]*\)_[[:space:]]*$/, "", row)
+          POST[norm(row)] = 1
+        }
+      }
+      function posted(n,   k) {
+        if (n in POST) return 1
+        for (k in POST) if (length(n) >= 24 && length(k) >= 24 && (index(k, n) || index(n, k))) return 1
+        return 0
       }
       /^####[[:space:]]*Chrome-Assisted/ { in_c = 1; next }
       /^#+[[:space:]]/ { in_c = 0 }
+      # A tick with nothing behind it (no deferral, no scope-out, not already on
+      # the checklist) is no answer: lv-manual-gate.sh reads it as open, so it
+      # moves like an unchecked one. A builder ticked two errored criteria on a
+      # client, and they would have shipped on neither list (LVI-006/007).
+      in_c && /^[[:space:]]*-[[:space:]]*\[[xX]\]/ {
+        if (match($0, "deferred as (" ENVIRON["LV_DCRE"] ")-[0-9]+") || tolower($0) ~ /scoped out/) next
+        k = norm($0)
+        if (posted(k)) next
+        if ((k in L) && !passed(k)) { t = $0; sub(/^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]*/, "", t); print (errored(k) ? "E" : "M") "\t" NR "\t" t }
+        next
+      }
       in_c && /^[[:space:]]*-[[:space:]]*\[ \]/ {
         k = norm($0)
         if ((k in L) && !passed(k)) { t = $0; sub(/^[[:space:]]*-[[:space:]]*\[ \][[:space:]]*/, "", t); print (errored(k) ? "E" : "M") "\t" NR "\t" t }

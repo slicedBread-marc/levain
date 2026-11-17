@@ -283,6 +283,37 @@ eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
 assert_eq "an ERROR beside a needs: reason is a reason, not a bare ERROR" 0 "$CHROME_ERRORED"
 assert_eq "…and goes to the end-state review" false "$GATE"
 
+# A client's LVI-006/007: the builder ticked both Chrome-Assisted criteria on
+# its way to verify, test-progress.md held only a headless ERROR for them, and
+# the gate read the ticks as settled: GATE=false, CHROME_OPEN=0.
+new_client "$PRE"
+python3 - plans/PLN-002-beta/plan.md <<'PY4'
+import sys; p=sys.argv[1]; s=open(p).read()
+s=s.replace("- [ ] (eyes:blocking)", "- [x] (eyes:blocking)", 1)
+s=s.replace("#### Manual\n", "#### Chrome-Assisted\n- [x] /print — the label stays on one line at a phone width\n- [x] /print — the footer keeps the page count beside the title — deferred as DC-007\n\n#### Manual\n", 1)
+open(p,"w").write(s)
+PY4
+git add -A && git commit -qm "builder ticked chrome"
+sha=$(git rev-parse --short HEAD)
+printf '| # | Criterion | Build | Result | Notes |\n|-|-|-|-|-|\n| 1 | /print — the label stays on one line at a phone width | %s | — | ERROR sign-in link rate limit |\n' "$sha" > plans/PLN-002-beta/test-progress.md
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "a tick with nothing behind it is read as open: CHROME_OPEN=1" 1 "$CHROME_OPEN"
+assert_eq "…counted as ticked" 1 "$CHROME_TICKED"
+assert_eq "…its ERROR still counts: CHROME_ERRORED=1" 1 "$CHROME_ERRORED"
+assert_eq "…and it gates" true "$GATE"
+assert_has "…saying the box is not the record" "ticked in plan.md with no PASS, deferral" "$GATE_REASON"
+printf '| # | Criterion | Build | Result | Notes |\n|-|-|-|-|-|\n| 1 | /print — the label stays on one line at a phone width | %s | — | needs: device — a real phone is required |\n' "$sha" > plans/PLN-002-beta/test-progress.md
+git add -A && git commit -qm "reasoned"
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "with a reason it goes to the end-state review" false "$GATE"
+out=$("$S/lv-lane.sh" answer PLN-002 manual-test 2>&1); rc=$?
+assert_eq "lv-lane.sh answer: exit 0" 0 "$rc"
+assert_has "…lists the ticked criterion on the post-ship checklist" "- [ ] /print — the label stays on one line at a phone width _(chrome-assisted" "$(cat plans/PLN-002-beta/plan.md)"
+assert_not "…but not the deferred one" "- [ ] /print — the footer keeps the page count" "$(cat plans/PLN-002-beta/plan.md)"
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "once listed, the tick is backed: CHROME_TICKED=0" 0 "$CHROME_TICKED"
+assert_eq "…and nothing is open" 0 "$CHROME_OPEN"
+
 # A client's LVI-053: the tester had moved the plan to accept when it opened
 # manual-test; answering it left the row where the daemon never looks.
 new_client "$PRE"
