@@ -2059,6 +2059,20 @@ read_stamp() {
   [ -f "$2" ] && IFS= read -r __v < "$2"
   printf -v "$1" '%s' "$__v"
 }
+# sweep_result <var> — the last sweep's result, or nothing once it is history:
+# a held result stops counting when a deploy reached this coordinator after it
+# (its .claude/workflow-version is newer), because the held fixes then went out
+# some other way — deploy-all.sh by hand, or `U` — and holding auto-heal off for
+# them, or reporting "left N" for issues since resolved, misleads (the
+# coordinator's LVI-053). Builtins and one test, no fork: the line paints every frame.
+sweep_result() {
+  local __r=""
+  read_stamp __r "$SWEEP_STATE/result"
+  case "$__r" in *"held for review"*)
+    [ "$COORD_DIR/.claude/workflow-version" -nt "$SWEEP_STATE/result" ] && __r="" ;;
+  esac
+  printf -v "$1" '%s' "$__r"
+}
 # library_version — the library's VERSION, or nothing when the coordinator
 # names no library.
 library_version() {
@@ -2181,7 +2195,7 @@ library_sweep_line() {
   [ -n "$tok" ] && printf ' · %s%s%s%s' "${R}${sa}" "$tok" "$R" "$DIM"
   case "$tok" in *"decide ("*) [ -n "$heal" ] && printf ' · %s%s%s' "$heal" "$R" "$DIM" ;; esac
   if ! sweep_running; then
-    read_stamp res "$SWEEP_STATE/result"
+    sweep_result res
     [ -n "$res" ] && printf ' · last sweep: %s' "$res"
   fi
   [ "$(setting_get auto_heal)" = on ] && printf ' · auto-heal'
@@ -2244,7 +2258,7 @@ maybe_auto_heal() {
   local n="" res="" last="" now t c
   read_stamp n "$SWEEP_STATE/lvis"
   [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null || return 0
-  read_stamp res "$SWEEP_STATE/result"
+  sweep_result res
   case "$res" in *"held for review"*) return 0 ;; esac
   now=$(date +%s)
   read_stamp last "$SWEEP_STATE/auto-last"

@@ -238,9 +238,16 @@ ck "the count moved: retries" "$(grep -c '^start' "$CALLS")" "2"
 printf '1 3\n' > "$STATE/auto-last"; printf 'fixed 1 · left 3 · held for review — x\n' > "$STATE/result"
 maybe_auto_heal
 ck "held for review: never" "$(grep -c '^start' "$CALLS")" "2"
+has "and the line still reports the hold" "$(library_sweep_line)" "held for review"
+# The held fixes went out by a later deploy (by hand, or U): the hold is history (LVI-053).
+touch -t 202601010000 "$STATE/result"; touch "$COORD_DIR/.claude/workflow-version"
+case "$(library_sweep_line)" in *"held for review"*) bad "a deploy after the hold: line drops it" ;; *) ok "a deploy after the hold: line drops it" ;; esac
+printf '1 3\n' > "$STATE/auto-last"
+maybe_auto_heal
+ck "and auto-heal is no longer held off" "$(grep -c '^start' "$CALLS")" "3"
 printf '0\n' > "$STATE/lvis"; rm -f "$STATE/result" "$STATE/auto-last"
 maybe_auto_heal
-ck "nothing open: never" "$(grep -c '^start' "$CALLS")" "2"
+ck "nothing open: never" "$(grep -c '^start' "$CALLS")" "3"
 HERE="$REAL_HERE"
 
 echo "── publish after a deploy ──"
