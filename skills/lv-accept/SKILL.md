@@ -182,14 +182,14 @@ Write them to `plans/PLN-NNN-<slug>/findings.md`:
 ```
 Tear down the container from the worktree, then, from the project root:
 ```bash
-route=$(scripts/lv-exec.sh lv-findings-route.sh plans/PLN-NNN-<slug>)
+route=$(scripts/lv-exec.sh lv-findings-route.sh plans/PLN-NNN-<slug>)   # picks the message only
 scripts/lv-exec.sh lv-registry-update.sh PLN-NNN accept draft \
   --commit "accept(PLN-NNN-<slug>): N findings from human acceptance — routing to spec" \
   --add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md plans/auto-test-log.md
 scripts/lv-exec.sh lv-gate-close.sh PLN-NNN "human acceptance found N issue(s)" --only manual-test
 scripts/lv-exec.sh lv-unclaim.sh PLN-NNN-<slug>
 ```
-Both routes land on `draft`, because Opus reviews every finding before the builder sees it. If `$route` is `escalated`, say "N escalated findings need design decisions. Run /lv-spec." Otherwise say "N findings written. Run /lv-spec to review and route to the builder."
+Both routes land on `draft`, because Opus reviews every finding before the builder sees it. `$route` printing `active` is not a state to move to: a tester that read it as one moved a plan past the planner (a client's LVI-062). If `$route` is `escalated`, say "N escalated findings need design decisions. Run /lv-spec." Otherwise say "N findings written. Run /lv-spec to review and route to the builder."
 
 ### Early abort
 

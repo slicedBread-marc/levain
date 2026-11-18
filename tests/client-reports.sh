@@ -7177,6 +7177,23 @@ assert_eq "a row with no description has an empty one, not the whole line" "" \
   "$(printf '%s\n' "$dash_storms" | grep '^BRF-010' | cut -f4)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "Acceptance findings always go to draft, whatever the router prints (a client's LVI-062)"
+
+# lv-findings-route.sh prints `active` for plain code findings, which is also a
+# state name; a tester used it as the target and moved testing → active.
+LVT_FIND=$(sed -n '/^### If findings (failures)/,/^### Order of exit/p' "$LIB_ROOT/skills/lv-test/SKILL.md")
+assert_eq "lv-test findings exit moves testing → draft" "true" \
+  "$(printf '%s\n' "$LVT_FIND" | grep -q 'lv-registry-update.sh PLN-NNN testing draft' && echo true || echo false)"
+assert_eq "and never testing → active" "false" \
+  "$(printf '%s\n' "$LVT_FIND" | grep -q 'testing active' && echo true || echo false)"
+assert_eq "the route only chooses the commit message" "true" \
+  "$(printf '%s\n' "$LVT_FIND" | grep -q -- '--commit "\$MSG"' && echo true || echo false)"
+assert_eq "and the skill says the target is draft whatever \$route says" "true" \
+  "$(printf '%s\n' "$LVT_FIND" | grep -q 'The target state is `draft` whatever `\$route` says' && echo true || echo false)"
+assert_eq "lv-accept says the same" "true" \
+  "$(grep -q 'is not a state to move to' "$LIB_ROOT/skills/lv-accept/SKILL.md" && echo true || echo false)"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"

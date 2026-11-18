@@ -1109,14 +1109,18 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
 4. Determine the route, move the plan out of `testing` **first**, then drop the guards:
    ```bash
    route=$(scripts/lv-exec.sh lv-findings-route.sh plans/PLN-NNN-<slug>)
+   case "$route" in
+     escalated) MSG="test(PLN-NNN-<slug>): escalated findings — needs replanning" ;;
+     *)         MSG="test(PLN-NNN-<slug>): N findings from acceptance — routing to spec" ;;
+   esac
    ```
-   Both routes land on `draft` — `escalated` because the findings need design decisions, `active` because Opus reviews all findings before sending them to the builder. Only the commit message differs.
-   - **`escalated`**, message `test(PLN-NNN-<slug>): escalated findings — needs replanning`, display "N escalated findings require design decisions. Run /lv-spec."
-   - **`active`**, message `test(PLN-NNN-<slug>): N findings from acceptance — routing to spec`, display "N findings written. Run /lv-spec to review and route to builder."
+   **The target state is `draft` whatever `$route` says. `$route` picks the commit message and the display line, never the state.** `escalated` means the findings need design decisions; `active` means they are code fixes, and they still go to `draft` because Opus reviews every acceptance finding before the builder sees it. The router's word `active` is the name of the state verify sends a plan to, and that is exactly the trap: a client's tester read it as the transition and moved PLN-141 `testing → active`, past the planner (a client's LVI-062). `testing → active` belongs only to the post-merge-check, merge-blocked and develop-conflict paths of [If all pass](#if-all-pass), where the build itself is broken and no plan review is owed.
+   - **`escalated`**: display "N escalated findings require design decisions. Run /lv-spec."
+   - otherwise: display "N findings written. Run /lv-spec to review and route to builder."
 
    ```bash
    scripts/lv-exec.sh lv-registry-update.sh PLN-NNN testing draft \
-     --commit "<message from above>" \
+     --commit "$MSG" \
      --add plans/PLN-NNN-<slug>/findings.md plans/PLN-NNN-<slug>/test-progress.md \
            plans/auto-test-log.md
    scripts/lv-exec.sh lv-gate-close.sh PLN-NNN "acceptance found N issue(s)" --only manual-test
