@@ -423,9 +423,17 @@ Before starting, confirm E2E passed on release:
 12. **Return to the develop worktree and back-merge `main` → `develop`** (auto-resolve in favor of develop). Unlike steps 6–11, this one runs in the develop worktree itself — the commits `main` just received in `release-branches/main` are already visible there as local refs, no push needed:
     ```bash
     cd "$(git worktree list --porcelain | head -1 | sed 's/^worktree //')"
+    # lv-issue.sh appends to WORKFLOW-ISSUES.md here and never commits, and
+    # main carries the same tracked file, so a filing left uncommitted makes git
+    # refuse both the pull and the merge (a client's LVI-012). Commit it first.
+    if ! git diff --quiet HEAD -- WORKFLOW-ISSUES.md 2>/dev/null; then
+      scripts/lv-exec.sh lv-commit.sh "issue(WORKFLOW-ISSUES): entries filed from workflow sessions" \
+        --add WORKFLOW-ISSUES.md
+    fi
     git pull origin develop
     git merge -X ours main -m "sync: bring completed plans back to develop"
     ```
+    **Commit the filings; never stash, discard or hand-merge them.** Those entries are reports a worker filed and nobody has swept yet; a stash pop after the merge conflicts on the same file, and a discard loses them. If the merge still refuses because some *other* path in the develop worktree is dirty, that path is another worker's live work: stop before step 12, leave it alone, and report it (main stays promoted locally and unpushed, which step 14 already allows).
     The merge runs *on develop*, so `-X ours` keeps **develop's** side of any conflicting hunk in `plans/`. That is the side to keep: every registry transition, `complete` included, is written on develop, so develop's `REGISTRY.md` is the live one and main's is the snapshot release carried. Taking main's side would roll back rows that moved since release was cut (a client's LVI-042 found this sentence had it backwards).
 12a. **Now run the general bug-close sweep** — develop is caught up with main as of step 12, so this correctly sees only genuine cross-run orphans (a bug whose link was never acted on before its own close step existed, or an earlier deploy that skipped it on error — client-c's WFI-017 found two, each a full deploy cycle stale) and not the bugs step 10 just closed:
     ```bash

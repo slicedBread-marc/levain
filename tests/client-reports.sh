@@ -7214,6 +7214,39 @@ assert_eq "lv-accept's [all] note keeps (/lv-accept)" "true" \
 rm -rf "$HT_DIR"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "The deploy back-merge commits WORKFLOW-ISSUES.md filings before it merges (a client's LVI-012)"
+
+# lv-issue.sh leaves its entry uncommitted in the develop worktree; main carries
+# the same tracked file, so `git merge -X ours main` refused to run.
+DEP12=$(sed -n '/^12\. \*\*Return to the develop worktree/,/^12a\./p' "$LIB_ROOT/skills/lv-deploy/SKILL.md")
+dep12_line() { printf '%s\n' "$DEP12" | grep -n -m1 -F -- "$1" | cut -d: -f1; }
+D12_COMMIT=$(dep12_line '--add WORKFLOW-ISSUES.md')
+D12_PULL=$(dep12_line 'git pull origin develop')
+D12_MERGE=$(dep12_line 'git merge -X ours main')
+assert_eq "step 12 commits WORKFLOW-ISSUES.md" "true" "$([ -n "$D12_COMMIT" ] && echo true || echo false)"
+assert_eq "before the pull and the merge" "true" \
+  "$([ -n "$D12_COMMIT" ] && [ -n "$D12_PULL" ] && [ "$D12_COMMIT" -lt "$D12_PULL" ] && [ "$D12_PULL" -lt "$D12_MERGE" ] && echo true || echo false)"
+assert_eq "through lv-commit.sh, never a whole-index commit" "true" \
+  "$(printf '%s\n' "$DEP12" | grep -q 'lv-commit.sh "issue(WORKFLOW-ISSUES)' && echo true || echo false)"
+
+# And the guard really unblocks the merge: dirty filing + main changed the file.
+D12_DIR=$(mktemp -d)
+(
+  cd "$D12_DIR" && git init -q -b develop && git config user.email t@t && git config user.name t
+  printf 'head\n<!-- marker -->\n' > WORKFLOW-ISSUES.md && git add . && git commit -qm init
+  git checkout -qb main && printf 'head\n<!-- marker -->\nresolved\n' > WORKFLOW-ISSUES.md && git commit -qam main
+  git checkout -q develop && printf 'head\n<!-- marker -->\n## LVI-010\n' > WORKFLOW-ISSUES.md
+  git merge -X ours main -m sync >/dev/null 2>&1 && echo merged-dirty || echo refused-dirty
+  git diff --quiet HEAD -- WORKFLOW-ISSUES.md || git commit -qm issue -- WORKFLOW-ISSUES.md
+  git merge -X ours main -m sync >/dev/null 2>&1 && echo merged || echo refused
+  grep -c 'LVI-010' WORKFLOW-ISSUES.md
+) > "$D12_DIR.out" 2>&1
+assert_eq "an uncommitted filing blocks the merge (the fault)" "refused-dirty" "$(sed -n 1p "$D12_DIR.out")"
+assert_eq "once committed the merge runs" "merged" "$(sed -n 2p "$D12_DIR.out")"
+assert_eq "and the filing survives it" "1" "$(sed -n 3p "$D12_DIR.out")"
+rm -rf "$D12_DIR" "$D12_DIR.out"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"
