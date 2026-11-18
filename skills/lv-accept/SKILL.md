@@ -109,7 +109,7 @@ If `LV_UNATTENDED=1` is set, print `lv-accept is attended only — accept:manual
    [each] walk them   [all] they all pass   [stop] save and leave
    ```
 
-   `[all]` records PASS for every walked criterion on this build, with Notes `human: [all]`. It is the human's assertion, and the record says so.
+   `[all]` records PASS for every walked criterion on this build, with Notes `human: [all] (/lv-accept)` — keep the `(/lv-accept)`, which is what `/lv-test` reads to say a human tested the build. It is the human's assertion, and the record says so.
 
    **Open the app yourself; don't hand over a URL to copy.** Once the list is shown, open the base URL (`$PUBLIC_URL` on a tunnel run) for the human:
    ```bash

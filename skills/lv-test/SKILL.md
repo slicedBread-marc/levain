@@ -801,7 +801,10 @@ All steps below run from the **worktree** (`feature-branches/PLN-NNN-<slug>/`) u
      # Claim a human test only when one happened: a row a human recorded in
      # /lv-accept. An unattended pass, or criteria sent to the post-ship
      # checklist, had none (WFI-229; a client's LVI-051 had to reword this by hand).
-     if grep -qF 'human (/lv-accept)' "../../plans/$PLAN_NAME/test-progress.md" 2>/dev/null; then
+     # /lv-accept writes two spellings, `human (/lv-accept)` for a walked row and
+     # `human: [all] (/lv-accept)` for [all]; match both, never one literal
+     # (a client's LVI-009/LVI-010 read a human-accepted build as untested).
+     if grep -qE 'human[^|]*\(/lv-accept' "../../plans/$PLAN_NAME/test-progress.md" 2>/dev/null; then
        TEST_LINE="All acceptance criteria passed — automated, and by a human where one was needed"
      else
        TEST_LINE="All automated acceptance criteria passed. No human tested this build; any eyes criteria are on the plan's post-ship checklist"
@@ -953,7 +956,7 @@ Steps below run from **project root** — use absolute path `cd /absolute/path/t
 
    | What happened | Commit message |
    |-|-|
-   | A human accepted criteria in `/lv-accept` (rows with Notes `human (/lv-accept)`) | `test(PLN-NNN-<slug>): accepted by a human, automated half passed — complete` |
+   | A human accepted criteria in `/lv-accept` (rows whose Notes carry `human (/lv-accept)` or `human: [all] (/lv-accept)`) | `test(PLN-NNN-<slug>): accepted by a human, automated half passed — complete` |
    | Every Manual criterion deferred `(external)` / `(soak)` | `test(PLN-NNN-<slug>): criteria automated or deferred, no human test — complete` |
    | Automated + Chrome-assisted only, no Manual criteria at all | `test(PLN-NNN-<slug>): automated criteria passed, none required a human — complete` |
 

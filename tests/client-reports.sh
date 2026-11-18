@@ -7194,6 +7194,26 @@ assert_eq "lv-accept says the same" "true" \
   "$(grep -q 'is not a state to move to' "$LIB_ROOT/skills/lv-accept/SKILL.md" && echo true || echo false)"
 
 # ═══════════════════════════════════════════════════════════════════════
+section "A human row written by /lv-accept [all] is read as a human test (a client's LVI-009, LVI-010)"
+
+# /lv-accept's [all] wrote Notes `human: [all] (/lv-accept)`; lv-test's PR text
+# grepped the literal `human (/lv-accept)` and said no human tested the build.
+HT_LINE=$(grep -F 'plans/$PLAN_NAME/test-progress.md" 2>/dev/null; then' "$LIB_ROOT/skills/lv-test/SKILL.md" | grep -m1 -F 'lv-accept')
+HT_CMD=$(printf '%s\n' "$HT_LINE" | sed -E 's/^ *if (grep [^"]*)"\.\.\/\.\.\/plans\/\$PLAN_NAME\/test-progress\.md".*/\1/')
+HT_DIR=$(mktemp -d)
+printf '| 1 | crit | b (abc) | PASS | human: [all] (/lv-accept); earlier headless: ERROR |\n' > "$HT_DIR/all.md"
+printf '| 1 | crit | b (abc) | PASS | human (/lv-accept) |\n' > "$HT_DIR/walk.md"
+printf '| 1 | crit | b (abc) | PASS | headless assertion PASS |\n| 2 | the human sees it | b | DEFERRED | post-ship (lv-accept later) |\n' > "$HT_DIR/none.md"
+ht() { eval "$HT_CMD \"\$HT_DIR/$1.md\"" >/dev/null 2>&1 && echo human || echo none; }
+assert_eq "lv-test's human-test grep was found" "true" "$([ -n "$HT_LINE" ] && echo true || echo false)"
+assert_eq "an [all] row reads as a human test" "human" "$(ht all)"
+assert_eq "a walked row reads as a human test" "human" "$(ht walk)"
+assert_eq "an unattended row does not" "none" "$(ht none)"
+assert_eq "lv-accept's [all] note keeps (/lv-accept)" "true" \
+  "$(grep -qF 'human: [all] (/lv-accept)' "$LIB_ROOT/skills/lv-accept/SKILL.md" && echo true || echo false)"
+rm -rf "$HT_DIR"
+
+# ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1m%d passed, 0 failed\033[0m\n' "$PASS"
