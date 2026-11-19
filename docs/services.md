@@ -64,6 +64,40 @@ What this means for a launcher:
 
 `LV_SERVICES_OPENER` replaces Terminal in tests. It receives the window's command line.
 
+## Redeploy (the coordinator's LVI-057)
+
+A service that runs from main serves the build it was started from. A release that moves main
+changes nothing it serves until someone restarts it, and before this nothing even showed that it
+was stale: a beacon-less compose service had no commit on `status`.
+
+```yaml
+services:
+  household:
+    start: "tools/run-household.sh up"
+    stop: "tools/run-household.sh down"
+    compose: "myapp-household"
+    redeploy: auto            # only with checkout: main (the default)
+```
+
+- **The deployed commit** is, in order: the `org.opencontainers.image.revision` label of a running
+  container of the service's `compose:` project (what actually runs), else `<id>.deployed`, which
+  every `start` writes (the checkout's full HEAD), else a beacon's commit. `status` fills a
+  beacon-less up service's checkout, commit and `behind=N` from it.
+- **`lv-services.sh redeploy [<id>...] [--auto] [--dry-run]`** stops and restarts each up,
+  main-only service whose deployed commit is not at or past main: stop, wait until down
+  (`LV_SERVICES_STOP_WAIT`, 60 s), start with no window (`LV_SERVICES_NO_WINDOW`). With no `<id>`
+  it takes every service declaring `redeploy: auto`. It prints `REDEPLOYED`, `FAILED` or `WOULD
+  <id> <deployed> -> <main>`, and exits 1 when a start failed.
+- **A failed start is recorded** in `<id>.redeploy` with main's commit; `--auto` never retries that
+  commit, an explicit `redeploy <id>` does. One redeploy runs per project at a time
+  (`redeploy.lock/`, a dead holder's lock is taken over).
+- **It runs in the operator's terminal.** Refused under an agent except `--dry-run`; `--auto` is
+  silent instead, as it is when another redeploy holds the lock.
+- **The rack's collector runs `redeploy --auto`** in the background after each full collect, for
+  each project whose `levain.yml` declares `redeploy: auto`, and logs each line to
+  `collector.log` as `redeploy <project>: …`. A collector started under an agent does nothing.
+  `LV_RACK_REDEPLOY=off` turns it off.
+
 ## Progress (the coordinator's LVI-052)
 
 `progress:` names a JSON file that the service writes. The path is either absolute or relative to

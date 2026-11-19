@@ -15,6 +15,7 @@
 #   lv-services.sh console              open the project's own console (services_console:)
 #   lv-services.sh guard <path>         exit 2 when a live service runs from <path>
 #   lv-services.sh beacon up|beat|down <id> (--pid <pid> | --detached)
+#   lv-services.sh redeploy [<id>...] [--auto] [--dry-run]   restart what main has moved past
 #
 # ── WHY ────────────────────────────────────────────────────────────────────
 #
@@ -41,6 +42,8 @@
 #                                        # "myapp-web/cloudflared" narrows it to one compose service
 #       heartbeat: 120                   # a beacon not refreshed for this long is stale
 #       needs: "web"                     # ids that must be up before this one starts
+#       redeploy: auto                   # with checkout: main — restarted once main moves past
+#                                        # the commit it runs (see REDEPLOY below)
 #   services_console: "tools/board.sh"   # the project's own board, for what the rack does not do
 #
 # A service stopped by signal (stop: signal, or no stop:) is the process its start: runs, so
@@ -106,6 +109,23 @@
 #         rate: 20/hour                  # beacons; these are its defaults, and the keys the
 #         budget: 400k tokens/5h         # rack may change (docs/services.md § Throttle)
 #
+# ── REDEPLOY ───────────────────────────────────────────────────────────────
+#
+# A service that runs from main serves the build it was started from until someone restarts
+# it; a release that moves main changes nothing it serves (the coordinator's LVI-057). Its
+# deployed commit is, in order: the org.opencontainers.image.revision label of a running
+# container of its compose: project (what actually runs), else <id>.deployed, which every
+# start writes (the checkout's full HEAD), else a beacon's commit. status fills a beacon-less
+# up service's commit and behind=N from it.
+#
+# `redeploy` stops and restarts each up, main-only service whose deployed commit is behind
+# main: stop, wait until down (LV_SERVICES_STOP_WAIT, 60s), start with no window. With no
+# <id> it takes every service declaring `redeploy: auto`. One line per service it acts on:
+# REDEPLOYED|FAILED|WOULD <id> <deployed> -> <main>. A failed start is recorded in
+# <id>.redeploy, and --auto never retries that main commit. --auto is the rack collector's
+# call: it says nothing when refused under an agent or when another redeploy holds the
+# project's lock. Refused under an agent except --dry-run.
+#
 # Exit codes: 0 ok · 1 usage · 2 refused under an agent, or guard found a live service ·
 # 3 that checkout is not allowed · 4 no main worktree · 5 a need is not up · 6 already running
 # · 7 no such service, or nothing to run · 8 a detached start exited at once · 9 a control file does not parse, or no python3.
@@ -117,7 +137,7 @@ source "$(dirname "$0")/lv-orch-lib.sh"
 
 SERVICES_DIR="${LV_SERVICES_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/levain/services}"
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-1}"; }
 die() { local rc="$1"; shift; echo "lv-services: $*" >&2; exit "$rc"; }
 
 # Starting or stopping runs the project's own launchers, which read keys in the operator's
@@ -283,7 +303,15 @@ status_of() {
   recs=$(live_records "$id")
   if [ -z "$recs" ]; then
     case "$P_STATE" in none) state=down ;; *) state="$P_STATE" ;; esac
-    printf '%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t%s\t%s\n' "$id" "$state" "${P_DETAIL:--}" "$url" "$facts"
+    local dc="" dco="-" dfl="-" main
+    if [ "$state" = up ] && [ "$(svc "$id" checkout main)" = main ]; then
+      dc=$(deployed_commit "$id" || true)
+      if [ -n "$dc" ] && main=$(main_worktree); then
+        dco="$main"; dfl=$(flags_for "$main" "$dc"); dc="${dc:0:7}"
+      fi
+    fi
+    printf '%s\t%s\t%s\t%s\t-\t%s\t-\t-\t%s\t%s\t%s\n' "$id" "$state" "${P_DETAIL:--}" \
+      "$dco" "${dc:--}" "$dfl" "$url" "$facts"
     return 0
   fi
   while IFS= read -r f; do
@@ -558,8 +586,11 @@ start() {
   if wants_window "$id"; then
     detach "$id" "$co" "$cmd"
   else
-    (cd "$co" && bash -c "$cmd")
+    # Explicit, not left to set -e: redeploy calls start inside an `if`, where errexit is off,
+    # and a launcher that failed would have been reported REDEPLOYED.
+    (cd "$co" && bash -c "$cmd") || return $?
   fi
+  rec_write "$(pdir)/$id.deployed" "commit=$(git -C "$co" rev-parse HEAD 2>/dev/null || echo -)" "at=$(date +%s)"
 }
 
 # log_of <id> — where a detached start writes the service's stdout and stderr.
@@ -603,6 +634,10 @@ detach() {
     printf 'lv-services: %s exited at once; the end of its log (%s):\n' "$id" "$log" >&2
     tail -n 20 "$log" >&2
     exit 8
+  fi
+  if [ -n "${LV_SERVICES_NO_WINDOW:-}" ]; then
+    printf '%s: started detached (pid %s), from %s; its log is %s\n' "$id" "$pid" "$co" "$log"
+    return 0
   fi
   open_window "$co" "tail -n 200 -F $(printf '%q' "$log")" \
     || printf '%s: no window opened; follow it with: tail -F %s\n' "$id" "$log"
@@ -695,6 +730,94 @@ guard() {
   return 2
 }
 
+# deployed_commit <id> — the commit an up service was built from (see REDEPLOY), else exit 1.
+deployed_commit() {
+  local id="$1" compose c f
+  compose=$(svc "$id" compose)
+  if [ -n "$compose" ]; then
+    local -a filt=(--filter "label=com.docker.compose.project=${compose%%/*}")
+    case "$compose" in */*) filt+=(--filter "label=com.docker.compose.service=${compose#*/}") ;; esac
+    local cid
+    for cid in $(docker ps -q "${filt[@]}" 2>/dev/null || true); do
+      c=$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$cid" 2>/dev/null || true)
+      case "$c" in ""|"<no value>") continue ;; esac
+      printf '%s' "$c"; return 0
+    done
+  fi
+  c=$(rec_get "$(pdir)/$id.deployed" commit)
+  if [ -n "$c" ] && [ "$c" != - ]; then printf '%s' "$c"; return 0; fi
+  for f in $(live_records "$id"); do
+    c=$(rec_get "$f" commit)
+    if [ -n "$c" ] && [ "$c" != - ]; then printf '%s' "$c"; return 0; fi
+  done
+  return 1
+}
+
+# redeploy [<id>...] [--auto] [--dry-run] — see REDEPLOY above.
+redeploy() {
+  local auto=false dry=false id ids=() lock tip dc rc=0 waited wait_max
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --auto) auto=true; shift ;;
+      --dry-run) dry=true; shift ;;
+      -*) usage 1 ;;
+      *) ids+=("$1"); shift ;;
+    esac
+  done
+  if [ -n "${CLAUDECODE:-}" ] && ! $dry; then
+    $auto && return 0
+    refuse_agent "redeploy"
+  fi
+  if [ ${#ids[@]} -eq 0 ]; then
+    while IFS= read -r id; do
+      [ -n "$id" ] && [ "$(svc "$id" redeploy)" = auto ] && ids+=("$id")
+    done <<< "$(svc_ids)"
+    [ ${#ids[@]} -gt 0 ] || { $auto && return 0; die 7 "no service declares redeploy: auto"; }
+  fi
+  tip=$(git -C "$(root)" rev-parse --verify -q main 2>/dev/null) || { $auto && return 0; die 4 "no main branch"; }
+  mkdir -p "$(pdir)"
+  lock="$(pdir)/redeploy.lock"
+  if ! $dry; then
+    if ! mkdir "$lock" 2>/dev/null; then
+      if pid_alive "$(cat "$lock/pid" 2>/dev/null)"; then
+        $auto && return 0
+        die 6 "another redeploy is running for $(slug)"
+      fi
+      rm -rf "$lock"; mkdir "$lock" 2>/dev/null || { $auto && return 0; die 6 "another redeploy is running for $(slug)"; }
+    fi
+    printf '%s\n' "$$" > "$lock/pid"
+    trap 'rm -rf "'"$lock"'"' EXIT
+  fi
+  wait_max="${LV_SERVICES_STOP_WAIT:-60}"
+  for id in "${ids[@]}"; do
+    has_svc "$id" || { $auto || echo "lv-services: no service '$id'" >&2; continue; }
+    [ -n "$(svc "$id" start)" ] || continue
+    [ "$(svc "$id" checkout main)" = main ] || { $auto || echo "lv-services: $id is not checkout: main — not redeployed" >&2; continue; }
+    is_up "$id" || continue
+    dc=$(deployed_commit "$id") || continue
+    dc=$(git -C "$(root)" rev-parse --verify -q "$dc^{commit}" 2>/dev/null) || continue
+    # At main, or past it: nothing to do.
+    git -C "$(root)" merge-base --is-ancestor "$tip" "$dc" 2>/dev/null && continue
+    if $auto && [ "$(rec_get "$(pdir)/$id.redeploy" failed)" = "$tip" ]; then continue; fi
+    if $dry; then printf 'WOULD %s %s -> %s\n' "$id" "${dc:0:7}" "${tip:0:7}"; continue; fi
+    if ( stop "$id" ) >/dev/null 2>&1; then
+      waited=0
+      while [ "$(status_of "$id" | cut -f2 | grep -cvx down || true)" -gt 0 ] && [ "$waited" -lt "$wait_max" ]; do
+        sleep 1; waited=$((waited + 1))
+      done
+      if ( LV_SERVICES_NO_WINDOW=1 start "$id" ); then
+        rm -f "$(pdir)/$id.redeploy"
+        printf 'REDEPLOYED %s %s -> %s\n' "$id" "${dc:0:7}" "${tip:0:7}"
+        continue
+      fi
+    fi
+    rec_write "$(pdir)/$id.redeploy" "failed=$tip" "at=$(date +%s)"
+    printf 'FAILED %s %s -> %s\n' "$id" "${dc:0:7}" "${tip:0:7}"
+    rc=1
+  done
+  return "$rc"
+}
+
 list() {
   local id
   while IFS= read -r id; do
@@ -722,6 +845,7 @@ case "${1:-}" in
   progress) shift; progress "$@" ;;
   throttle) shift; throttle "$@" ;;
   beacon) shift; beacon "$@" ;;
+  redeploy) shift; redeploy "$@" ;;
   -h|--help) usage 0 ;;
   *) usage 1 ;;
 esac

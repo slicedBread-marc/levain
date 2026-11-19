@@ -1206,7 +1206,28 @@ collector_job_finish() {
   snapshot_save
   c_seq=$((c_seq + 1))
   collector_serve "$c_job_tokens"
+  [ "$c_job_kind" = all ] && collector_redeploy
   c_job_pid=""; c_job_file=""; c_job_kind=""; c_job_tokens=""
+}
+
+# collector_redeploy — after each full collect, `lv-services.sh redeploy --auto` in the
+# background for each project whose levain.yml declares a `redeploy:` service, its lines to
+# the collector log (the coordinator's LVI-057). A service that runs from main is then
+# restarted once a release moves main past its build. The restart has to run in the
+# operator's terminal (its launcher reads keys there), which is where a board's collector
+# runs; one started under an agent says nothing and does nothing. lv-services.sh holds a
+# per-project lock, so an overlapping run is a no-op. LV_RACK_REDEPLOY=off turns it off.
+collector_redeploy() {
+  [ "${LV_RACK_REDEPLOY:-on}" != off ] || return 0
+  [ -z "${CLAUDECODE:-}" ] || return 0
+  local p
+  for p in ${paths[@]+"${paths[@]}"}; do
+    [ -f "$p/levain.yml" ] && grep -qE '^[[:space:]]+redeploy:[[:space:]]*auto' "$p/levain.yml" 2>/dev/null || continue
+    has_harness "$p" || continue
+    ( cd "$p" && hx lv-services.sh redeploy --auto </dev/null 2>&1 \
+        | while IFS= read -r line; do collector_log "redeploy $(basename "$p"): $line"; done ) &
+  done
+  return 0
 }
 
 collector_serve() {
