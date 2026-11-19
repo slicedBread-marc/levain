@@ -64,11 +64,15 @@ plan_dir="plans/${plan_id}-${slug}"
 
 if [ "$revive" = "true" ]; then
   [ "$state" = "abandoned" ] || { echo "Error: $plan_id is '$state', not abandoned" >&2; exit 1; }
-  "$SELF_DIR/lv-registry-update.sh" "$plan_id" abandoned draft
+  revive_add=()
   if [ -d "$plan_dir" ]; then
     printf '\n## Revived — %s\n\n%s\n' "$(date +%Y-%m-%d)" "${reason:-Revived for replanning.}" \
       >> "$plan_dir/progress.md"
+    revive_add=(--add "$plan_dir/progress.md")
   fi
+  # One commit for the row and the reason (see the abandon path below).
+  "$SELF_DIR/lv-registry-update.sh" "$plan_id" abandoned draft \
+    --commit "abandon($plan_id): revived → draft" "${revive_add[@]+"${revive_add[@]}"}"
   echo "$plan_id revived → draft. Replan before building: the branch may be stale."
   exit 0
 fi
@@ -91,12 +95,20 @@ fi
 
 # Record the reason BEFORE the transition. If the write fails, the plan is
 # still in a state someone will look at, rather than terminal and unexplained.
+#
+# And the reason is committed WITH the row, in the transition's own commit.
+# Without --add, lv-registry-update.sh committed REGISTRY.md alone and left
+# progress.md modified on the shared develop checkout, where the next worker's
+# stash or pathspec commit takes it (a client's LVI-013).
+abandon_add=()
 if [ -d "$plan_dir" ]; then
   printf '\n## Abandoned — %s\n\n**Was:** %s\n\n%s\n' \
     "$(date +%Y-%m-%d)" "$state" "$reason" >> "$plan_dir/progress.md"
+  abandon_add=(--add "$plan_dir/progress.md")
 fi
 
-"$SELF_DIR/lv-registry-update.sh" "$plan_id" "$state" abandoned -
+"$SELF_DIR/lv-registry-update.sh" "$plan_id" "$state" abandoned - \
+  --commit "abandon($plan_id): $state → abandoned" "${abandon_add[@]+"${abandon_add[@]}"}"
 
 # Dependents are the reason this state exists rather than a deletion. Say so
 # now, while the person who made the decision is still here to act on it.

@@ -1385,6 +1385,12 @@ assert_ok "abandoning with one works from any state" \
 assert_eq "the plan is terminal" "abandoned" "$(registry_state PLN-035)"
 assert_eq "and the reason survives in progress.md" "true" \
   "$(grep -q 'Superseded by PLN-073' plans/PLN-035-dropped/progress.md && echo true || echo false)"
+# The reason was written but committed by nobody: the transition committed
+# REGISTRY.md alone and left progress.md dirty on develop (a client's LVI-013).
+assert_eq "and the reason is committed with the row, not left dirty" "" \
+  "$(git status --porcelain -- plans/PLN-035-dropped/progress.md plans/REGISTRY.md)"
+assert_eq "in the abandonment's own commit" "true" \
+  "$(git show --name-only --format= HEAD | grep -q 'PLN-035-dropped/progress.md' && echo true || echo false)"
 
 # An incomplete dep is "not yet"; an abandoned one is "never". Reported the same
 # way, an abandoned dep blocked its dependents forever with no way to clear it.
@@ -1396,6 +1402,8 @@ assert_fails "a terminal plan cannot jump back to a working state" \
 assert_ok "but it can be revived to draft" \
   "$SCRIPT_DIR/lv-abandon.sh" PLN-035 --revive
 assert_eq "which is where revival lands" "draft" "$(registry_state PLN-035)"
+assert_eq "and the revival note is committed with it" "" \
+  "$(git status --porcelain -- plans/PLN-035-dropped/progress.md plans/REGISTRY.md)"
 
 assert_eq "the orchestrator routes abandoned instead of hard-failing" "true" \
   "$(grep -qE 'abandoned\|rolled-back\) *result="abandoned"' "$SCRIPT_DIR/lv-orchestrate.sh" && echo true || echo false)"
