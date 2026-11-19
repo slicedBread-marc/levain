@@ -209,6 +209,7 @@ batch_moved_ok=false
 withdraw=false
 express=false
 plan_context_at_open=""
+hold_until=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -226,6 +227,7 @@ while [ $# -gt 0 ]; do
     --batch-moved-ok) batch_moved_ok=true; shift ;;
     --withdraw) withdraw=true; shift ;;
     --express) express=true; shift ;;
+    --hold-until) hold_until="${2:?--hold-until requires the plan this one waits on}"; shift 2 ;;
     -*)      echo "Unknown option: $1" >&2; exit 1 ;;
     *)
       if [ -z "$artifact" ]; then artifact="$1"; else resolution="$1"; fi
@@ -240,6 +242,17 @@ if $withdraw && { [ -n "$decision" ] || [ -n "$forced_gate" ]; }; then
   echo "Error: --withdraw records that a question became moot. It cannot carry a --decision," >&2
   echo "       and it cannot backfill (--gate) a question that is not open." >&2
   exit 1
+fi
+
+if [ -n "$hold_until" ]; then
+  if $withdraw; then
+    echo "Error: --hold-until records an answer; a withdrawn question was not answered." >&2
+    exit 1
+  fi
+  if ! [[ "$hold_until" =~ ^($LV_WORK_RE)-[0-9]+$ ]]; then
+    echo "Error: --hold-until takes the id of the plan to wait on (e.g. $LV_PLN-NNN), not '$hold_until'" >&2
+    exit 1
+  fi
 fi
 
 if [ -n "$only_gate" ] && [ -n "$forced_gate" ]; then
@@ -384,6 +397,36 @@ if [ -f "$gate_file" ]; then
   covers_push=$(wf_gate_field "$gate_file" GATE_COVERS_PUSH)
 else
   gate_name="$forced_gate"
+fi
+
+# ── --hold-until: the hold becomes a Deps entry (a client's LVI-064) ──────
+#
+# PLN-143 sat in verify on a needs-input answered "hold PLN-143 until PLN-144
+# lands". Nothing but the prose said so, and the dispatcher reads states, not
+# prose: verify was dispatched again, read the same situation, asked the same
+# question and answered it the same way, three times in four minutes. An answer
+# that says "wait for X" is a dependency, and Deps is the one place every list
+# script already reads one (lv-check-deps.sh). So the close writes it there,
+# and lv-list-verify.sh / lv-list-testable.sh hold the plan until X completes.
+#
+# Checked BEFORE anything is written: a hold that cannot be recorded must not
+# leave behind a closed gate that says it was.
+if [ -n "$hold_until" ]; then
+  if ! [[ "$id" =~ ^($LV_PLN_RE)-[0-9]+$ ]] || [ "$(wf_state_of "$id")" = "—" ]; then
+    echo "Error: --hold-until holds a plan in the registry; $id is not one. Nothing was closed." >&2
+    exit 1
+  fi
+  if [ "${hold_until##*-}" -eq "${id##*-}" ] 2>/dev/null; then
+    echo "Error: $id cannot be held until itself. Nothing was closed." >&2
+    exit 1
+  fi
+  _hroot="$(wf_develop_root)"
+  if [ "$(wf_state_of "$hold_until")" = "—" ] &&
+     ! compgen -G "$_hroot/bugs/*/$hold_until-*" >/dev/null &&
+     ! compgen -G "$_hroot/plans/briefs/$hold_until-*" >/dev/null; then
+    echo "Error: --hold-until $hold_until names nothing in the registry, bugs/ or plans/briefs/. Nothing was closed." >&2
+    exit 1
+  fi
 fi
 
 # ── --gate is a BACKFILL, and a backfill over a live gate is a forgery ─────
@@ -722,6 +765,9 @@ record=$(
   if [ -n "$decision" ]; then
     wf_emit GATE_DECISION "$decision"
   fi
+  if [ -n "$hold_until" ]; then
+    wf_emit GATE_HOLD_UNTIL "$hold_until"
+  fi
   if [ -n "$promote_tip" ]; then
     wf_emit GATE_PROMOTE_TIP "$promote_tip"
   fi
@@ -782,6 +828,7 @@ transcribe_resolution() {
       printf '> **Answered by:** %s\n' "${basis:-a human at an attended terminal}"
     fi
     printf '> **State at close:** %s\n' "${gate_state:-—}"
+    [ -n "$hold_until" ] && printf '> **Held until:** %s lands — recorded in Deps, so the dispatcher holds this plan until then\n' "$hold_until"
     printf '> Recorded by lv-gate-close.sh. This is the decision of record — act on it rather than re-deriving the question (WFI-181).\n'
   } >> "$findings"
 
@@ -793,6 +840,23 @@ transcribe_resolution() {
     || echo "lv-gate-close: the resolution is written to $findings but could not be committed" >&2
 }
 transcribe_resolution || true
+
+# The hold, written where the dispatcher reads it — see --hold-until above.
+if [ -n "$hold_until" ]; then
+  cur_deps=$(wf_registry_field "$id" deps "$(wf_develop_root)/plans/REGISTRY.md" 2>/dev/null || true)
+  case "$cur_deps" in ""|"—") new_deps="$hold_until" ;;
+    *) if [[ ",${cur_deps// /}," == *",$hold_until,"* ]]; then new_deps=""; else new_deps="$cur_deps,$hold_until"; fi ;;
+  esac
+  if [ -z "$new_deps" ]; then
+    echo "$id: already depends on $hold_until — held until it lands"
+  elif "$SELF_DIR/lv-set-deps.sh" "$id" "$new_deps" >/dev/null 2>&1; then
+    wf_event gate-hold "$id" "$gate_name: held until $hold_until lands (Deps → $new_deps)"
+    echo "$id: held until $hold_until lands — Deps → $new_deps"
+  else
+    echo "lv-gate-close: $id's gate is closed, but its hold on $hold_until could NOT be written to Deps." >&2
+    echo "  Record it by hand: lv-set-deps.sh $id $new_deps" >&2
+  fi
+fi
 
 # ── The checkbox has to agree with the answer ─────────────────────────────
 #

@@ -680,7 +680,8 @@ dispatch() {
 # source of eligibility truth (docs/eligibility.md) — we only parse them.
 
 candidates_verify() {
-  "$SELF_DIR/lv-list-verify.sh" 2>/dev/null | awk -F'\t' 'NF { print $1 }' || true
+  # Field 5 carries "blocked:<deps>" for a plan held on a dependency (LVI-064).
+  "$SELF_DIR/lv-list-verify.sh" 2>/dev/null | awk -F'\t' 'NF && $5 !~ /^blocked:/ { print $1 }' || true
 }
 
 candidates_test() {

@@ -18,6 +18,11 @@
 #               a human checks it against the end state (lv-end-state.sh). The
 #               next worker reads it as the answer of record. Anywhere else it is
 #               shown to the human with the question. a client's LVI-034.
+# --hold-until <plan-id>
+#               The recommendation is to hold this plan until <plan-id> lands.
+#               A pre-launch self-answer records it in the plan's Deps through
+#               lv-gate-close.sh --hold-until, so the dispatcher stops sending
+#               the plan's role back to re-ask (a client's LVI-064).
 # --floor <why> Ask a human even while pre-launch: the answer spends money,
 #               touches a secret, destroys data, or reaches real people. The
 #               reason goes into the question.
@@ -154,6 +159,7 @@ claim_disposition=default
 covers_push=false
 recommend=""
 floor=""
+hold_until=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --context)    context="${2:?--context requires a path}"; shift 2 ;;
@@ -165,6 +171,7 @@ while [ $# -gt 0 ]; do
     --covers-push) covers_push=true; shift ;;
     --recommend) recommend="${2:?--recommend requires the answer}"; shift 2 ;;
     --floor) floor="${2:?--floor requires the reason a human must answer}"; shift 2 ;;
+    --hold-until) hold_until="${2:?--hold-until requires the plan this one waits on}"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -630,6 +637,7 @@ fi
     wf_emit GATE_COVERS_PUSH true
   fi
   [ -z "$recommend" ] || wf_emit GATE_RECOMMENDED "$recommend"
+  [ -z "$hold_until" ] || wf_emit GATE_RECOMMENDED_HOLD_UNTIL "$hold_until"
   [ -z "$floor" ] || wf_emit GATE_FLOOR "$floor"
   if [ -n "$prior_res" ]; then
     wf_emit GATE_PRIOR_QUESTION   "$prior_q"
@@ -674,7 +682,8 @@ if wf_self_answers "$gate_name"; then
       decision_args=()
       [ "$gate_name" = spec-approval ] && decision_args=(--decision approve)
       if LV_UNATTENDED=1 "$SELF_DIR/lv-gate-close.sh" "$id" "$LV_SELF_ANSWER_MARK: $recommend" \
-           --only "$gate_name" --basis pre-launch ${decision_args[@]+"${decision_args[@]}"} >&2; then
+           --only "$gate_name" --basis pre-launch ${decision_args[@]+"${decision_args[@]}"} \
+           ${hold_until:+--hold-until "$hold_until"} >&2; then
         wf_event gate-self-answered "$id" "$gate_name: $recommend"
         echo "$id: '$gate_name' answered by its recommendation (pre-launch) — $recommend"
         echo "  Act on it. It is the decision of record; lv-end-state.sh lists it for the human's end-state review."

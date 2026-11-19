@@ -362,6 +362,37 @@ assert_eq "an unreadable stamp comes back unchanged" "soon" \
 assert_eq "showing a time leaves the caller's TZ alone" unset \
   "$(LV_TZ=Europe/Paris bash -c 'unset TZ; . "$1/lv-orch-lib.sh"; wf_show_time >/dev/null; echo "${TZ-unset}"' _ "$S")"
 
+# ── 1b. A hold answer is a dependency (a client's LVI-064) ─────────────────
+#
+# PLN-143 in verify asked "hold until PLN-144 lands, or send to testing?",
+# answered it "hold", stayed in verify, and was dispatched to ask again: three
+# times in four minutes. --hold-until writes the hold into Deps, and the lists
+# the dispatcher reads stop offering the plan until the dependency completes.
+echo ""
+echo "1b. a 'hold until <plan> lands' answer is recorded in Deps"
+new_client "$PRE"
+sed -i.bak 's/^| PLN-001 | alpha | draft |/| PLN-001 | alpha | verify |/' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak
+git commit -qam "PLN-001 to verify"
+assert_eq "before: verify offers PLN-001" "PLN-001-alpha" "$("$S/lv-list-verify.sh" 2>/dev/null | cut -f1)"
+out=$(LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-001 needs-input "Hold PLN-001 until PLN-002 lands, or send it to testing?" \
+  --recommend "hold until PLN-002 lands" --hold-until PLN-002 2>&1); rc=$?
+assert_eq "exit 0" 0 "$rc"
+assert_eq "no gate is left open" "" "$(ls $G/*.gate 2>/dev/null)"
+assert_eq "the hold is in PLN-001's Deps" "PLN-002" "$(cd "$CLIENT" && bash -c '. "$1/lv-orch-lib.sh"; wf_registry_field PLN-001 deps plans/REGISTRY.md' _ "$S")"
+assert_eq "…committed, not left dirty" "" "$(git status --porcelain plans/REGISTRY.md)"
+assert_has "…and named in the decision of record" "Held until:** PLN-002 lands" "$(cat plans/PLN-001-alpha/findings.md 2>/dev/null)"
+assert_has "verify lists it as held" "blocked:PLN-002" "$("$S/lv-list-verify.sh" 2>/dev/null)"
+assert_eq "…and the dispatcher's verify candidates leave it out" "" \
+  "$("$S/lv-orchestrate.sh" --sweep --dry-run --force 2>&1 | grep -E 'spawn.*verify.*PLN-001|verify +PLN-001' | grep -v skip || true)"
+out=$("$S/lv-gate-close.sh" PLN-001 "hold" --gate needs-input --hold-until PLN-002 2>&1)
+assert_has "a second hold on the same plan adds nothing" "already depends on PLN-002" "$out"
+sed -i.bak 's/^| PLN-002 | beta | testing |/| PLN-002 | beta | complete |/' plans/REGISTRY.md && rm -f plans/REGISTRY.md.bak
+git commit -qam "PLN-002 complete"
+assert_eq "once PLN-002 lands, verify offers PLN-001 again" "PLN-001-alpha" "$("$S/lv-list-verify.sh" 2>/dev/null | cut -f1)"
+out=$("$S/lv-gate-close.sh" PLN-001 "hold" --gate needs-input --hold-until PLN-999 2>&1); rc=$?
+assert_eq "a hold on nothing is refused" 1 "$rc"
+assert_has "…before anything is closed" "Nothing was closed" "$out"
+
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

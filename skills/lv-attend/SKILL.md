@@ -511,6 +511,12 @@ scripts/lv-exec.sh lv-registry-update.sh <PLN-ID> <from-state> complete --commit
 scripts/lv-exec.sh lv-unclaim.sh <plan-name>
 ```
 
+**If the answer is to hold the plan until another plan lands, say so with `--hold-until`.** The close writes that plan into this one's Deps, and the dispatcher does not send verify or test back to a plan whose Deps are not complete. Without it, the answer lives only in prose that no list script reads, and the plan is dispatched again into the question it just answered: a client's PLN-143 asked and answered "hold until PLN-144 lands" three times in four minutes (LVI-064).
+
+```bash
+scripts/lv-exec.sh lv-gate-close.sh <PLN-ID> "<the answer>" --only needs-input --hold-until <PLN-ID it waits on>
+```
+
 Everywhere else in this skill the gate still closes last.
 
 **If the answer disposes of a bug, use the scripted close.** A `needs-input` gate often resolves as "this bug is a duplicate", "this one is already fixed", or "we are not fixing this", and each has a verb — none of them needs a plan, and none of them should be a hand-edit plus a `git mv`:

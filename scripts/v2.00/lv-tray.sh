@@ -323,9 +323,14 @@ render_plans() {
     [ -n "$n_draft" ] || n_draft="$p_id"
   done <<< "$drafts"
 
-  while IFS=$'\037' read -r name unchecked esc goal; do
+  while IFS=$'\037' read -r name unchecked esc goal vheld; do
     [ -n "$name" ] || continue
     split_plan_name "$name"
+    case "${vheld:-}" in
+      blocked:*)
+        s_verify="$s_verify$(item - "$p_id" "$p_slug" "[held until ${vheld#blocked:} lands]$(gated_note "$p_id")")"$'\n'
+        continue ;;
+    esac
     detail="automated checks"
     [ "${unchecked:-0}" -gt 0 ] 2>/dev/null && detail="$detail, $unchecked unchecked"
     [ "${esc:-0}" -gt 0 ] 2>/dev/null && detail="$detail, $esc escalated"
