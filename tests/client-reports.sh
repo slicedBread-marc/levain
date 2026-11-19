@@ -3276,12 +3276,23 @@ printf 'x\n' >> plans/PLN-931-pen-holder/plan.md
 eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --check 2>/dev/null)"
 assert_eq "a HEAD move during the round is reported" "true" "$REVIEW_GUARD_CONCURRENT"
 git checkout -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
-sleep 1                             # the reflog is second-resolution
+# A client's LVI-015: the skill commits the revision and arms the guard back to
+# back, so they share a second, and the second-resolution reflog filter read the
+# session's own revision commit as a concurrent move. No sleep here on purpose.
+printf '\n## Amendments\nA-2 — revision for round 2\n' >> plans/PLN-931-pen-holder/plan.md
+git commit -q -m "spec(PLN-931-pen-holder): revision for review round 2" -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
 eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --record 2>/dev/null)"
 assert_eq "committed text records clean" "false" "$REVIEW_GUARD_DIRTY_AT_RECORD"
 printf 'x\n' >> plans/PLN-931-pen-holder/plan.md
 eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --check 2>/dev/null)"
-assert_eq "and a quiet round is not blamed on anyone else" "false" "$REVIEW_GUARD_CONCURRENT"
+assert_eq "and a quiet round is not blamed on anyone else, even one armed in the commit's second (LVI-015)" "false" "$REVIEW_GUARD_CONCURRENT"
+# …while a move in that same second, after --record, still is.
+git checkout -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
+"$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --record >/dev/null 2>&1
+git commit -q --allow-empty -m "a concurrent worker's commit" >/dev/null 2>&1
+printf 'x\n' >> plans/PLN-931-pen-holder/plan.md
+eval "$("$SCRIPT_DIR/lv-review-guard.sh" PLN-931 --check 2>/dev/null)"
+assert_eq "a move right after --record, in its second, is still reported" "true" "$REVIEW_GUARD_CONCURRENT"
 git checkout -- plans/PLN-931-pen-holder/plan.md >/dev/null 2>&1
 
 # A guard that was never armed is not evidence of anything, and failing the

@@ -113,12 +113,39 @@ STATE_DIR="$(wf_orch_dir)/review-guard"
 mkdir -p "$STATE_DIR"
 STATE="$STATE_DIR/$plan_id"
 
-# reflog_since <epoch> → HEAD reflog entries written at or after it, one per
-# line. The reflog's own time (%gd under --date=unix), not the commit's: a
-# stash's `reset: moving to HEAD` points at an old commit.
+# reflog_lines → HEAD's reflog, newest first, one entry per line. The reflog's
+# own time (%gd under --date=unix), not the commit's: a stash's `reset: moving
+# to HEAD` points at an old commit.
+reflog_lines() {
+  (cd "$ROOT" && git reflog --date=unix --format='%gd %h %gs' HEAD 2>/dev/null) || true
+}
+
+line_id() { printf '%s' "$1" | shasum | awk '{print $1}'; }
+
+# reflog_since <top-id> <epoch> → the entries written after --record.
+#
+# Anchored on the entry that was newest at --record, not on its second. The
+# skill commits the revision and arms the guard back to back, so that commit
+# and --record share a second nearly every time, and `>= epoch` counted the
+# session's own revision commit as a concurrent move: a client's LVI-015
+# ("HEAD moved meanwhile", citing a commit made before --record). Only when
+# the anchor is gone (no reflog at --record, or it expired) does it fall back
+# to time, strictly after the --record second.
 reflog_since() {
-  (cd "$ROOT" && git reflog --date=unix --format='%gd %gs' HEAD 2>/dev/null) \
-    | awk -v t="$1" '{ ts = $1; gsub(/[^0-9]/, "", ts); if (ts + 0 >= t + 0) print }'
+  local top="$1" since="$2" line found=false out=""
+  if [ -n "$top" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      if [ "$(line_id "$line")" = "$top" ]; then found=true; break; fi
+      out="${out:+$out
+}$line"
+    done <<EOF
+$(reflog_lines)
+EOF
+    if $found; then printf '%s' "$out"; return 0; fi
+  fi
+  [ -n "$since" ] || return 0
+  reflog_lines | awk -v t="$since" '{ ts = $1; gsub(/[^0-9]/, "", ts); if (ts + 0 > t + 0) print }'
 }
 
 if [ "$mode" = "--record" ]; then
@@ -130,6 +157,8 @@ if [ "$mode" = "--record" ]; then
     wf_emit GUARD_PLAN "$plan_id"
     wf_emit GUARD_AT   "$(wf_now)"
     wf_emit GUARD_EPOCH "$(date +%s)"
+    top_line=$(reflog_lines | head -1)
+    wf_emit GUARD_REFLOG_TOP "$([ -n "$top_line" ] && line_id "$top_line")"
     for name in $WATCHED; do
       key=$(printf '%s' "$name" | tr '.a-z' '_A-Z')
       wf_emit "GUARD_HASH_$key"  "$(hash_of "$PLAN_DIR/$name")"
@@ -177,7 +206,7 @@ fi
 since=$(wf_gate_field "$STATE" GUARD_EPOCH)
 concurrent=false
 moves=""
-[ -n "$since" ] && moves=$(reflog_since "$since")
+moves=$(reflog_since "$(wf_gate_field "$STATE" GUARD_REFLOG_TOP)" "$since")
 [ -n "$moves" ] && concurrent=true
 
 wf_emit REVIEW_GUARD touched
