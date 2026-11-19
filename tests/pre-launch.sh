@@ -324,6 +324,36 @@ assert_eq "answer from accept: exit 0" 0 "$rc"
 assert_has "…moves the plan back to testing, branch kept" "| PLN-002 | beta | testing | — | feature/PLN-002-beta |" "$(cat plans/REGISTRY.md)"
 assert_eq "…and commits it" "" "$(git status --porcelain plans/REGISTRY.md)"
 
+# A client's LVI-017: a self-answered needs-input sent a criterion to
+# /lv-accept; pre-launch carried it out as the end-state checklist, and the
+# record said nothing of it. The operator's call: the checklist wins, and the
+# answer step says that is how the answer was carried out.
+new_client "$PRE"
+cat > plans/PLN-002-beta/findings.md <<'F'
+# Findings — beta
+
+## Decisions
+
+### needs-input — 2026-11-19T01:22:39Z
+> **Asked:** How should criterion 1 be settled?
+> **Resolution:** self-answered (pre-launch): Take the trace by hand in /lv-accept and record it there.
+> **Answered by:** pre-launch
+F
+git add -A && git commit -qm "answer of record"
+out=$("$S/lv-lane.sh" answer PLN-002 manual-test 2>&1); rc=$?
+assert_eq "answer with a /lv-accept answer of record: exit 0" 0 "$rc"
+assert_has "…says how the answer was carried out" "carried out as the end-state checklist" "$out"
+f=$(cat plans/PLN-002-beta/findings.md)
+assert_has "…records it in findings.md, naming the answer" "**Answer of record:** needs-input — 2026-11-19T01:22:39Z — sent criteria to /lv-accept." "$f"
+assert_has "…and that no manual-test gate opened" "no manual-test gate opened: 1 criteria" "$f"
+assert_eq "…committed" "" "$(git status --porcelain plans/PLN-002-beta/findings.md)"
+assert_eq "no manual-test gate is open" false "$([ -f $G/PLN-002.gate ] && echo true || echo false)"
+new_client "$PRE"
+printf '# Findings\n\n## Decisions\n\n### needs-input — 2026-11-19T00:00:00Z\n> **Resolution:** (b) Print sheet\n' > plans/PLN-002-beta/findings.md
+git add -A && git commit -qm "unrelated answer"
+out=$("$S/lv-lane.sh" answer PLN-002 manual-test 2>&1)
+assert_not "an answer that never named /lv-accept adds no note" "Carried out as" "$(cat plans/PLN-002-beta/findings.md)"
+
 # ── 8. Not pre-launch ──────────────────────────────────────────────────────
 echo ""
 echo "8. Governed, or past live_from: gates as before"

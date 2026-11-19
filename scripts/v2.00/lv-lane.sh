@@ -854,13 +854,36 @@ answer)
       }
     ' "$PLAN_MD" > "$PLAN_MD.tmp" && mv "$PLAN_MD.tmp" "$PLAN_MD"
   fi
-  commit_paths "lane($PLAN_ID): manual-test answered by $by — $moved criteria to the post-ship checklist" "$PLAN_MD"
+  # An answer of record that sent criteria to /lv-accept is carried out here as
+  # the end-state checklist when the project is pre-launch: the deferral wins
+  # and no manual-test gate opens. Say so in the same ledger the answer sits in,
+  # or the record reads "to /lv-accept" against a plan that never went there
+  # (a client's LVI-017, PLN-083; the operator's call).
+  findings="$(dirname "$PLAN_MD")/findings.md"
+  carried=""
+  if [ "$by" != "the express lane" ] && [ "$moved" -gt 0 ] && [ -f "$findings" ]; then
+    carried=$(awk '
+      /^## / { in_d = ($0 ~ /^## Decisions([[:space:]]|$)/); next }
+      in_d && /^### / { h = $0; sub(/^###[[:space:]]+/, "", h); next }
+      in_d && /^> \*\*Resolution:\*\*/ && h != "" && ($0 ~ /\/lv-accept/ || tolower($0) ~ /accept:manual/) { print h; h = "" }
+    ' "$findings" | paste -sd ';' - | sed 's/;/; /g')
+  fi
+  if [ -n "$carried" ]; then
+    {
+      printf '\n### manual-test answer carried out — %s\n' "$(wf_now)"
+      printf '> **Answer of record:** %s — sent criteria to /lv-accept.\n' "$carried"
+      printf '> **Carried out as:** the end-state checklist. The project is pre-launch, so no manual-test gate opened: %s criteria are on plan.md'"'"'s `## Post-ship checklist`, where lv-end-state.sh lists them for the end-state review. Only a governed project opens accept:manual.\n' "$moved"
+      printf '> Recorded by lv-lane.sh answer.\n'
+    } >> "$findings"
+  fi
+  commit_paths "lane($PLAN_ID): manual-test answered by $by — $moved criteria to the post-ship checklist" "$PLAN_MD" ${carried:+"$findings"}
   if [ "$by" = "the express lane" ]; then
     wf_event autonomy-use "$PLAN_ID" "express: manual-test answered by the express lane — $moved criteria moved to the post-ship checklist ($DECL_TEXT)"
   else
     wf_event autonomy-use "$PLAN_ID" "pre-launch: manual-test answered for the end-state review — $moved criteria moved to the post-ship checklist"
   fi
   echo "$PLAN_ID: manual-test answered by $by — $moved criteria moved to the post-ship checklist."
+  [ -z "$carried" ] || echo "  The answer of record ($carried) said /lv-accept; carried out as the end-state checklist (pre-launch) — noted in findings.md."
   # A tester that opened the gate also moved the plan to `accept`, which the
   # daemon never dispatches: it waits for /lv-accept. Nothing is left for a
   # human, so hand it back to `testing`, where the next tester takes the
