@@ -166,6 +166,12 @@ when answering a `needs-input` gate means sending the plan back to `/lv-spec`, t
 its own `spec-approval` gate, so `needs-input` has to close before the handoff rather than after
 it. The answer is what *authorizes* the replan; it is not waiting on its outcome.
 
+The order is also enforced in one place, in the other direction. `lv-gate-close.sh` refuses to
+close `manual-test` (exit 7) while its plan still reads `accept`. No worker is dispatched at
+`accept`, and the open gate is what keeps the plan on the attend queue, so closing it first strands
+the plan with nothing on the board saying so (a client's PLN-081, LVI-018). Move the row out
+(`accept → testing`, `→ draft`) first, then close. `--withdraw` is not refused.
+
 **Adding a guard of this shape is what makes the exception grow, so say so here when you add
 one.** A precondition that refuses a transition until a gate is answered is not a local change
 to one script: it silently inverts the exit ordering of every skill that performs that

@@ -188,6 +188,8 @@
 #        4 when an unattended close has no acceptable basis,
 #        5 when an `approve` names a batch the source ref has moved past,
 #        6 when a --decision is given and no gate is open to take it.
+#        7 when manual-test is closed while its plan is still in `accept` —
+#          move the row out of accept first (LVI-018).
 
 set -euo pipefail
 
@@ -478,6 +480,30 @@ if [ -n "$only_gate" ] && [ "$gate_name" != "$only_gate" ]; then
   echo "  Answer it deliberately — /lv-attend, or lv-gate-close.sh $id \"<answer>\" — then retry." >&2
   wf_event gate-close-refused "$id" "$gate_name open, caller asked for $only_gate (WFI-010)"
   exit 5
+fi
+
+# ── manual-test on an `accept` plan: the transition comes first ───────────
+#
+# A plan in `accept` is dispatched to nobody; the open manual-test gate is what
+# shows it in /lv-attend. Closing that gate and leaving the row at `accept`
+# strands it: a client's PLN-081 and PLN-082 had theirs closed once headless
+# sign-in landed, the board read GATES: 0, no worker re-ran /lv-test, and
+# nothing said they were stuck (a client's LVI-018). Every exit that answers
+# this gate — /lv-accept's pass, findings or build-moved — moves the row out of
+# `accept` first and closes second (docs/guard-ordering.md), so a close that
+# finds the row still in `accept` is the step skipped, not a valid order.
+# Refused before anything is written, so the plan stays queued. --withdraw is
+# not refused: it records nothing as answered.
+if [ "$gate_name" = "manual-test" ] && [ -f "$gate_file" ] && ! $withdraw \
+   && [ "$(wf_state_of "$id")" = "accept" ]; then
+  echo "lv-gate-close: $id is still in 'accept' — its manual-test gate was NOT closed." >&2
+  echo "  Closing it here would leave the plan in a state no worker is dispatched at, off" >&2
+  echo "  the attend queue, with nothing on the board saying so (a client's LVI-018)." >&2
+  echo "  A human is accepting it:      /lv-accept $id" >&2
+  echo "  It should be re-tested:       lv-registry-update.sh $id accept testing --commit \"<why>\"" >&2
+  echo "                                then lv-gate-close.sh $id \"<why>\" --only manual-test" >&2
+  wf_event gate-close-refused "$id" "manual-test with the plan still in accept (LVI-018)"
+  exit 7
 fi
 
 # ── Who is answering? ─────────────────────────────────────────────────────

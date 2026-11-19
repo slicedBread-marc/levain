@@ -188,7 +188,15 @@ assert_has "…pointing at the transition first" "testing accept first" "$out"
 assert_eq "…and nothing is queued" "" "$(ls .claude/orchestrator/gates/PLN-043* 2>/dev/null)"
 out=$(LV_UNATTENDED=1 "$S/lv-gate-open.sh" PLN-041 manual-test "1 criterion needs eyes" --skill lv-test 2>&1); rc=$?
 assert_eq "beside an accept row it opens" 0 "$rc"
-"$S/lv-gate-close.sh" PLN-041 done >/dev/null 2>&1
+# A client's LVI-018: closing it with the row still in accept stranded the
+# plan — no worker is dispatched at accept and the attend queue lost it.
+out=$("$S/lv-gate-close.sh" PLN-041 "re-test now sign-in works" --only manual-test 2>&1); rc=$?
+assert_eq "closing manual-test while the plan reads accept is refused" 7 "$rc"
+assert_has "…pointing at the transition first" "accept testing" "$out"
+assert_eq "…and the gate is still open" "manual-test" \
+  "$(grep -h '^GATE_NAME=' .claude/orchestrator/gates/PLN-041.gate 2>/dev/null | cut -d"'" -f2)"
+out=$("$S/lv-gate-close.sh" PLN-041 "withdrawn — no longer asked" --only manual-test --withdraw 2>&1); rc=$?
+assert_eq "withdrawing it is not refused" 0 "$rc"
 
 out=$(LV_ALLOW_ACCEPT=1 "$S/lv-registry-update.sh" PLN-042 testing accept 2>&1); rc=$?
 assert_eq "LV_ALLOW_ACCEPT=1 overrides a refusal" 0 "$rc"
