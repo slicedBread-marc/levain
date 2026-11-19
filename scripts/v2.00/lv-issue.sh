@@ -32,6 +32,9 @@
 # and carry on. Never prompts, never blocks, never fails the caller — filing a
 # report must not be able to break the run that hit the problem.
 #
+# A filing or a --resolve is committed (WORKFLOW-ISSUES.md only) where it is
+# written; one that cannot be committed is kept, with a warning (LVI-060).
+#
 # Exit 0 on success. Exit 1 only on genuinely bad usage.
 
 set -uo pipefail
@@ -49,6 +52,30 @@ ISSUE_MATCH=$(lv_id_match issue)
 
 ROOT="$(wf_develop_root)"
 ISSUES="$ROOT/WORKFLOW-ISSUES.md"
+
+# commit_issues <subject> — commit WORKFLOW-ISSUES.md where it was written.
+#
+# A filing used to stay uncommitted until /lv-deploy step 12 swept it up, so the
+# file collected entries between deploys, a coordinator (which never deploys)
+# never committed its own at all, and every session found it already dirty and
+# left it for someone else (the coordinator's LVI-060). The file is append-only
+# reports, so committing whatever else is pending in it is correct. Pathspec
+# only (lv-commit.sh), on whatever branch the root is on, never moving it.
+# Anything that refuses (no repo, file ignored, a lock, a hook) keeps the entry
+# and warns: a filing must never be lost or fail its caller. LV_ISSUE_NO_COMMIT=1
+# skips it. /lv-deploy step 12 stays as the backstop.
+commit_issues() {
+  [ "${LV_ISSUE_NO_COMMIT:-}" = 1 ] && return 0
+  ( cd "$ROOT" 2>/dev/null || exit 0
+    git rev-parse --git-dir >/dev/null 2>&1 || exit 0
+    git check-ignore -q WORKFLOW-ISSUES.md 2>/dev/null && exit 0
+    out=$("$SELF_DIR/lv-commit.sh" "$1" --add WORKFLOW-ISSUES.md 2>&1) || {
+      echo "lv-issue.sh: written, but not committed — commit WORKFLOW-ISSUES.md by hand:" >&2
+      printf '%s\n' "$out" | sed 's/^/  /' >&2
+    }
+  ) || true
+  return 0
+}
 
 HEADER='# Workflow Issues
 
@@ -138,6 +165,8 @@ case "${1:-}" in
       }
       { print }
     ' "$ISSUES" > "$ISSUES.tmp" && mv "$ISSUES.tmp" "$ISSUES"
+    wf_lock_release "workflow-issues" 2>/dev/null || true
+    commit_issues "issue(WORKFLOW-ISSUES): $id resolved"
     echo "$id: resolved — $note"
     exit 0
     ;;
@@ -244,6 +273,11 @@ if [ -n "$marker_line" ]; then
 else
   printf '%s\n' "$entry" >> "$ISSUES"
 fi
+
+# The lock is released first: lv-commit.sh takes the commit lock, and a caller
+# already holding that one may be filing too.
+wf_lock_release "workflow-issues" 2>/dev/null || true
+commit_issues "issue(WORKFLOW-ISSUES): $next $source_name"
 
 wf_event issue "${context:-—}" "$next: $source_name — $expected"
 echo "$next filed in WORKFLOW-ISSUES.md ($source_name)"

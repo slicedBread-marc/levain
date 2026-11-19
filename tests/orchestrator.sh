@@ -1543,6 +1543,26 @@ assert_ok "filing after LVI-019 succeeds" "$SCRIPT_DIR/lv-issue.sh" \
 assert_eq "the ID after 019 is 020" "true" \
   "$(grep -q '^## LVI-020 ' WORKFLOW-ISSUES.md && echo true || echo false)"
 
+section "A filing and a resolve are committed where they are written (the coordinator's LVI-060)"
+
+# lv-issue.sh appended and never committed; only /lv-deploy step 12 did, so a
+# coordinator's file was never committed and every session left it dirty.
+"$SCRIPT_DIR/lv-issue.sh" --source lv-x --expected e --actual "committed?" >/dev/null 2>&1
+assert_eq "a filing leaves WORKFLOW-ISSUES.md clean" "" "$(git status --porcelain -- WORKFLOW-ISSUES.md)"
+assert_eq "…in a commit naming the entry" "issue(WORKFLOW-ISSUES): LVI-021 lv-x" "$(git log -1 --format=%s -- WORKFLOW-ISSUES.md)"
+echo "stray" > lvi060-other.txt
+"$SCRIPT_DIR/lv-issue.sh" --resolve LVI-021 "fixed" >/dev/null 2>&1
+assert_eq "a resolve is committed too" "issue(WORKFLOW-ISSUES): LVI-021 resolved" "$(git log -1 --format=%s)"
+assert_eq "…and carries nothing else" "WORKFLOW-ISSUES.md" "$(git show --name-only --format= HEAD)"
+rm -f lvi060-other.txt
+LV_ISSUE_NO_COMMIT=1 "$SCRIPT_DIR/lv-issue.sh" --source lv-y --expected e --actual x >/dev/null 2>&1
+assert_eq "LV_ISSUE_NO_COMMIT=1 leaves it for the caller" " M WORKFLOW-ISSUES.md" "$(git status --porcelain -- WORKFLOW-ISSUES.md)"
+git commit -q -m "test: settle" -- WORKFLOW-ISSUES.md >/dev/null 2>&1
+LVI060_DIR=$(mktemp -d)
+assert_eq "outside a repo it still files, exit 0" "0" \
+  "$(cd "$LVI060_DIR" && "$SCRIPT_DIR/lv-issue.sh" --source z --expected e --actual x >/dev/null 2>&1; echo $?)"
+rm -rf "$LVI060_DIR"
+
 section "Issue reporting is wired into the skills"
 
 for s in lv-spec lv-implement lv-test lv-verify; do

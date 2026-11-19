@@ -235,9 +235,9 @@ while IFS= read -r client; do
         *"not overwriting"*) echo -e "${YELLOW}  $name: $out${NC}"; continue ;;
       esac
 
-      # Commit it, here, now. lv-issue.sh deliberately never touches git — the
-      # session that FILES an issue is inside that project and commits the file
-      # with the rest of its work. A resolve has no such session: this loop is
+      # Commit it, here, now. lv-issue.sh commits its own writes as of the
+      # coordinator's LVI-060; a client still on an older copy does not, and a
+      # resolve has no session of its own to commit it: this loop is
       # the only thing that ran, it leaves a tracked file dirty in a repo it
       # does not otherwise touch, and then walks away.
       #
@@ -258,6 +258,11 @@ while IFS= read -r client; do
       # the whole point is that it explains the fix — and putting it after -m
       # as one string makes it all one subject line, which `git log --oneline`
       # then renders as a wall.
+      # A client on 16.12.0+ committed it already (lv-issue.sh, LVI-060).
+      if ( cd "$client" && git diff --quiet HEAD -- WORKFLOW-ISSUES.md 2>/dev/null ); then
+        echo -e "${GREEN}  $name: $resolve_id resolved and committed${NC}"
+        continue
+      fi
       crc=0
       cout=$( cd "$client" \
         && git add WORKFLOW-ISSUES.md \

@@ -424,9 +424,9 @@ Before starting, confirm E2E passed on release:
 12. **Return to the develop worktree and back-merge `main` → `develop`** (auto-resolve in favor of develop). Unlike steps 6–11, this one runs in the develop worktree itself — the commits `main` just received in `release-branches/main` are already visible there as local refs, no push needed:
     ```bash
     cd "$(git worktree list --porcelain | head -1 | sed 's/^worktree //')"
-    # lv-issue.sh appends to WORKFLOW-ISSUES.md here and never commits, and
-    # main carries the same tracked file, so a filing left uncommitted makes git
-    # refuse both the pull and the merge (a client's LVI-012). Commit it first.
+    # lv-issue.sh commits each filing itself (LVI-060), but one it could not
+    # commit stays dirty here, and main carries the same tracked file, so git
+    # would refuse both the pull and the merge (a client's LVI-012). Backstop.
     if ! git diff --quiet HEAD -- WORKFLOW-ISSUES.md 2>/dev/null; then
       scripts/lv-exec.sh lv-commit.sh "issue(WORKFLOW-ISSUES): entries filed from workflow sessions" \
         --add WORKFLOW-ISSUES.md
