@@ -163,6 +163,15 @@ a.guide{font-size:13px;display:block;line-height:18px}
 <div class="wide">wide</div>
 </body></html>
 HTML
+  cat > "$TEST_DIR/www/media.html" <<'HTML'
+<!doctype html><html><head><style>
+body{color:#000} @media (prefers-color-scheme: dark){body{color:#fff}}
+@keyframes s{to{transform:rotate(1turn)}} #spin{animation:s 1s infinite}
+@media (prefers-reduced-motion: reduce){#spin{animation:none}}
+</style></head><body><div id="spin">x</div><div id="rm"></div>
+<script>document.getElementById('rm').textContent = matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduce' : 'motion';</script>
+</body></html>
+HTML
   cat > "$TEST_DIR/www/tall.html" <<'HTML'
 <!doctype html><html><body style="margin:0"><div style="height:2000px">tall</div></body></html>
 HTML
@@ -234,6 +243,22 @@ HTML
     "$(run lv-headless-session.sh '{"contexts":[{"name":"a","url":"'"$F"'","actions":[{"type":"download","selector":"#dl"}]}],"expr":{"context":"a","js":"downloads[0].filename === \"scores.csv\""}}')"
   assert_eq "a session expr that is not true or false is ERROR" '2|ERROR expression returned string, not true or false: "scores.csv"' \
     "$(run lv-headless-session.sh '{"contexts":[{"name":"a","url":"'"$F"'","actions":[{"type":"download","selector":"#dl"}]}],"expr":{"context":"a","js":"downloads[0].filename"}}')"
+  echo "  media emulation (a client's LVI-014, LVI-016, LVI-021)"
+  M="http://127.0.0.1:$PORT/media.html"
+  assert_eq "no emulation: light, motion allowed"      '0|PASS true' \
+    "$(run lv-headless-eval.sh "$M" "getComputedStyle(document.body).color === 'rgb(0, 0, 0)' && !matchMedia('(prefers-reduced-motion: reduce)').matches")"
+  assert_eq "emulateMedia colorScheme dark: CSS sees it" '0|PASS true' \
+    "$(run lv-headless-eval.sh "$M" "getComputedStyle(document.body).color === 'rgb(255, 255, 255)'" '[{"type":"emulateMedia","colorScheme":"dark"}]')"
+  assert_eq "emulateMedia reducedMotion reduce: the animation is off" '0|PASS true' \
+    "$(run lv-headless-eval.sh "$M" "getComputedStyle(document.getElementById('spin')).animationName === 'none'" '[{"type":"emulateMedia","reducedMotion":"reduce"}]')"
+  assert_eq "a reload after it: a load-time matchMedia read sees it" '0|PASS true' \
+    "$(run lv-headless-eval.sh "$M" "document.getElementById('rm').textContent === 'reduce'" '[{"type":"emulateMedia","reducedMotion":"reduce"},{"type":"reload"}]')"
+  r=$(run lv-headless-eval.sh "$M" "true" '[{"type":"emulateMedia"}]')
+  has "emulateMedia with no setting is ERROR"         "$r" '^2\|ERROR emulateMedia needs one of'
+  assert_eq "session: a context's own colorScheme, from its first load" '0|PASS true' \
+    "$(run lv-headless-session.sh '{"contexts":[{"name":"phone","url":"'"$M"'","colorScheme":"dark","reducedMotion":"reduce"},{"name":"laptop","url":"'"$M"'"}],"expr":{"context":"phone","js":"document.getElementById(\"rm\").textContent === \"reduce\" && getComputedStyle(document.body).color === \"rgb(255, 255, 255)\""}}')"
+  assert_eq "session: the other context keeps its own settings" '0|PASS true' \
+    "$(run lv-headless-session.sh '{"contexts":[{"name":"phone","url":"'"$M"'","colorScheme":"dark"},{"name":"laptop","url":"'"$M"'"}],"expr":{"context":"laptop","js":"getComputedStyle(document.body).color === \"rgb(0, 0, 0)\""}}')"
   r=$(run lv-headless-eval.sh "$U" "true" '[{"type":"wave"}]')
   assert_eq "an unknown action is ERROR, naming it"    "2|ERROR unknown action type: wave" "$r"
   r=$(run lv-headless-eval.sh "$U" "true" '[{"type":"waitForSelector","selector":"#never","timeout":300}]')

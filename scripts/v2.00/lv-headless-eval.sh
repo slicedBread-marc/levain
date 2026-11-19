@@ -61,6 +61,15 @@
 #                                     "click" answers the file chooser a button opens
 #     {"type":"clipboard"}          — read the clipboard into `clipboard`
 #     {"type":"clipboardWrite","text":"..."} — seed it, for a paste criterion
+#     {"type":"emulateMedia","reducedMotion":"reduce"}
+#     {"type":"emulateMedia","colorScheme":"dark"}
+#                                   — the browser setting a criterion names:
+#                                     colorScheme, reducedMotion, forcedColors,
+#                                     contrast, media ("print"). Put it first;
+#                                     add {"type":"reload"} after it when the
+#                                     page reads matchMedia only at load.
+#                                     Reduced motion and dark mode are never a
+#                                     reason to leave a criterion for a human.
 #   Every step optionally takes "timeout" (ms, default 5000/15000 per type).
 #   A click, press, keyboard, check/uncheck or selectOption that starts a
 #   navigation (a form submit: POST, 302, a new page) waits for the new page

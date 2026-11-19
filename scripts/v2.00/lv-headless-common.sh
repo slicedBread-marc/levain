@@ -13,7 +13,7 @@
 #     vocabulary (click, fill, press, keyboard, hover, focus, mouse,
 #     selectOption, check/uncheck, waitForSelector, waitForURL,
 #     waitForLoadState, wait, goto, reload, download, upload, clipboard,
-#     clipboardWrite) is defined in exactly one place. A click, press,
+#     clipboardWrite, emulateMedia) is defined in exactly one place. A click, press,
 #     keyboard, check/uncheck or selectOption that starts a navigation waits
 #     for the new page to load before the next step (LVI-043). It also
 #     exports exprScope(page, consoleErrors): what an expression can name —
@@ -312,6 +312,23 @@ async function runStep(page, step, timeout) {
         await grantClipboard(page);
         await page.evaluate((t) => navigator.clipboard.writeText(t), step.text ?? '');
         break;
+      case 'emulateMedia': {
+        // Browser settings a criterion names: "with reduced motion on", "in
+        // dark mode", "when printed". Any of colorScheme (light|dark|
+        // no-preference), reducedMotion (reduce|no-preference), forcedColors
+        // (active|none), contrast (more|no-preference), media (screen|print);
+        // null resets one. CSS media queries and matchMedia listeners see it
+        // at once; a page that read matchMedia only at load needs a "reload"
+        // step after it. There was no verb, so every reduced-motion and dark
+        // criterion was recorded ERROR or untestable and went to a human
+        // (a client's LVI-014, LVI-016, LVI-021).
+        const keys = ['colorScheme', 'reducedMotion', 'forcedColors', 'contrast', 'media'];
+        const opts = {};
+        for (const k of keys) if (k in step) opts[k] = step[k];
+        if (Object.keys(opts).length === 0) throw new Error(`emulateMedia needs one of ${keys.join(', ')}`);
+        await page.emulateMedia(opts);
+        break;
+      }
       default:
         throw new Error(`unknown action type: ${step.type}`);
     }

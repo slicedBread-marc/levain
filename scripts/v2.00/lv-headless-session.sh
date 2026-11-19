@@ -58,7 +58,10 @@
 #               action vocabulary is actions.mjs's, identical to
 #               lv-headless-eval.sh's — click, fill, press, keyboard, hover, focus, mouse, selectOption,
 #               check/uncheck, waitForSelector, waitForURL, waitForLoadState,
-#               wait, goto, reload. A navigating click waits for the new page.
+#               wait, goto, reload, emulateMedia. A navigating click waits for the new page.
+#   A context may also carry "colorScheme", "reducedMotion", "forcedColors"
+#   or "contrast" — the device's settings from its first load, e.g. a phone
+#   in dark mode beside a laptop in light.
 #   expr        ONE boolean expression, evaluated in ONE named context, after
 #               every step. `consoleErrors` is in scope and holds that
 #               context's errors only. One criterion, one invocation, one
@@ -142,7 +145,9 @@ try {
       console.log(`ERROR duplicate context name "${c.name}"`);
       process.exit(2);
     }
-    const ctx = await browser.newContext({ viewport: c.viewport || defaultViewport });
+    const ctxOpts = { viewport: c.viewport || defaultViewport };
+    for (const k of ['colorScheme', 'reducedMotion', 'forcedColors', 'contrast']) if (k in c) ctxOpts[k] = c[k];
+    const ctx = await browser.newContext(ctxOpts);
     const page = await ctx.newPage();
     const consoleErrors = [];
     page.on('pageerror', (e) => consoleErrors.push(String(e)));
