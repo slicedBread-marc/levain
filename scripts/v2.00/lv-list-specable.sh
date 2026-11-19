@@ -413,6 +413,57 @@ intake_skip() {
   return 1
 }
 
+# ── A brief folds a bug only by saying so: `> **Folds:**` (LVI-011) ────────
+#
+# A client's BRF-069 went Decided naming BUG-066 and BUG-068 and reversing
+# their design; seven minutes later an unattended spec run drafted BUG-068 to
+# the rejected option and took it to ready, and BUG-066 was built the same
+# way. This list offered the brief and the bugs as unrelated rows.
+#
+# The link is an explicit header, never prose. The same brief named BUG-067
+# as out of scope, so "names a bug in References or Problem" would have
+# withheld a bug nobody meant to fold, and pre-launch workers answer their own
+# gates, so a wrong match goes unnoticed. Only the bugs on a Decided or
+# Planned brief's Folds line are withheld, with the brief named as the reason;
+# the brief's own spec run consumes them `--folded` into its plan.
+folded_map=""   # lines: <bug-id>\t<brief-id>\t<brief-status>
+for brief_md in plans/briefs/*.md; do
+  [ -f "$brief_md" ] || continue
+  folds=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Folds:\*\*' "$brief_md" 2>/dev/null \
+          | sed -E 's/^.*\*\*Folds:\*\*[[:space:]]*//' || true)
+  [ -n "$folds" ] || continue
+  bstatus=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*Status:\*\*' "$brief_md" 2>/dev/null \
+            | sed -E 's/^.*\*\*Status:\*\*[[:space:]]*//; s/[[:space:]].*$//' || true)
+  case "$bstatus" in Decided|Planned) ;; *) continue ;; esac
+  bid=$(grep -m1 -E '^[ \t]*>?[ \t]*\*\*ID:\*\*' "$brief_md" 2>/dev/null | grep -oE "($LV_BRF_RE)-[0-9]+" || true)
+  [ -n "$bid" ] || bid=$(basename "$brief_md" | grep -oE "^($LV_BRF_RE)-[0-9]+" || true)
+  [ -n "$bid" ] || continue
+  for fb in $(printf '%s\n' "$folds" | grep -oE "($LV_BUG_RE)-[0-9]+" || true); do
+    folded_map+="$fb"$'\t'"$bid"$'\t'"$bstatus"$'\n'
+  done
+done
+
+# folded_skip <bug-id> — exit 0 when a brief folds it (reason already on stderr).
+folded_skip() {
+  local hit
+  hit=$(printf '%s' "$folded_map" | awk -F'\t' -v b="$1" '$1 == b { print $2 "\t" $3; exit }')
+  [ -n "$hit" ] || return 1
+  if [ "${hit#*$'\t'}" = "Planned" ]; then
+    not_offered "$1" "folded into ${hit%%$'\t'*}, already planned — consume it there: lv-bug-consume.sh $1 <its plan> --folded"
+  else
+    not_offered "$1" "folded into ${hit%%$'\t'*}"
+  fi
+  return 0
+}
+
+# folds_note <brief-id> → "folds BUG-a,BUG-b — …; " or nothing
+folds_note() {
+  local ids
+  ids=$(printf '%s' "$folded_map" | awk -F'\t' -v b="$1" '$2 == b { printf "%s%s", s, $1; s = "," }')
+  [ -n "$ids" ] && printf 'folds %s — consume each --folded into the plan; ' "$ids"
+  return 0
+}
+
 # --- Open bugs ---
 bugs_found=0
 for bug_md in bugs/open/*/bug.md; do
@@ -434,6 +485,7 @@ for bug_md in bugs/open/*/bug.md; do
   # plan folder exists yet to hold the claim (WFI-004). Offering it anyway is
   # how two spec workers end up on one artifact.
   skip_with_reason "$bug_id" && continue
+  folded_skip "$bug_id" && continue
   # Blocked by a recorded, human-written reason. To stderr, so a human running
   # this sees what is held back and why, while the stdout a dispatcher parses
   # carries only work that can be done.
@@ -485,6 +537,7 @@ for bug_md in bugs/triaged/*/bug.md; do
   severity=$({ grep -E "Severity:" "$bug_md" 2>/dev/null | head -1 | sed 's/.*Severity:\*\*[[:space:]]*//' | sed 's/^> //'; } || true)
   title=$(head -1 "$bug_md" | sed 's/^# //')
   skip_with_reason "$bug_id" && continue
+  folded_skip "$bug_id" && continue
   if blocked_why=$(brief_is_blocked "$bug_md"); then
     echo "  ($bug_id blocked — $blocked_why)" >&2
     continue
@@ -590,7 +643,7 @@ if [ -f "plans/briefs/INDEX.md" ]; then
       if [ "$brief_id" != "—" ] && skip_with_reason "$brief_id"; then continue; fi
       desc=$(echo "$line" | sed 's/^[^—]*— //')
       if [ $briefs_found -eq 0 ]; then echo "# briefs"; fi
-      printf "%s\t%s\t%s%s\n" "$brief_id" "$name" "$(gate_note "$brief_id")" "$desc"
+      printf "%s\t%s\t%s%s%s\n" "$brief_id" "$name" "$(gate_note "$brief_id")" "$(folds_note "$brief_id")" "$desc"
       briefs_found=1
       found=1
     fi

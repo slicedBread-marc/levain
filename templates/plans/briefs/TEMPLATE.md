@@ -13,6 +13,13 @@
      clear it with `--clear`. The brief stays Decided and stops being offered to
      /lv-spec; short of a plan existing, it is the only exit a brief has. -->
 
+<!-- A brief that absorbs open bugs — its plan fixes them, and their own
+     designs must not be built — lists them in a `> **Folds:** BUG-NNN, BUG-NNN`
+     field in the header above. While the brief is Decided or Planned, only
+     those bugs are withheld from /lv-spec, shown as `folded into BRF-NNN`, and
+     the brief's plan consumes them with `lv-bug-consume.sh --folded`. Naming a
+     bug anywhere else in the brief folds nothing. -->
+
 <!-- A brief nobody is carrying forward is PARKED, not deleted:
      `lv-brief-park.sh BRF-NNN "<why>"` sets Status to Parked, stamps a dated
      reason, and moves its INDEX.md row to `## Parked`. It stops counting as an
