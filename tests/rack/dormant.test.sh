@@ -100,6 +100,7 @@ grid=$(render_text)
 ck "the harness row shows each client's stamp" "$(printf '%s\n' "$grid" | grep '^  harness' | tr -s ' ')" " harness 14.0.0 14.1.0"
 ck "and the library's version" "$(printf '%s\n' "$grid" | grep -c 'library 14.1.0')" "1"
 
+export LV_DEPLOY_LOGS="$FIX/deploy-logs"; DEPLOY_LOGS="$LV_DEPLOY_LOGS"
 export LV_RACK_SUITE="exit 1"
 : > "$RACK_CALLS"; deploy_library >/dev/null 2>&1; rc=$?
 ck "a red suite refuses the deploy" "$rc:$(grep -c deployed "$RACK_CALLS")" "3:0"
@@ -115,6 +116,22 @@ ck "a held lock refuses the deploy" "$rc:$(grep -c deployed "$RACK_CALLS")" "3:0
 rm -f "$FIX/lib/lock.sh"
 : > "$RACK_CALLS"; deploy_library >/dev/null 2>&1; rc=$?
 ck "lock free, tree clean, suite green: it deploys, unprompted" "$rc:$(grep -c deployed "$RACK_CALLS")" "0:1"
+# LVI-062: every U run leaves a log, and the suite prints a line per test.
+export LV_DEPLOY_LOGS="$FIX/deploy-logs"; DEPLOY_LOGS="$LV_DEPLOY_LOGS"
+export LV_RACK_SUITE="exit 1"
+deploy_library >/dev/null 2>&1
+ck "a refused deploy leaves a log naming why" "$(grep -c 'suite is red' "$DEPLOY_LOGS/latest.log")" "1"
+ck "the log ends with the exit code" "$(tail -1 "$DEPLOY_LOGS/latest.log" | cut -d' ' -f1-2)" "exit 3"
+ck "the log holds no colour codes" "$(grep -c $'\033' "$DEPLOY_LOGS/latest.log")" "0"
+unset LV_RACK_SUITE
+mkdir -p "$FIX/suite/tests"
+printf 'echo fine\n' > "$FIX/suite/tests/a.sh"
+printf 'echo "  ✗ the thing broke"; exit 1\n' > "$FIX/suite/tests/b.sh"
+out=$(LIB_DIR="$FIX/suite" SUITE_LOG_DIR="$FIX/suite-logs" run_library_suite 2>&1); rc=$?
+ck "the suite names each test with a counter" "$(printf '%s\n' "$out" | grep -c '\[[12]/2\]')" "2"
+ck "a failing test shows its ✗ line" "$rc:$(printf '%s\n' "$out" | grep -c 'the thing broke')" "1:1"
+ck "and keeps its full output" "$(cat "$FIX/suite-logs/b.log" 2>/dev/null | grep -c broke)" "1"
+export LV_RACK_SUITE="exit 0"
 LIB_DIR=""
 deploy_library >/dev/null 2>&1; ck "no library, no deploy" "$?" "3"
 

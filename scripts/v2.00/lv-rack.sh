@@ -272,6 +272,10 @@ LIB_DIR="${LV_LIBRARY_DIR:-}"
 # The blind sweep's state — pid, result, logs, held fixes (lv-library-sweep.sh,
 # LVI-031). LV_SWEEP_STATE is the test seam.
 SWEEP_STATE="${LV_SWEEP_STATE:-$COORD_DIR/.claude/orchestrator/library-sweep}"
+# `U`'s own record: one log per deploy (suite, deploy-all.sh, publish), so a
+# red line that scrolled off the board can be read afterwards (LVI-062).
+# LV_DEPLOY_LOGS is the test seam.
+DEPLOY_LOGS="${LV_DEPLOY_LOGS:-$COORD_DIR/.claude/orchestrator/deploy-logs}"
 # The board's own settings (`,`): key=value lines, gitignored coordinator
 # state. LV_RACK_SETTINGS is the test seam.
 RACK_SETTINGS="${LV_RACK_SETTINGS:-$COORD_DIR/.claude/orchestrator/rack-settings}"
@@ -2317,10 +2321,34 @@ sweep_library() {
   return "$rc"
 }
 
-# deploy_library — `U`: run the library's deploy-all.sh, after the checks that
+# deploy_library — `U`: deploy_library_run, with everything it prints also
+# written to $DEPLOY_LOGS/<UTC stamp>.log (latest.log points at the newest),
+# so the outcome survives the board returning to its watch screen (LVI-062).
+# Keeps the newest 20 logs.
+deploy_library() {
+  local stamp log rc
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  mkdir -p "$DEPLOY_LOGS" 2>/dev/null
+  log="$DEPLOY_LOGS/$stamp.log"
+  if ! : > "$log" 2>/dev/null; then deploy_library_run; return; fi
+  SUITE_LOG_DIR="$DEPLOY_LOGS/$stamp.suite" deploy_library_run 2>&1 | tee -a "$log"
+  rc=${PIPESTATUS[0]}
+  printf '\nexit %s at %s\n' "$rc" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$log"
+  # Colour codes are for the screen; the file is for reading.
+  sed $'s/\033\\[[0-9;?]*[A-Za-z]//g' "$log" > "$log.tmp" 2>/dev/null && mv "$log.tmp" "$log"
+  ln -sf "$stamp.log" "$DEPLOY_LOGS/latest.log" 2>/dev/null
+  printf '\n  %slog: %s%s\n' "$DIM" "$log" "$R"
+  # Keep the newest 20 runs.
+  ls -1t "$DEPLOY_LOGS"/*.log 2>/dev/null | grep -v '/latest\.log$' | tail -n +21 | while IFS= read -r old; do
+    rm -rf "$old" "${old%.log}.suite"
+  done
+  return "$rc"
+}
+
+# deploy_library_run — run the library's deploy-all.sh, after the checks that
 # make an unattended deploy safe to start from a board. Exit 0 deployed, 3
 # refused (the reason is printed), otherwise deploy-all.sh's own exit.
-deploy_library() {
+deploy_library_run() {
   local rc
   if [ -z "$LIB_DIR" ] || [ ! -x "$LIB_DIR/deploy-all.sh" ]; then
     printf '  %sno library to deploy from — .claude/workflow-source names none with a deploy-all.sh%s\n' "$YEL" "$R"
@@ -2383,20 +2411,39 @@ publish_library() {
   esac
 }
 
-# run_library_suite — every tests/*.sh in the library, naming each failure.
-# LV_RACK_SUITE, when set, is run instead (a command line, from the library).
+# run_library_suite — every tests/*.sh in the library, one progress line each
+# ("[3/28] client-reports.sh ✓ 233s"), so a long healthy run does not look hung
+# (LVI-062). A failure prints its failing lines (✗ / FAIL), or its last lines
+# when it names none. SUITE_LOG_DIR, when set, keeps each test's full output as
+# <name>.log there. LV_RACK_SUITE, when set, is run instead (a command line,
+# from the library).
 run_library_suite() {
   if [ -n "${LV_RACK_SUITE:-}" ]; then
     (cd "$LIB_DIR" && bash -c "$LV_RACK_SUITE") >/dev/null 2>&1
     return
   fi
-  local t red=0
+  local t name out start secs red=0 i=0 n=0 tmp
+  for t in "$LIB_DIR"/tests/*.sh; do [ -f "$t" ] && n=$((n+1)); done
+  [ -n "${SUITE_LOG_DIR:-}" ] && mkdir -p "$SUITE_LOG_DIR" 2>/dev/null
+  tmp=$(mktemp "${TMPDIR:-/tmp}/lv-rack-suite.XXXXXX") || tmp=/dev/null
   for t in "$LIB_DIR"/tests/*.sh; do
     [ -f "$t" ] || continue
-    if ! (cd "$LIB_DIR" && bash "$t") >/dev/null 2>&1; then
-      printf '    %sFAILED %s%s\n' "$RED" "${t#$LIB_DIR/}" "$R"; red=1
+    i=$((i+1)); name=${t#$LIB_DIR/tests/}; start=$(date +%s)
+    if [ -n "${SUITE_LOG_DIR:-}" ] && [ -d "$SUITE_LOG_DIR" ]; then out="$SUITE_LOG_DIR/${name%.sh}.log"; else out=$tmp; fi
+    if (cd "$LIB_DIR" && bash "$t") > "$out" 2>&1 < /dev/null; then
+      secs=$(( $(date +%s) - start ))
+      printf '    [%d/%d] %s %s✓%s %ss\n' "$i" "$n" "$name" "$GRN" "$R" "$secs"
+    else
+      secs=$(( $(date +%s) - start ))
+      printf '    [%d/%d] %s %s✗ FAILED%s %ss\n' "$i" "$n" "$name" "$RED" "$R" "$secs"; red=1
+      if grep -qE '✗|FAIL|not ok' "$out" 2>/dev/null; then
+        grep -E '✗|FAIL|not ok' "$out" | head -20 | sed 's/^/        /'
+      else
+        tail -15 "$out" 2>/dev/null | sed 's/^/        /'
+      fi
     fi
   done
+  [ "$tmp" != /dev/null ] && rm -f "$tmp"
   return "$red"
 }
 
