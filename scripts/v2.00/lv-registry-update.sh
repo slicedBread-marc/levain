@@ -70,6 +70,8 @@
 #   active -> verify    LV_ALLOW_IGNORED=1      a file the plan wrote is
 #                                               git-ignored, never committed
 #                                               (lv-ignored-sources.sh)
+#   any                 LV_ALLOW_CLAIMED=1      another live session holds the
+#                                               plan's claim (LVI-019)
 #
 # And one shape rule with no override: `accept` is entered from `testing` only,
 # and left only for testing, active, draft or abandoned.
@@ -179,6 +181,14 @@ if [ "$from_state" = "abandoned" ] && [ "$to_state" != "draft" ]; then
   echo "Error: $plan_id is abandoned. Revive it to 'draft' first, then replan." >&2
   exit 1
 fi
+
+# ── Not under another live session's claim ────────────────────────────────
+#
+# A transition is a write to a plan, and a plan someone else holds is theirs
+# until they release it (a client's LVI-019: a second session moved a plan
+# accept -> testing beneath an attended /lv-accept mid-walk). See
+# wf_claim_refuse_other; LV_ALLOW_CLAIMED=1 overrides.
+wf_claim_refuse_other "$plan_id" "move it $from_state -> $to_state" || exit 1
 
 # ── A finished plan does not walk backwards ───────────────────────────────
 #

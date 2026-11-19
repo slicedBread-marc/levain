@@ -464,6 +464,11 @@ if [ -z "$plan_id" ] || [ -z "$criterion" ]; then
   exit 1
 fi
 
+# Deferring a criterion settles it for the plan, and a plan another live session
+# holds is theirs to settle (a client's LVI-019: six criteria deferred beneath a
+# human mid-/lv-accept). See wf_claim_refuse_other.
+wf_claim_refuse_other "$plan_id" "defer its criteria" || exit 1
+
 # `-` means the criterion is on stdin, where the shell has nothing to expand.
 criterion_source=argv
 if [ "$criterion" = "-" ]; then

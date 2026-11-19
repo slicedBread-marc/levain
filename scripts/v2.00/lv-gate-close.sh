@@ -274,6 +274,14 @@ if [ -z "$id" ]; then
   exit 1
 fi
 
+# An answer closed under another live session's claim acts on a plan someone is
+# working — a client's LVI-019 closed manual-test beneath a human mid-/lv-accept.
+# A withdrawal is the harness recording that a question went moot, not an
+# answer to it, and stays allowed. See wf_claim_refuse_other.
+if ! $withdraw; then
+  wf_claim_refuse_other "$id" "close its gate" || exit 1
+fi
+
 # By number, so a gate opened under the plan closes when the brief it came from
 # is the name in hand (WFI-187).
 gate_file=$(wf_gate_file "$id" || true)

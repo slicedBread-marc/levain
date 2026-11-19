@@ -13,6 +13,8 @@
 #   5. A manual-test gate fits accept and testing; lv-registry-audit.sh
 #      reports UNQUEUED, PRE-SPLIT and STRAY GATE.
 #   6. /lv-tray counts accept plans separately on its machine line.
+#   8. A plan another live session has claimed is not transitioned, its gate
+#      not closed, its criteria not deferred, under that claim (LVI-019).
 #
 # (The dispatcher half — exit 20 and no worker for an accept plan — is in
 # tests/orchestrator.sh beside the other drive-one exits.)
@@ -281,6 +283,35 @@ assert_eq "…and from HEAD, in the transition's commit" "" \
 assert_has "its rows are kept in progress.md" "| reads clearly | PASS |" \
   "$(git show HEAD:plans/PLN-047-plain/progress.md 2>/dev/null)"
 assert_eq "nothing is left dirty" "" "$(git status --porcelain -- plans/PLN-047-plain)"
+
+# ── 8. Another live session's claim ───────────────────────────────────────
+echo ""
+echo "8. a plan another live session holds is not moved, closed or deferred under it (a client's LVI-019)"
+# The holder: a live process that is neither this shell nor any ancestor of
+# it, standing in for an attended /lv-accept mid-walk in another terminal.
+sleep 300 & HOLDER=$!
+"$S/lv-claim.sh" PLN-044 --pid "$HOLDER" >/dev/null 2>&1
+"$S/lv-gate-open.sh" PLN-044 manual-test "1 criterion needs human eyes" --hold-claim >/dev/null 2>&1
+out=$("$S/lv-registry-update.sh" PLN-044 accept testing --no-commit 2>&1); rc=$?
+assert_eq "accept -> testing under another session's claim is refused" 1 "$rc"
+assert_has "…saying who holds it" "PID $HOLDER" "$out"
+assert_eq "…and the row is still accept" accept "$(state_of PLN-044)"
+out=$("$S/lv-gate-close.sh" PLN-044 "deferred, not judged" --only manual-test --basis operator 2>&1); rc=$?
+assert_eq "closing its gate is refused" 1 "$rc"
+assert_eq "…and the gate is still open" true "$([ -f .claude/orchestrator/gates/PLN-044.gate ] && echo true || echo false)"
+out=$("$S/lv-defer-criterion.sh" PLN-044 unbuilt "/page — reads clearly on a phone" --prereq BUG-087 --no-commit 2>&1); rc=$?
+assert_eq "deferring its criteria is refused" 1 "$rc"
+assert_not "…and nothing was deferred" "PLN-044" "$(cat plans/deferred-criteria.md 2>/dev/null)"
+out=$(LV_ALLOW_CLAIMED=1 "$S/lv-registry-update.sh" PLN-044 accept testing --no-commit 2>&1); rc=$?
+assert_eq "LV_ALLOW_CLAIMED=1 overrides" 0 "$rc"
+assert_eq "…and the transition lands" testing "$(state_of PLN-044)"
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
+# The caller's own claim is not somebody else's.
+"$S/lv-claim.sh" PLN-044 >/dev/null 2>&1
+out=$("$S/lv-registry-update.sh" PLN-044 testing accept --no-commit 2>&1); rc=$?
+assert_not "a session's own claim does not refuse it" "another live session" "$out"
+"$S/lv-unclaim.sh" PLN-044 >/dev/null 2>&1
+git checkout -q -- plans/REGISTRY.md 2>/dev/null || true
 
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"

@@ -2075,6 +2075,39 @@ wf_claim_live() {
   return 1
 }
 
+# wf_claim_refuse_other <artifact> <what> — 1, having said why on stderr, when
+# <artifact> is claimed by ANOTHER live session; 0 otherwise.
+#
+# A claim was only ever enforced at the door: lv-claim.sh refuses a second
+# claimant, and the write hook refuses an Edit. The scripts that MOVE a plan
+# never asked. A client's LVI-019: an attended /lv-accept held PLN-082
+# (`lv-claim.sh --state accept,testing`, exit 0) with a human mid-walk, and a
+# second attended session answering the manual-test gate — which takes no claim
+# on that path — deferred all six criteria, moved accept -> testing and closed
+# the gate under it. The human's own accept -> testing then failed on a state
+# that had changed beneath them, and their PASSes had to be committed by hand.
+#
+# So the three writes that act on another session's plan — a registry
+# transition, a gate close, a deferral — check the claim themselves. The
+# caller's own claim, and one its dispatcher took out for it, are recognised by
+# wf_claim_mine and pass. LV_ALLOW_CLAIMED=1 is the sentence a human types when
+# they know the holder is finished or wedged (lv-unclaim.sh --force is the
+# other). RELEASE/DEPLOY are batch locks, not a plan someone is walking, and
+# are not checked here.
+wf_claim_refuse_other() {
+  local artifact="$1" what="${2:-act on it}" dir
+  [ "${LV_ALLOW_CLAIMED:-0}" = "1" ] && return 0
+  case "$artifact" in RELEASE|DEPLOY|"") return 0 ;; esac
+  dir=$(wf_claim_dir "$artifact" 2>/dev/null) || return 0
+  wf_claim_live "$dir" || return 0
+  wf_claim_mine "$dir" && return 0
+  echo "Error: $artifact is claimed by another live session (PID ${LV_CLAIM_HOLDER_PID:-?}, $(( ${LV_CLAIM_AGE:-0} / 60 ))m ago) — not going to $what under it." >&2
+  echo "       That session is working this plan now (a human mid-/lv-accept, or a worker); acting" >&2
+  echo "       on it here changes its state beneath them (a client's LVI-019). Wait for it to release," >&2
+  echo "       or, if you know it is finished or wedged: LV_ALLOW_CLAIMED=1 <this command>" >&2
+  return 1
+}
+
 # ── Gates ─────────────────────────────────────────────────────────────────
 
 # wf_gate_field <gate-file> <KEY> [--unescape]
