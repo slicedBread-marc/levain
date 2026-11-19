@@ -256,7 +256,9 @@ row_state() {
 # not <to>: `release` for work merged to develop and never carried through
 # /lv-release, `deploy` for work sitting on release awaiting /lv-deploy. The
 # registry cannot answer this — a plan reads `complete` the day before the
-# release and the day after.
+# release and the day after — but it does say which of them are done: only a
+# complete plan is promotable, whatever bookkeeping commits an in-flight one
+# has landed on develop (the coordinator's LVI-056).
 row_promotable() {
   local from="$1" to="$2" id
   git -C "$ROOT" rev-parse --verify "$from" >/dev/null 2>&1 || return 0
@@ -264,8 +266,7 @@ row_promotable() {
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     emit "$(printf '%-11s %s' "$id" "$(wf_registry_field "$id" slug "$REGISTRY")")" list "artifact $id"
-  done < <(git -C "$ROOT" log --oneline "$from" --not "$to" 2>/dev/null \
-            | grep -oE "($LV_PLN_RE)-[0-9]+" | sort -u)
+  done < <(wf_promotable_plans "$ROOT" "$from" "$to" "$REGISTRY")
 }
 
 # history_body — the sections of `history <ID>`, in reading order. Reads the

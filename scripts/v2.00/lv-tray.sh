@@ -112,26 +112,13 @@ bug_of_number() {
   return 0
 }
 
-# plans_ahead <a> <b> — how many DISTINCT plan IDs appear in commits on <a>
-# that are not on <b>.
-#
-# One `git log` into one awk. The `--oneline | grep -oE | sort -u | wc -l |
-# tr -d ' '` form this replaces was five processes per counter, twice per
-# render, and coordinator' lv-rack renders this board for nine projects at once.
-# `--format=%s` rather than `--oneline` because the abbreviated SHA an
-# --oneline line carries is hex and can never hold a PLN id anyway.
-# The seen-count is kept in a variable, not `length(array)`, which is a gawk
-# extension and not available in the awk that ships on macOS.
+# plans_ahead <a> <b> — how many plans a promotion from <a> to <b> would
+# carry: complete plans named in commits on <a> and not on <b>. The list is
+# wf_promotable_plans', so this count and lv-tray-drill.sh's rows agree, and
+# a plan still in flight is not counted for its bookkeeping commits (the
+# coordinator's LVI-056).
 plans_ahead() {
-  git -C "$ROOT" log --format=%s "$1" --not "$2" 2>/dev/null | awk -v plan_id_re="($LV_PLN_RE)-[0-9]+" '
-    {
-      while (match($0, plan_id_re)) {
-        k = substr($0, RSTART, RLENGTH)
-        if (!(k in seen)) { seen[k] = 1; n++ }
-        $0 = substr($0, RSTART + RLENGTH)
-      }
-    }
-    END { print n + 0 }'
+  wf_promotable_plans "$ROOT" "$1" "$2" "$REGISTRY" | awk 'END { print NR + 0 }'
 }
 
 # intake_group_note <slug> — the group heading's parenthesis: whether it is

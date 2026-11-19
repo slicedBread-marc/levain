@@ -122,6 +122,28 @@ wf_registry_rows() {
   ' "$reg"
 }
 
+# wf_promotable_plans <root> <from-ref> <to-ref> [registry-path]
+# The plans a promotion from <from> to <to> would carry: every plan ID named in
+# a commit subject on <from> and not on <to>, kept only when its registry state
+# is `complete`, one per line, sorted. The subject scan alone counted the
+# harness's own bookkeeping commits — spec, registry, progress, implement,
+# consistency — which land on develop for plans still in flight, so a client's
+# RELEASE row listed a plan in accept, one in verify and one in ready beside
+# the one that could be released (the coordinator's LVI-056). lv-tray.sh counts
+# these and lv-tray-drill.sh lists them, so both ask here and cannot disagree.
+wf_promotable_plans() {
+  local root="$1" from="$2" to="$3" reg="${4:-$1/plans/REGISTRY.md}"
+  awk -v re="($LV_PLN_RE)-[0-9]+" '
+    FILENAME == ARGV[1] { split($0, f, sprintf("%c", 31)); if (f[3] == "complete") done[f[1]] = 1; next }
+    {
+      while (match($0, re)) {
+        k = substr($0, RSTART, RLENGTH)
+        if ((k in done) && !(k in seen)) { seen[k] = 1; print k }
+        $0 = substr($0, RSTART + RLENGTH)
+      }
+    }' <(wf_registry_rows "$reg") <(git -C "$root" log --format=%s "$from" --not "$to" 2>/dev/null) | sort
+}
+
 # wf_registry_field <id> <column> [registry-path]
 # One column of one plan's row, trimmed. Empty when the id or the row isn't
 # found. Column names: slug state priority branch updated wf tags deps.

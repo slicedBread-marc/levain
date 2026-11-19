@@ -268,6 +268,23 @@ assert_contains "a live claim holds its bug" "$("$INTAKE")" "$(printf 'BUG-010\t
 assert_contains "and the drill says it is claimed" "$("$DRILL" row intake)" "* BUG-010     lone-one"
 rm -rf .claude/orchestrator/claims
 
+# ── RELEASE counts and lists only complete plans (the coordinator's LVI-056) ──
+# Bookkeeping commits for in-flight plans land on develop too; a client's
+# RELEASE row showed a plan in accept, one in verify and one in ready beside
+# the one releasable plan.
+echo "release row: only complete plans"
+git branch -f release HEAD >/dev/null 2>&1
+git checkout -q -b develop 2>/dev/null || git checkout -q develop
+git commit -q --allow-empty -m "implement(PLN-001-alpha): step 1"
+git commit -q --allow-empty -m "test(PLN-002-beta): complete"
+rel=$("$DRILL" row release 2>/dev/null || true)
+assert_contains "the complete plan is listed" "$rel" "PLN-002"
+case "$rel" in *PLN-001*) fail "an active plan's bookkeeping commit is not listed" "$rel" ;;
+  *) pass "an active plan's bookkeeping commit is not listed" ;; esac
+fields=$("$REPO_ROOT/scripts/v2.00/lv-tray.sh" --fields 2>/dev/null || true)
+assert_contains "and the board counts the same one" "$fields" "$(printf '\trelease_pending=1\t')"
+git checkout -q - 2>/dev/null || true
+
 echo
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
