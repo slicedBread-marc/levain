@@ -1223,6 +1223,34 @@ assert_eq "…and the claim stays" "true" "$([ -f "$claims_root/908/.wf-claim" ]
 assert_eq "--force releases it" "0:false" "$rc:$([ -f "$claims_root/908/.wf-claim" ] && echo true || echo false)"
 kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
 
+# A client's LVI-063: a deploy checked `release` against its remote and was
+# told "in sync" while a release run moved the ref under it. RELEASE and DEPLOY
+# are one promotion lock: neither is claimed or spawned while another live
+# session holds the other, and --steal does not reach across.
+sleep 300 & other=$!
+"$SCRIPT_DIR/lv-claim.sh" RELEASE --pid "$other" >/dev/null 2>&1
+rc=0; err=$("$SCRIPT_DIR/lv-claim.sh" DEPLOY 2>&1 >/dev/null) || rc=$?
+assert_eq "DEPLOY is refused while a live RELEASE run holds the promotion lock" "2" "$rc"
+case "$err" in *"held by a RELEASE run"*) ok_pl=1 ;; *) ok_pl=0 ;; esac
+assert_eq "…and the refusal names the run holding it" "1" "$ok_pl"
+assert_eq "…and no DEPLOY claim was written" "false" \
+  "$([ -f "$claims_root/DEPLOY/.wf-claim" ] && echo true || echo false)"
+rc=0; "$SCRIPT_DIR/lv-claim.sh" DEPLOY --steal >/dev/null 2>&1 || rc=$?
+assert_eq "--steal does not take the other run's lock" "2" "$rc"
+rc=0; "$SCRIPT_DIR/lv-spawn.sh" deploy DEPLOY --dry-run >/dev/null 2>&1 || rc=$?
+assert_eq "the dispatcher does not spawn a deploy over a live release" "2" "$rc"
+"$SCRIPT_DIR/lv-unclaim.sh" RELEASE --force >/dev/null 2>&1
+"$SCRIPT_DIR/lv-claim.sh" DEPLOY --pid "$other" >/dev/null 2>&1
+rc=0; "$SCRIPT_DIR/lv-claim.sh" RELEASE --if-free >/dev/null 2>&1 || rc=$?
+assert_eq "…and RELEASE is refused while a live DEPLOY run holds it" "2" "$rc"
+"$SCRIPT_DIR/lv-unclaim.sh" DEPLOY --force >/dev/null 2>&1
+kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
+"$SCRIPT_DIR/lv-claim.sh" RELEASE >/dev/null 2>&1
+rc=0; "$SCRIPT_DIR/lv-claim.sh" DEPLOY >/dev/null 2>&1 || rc=$?
+assert_eq "one session holding RELEASE may still claim DEPLOY itself" "0" "$rc"
+"$SCRIPT_DIR/lv-unclaim.sh" DEPLOY >/dev/null 2>&1
+"$SCRIPT_DIR/lv-unclaim.sh" RELEASE >/dev/null 2>&1
+
 
 section "Two plans owing consistency do not stop implement (client-b WFI-020)"
 

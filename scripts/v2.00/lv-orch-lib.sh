@@ -1805,6 +1805,40 @@ wf_claim_held() {
   return 1
 }
 
+# wf_promote_sibling_held <artifact> — 0 when <artifact> is one promotion slot
+# (RELEASE or DEPLOY) and the OTHER one is held by a live session that is not
+# the caller's own. Sets LV_PROMOTE_SIBLING to the slot it found held, and the
+# LV_CLAIM_* reporting variables from reading it. 1 otherwise, for every other
+# artifact.
+#
+# ONE PROMOTION LOCK, TWO NAMES (a client's LVI-063)
+#
+# /lv-release moves `release`; /lv-deploy checks `release` against its remote
+# with lv-release-sync.sh, then merges it into `main` and pushes. Each claimed
+# only its own slot, so a release could move the ref between the deploy's
+# check and its merge: one deploy was told "release is in sync with
+# origin/release (1adfbb4f) — safe to promote" while git showed the local ref
+# already at e44a164d, a commit no E2E run had pushed; the next run said
+# "AHEAD". So the two claims are now exclusive of each other. A deploy that
+# finds a release in flight is refused exactly as if its own slot were taken,
+# and the other way round, for the whole run, because each skill holds its
+# claim from its first step to its last. It never promotes on a stale check.
+wf_promote_sibling_held() {
+  local sib d
+  LV_PROMOTE_SIBLING=""
+  case "$1" in
+    RELEASE) sib=DEPLOY ;;
+    DEPLOY)  sib=RELEASE ;;
+    *) return 1 ;;
+  esac
+  d=$(wf_claim_dir "$sib") || return 1
+  wf_claim_live "$d" || return 1
+  wf_claim_mine "$d" && return 1
+  LV_PROMOTE_SIBLING="$sib"
+  LV_CLAIM_HELD_DIR="$d"
+  return 0
+}
+
 # wf_artifacts_with_number <num> — every artifact in this project carrying that
 # number, one "<PREFIX> <where>" line each. Empty when the number is unused.
 #

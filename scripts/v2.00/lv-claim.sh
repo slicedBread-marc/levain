@@ -323,6 +323,17 @@ if [ -d "$legacy_dir" ] && [ -f "$legacy_dir/.wf-claim" ] && [ ! -f "$plan_dir/.
   mv "$legacy_dir/.wf-claim" "$plan_dir/.wf-claim" 2>/dev/null || true
 fi
 
+# RELEASE and DEPLOY are one promotion lock (a client's LVI-063): neither is
+# taken while a live session other than this one holds the other. Refused like
+# a held claim (exit 2), and --steal does not reach across: it takes this slot
+# from its holder, never the other run's. See wf_promote_sibling_held.
+if wf_promote_sibling_held "$plan_name"; then
+  echo "$plan_name not claimed: the promotion lock is held by a $LV_PROMOTE_SIBLING run (PID ${LV_CLAIM_HOLDER_PID:-?}, $(wf_human_age "${LV_CLAIM_AGE:-0}") ago)." >&2
+  echo "RELEASE and DEPLOY exclude each other so release cannot move between a deploy's sync check and its merge (LVI-063)." >&2
+  echo "Wait for that run to finish, or clear it with lv-unclaim.sh $LV_PROMOTE_SIBLING if its session is gone." >&2
+  exit 2
+fi
+
 if wf_claim_live "$plan_dir"; then
   # A claim this caller's own dispatch wrote is not a competing session — it is
   # this session, held in advance. Refresh it and carry on (WFI-073/075).

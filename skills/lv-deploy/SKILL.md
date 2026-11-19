@@ -36,6 +36,7 @@ Before starting, confirm E2E passed on release:
    |-|-|-|
    | `0` | Claimed | Continue at step 2 |
    | `2` | Another live session already holds it | Tell the user who holds it (the script's output names the session) and stop. If they believe it's stuck, offer `scripts/lv-exec.sh lv-claim.sh DEPLOY --steal` |
+   | `2`, output says `the promotion lock is held by a RELEASE run` | A /lv-release is in flight. `RELEASE` and `DEPLOY` are one promotion lock: neither is taken while the other is held, so `release` cannot move between `/lv-deploy`'s `lv-release-sync.sh` check and its merge into `main` (a client's LVI-063). | Tell the user which run holds it and stop. Do not `--steal`, which never reaches the other slot. Run again once it has finished |
 
    **From here on, whatever happens — success, test failure, "nothing to deploy," or a parked
    gate — the last thing you do before finishing is `scripts/lv-exec.sh lv-unclaim.sh DEPLOY`.**

@@ -243,6 +243,15 @@ if wf_claim_held "$artifact"; then
   exit 2
 fi
 
+# One promotion lock across RELEASE and DEPLOY (a client's LVI-063) — the
+# dispatcher must not launch a deploy while a release run holds `release`, or
+# the other way round. Same exit as a held claim, so the sweep defers it.
+if wf_promote_sibling_held "$artifact"; then
+  echo "lv-spawn: the promotion lock is held by a $LV_PROMOTE_SIBLING run (PID ${LV_CLAIM_HOLDER_PID:-?}) — not spawning $role" >&2
+  echo "          claim at ${LV_CLAIM_HELD_DIR:-?}/.wf-claim" >&2
+  exit 2
+fi
+
 # A queued spawn for this exact role is being served right now; drop the marker
 # so the release path does not launch a second one.
 $dry_run || rm -f "$ORCH/pending/${num}-${role}.spawn" 2>/dev/null || true
