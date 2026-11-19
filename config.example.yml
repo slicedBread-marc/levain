@@ -440,6 +440,11 @@ tunnel_command: "cloudflared tunnel --url http://localhost:$FEATURE_PORT"
 #                gate, manualTestGate.blockOnCosmetic: true, autonomy scoped
 #                to release/deploy at most — production-push stays attended.
 #
+# projectProfile.headlessError (pre-launch only): `gate` (default) holds a plan
+# whose Chrome-Assisted criterion has only a headless ERROR for a human, since
+# an ERROR is no result. `end-state` sends it to the post-ship checklist marked
+# "headless ERROR — never ran", for one walkthrough of the app at the end.
+#
 # Leave unset until you've deliberately picked one — lv-profile.sh --show
 # refuses rather than assume a tier for you.
 #

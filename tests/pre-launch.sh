@@ -278,6 +278,24 @@ out=$("$S/lv-lane.sh" answer PLN-002 manual-test 2>&1); rc=$?
 assert_eq "lv-lane.sh answer refuses it (exit 4)" 4 "$rc"
 assert_has "…naming the criterion" "the label stays on one line at a phone width" "$out"
 assert_eq "…and moves nothing" "$before" "$(cat plans/PLN-002-beta/plan.md)"
+# A client's LVI-023: the operator chose one walkthrough at the end over
+# per-plan checks. With projectProfile.headlessError: end-state, the same
+# ERROR goes to the end-state review, listed as never run, not as tested.
+printf 'projectProfile:\n  tier: pre-launch\n  headlessError: end-state\n' > levain.yml
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "headlessError: end-state: the ERROR still counts" 1 "$CHROME_ERRORED"
+assert_eq "…but does not gate" false "$GATE"
+assert_eq "…saying pre-launch" true "$PRELAUNCH"
+assert_has "…and that it goes as never run" "go to the end-state review as never run" "$GATE_REASON"
+git add -A && git commit -qm "end-state knob"
+out=$("$S/lv-lane.sh" answer PLN-002 manual-test 2>&1); rc=$?
+assert_eq "…lv-lane.sh answer: exit 0" 0 "$rc"
+assert_has "…lists it on the checklist as never run" "- [ ] /print — the label stays on one line at a phone width _(chrome-assisted, headless ERROR — never ran" "$(cat plans/PLN-002-beta/plan.md)"
+git checkout -q HEAD~1 -- plans/PLN-002-beta/plan.md levain.yml 2>/dev/null; git commit -qam "back" 2>/dev/null
+printf 'projectProfile:\n  tier: governed\n  headlessError: end-state\n' > levain.yml
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "headlessError: end-state on a governed project still gates" true "$GATE"
+printf '%b' "projectProfile:\n  tier: pre-launch\n" > levain.yml
 printf '| # | Criterion | Build | Result | Notes |\n|-|-|-|-|-|\n| 1 | /print — the label stays on one line at a phone width | %s | — | needs: device — ERROR on the emulated touch path; a real phone is required |\n' "$sha" > plans/PLN-002-beta/test-progress.md
 eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
 assert_eq "an ERROR beside a needs: reason is a reason, not a bare ERROR" 0 "$CHROME_ERRORED"

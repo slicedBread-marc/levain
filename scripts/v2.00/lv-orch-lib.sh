@@ -1369,6 +1369,17 @@ wf_prelaunch() {
   [ "$live" \> "$today" ]
 }
 
+# wf_prelaunch_errors_reviewed → exit 0 while pre-launch AND the operator has
+# set projectProfile.headlessError: end-state. Then a Chrome-Assisted criterion
+# whose only record is a headless ERROR goes to the end-state review, listed as
+# never run, instead of gating the plan. Unset or `gate` keeps the coordinator's
+# LVI-043 rule: an ERROR is no result and gates even pre-launch (a client's
+# LVI-023: the operator walks the whole app at the end rather than per plan).
+wf_prelaunch_errors_reviewed() {
+  wf_prelaunch || return 1
+  [ "$(wf_cfg projectProfile.headlessError gate)" = "end-state" ]
+}
+
 # ── Pre-launch self-answer (a client's LVI-034) ─────────────────────────────
 #
 # A pre-launch project runs to its end state without stopping for questions a

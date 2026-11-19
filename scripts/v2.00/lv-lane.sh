@@ -104,7 +104,8 @@
 #   check / answer   0 express holds · 1 downgraded (reasons on stdout and in
 #                    plan.md) · 3 no lane declared · 2 usage or error
 #                    · 4 (answer manual-test) a Chrome-Assisted criterion's only
-#                    result is a headless ERROR; nothing moved (LVI-043)
+#                    result is a headless ERROR; nothing moved (LVI-043),
+#                    unless projectProfile.headlessError: end-state (LVI-023)
 #   push-covered     0 covered · 1 not covered (reason on stderr)
 #   declare          0 done · 1 refused or error
 #   status           0 always, unless the plan cannot be resolved (2)
@@ -806,7 +807,7 @@ answer)
     ' "$PLAN_MD")
   fi
   errored=$(printf '%s\n' "${chrome:-}" | sed -n 's/^E	[0-9]*	//p')
-  if [ -n "$errored" ]; then
+  if [ -n "$errored" ] && ! wf_prelaunch_errors_reviewed; then
     echo "$PLAN_ID: manual-test not answered — these Chrome-Assisted criteria have only a headless ERROR," >&2
     echo "  which is no result, so they cannot go to the post-ship checklist as if tested (LVI-043):" >&2
     printf '%s\n' "$errored" | sed 's/^/    - /' >&2
@@ -828,10 +829,16 @@ answer)
     done <<< "$open"
   fi
   if [ -n "${chrome:-}" ]; then
-    while IFS=$'\t' read -r _kind ln crit; do
+    while IFS=$'\t' read -r kind ln crit; do
       [ -n "$ln" ] || continue
       sed -i.bak "${ln}s/\[ \]/[x]/" "$PLAN_MD" && rm -f "$PLAN_MD.bak"
-      list+="- [ ] ${crit} _(chrome-assisted, untested; shipped without eyes by ${by}, ${today})_"$'\n'
+      # An errored one reaches here only under projectProfile.headlessError:
+      # end-state, and says it never ran: a headless ERROR is no result (LVI-023).
+      if [ "$kind" = E ]; then
+        list+="- [ ] ${crit} _(chrome-assisted, headless ERROR — never ran; shipped without eyes by ${by}, ${today})_"$'\n'
+      else
+        list+="- [ ] ${crit} _(chrome-assisted, untested; shipped without eyes by ${by}, ${today})_"$'\n'
+      fi
       moved=$((moved + 1))
     done <<< "$chrome"
   fi

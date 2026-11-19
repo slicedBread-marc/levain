@@ -40,7 +40,11 @@ for questions.** While `wf_prelaunch` holds:
   one artifact and gate in a day parks for a human, because that is a loop.
 - `manual-test` does not gate: `lv-manual-gate.sh` answers `GATE=false` with
   `PRELAUNCH=true`, and `/lv-test` moves the open eyes criteria to the plan's
-  post-ship checklist (`lv-lane.sh answer <PLN> manual-test`).
+  post-ship checklist (`lv-lane.sh answer <PLN> manual-test`). A
+  Chrome-Assisted criterion whose only record is a headless `ERROR` still gates,
+  because an ERROR is no result (the coordinator's LVI-043), unless the operator
+  sets `headlessError: end-state`. Then it goes to the checklist marked
+  *headless ERROR — never ran*, for the end-state walkthrough (a client's LVI-023).
 - `deploy-deferred-criteria` does not gate on `(external)` or `(soak)` rows:
   `lv-lane.sh deferred-covered` covers them for any plan, lane or none, and they
   stay open in `plans/deferred-criteria.md`. An `(unbuilt)` row still gates
@@ -59,6 +63,7 @@ worth; only a live project keeps per-plan gates.
 projectProfile:
   tier: pre-launch
   selfAnswerMaxPerDay: 3      # optional
+  headlessError: gate         # optional: gate (default) | end-state
 ```
 
 What the tier gives you is:

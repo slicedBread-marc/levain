@@ -55,7 +55,9 @@
 #     count in CHROME_UNRECORDED too: a note is not a result (LVI-030)
 #   CHROME_ERRORED — how many of CHROME_UNTESTED have only a headless ERROR
 #     as their reason. They gate even while pre-launch: an ERROR is no result,
-#     so it is never moved to the end-state review as if tested (LVI-043)
+#     so it is never moved to the end-state review as if tested (LVI-043).
+#     With projectProfile.headlessError: end-state they go there as never
+#     run instead, and do not gate (a client's LVI-023)
 #   CHROME_TICKED — Chrome-Assisted criteria ticked in plan.md with nothing
 #     behind the tick (no PASS/FAIL that settles it, no `deferred as DC-NNN`,
 #     no SCOPED OUT, no post-ship checklist line). They are counted in the
@@ -589,7 +591,12 @@ if [ "$chrome_untested" -gt 0 ] && wf_prelaunch; then
   PRELAUNCH=true
   [ "$chrome_excused" -gt 0 ] || [ "$chrome_unrecorded" -gt "$chrome_excused" ] || gate=false
   reason="$chrome_untested Chrome-Assisted criteria untested go to the end-state review too: $chrome_reasoned; $reason"
-  if [ "$chrome_errored" -gt 0 ]; then
+  if [ "$chrome_errored" -gt 0 ] && wf_prelaunch_errors_reviewed; then
+    # The operator chose one walkthrough at the end over per-plan checks
+    # (projectProfile.headlessError: end-state, a client's LVI-023). The ERROR
+    # still is no result: lv-lane.sh lists it as never run, not as tested.
+    reason="$chrome_errored Chrome-Assisted criteria have only a headless ERROR, which is no result — they go to the end-state review as never run (projectProfile.headlessError: end-state): $chrome_errors; $reason"
+  elif [ "$chrome_errored" -gt 0 ]; then
     gate=true
     # An ERROR is a run that produced nothing, not a reason a person must look
     # (the coordinator's LVI-043). Re-run it in lv-test step 3c (a navigating
