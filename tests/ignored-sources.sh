@@ -118,6 +118,21 @@ mv levain.yml.orig levain.yml
 sed -i.bak '$d' "plans/$P-$SLUG/plan.md" && rm -f "plans/$P-$SLUG/plan.md.bak"
 
 echo ""
+echo "1d. An ignored promote source whose bytes HEAD holds is not lost (a client's LVI-065)"
+( cd "$WT" && mkdir -p brainstorm assets && printf 'brainstorm/\n' >> .gitignore \
+  && printf 'PNGDATA\n' > brainstorm/intro.png && cp brainstorm/intro.png assets/intro.png \
+  && git add .gitignore assets/intro.png && git commit -qm "promote intro" )
+printf '%s\n' '- **Files:** create `brainstorm/intro.png` (git-ignored, the promote source), `assets/intro.png`.' >> "plans/$P-$SLUG/plan.md"
+out=$("$S/lv-ignored-sources.sh" "$P" 2>&1)
+assert_not "a byte-identical tracked copy: not reported" "brainstorm/intro.png" "$out"
+assert_has "…other sources still are" "src/App/Debug/Store.cs" "$out"
+printf 'EDITED\n' > "$WT/brainstorm/intro.png"
+out=$("$S/lv-ignored-sources.sh" "$P" 2>&1)
+assert_has "edited after the promote: reported" "brainstorm/intro.png" "$out"
+( cd "$WT" && git reset -q --hard HEAD~1 && rm -rf brainstorm assets )
+sed -i.bak '$d' "plans/$P-$SLUG/plan.md" && rm -f "plans/$P-$SLUG/plan.md.bak"
+
+echo ""
 echo "2. active -> verify is refused while they are"
 out=$("$S/lv-registry-update.sh" "$P" active verify 2>&1); rc=$?
 assert_eq "the transition is refused" 1 "$rc"

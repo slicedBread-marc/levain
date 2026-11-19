@@ -47,6 +47,17 @@
 # lists brainstorm/foo.html still makes brainstorm/index.html a sibling of the
 # same extension (a client's LVI-057).
 #
+# CONTENT GIT ALREADY HOLDS
+#
+# An ignored file whose bytes are, exactly, a blob committed at some tracked
+# path on the worktree's HEAD is not lost when the worktree goes: a clean
+# checkout has the content. That is a promote source — a git-ignored draft
+# copied byte for byte into a tracked asset folder (a client's PLN-148 listed
+# brainstorm/<scene>/intro.png, whose tracked copy sits under brands/; it
+# filed a bug and kept the worktree, LVI-065). Only identical bytes count: a
+# source edited after its promotion has a hash git does not hold, and is
+# reported.
+#
 # Read by lv-registry-update.sh's `active -> verify` guard, and by /lv-test
 # before it removes a worktree.
 #
@@ -61,7 +72,7 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lv-orch-lib.sh
 source "$SELF_DIR/lv-orch-lib.sh"
 
-usage() { sed -n '2,56p' "$0" >&2; }
+usage() { sed -n '2,67p' "$0" >&2; }
 
 raw="${1:-}"
 case "$raw" in
@@ -120,6 +131,14 @@ found=$(
     done <<< "$derived"
     return 1
   }
+  # Every blob committed on HEAD, once (LVI-065).
+  held_blobs=$(git ls-tree -r HEAD 2>/dev/null | awk '$2 == "blob" { print $3 }' | sort -u)
+  held() {
+    local h
+    [ -n "$held_blobs" ] || return 1
+    h=$(git hash-object -- "$1" 2>/dev/null) || return 1
+    printf '%s\n' "$held_blobs" | grep -qxF -- "$h"
+  }
   ignored() { ! git ls-files --error-unmatch -- "$1" >/dev/null 2>&1 && git check-ignore -q -- "$1" 2>/dev/null; }
   # What the harness itself installs into a worktree is ignored by design and
   # was never the plan's to write (scripts/lv-exec.sh beside a plan's
@@ -133,7 +152,7 @@ found=$(
   }
   printf '%s\n' "$files" | while IFS= read -r p; do
     [ -n "$p" ] || continue
-    if [ -f "$p" ] && ! harness "$p" && ! is_derived "$p" && ignored "$p"; then printf '%s\n' "$p"; fi
+    if [ -f "$p" ] && ! harness "$p" && ! is_derived "$p" && ignored "$p" && ! held "$p"; then printf '%s\n' "$p"; fi
     d="${p%/*}"
     [ "$d" != "$p" ] && [ -d "$d" ] || continue
     exts=$(printf '%s\n' "$dir_exts" | awk -F'\t' -v d="$d" '$1 == d { print $2 }')
@@ -143,6 +162,7 @@ found=$(
       | while IFS= read -r f; do
           harness "$f" && continue
           is_derived "$f" && continue
+          held "$f" && continue
           [ "${f##*.}" != "$f" ] && printf '%s\n' "$exts" | grep -qxF ".${f##*.}" && printf '%s\n' "$f"
         done
   done | sort -u

@@ -163,7 +163,7 @@ A dependency that is abandoned **will never be satisfied**. `lv-check-deps.sh` r
 |-|-|-|
 | `draft → ready` | `plan.md` records no review verdict — `lv-review-status.sh` reports `REVIEW_LOCATION=none`, or the plan folder does not exist | `LV_ALLOW_UNREVIEWED=1` |
 | `draft → ready` | a `spec-approval` gate is open and unanswered | `LV_ALLOW_UNGATED=1` |
-| `active → verify` | `lv-ignored-sources.sh` finds a file the plan wrote (a `**Files:**` path, or a same-extension sibling in its folder) that is git-ignored and untracked in the feature worktree, and not declared regenerated under `levain.yml` `ignoredSources.derived:` | `LV_ALLOW_IGNORED=1` |
+| `active → verify` | `lv-ignored-sources.sh` finds a file the plan wrote (a `**Files:**` path, or a same-extension sibling in its folder) that is git-ignored and untracked in the feature worktree, not declared regenerated under `levain.yml` `ignoredSources.derived:`, and not byte-identical to a blob committed on HEAD (a promote source) | `LV_ALLOW_IGNORED=1` |
 | `testing → accept` | `lv-manual-gate.sh` gives no verdict, reports `PROGRESS_INCOMPLETE=true` or `LANE=express`, or says `GATE` is not `true` | `LV_ALLOW_ACCEPT=1` |
 | `testing → complete` | an unchecked `eyes:blocking` criterion with no PASS in `test-progress.md` and no answered `manual-test` gate | `LV_ALLOW_UNTESTED=1` |
 | `* → complete` | the Branch column names a branch that still exists and is an ancestor of none of `release`, `main`, `develop` (or their `origin/` counterparts) | `LV_ALLOW_UNMERGED=1` |
