@@ -301,6 +301,56 @@ eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
 assert_eq "an ERROR beside a needs: reason is a reason, not a bare ERROR" 0 "$CHROME_ERRORED"
 assert_eq "…and goes to the end-state review" false "$GATE"
 
+# A client's LVI-026: the operator bulk-tests small UI tweaks at the end. With
+# projectProfile.cosmeticCheck: end-state, an (eyes:cosmetic) criterion the
+# tester skipped goes to the end-state review; the same note on a blocking
+# criterion is no result and gates — a breaking change is never skipped.
+new_client "$PRE"
+python3 - plans/PLN-002-beta/plan.md <<'PY5'
+import sys; p=sys.argv[1]; s=open(p).read()
+s=s.replace("- [ ] (eyes:blocking)", "- [x] (eyes:blocking)", 1)
+s=s.replace("#### Manual\n", "#### Chrome-Assisted\n- [ ] (eyes:cosmetic) /print — the close button sits in the strip's corner\n\n#### Manual\n", 1)
+open(p,"w").write(s)
+PY5
+git add -A && git commit -qm "cosmetic chrome"
+sha=$(git rev-parse --short HEAD)
+skip_row() { printf '| # | Criterion | Build | Result | Notes |\n|-|-|-|-|-|\n| 1 | %s | %s | — | SKIPPED (bulk review) — projectProfile.cosmeticCheck: end-state |\n' "$1" "$sha" > plans/PLN-002-beta/test-progress.md; }
+skip_row "(eyes:cosmetic) /print — the close button sits in the strip's corner"
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "cosmeticCheck unset: a skip note is no result, and gates" true "$GATE"
+assert_eq "…counted as excused" 1 "$CHROME_EXCUSED"
+printf 'projectProfile:\n  tier: pre-launch\n  cosmeticCheck: end-state\n' > levain.yml
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "cosmeticCheck: end-state: the skipped cosmetic criterion is untested with a reason" 1 "$CHROME_UNTESTED"
+assert_eq "…does not gate" false "$GATE"
+assert_eq "…saying pre-launch" true "$PRELAUNCH"
+assert_eq "lv-profile.sh --show reports it in force" "cosmeticCheck: end-state" "$("$S/lv-profile.sh" --show | grep cosmeticCheck)"
+git add -A && git commit -qm "cosmetic knob"
+out=$("$S/lv-lane.sh" answer PLN-002 manual-test 2>&1); rc=$?
+assert_eq "…lv-lane.sh answer: exit 0" 0 "$rc"
+assert_has "…lists it on the checklist as skipped for bulk review" "the close button sits in the strip's corner _(chrome-assisted, skipped for bulk review — never ran" "$(cat plans/PLN-002-beta/plan.md)"
+cosmetic_client() {   # cosmetic_client <tag> <profile yaml lines>
+  new_client "$2"
+  python3 - plans/PLN-002-beta/plan.md "$1" <<'PY6'
+import sys; p=sys.argv[1]; s=open(p).read()
+s=s.replace("- [ ] (eyes:blocking)", "- [x] (eyes:blocking)", 1)
+s=s.replace("#### Manual\n", "#### Chrome-Assisted\n- [ ] (" + sys.argv[2] + ") /print — the close button sits in the strip's corner\n\n#### Manual\n", 1)
+open(p,"w").write(s)
+PY6
+  git add -A && git commit -qm "chrome $1"
+  sha=$(git rev-parse --short HEAD)
+  skip_row "($1) /print — the close button sits in the strip's corner"
+}
+cosmetic_client eyes:blocking 'projectProfile:\n  tier: pre-launch\n  cosmeticCheck: end-state\n'
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "the same skip on an (eyes:blocking) criterion gates — breaking changes are never skipped" true "$GATE"
+assert_eq "…counted as excused, not as a reason" 1 "$CHROME_EXCUSED"
+cosmetic_client eyes:cosmetic 'projectProfile:\n  tier: governed\n  cosmeticCheck: end-state\n'
+eval "$("$S/lv-manual-gate.sh" PLN-002 2>/dev/null)"
+assert_eq "cosmeticCheck: end-state on a governed project still gates" true "$GATE"
+assert_has "lv-profile.sh --check flags it as drift" "DRIFT projectProfile.cosmeticCheck: end-state under a governed tier" "$("$S/lv-profile.sh" --check 2>&1 || true)"
+printf '%b' "projectProfile:\n  tier: pre-launch\n" > levain.yml
+
 # A client's LVI-006/007: the builder ticked both Chrome-Assisted criteria on
 # its way to verify, test-progress.md held only a headless ERROR for them, and
 # the gate read the ticks as settled: GATE=false, CHROME_OPEN=0.

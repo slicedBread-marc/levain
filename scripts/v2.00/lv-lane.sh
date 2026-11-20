@@ -754,6 +754,15 @@ answer)
       # Its only result is a headless ERROR: no run produced anything, so it is
       # not moved as untested-but-checked-later. LVI-043 from the coordinator:
       # a sign-in criterion went to the checklist that way, and shipped.
+      # Recorded as skipped for the bulk review (projectProfile.cosmeticCheck:
+      # end-state, a client LVI-026). lv-manual-gate.sh has already refused
+      # the note on anything but an (eyes:cosmetic) criterion; this only labels it.
+      function skipped(n,   k, t) {
+        t = ""
+        if (n in NOTE) t = NOTE[n]
+        else for (k in NOTE) if (length(n) >= 24 && length(k) >= 24 && (index(k, n) || index(n, k))) { t = NOTE[k]; break }
+        return tolower(t) ~ /skipped \(bulk review\)/
+      }
       function errored(n,   k, t, l) {
         t = ""
         if (n in NOTE) t = NOTE[n]
@@ -797,12 +806,12 @@ answer)
         if (match($0, "deferred as (" ENVIRON["LV_DCRE"] ")-[0-9]+") || tolower($0) ~ /scoped out/) next
         k = norm($0)
         if (posted(k)) next
-        if ((k in L) && !passed(k)) { t = $0; sub(/^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]*/, "", t); print (errored(k) ? "E" : "M") "\t" NR "\t" t }
+        if ((k in L) && !passed(k)) { t = $0; sub(/^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]*/, "", t); print (errored(k) ? "E" : (skipped(k) ? "B" : "M")) "\t" NR "\t" t }
         next
       }
       in_c && /^[[:space:]]*-[[:space:]]*\[ \]/ {
         k = norm($0)
-        if ((k in L) && !passed(k)) { t = $0; sub(/^[[:space:]]*-[[:space:]]*\[ \][[:space:]]*/, "", t); print (errored(k) ? "E" : "M") "\t" NR "\t" t }
+        if ((k in L) && !passed(k)) { t = $0; sub(/^[[:space:]]*-[[:space:]]*\[ \][[:space:]]*/, "", t); print (errored(k) ? "E" : (skipped(k) ? "B" : "M")) "\t" NR "\t" t }
       }
     ' "$PLAN_MD")
   fi
@@ -836,6 +845,8 @@ answer)
       # end-state, and says it never ran: a headless ERROR is no result (LVI-023).
       if [ "$kind" = E ]; then
         list+="- [ ] ${crit} _(chrome-assisted, headless ERROR — never ran; shipped without eyes by ${by}, ${today})_"$'\n'
+      elif [ "$kind" = B ]; then
+        list+="- [ ] ${crit} _(chrome-assisted, skipped for bulk review — never ran; shipped without eyes by ${by}, ${today})_"$'\n'
       else
         list+="- [ ] ${crit} _(chrome-assisted, untested; shipped without eyes by ${by}, ${today})_"$'\n'
       fi

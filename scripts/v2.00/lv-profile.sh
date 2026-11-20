@@ -16,7 +16,7 @@
 # Claude to "apply the <tier> profile" and it edits them by hand, the same
 # way a human would, with the rationale comments intact.
 #
-#   lv-profile.sh --show     tier, reason, who, when
+#   lv-profile.sh --show     tier, reason, who, when, cosmeticCheck in force
 #   lv-profile.sh --check    tier's recommendation vs. the actual knobs
 #
 # Exit (--check): 0 no drift, 1 drift found, 2 no tier declared or unknown tier.
@@ -49,6 +49,9 @@ case "$mode" in
     echo "reason: ${reason:-(none recorded)}"
     echo "set by: ${set_by:-?} on ${set_on:-?}"
     echo "live:   ${live_from:-(not set — no real users)}"
+    # What /lv-test step 3c reads to skip (eyes:cosmetic) criteria (LVI-026):
+    # "end-state" only when it is in force, i.e. pre-launch.
+    if wf_prelaunch_cosmetic_skipped; then echo "cosmeticCheck: end-state"; else echo "cosmeticCheck: run"; fi
     ;;
 
   --check)
@@ -74,6 +77,20 @@ case "$mode" in
 
     if [ "$block_cosmetic" != "$want_cosmetic" ]; then
       echo "DRIFT manualTestGate.blockOnCosmetic: $block_cosmetic (tier '$tier' recommends $want_cosmetic)"
+      drift=1
+    fi
+
+    # projectProfile.cosmeticCheck (a client's LVI-026): end-state skips the
+    # headless check of (eyes:cosmetic) criteria for a bulk pass at the end. It
+    # is inert on a governed project (wf_prelaunch_cosmetic_skipped), so set
+    # there it describes a stance the project no longer has.
+    cosmetic_check=$(wf_cfg projectProfile.cosmeticCheck run)
+    case "$cosmetic_check" in
+      run|end-state) ;;
+      *) echo "DRIFT projectProfile.cosmeticCheck: '$cosmetic_check' — expected run or end-state"; drift=1 ;;
+    esac
+    if [ "$tier" = "governed" ] && [ "$cosmetic_check" = "end-state" ]; then
+      echo "DRIFT projectProfile.cosmeticCheck: end-state under a governed tier — it is ignored there; remove it or return to pre-launch"
       drift=1
     fi
 

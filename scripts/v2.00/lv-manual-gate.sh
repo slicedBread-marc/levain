@@ -58,6 +58,10 @@
 #     so it is never moved to the end-state review as if tested (LVI-043).
 #     With projectProfile.headlessError: end-state they go there as never
 #     run instead, and do not gate (a client's LVI-023)
+#     An `(eyes:cosmetic)` criterion whose note is "SKIPPED (bulk review)"
+#     counts here, under projectProfile.cosmeticCheck: end-state on a
+#     pre-launch project (a client's LVI-026); anywhere else that note is
+#     CHROME_EXCUSED, so a blocking criterion is never skipped
 #   CHROME_TICKED — Chrome-Assisted criteria ticked in plan.md with nothing
 #     behind the tick (no PASS/FAIL that settles it, no `deferred as DC-NNN`,
 #     no SCOPED OUT, no post-ship checklist line). They are counted in the
@@ -338,7 +342,8 @@ eval "$("$(dirname "$0")/lv-manual-lint.sh" "$plan_id" --counts ${resolved_args[
 # — the plan would have completed on criteria that never ran on any build
 # (a client's LVI-006, LVI-007). CHROME_TICKED counts those ticks.
 chrome_out=$(awk -F'|' -v progress="$progress_md" -v sha="$build_sha" -v carried="$resolved_file" \
-    -v planmd="$ROOT/plans/$plan_name/plan.md" -v dcre="$LV_DC_RE" '
+    -v planmd="$ROOT/plans/$plan_name/plan.md" -v dcre="$LV_DC_RE" \
+    -v cosmetic_skip="$(wf_prelaunch_cosmetic_skipped && echo 1 || echo 0)" '
   function norm(s,   t) {
     t = tolower(s)
     gsub(/[`*_]/, "", t)
@@ -400,6 +405,15 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" -v sha="$build_sha" -v carried
     if (l ~ /needs: *(data|oauth|device|extension|profile)/) return 0
     return 1
   }
+  # The operator skip for small UI tweaks (projectProfile.cosmeticCheck:
+  # end-state, a client LVI-026): an (eyes:cosmetic) criterion recorded as
+  # skipped is a reason, and goes to the end-state review. On anything else —
+  # (eyes:blocking), untagged, or with the knob off — the same note is the
+  # tester explaining why it did not try, and gates as "run them": a breaking
+  # change is never skipped.
+  function cosskip(text, n) {
+    return cosmetic_skip == 1 && tolower(text) ~ /\(eyes: *cosmetic\)/ && tolower(n) ~ /skipped \(bulk review\)/
+  }
   function settled(k) {
     if (RES[k] != "PASS" && RES[k] != "FAIL") return 0
     if (current(BUILD[k])) return 1
@@ -456,6 +470,7 @@ chrome_out=$(awk -F'|' -v progress="$progress_md" -v sha="$build_sha" -v carried
     text = $0; sub(/^[[:space:]]*-[[:space:]]*\[[ xX]\][[:space:]]*/, "", text)
     k = lookup(norm(text))
     if (k != "" && settled(k)) print "S\t" text
+    else if (k != "" && cosskip(text, NOTE[k])) print "R\t" text
     else if (k != "" && reasoned(NOTE[k])) print (erroronly(NOTE[k]) ? "X" : "R") "\t" text
     else if (k != "" && NOTE[k] != "") print "E\t" text
     else print "U\t" text

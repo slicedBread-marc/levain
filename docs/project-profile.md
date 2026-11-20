@@ -45,6 +45,12 @@ for questions.** While `wf_prelaunch` holds:
   because an ERROR is no result (the coordinator's LVI-043), unless the operator
   sets `headlessError: end-state`. Then it goes to the checklist marked
   *headless ERROR — never ran*, for the end-state walkthrough (a client's LVI-023).
+- With `cosmeticCheck: end-state`, `/lv-test` does not drive `(eyes:cosmetic)`
+  criteria headless at all. It records each as *SKIPPED (bulk review)* and they
+  go to the checklist, so small UI tweaks are checked in one bulk pass rather
+  than one flow at a time (a client's LVI-026). It never covers breaking
+  changes: `(eyes:blocking)` and untagged criteria are still run, and
+  `lv-manual-gate.sh` reads the skip note on one of them as no result and gates.
 - `deploy-deferred-criteria` does not gate on `(external)` or `(soak)` rows:
   `lv-lane.sh deferred-covered` covers them for any plan, lane or none, and they
   stay open in `plans/deferred-criteria.md`. An `(unbuilt)` row still gates
@@ -64,6 +70,7 @@ projectProfile:
   tier: pre-launch
   selfAnswerMaxPerDay: 3      # optional
   headlessError: gate         # optional: gate (default) | end-state
+  cosmeticCheck: run          # optional: run (default) | end-state — skip (eyes:cosmetic) only
 ```
 
 What the tier gives you is:

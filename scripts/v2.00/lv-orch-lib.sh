@@ -1382,6 +1382,18 @@ wf_prelaunch_errors_reviewed() {
   [ "$(wf_cfg projectProfile.headlessError gate)" = "end-state" ]
 }
 
+# wf_prelaunch_cosmetic_skipped → exit 0 while pre-launch AND the operator has
+# set projectProfile.cosmeticCheck: end-state. Then /lv-test does not drive an
+# `(eyes:cosmetic)` criterion headless at all: it records the row with the note
+# LV_COSMETIC_SKIP_NOTE and the criterion goes to the post-ship checklist, for
+# one bulk pass at the end (a client's LVI-026). `(eyes:blocking)` and untagged
+# criteria are never skipped — a breaking change is always checked.
+LV_COSMETIC_SKIP_NOTE="SKIPPED (bulk review) — projectProfile.cosmeticCheck: end-state"
+wf_prelaunch_cosmetic_skipped() {
+  wf_prelaunch || return 1
+  [ "$(wf_cfg projectProfile.cosmeticCheck run)" = "end-state" ]
+}
+
 # ── Pre-launch self-answer (a client's LVI-034) ─────────────────────────────
 #
 # A pre-launch project runs to its end state without stopping for questions a

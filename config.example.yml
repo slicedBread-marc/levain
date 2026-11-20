@@ -445,6 +445,12 @@ tunnel_command: "cloudflared tunnel --url http://localhost:$FEATURE_PORT"
 # an ERROR is no result. `end-state` sends it to the post-ship checklist marked
 # "headless ERROR — never ran", for one walkthrough of the app at the end.
 #
+# projectProfile.cosmeticCheck (pre-launch only): `run` (default) drives every
+# eyes criterion headless. `end-state` skips that for `(eyes:cosmetic)` ones
+# only — small UI tweaks: /lv-test records them "SKIPPED (bulk review)" and they
+# go to the post-ship checklist for one bulk pass (lv-end-state.sh). Breaking
+# changes are never skipped: `(eyes:blocking)` and untagged criteria still run.
+#
 # Leave unset until you've deliberately picked one — lv-profile.sh --show
 # refuses rather than assume a tier for you.
 #
