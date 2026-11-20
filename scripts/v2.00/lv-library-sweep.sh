@@ -313,12 +313,26 @@ publish() {
 }
 
 # suite — every tests/*.sh, naming each failure; LV_RACK_SUITE instead when set.
+# Each test's whole output is kept beside the run's log, in <log>.suite/<test>.out
+# (LVI-061: three sweeps were held "the suite is red" and nothing recorded which
+# check failed, so nobody could tell why). A red test also puts its ✗ / FAIL
+# lines, or its last lines when it has none, into the run log under == suite.
 suite() {
   if [ -n "${LV_RACK_SUITE:-}" ]; then (cd "$LIB" && bash -c "$LV_RACK_SUITE"); return; fi
-  local t red=0
+  local t red=0 dir log="" out marks
+  read -r log < "$STATE/latest" 2>/dev/null || log=""
+  if [ -n "$log" ]; then dir="${log%.log}.suite"; else dir="$STATE/logs/$(date -u +%Y%m%dT%H%M%SZ).suite"; fi
+  mkdir -p "$dir" 2>/dev/null || dir=""
   for t in "$LIB"/tests/*.sh; do
     [ -f "$t" ] || continue
-    (cd "$LIB" && bash "$t") >/dev/null 2>&1 || { printf '  FAILED %s\n' "${t#$LIB/}"; red=1; }
+    out="${dir:+$dir/$(basename "$t" .sh).out}"
+    if (cd "$LIB" && bash "$t") > "${out:-/dev/null}" 2>&1 < /dev/null; then continue; fi
+    printf '  FAILED %s\n' "${t#$LIB/}"; red=1
+    [ -n "$out" ] && [ -f "$out" ] || continue
+    marks=$(sed $'s/\033\\[[0-9;]*m//g' "$out" | grep -E '✗|(^|[[:space:]])FAIL([[:space:]]|$)' | head -20)
+    [ -n "$marks" ] || marks=$(sed $'s/\033\\[[0-9;]*m//g' "$out" | tail -10)
+    printf '%s\n' "$marks" | sed -E 's/^[[:space:]]*/    | /'
+    printf '    (full output: %s)\n' "$out"
   done
   return "$red"
 }

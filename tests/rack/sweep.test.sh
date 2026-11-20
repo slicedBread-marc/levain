@@ -139,6 +139,25 @@ LV_RACK_SUITE="exit 1" STUB_TOUCH=scripts/v2.00/lv-foo.sh "$SWEEP" run "$LIB" "$
 ck "no deploy" "$(grep -c '^deployed' "$CALLS")" "0"
 has "held for review" "$(cat "$STATE/result")" "held for review — the suite is red"
 
+echo "── a red suite keeps what failed (LVI-061) ──"
+new_lib
+printf 'echo "  ok   fine"\n' > "$LIB/tests/a.sh"
+printf 'echo "  ok   one"; printf "  \\033[31m✗\\033[0m the thing broke\\n"; echo "  FAIL other thing"; exit 1\n' > "$LIB/tests/b.sh"
+printf 'echo "no markers here"; echo "last words"; exit 2\n' > "$LIB/tests/c.sh"
+git -C "$LIB" add -A && git -C "$LIB" -c user.name=t -c user.email=t@t commit -qm tests
+mkdir -p "$STATE/logs"; printf '%s\n' "$STATE/logs/R.log" > "$STATE/latest"
+out=$(LV_RACK_SUITE= STUB_TOUCH=scripts/v2.00/lv-foo.sh "$SWEEP" run "$LIB" "$STATE" 2>&1)
+has "still held" "$(cat "$STATE/result")" "held for review — the suite is red"
+has "the red test is named" "$out" "FAILED tests/b.sh"
+has "with its ✗ line, colour stripped" "$out" "    | ✗ the thing broke"
+has "and its FAIL line" "$out" "    | FAIL other thing"
+case "$out" in *"| ok   one"*) bad "a passing line is not quoted" ;; *) ok "a passing line is not quoted" ;; esac
+has "a red test with no marks shows its last lines" "$out" "    | last words"
+case "$out" in *"FAILED tests/a.sh"*) bad "a green test is not named" ;; *) ok "a green test is not named" ;; esac
+has "the full output is kept beside the run's log" "$(cat "$STATE/logs/R.suite/b.out" 2>/dev/null)" "the thing broke"
+ck "for every test, green ones too" "$(ls "$STATE/logs/R.suite" 2>/dev/null | tr '\n' ' ')" "a.out b.out c.out "
+has "and the run log says where" "$out" "(full output: $STATE/logs/R.suite/b.out)"
+
 echo "── refusals ──"
 new_lib
 STUB_COUNT=0 "$SWEEP" start "$LIB" "$STATE" >/dev/null 2>&1; rc=$?
