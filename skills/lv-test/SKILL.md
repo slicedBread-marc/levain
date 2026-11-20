@@ -230,6 +230,19 @@ It prints a `TREE … @ feature/… <sha> (<time>)` stamp. **Record that stamp i
    - **Amendments change that list.** A `#### Human Test Criteria (A-N)` block's `##### Chrome-Assisted` / `##### Manual` criteria are live and are tested like the originals; the originals its heading or `**Supersedes:**` line retires are not tested and get no row. `lv-manual-gate.sh` counts the same live set (LVI-027).
    - **Nothing reaches a human before step 3c has tried it.** Once the container is up, [step 3c](#testing) runs every Chrome-Assisted criterion and every `#### Manual` eyes or untagged criterion through headless Playwright, attended or not (LVI-002). `/lv-accept` walks only what it left: an ambiguous screenshot, a disagreement with a prior reading, an eyes judgment, or something Playwright cannot be — real third-party OAuth, a physical device, an installed browser extension, the user's own logged-in profile, or no headless browser installable on this machine at all.
 2. **Check for prior test progress** — look for `../../plans/PLN-NNN-<slug>/test-progress.md`. If it exists, read it to get per-criterion results and build identifiers.
+2b. **Bring a branch older than the test recipe up to it — before the container is built.** The sign-in recipe (`test_account_note`, `test_account_command`, `test_signin_url`) is read from develop's `levain.yml`, but it runs against *this branch's* build. A branch cut before the recipe changed can lack the very route the recipe calls: a client's LVI-020 tester followed develop's note to `GET /dev/round` on a branch cut before the plan that added it, got a 404, and could not reach the step under test. The operator's answer of record is to merge develop into such a branch first, so the recipe and the route arrive together:
+   ```bash
+   ../../scripts/lv-exec.sh lv-merge-develop.sh --if-recipe-stale
+   ```
+   It merges only when one of those three keys differs between the branch and develop, and otherwise prints `Test recipe current` and touches nothing.
+
+   | Exit | Behavior |
+   |-|-|
+   | `0` | [AUTO] Carry on to step 3. A merge it made is part of the build you test: the `TREE` stamp step 3 records already names the merged HEAD, so nothing else to note. |
+   | `1` | [AUTO] Non-plan conflicts. Do not resolve them here — that is code, and code is the builder's. `git merge --abort`, write a `**Behavior**` finding to `../../plans/PLN-NNN-<slug>/findings.md` naming the conflicted files and "branch predates develop's test recipe (LVI-020)", then route back: `../../scripts/lv-exec.sh lv-registry-update.sh PLN-NNN testing active --commit "test(PLN-NNN-<slug>): stale against develop's test recipe — merge conflict, back to builder" --add plans/PLN-NNN-<slug>/findings.md`, unclaim, exit 0. |
+
+   Do not instead read the recipe from the branch's own older `levain.yml`, and do not leave a missing dev route to the client as a product bug — the operator ruled both out (LVI-020).
+
 3. **Deploy to local container and capture build identifier** (single bash call — already inside feature branch):
    ```bash
    eval "$(../../scripts/lv-exec.sh lv-docker-up.sh)" && BUILD=$(git log -1 --format='%ad (%h)' --date=format:'%b %d %H:%M')

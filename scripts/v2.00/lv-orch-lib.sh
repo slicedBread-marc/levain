@@ -1038,7 +1038,9 @@ wf_cfg() {
 # caller prints this into a larger message.
 wf_cfg_block() {
   local path="$1" cfg
-  lv_config_into cfg "$(wf_develop_root)"
+  # LV_CFG_ROOT, as in wf_cfg: a block read of another checkout's levain.yml
+  # (lv-merge-develop.sh --if-recipe-stale compares the branch's recipe).
+  lv_config_into cfg "${LV_CFG_ROOT:-$(wf_develop_root)}"
   [ -f "$cfg" ] || return 0
 
   awk -v path="$path" '

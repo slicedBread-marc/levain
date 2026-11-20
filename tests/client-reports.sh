@@ -7265,6 +7265,39 @@ assert_eq "once committed the merge runs" "merged" "$(sed -n 2p "$D12_DIR.out")"
 assert_eq "and the filing survives it" "1" "$(sed -n 3p "$D12_DIR.out")"
 rm -rf "$D12_DIR" "$D12_DIR.out"
 
+# ── A branch older than develop's test recipe is merged up to it (LVI-020) ──
+# A client's tester read develop's test_account_note (`GET /dev/round`) and ran
+# it against a branch cut before the plan that added that route: 404. The
+# operator's answer: merge develop into such a branch, then run.
+RS="$TEST_DIR/recipe-stale"
+mkdir -p "$RS" && (
+  cd "$RS" && git init -qb develop . && git config user.email t@t && git config user.name t
+  printf 'feature-branches/\n.claude/\n' > .gitignore
+  printf 'project_slug: rs\ntest_account_note: |\n  sign in at /login\n' > levain.yml
+  printf 'app\n' > app.txt
+  git add -A && git commit -qm init
+  git worktree add -q feature-branches/old -b feature/PLN-201-old HEAD
+  ( cd feature-branches/old && printf 'old work\n' > old.txt && git add -A && git commit -qm old )
+  printf 'route /dev/round\n' > dev-round.txt
+  printf 'project_slug: rs\ntest_account_note: |\n  sign in at /login\n  GET /dev/round resets the round\n' > levain.yml
+  git add -A && git commit -qm "PLN-200: dev round route + recipe"
+  git worktree add -q feature-branches/new -b feature/PLN-203-new HEAD
+  # develop moves on for a reason that has nothing to do with the recipe
+  printf 'unrelated\n' > other.txt && git add -A && git commit -qm "PLN-204: unrelated"
+) >/dev/null 2>&1
+out=$(cd "$RS/feature-branches/old" && "$SCRIPT_DIR/lv-merge-develop.sh" --if-recipe-stale 2>&1); rc=$?
+assert_eq "a branch older than the recipe: exit 0" "0" "$rc"
+assert_eq "…and it now carries the route the recipe calls" "true" \
+  "$([ -f "$RS/feature-branches/old/dev-round.txt" ] && echo true || echo false)"
+assert_eq "…and the recipe it is tested with" "true" \
+  "$(grep -q '/dev/round' "$RS/feature-branches/old/levain.yml" && echo true || echo false)"
+before=$(git -C "$RS/feature-branches/new" rev-parse HEAD)
+out=$(cd "$RS/feature-branches/new" && "$SCRIPT_DIR/lv-merge-develop.sh" --if-recipe-stale 2>&1); rc=$?
+assert_eq "a branch whose recipe matches develop's: exit 0" "0" "$rc"
+assert_eq "…says so" "true" "$(printf '%s' "$out" | grep -q 'Test recipe current' && echo true || echo false)"
+assert_eq "…and merges nothing, though develop has moved on" "$before" "$(git -C "$RS/feature-branches/new" rev-parse HEAD)"
+rm -rf "$RS"
+
 # ═══════════════════════════════════════════════════════════════════════
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then

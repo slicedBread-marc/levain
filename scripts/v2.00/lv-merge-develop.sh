@@ -4,8 +4,22 @@
 # in plans/ and .plan-ref by taking develop's version (these files belong
 # to develop, not feature branches).
 #
+# lv-merge-develop.sh --if-recipe-stale
+#   Merges only when the branch is older than develop's test recipe: when any
+#   of test_account_note, test_account_command or test_signin_url in the
+#   branch's own levain.yml differs from develop's. Otherwise prints
+#   "Test recipe current" and touches nothing.
+#
+#   The tester reads the recipe from develop and runs it against the BRANCH'S
+#   build. A client's LVI-020: a feature branch cut before PLN-087 merged was
+#   tested with develop's note, whose `GET /dev/round` reset did not exist in
+#   that build — 404, and a run that could not reach the step it was testing.
+#   The operator's answer was to merge develop into such a branch, so the
+#   branch carries the recipe and the dev route together, and then run.
+#
 # Exit codes:
-#   0 — merge succeeded (clean or auto-resolved)
+#   0 — merge succeeded (clean or auto-resolved), or --if-recipe-stale found
+#       the recipe current and merged nothing
 #   1 — non-plan conflicts remain (caller must resolve)
 
 set -euo pipefail
@@ -16,6 +30,24 @@ source "$(dirname "$0")/lv-orch-lib.sh"
 # Must be on a feature branch
 branch=$(git branch --show-current)
 [[ "$branch" == feature/* ]] || { echo "Error: not on a feature branch (on $branch)" >&2; exit 1; }
+
+if [ "${1:-}" = "--if-recipe-stale" ]; then
+  _here=$(git rev-parse --show-toplevel)
+  _stale=""
+  for _k in test_account_note test_account_command test_signin_url; do
+    if [ "$(wf_cfg_text "$_k" "" 2>/dev/null)" != "$(LV_CFG_ROOT="$_here" wf_cfg_text "$_k" "" 2>/dev/null)" ]; then
+      _stale="$_stale $_k"
+    fi
+  done
+  if [ -z "$_stale" ]; then
+    echo "Test recipe current — the branch's levain.yml matches develop's; nothing merged."
+    exit 0
+  fi
+  echo "Test recipe stale on $branch:$_stale differ(s) from develop — merging develop so the build carries what the recipe uses (LVI-020)."
+  unset _here _stale _k
+elif [ -n "${1:-}" ]; then
+  wf_bad_option "$1"
+fi
 
 # ── The auto-claim goes to the CANONICAL path ─────────────────────────────
 #
